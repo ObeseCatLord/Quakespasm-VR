@@ -738,6 +738,47 @@ qboolean R_AvatarRetargetHumanoid(const r_avatar_rig_t *source,
 	memcpy(out,result,R_AvatarJointCount(target->live)*12*sizeof(float));return true;
 }
 
+qboolean R_AvatarHumanoidDesktopSupportEndpoint (
+	const r_avatar_rig_t *source, const r_avatar_rig_t *target,
+	const r_avatar_presentation_context_t *context,
+	const r_avatar_humanoid_t *map, const float *source_palette,
+	const float *target_palette, float endpoint[12])
+{
+	float identity[12], attach[12], mapped[12], calibrated[12], inverse[12];
+	float canonical_origin[3], target_origin[3];
+	int source_right, source_left, target_right;
+	if (!source || !target || !context || !map || !source_palette ||
+		!target_palette || !endpoint || !source->valid || !target->valid)
+		return false;
+	source_right = source->joint[MD5_VRIK_HAND_R];
+	source_left = source->joint[MD5_VRIK_HAND_L];
+	target_right = target->joint[MD5_VRIK_HAND_R];
+	if (source_right < 0 || source_left < 0 || target_right < 0 ||
+		!R_AvatarOrthonormal(map->offset[MD5_VRIK_HAND_L]) ||
+		!R_AvatarOrthonormal(map->reference[MD5_VRIK_HAND_R]))
+		return false;
+	R_AvatarIdentity (identity);
+	if (!R_AvatarBuildAttachedPropTransform (context,
+		source_palette + source_right * 12,
+		source->live->joints[source_right].bind,
+		target_palette + target_right * 12,
+		map->reference[MD5_VRIK_HAND_R], identity, attach))
+		return false;
+	R_AvatarMultiply (attach, source_palette + source_left * 12, mapped);
+	canonical_origin[0] = mapped[3];
+	canonical_origin[1] = mapped[7];
+	canonical_origin[2] = mapped[11];
+	R_AvatarPresentationInversePoint (context, canonical_origin, target_origin);
+	mapped[3] = mapped[7] = mapped[11] = 0.0f;
+	R_AvatarMultiply (mapped, map->offset[MD5_VRIK_HAND_L], calibrated);
+	R_AvatarInverseRigid (context->rotation, inverse);
+	R_AvatarMultiply (inverse, calibrated, endpoint);
+	endpoint[3] = target_origin[0];
+	endpoint[7] = target_origin[1];
+	endpoint[11] = target_origin[2];
+	return R_AvatarOrthonormal (endpoint);
+}
+
 /* Rotate a whole physical subtree about a joint, never translate an endpoint
  * independently. The opposite-vector case gets a deterministic rotation axis. */
 static qboolean R_AvatarAimBranch(const r_avatar_rig_t *rig,float *palette,int root,

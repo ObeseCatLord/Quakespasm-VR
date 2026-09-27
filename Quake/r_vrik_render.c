@@ -16,6 +16,8 @@ extern VkAccelerationStructureKHR bmodel_tlas;
 #define R_VRIK_RENDER_MAX_JOINTS 256
 #define R_VRIK_RENDER_MAX_AVATARS (PLAYER_AVATAR_COUNT + CUSTOM_AVATAR_MAX_PACKAGES)
 
+cvar_t r_avatar_humanoid = {"r_avatar_humanoid", "0", CVAR_ARCHIVE};
+
 typedef struct r_vrik_candidate_s
 {
 	const entity_t *entity;
@@ -51,10 +53,27 @@ typedef struct r_vrik_staged_avatar_s
 	md5_skeleton_view_t target_skeleton;
 	r_avatar_rig_t source_rig;
 	r_avatar_rig_t target_rig;
+	const r_avatar_profile_t *base_profile;
+	r_avatar_profile_t normalized_profile;
+	r_avatar_humanoid_t humanoid_map;
+	r_avatar_presentation_context_t presentation;
 	int id;
+	float floor_correction_z;
 	float target_to_canonical[12];
+	qboolean humanoid;
+	qboolean humanoid_ik;
 	qboolean valid;
 } r_vrik_staged_avatar_t;
+
+typedef struct r_vrik_floor_cache_s
+{
+	const qmodel_t *source_model, *target_model;
+	const md5_skeleton_data_t *source_skeleton, *target_skeleton;
+	const r_avatar_profile_t *base_profile;
+	float display_scale;
+	float correction_z;
+	qboolean attempted, valid;
+} r_vrik_floor_cache_t;
 
 static r_vrik_candidate_t candidates[MAX_SCOREBOARD];
 static float candidate_palettes[MAX_SCOREBOARD][R_VRIK_RENDER_MAX_JOINTS][12];
@@ -63,11 +82,7 @@ static qmodel_t *builtin_models[PLAYER_AVATAR_COUNT];
 static qboolean builtin_attempted[PLAYER_AVATAR_COUNT];
 static qmodel_t *custom_models[CUSTOM_AVATAR_MAX_PACKAGES];
 static qboolean custom_attempted[CUSTOM_AVATAR_MAX_PACKAGES];
-static const qmodel_t *floor_source_models[R_VRIK_RENDER_MAX_AVATARS];
-static const qmodel_t *floor_target_models[R_VRIK_RENDER_MAX_AVATARS];
-static float floor_correction_z[R_VRIK_RENDER_MAX_AVATARS];
-static qboolean floor_attempted[R_VRIK_RENDER_MAX_AVATARS];
-static qboolean floor_valid[R_VRIK_RENDER_MAX_AVATARS];
+static r_vrik_floor_cache_t floor_cache[R_VRIK_RENDER_MAX_AVATARS][2];
 static char admission_gamedir[MAX_OSPATH];
 static r_vrik_prepared_palette_t prepared[DOUBLE_BUFFERED][MAX_SCOREBOARD];
 static size_t prepared_count[DOUBLE_BUFFERED];
@@ -82,10 +97,7 @@ void R_VRIKRenderResetAdmission (void)
 	memset (builtin_attempted, 0, sizeof (builtin_attempted));
 	memset (custom_models, 0, sizeof (custom_models));
 	memset (custom_attempted, 0, sizeof (custom_attempted));
-	memset (floor_source_models, 0, sizeof (floor_source_models));
-	memset (floor_target_models, 0, sizeof (floor_target_models));
-	memset (floor_attempted, 0, sizeof (floor_attempted));
-	memset (floor_valid, 0, sizeof (floor_valid));
+	memset (floor_cache, 0, sizeof (floor_cache));
 	q_strlcpy (admission_gamedir, com_gamedir, sizeof (admission_gamedir));
 }
 
@@ -256,6 +268,73 @@ static qboolean R_VRIKRenderBindFloorCorrection (const qmodel_t *source,
 	return true;
 }
 
+static qboolean R_VRIKRenderStageFloor (r_vrik_staged_avatar_t *selection,
+	const qmodel_t *source, const qmodel_t *target)
+{
+	r_vrik_floor_cache_t *cache;
+	const md5_skeleton_view_t *source_skeleton, *target_skeleton;
+	float scale;
+	if (!selection || !source || !target || !selection->target_rig.profile ||
+		selection->id < 0 || selection->id >= R_VRIK_RENDER_MAX_AVATARS)
+		return false;
+	scale = R_AvatarQuantizedDisplayScale (selection->target_rig.profile);
+	cache = &floor_cache[selection->id][selection->humanoid ? 1 : 0];
+	source_skeleton = &selection->source_skeleton;
+	target_skeleton = &selection->target_skeleton;
+	if (!cache->attempted || cache->source_model != source ||
+		cache->target_model != target ||
+		cache->source_skeleton != source->md5_skeleton ||
+		cache->target_skeleton != target->md5_skeleton ||
+		cache->base_profile != selection->base_profile ||
+		cache->display_scale != scale)
+	{
+		cache->attempted = true;
+		cache->source_model = source;
+		cache->target_model = target;
+		cache->source_skeleton = source->md5_skeleton;
+		cache->target_skeleton = target->md5_skeleton;
+		cache->base_profile = selection->base_profile;
+		cache->display_scale = scale;
+		cache->valid = false;
+		if (selection->humanoid)
+		{
+			float source_bind[R_VRIK_RENDER_MAX_JOINTS][12];
+			float target_reference[R_VRIK_RENDER_MAX_JOINTS][12];
+			if (source_skeleton->joint_count <= R_VRIK_RENDER_MAX_JOINTS &&
+				target_skeleton->joint_count <= R_VRIK_RENDER_MAX_JOINTS)
+			{
+				for (size_t joint = 0; joint < source_skeleton->joint_count; ++joint)
+					memcpy (source_bind[joint], source_skeleton->joints[joint].bind,
+						sizeof (source_bind[joint]));
+				if (R_AvatarRetargetHumanoid (&selection->source_rig,
+					&selection->target_rig, &selection->presentation,
+					&selection->humanoid_map, (const float *)source_bind,
+					(float *)target_reference))
+					cache->valid = R_VRIKRenderBindFloorCorrection (source, target,
+						selection->target_rig.profile, selection->presentation.forward,
+						(const float (*)[12])target_reference,
+						target_skeleton->joint_count, &cache->correction_z);
+			}
+		}
+		else
+			cache->valid = R_VRIKRenderBindFloorCorrection (source, target,
+				selection->target_rig.profile, selection->presentation.forward,
+				NULL, 0, &cache->correction_z);
+		if (!cache->valid)
+			Con_Warning ("Avatar %s has no valid %s floor contact; %s\n",
+				selection->base_profile->key,
+				selection->humanoid ? "calibrated" : "bind",
+				selection->humanoid ? "using generic retarget" : "using Ranger");
+	}
+	if (!cache->valid)
+		return false;
+	selection->floor_correction_z = cache->correction_z;
+	R_AvatarPresentationAddCanonicalZ (&selection->presentation, cache->correction_z);
+	memcpy (selection->target_to_canonical, selection->presentation.forward,
+		sizeof (selection->target_to_canonical));
+	return true;
+}
+
 qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 {
 	r_vrik_staged_avatar_t selection = {0};
@@ -287,25 +366,53 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 		!Mod_GetMD5Skeleton (target, &selection.target_skeleton) ||
 		!R_AvatarResolveRig (R_AvatarProfileForId (PLAYER_AVATAR_RANGER),
 			&selection.source_skeleton, &selection.source_rig) ||
-		!R_AvatarResolveRig (profile, &selection.target_skeleton, &selection.target_rig) ||
-		!R_AvatarTargetToCanonicalPresentation (&selection.source_rig, &selection.target_rig,
-			selection.target_to_canonical))
+		!R_AvatarResolveRig (profile, &selection.target_skeleton, &selection.target_rig))
 		return false;
 	if (id < 0 || id >= R_VRIK_RENDER_MAX_AVATARS)
 		return false;
-	if (!floor_attempted[id] || floor_source_models[id] != source || floor_target_models[id] != target)
+	selection.id = id;
+	selection.base_profile = profile;
+	if (r_avatar_humanoid.value != 0.0f && CustomAvatar_Get (id))
 	{
-		floor_source_models[id] = source;
-		floor_target_models[id] = target;
-		floor_attempted[id] = true;
-		floor_valid[id] = R_VRIKRenderBindFloorCorrection (source, target, profile,
-			selection.target_to_canonical, NULL, 0, &floor_correction_z[id]);
-		if (!floor_valid[id])
-			Con_Warning ("Avatar %s has no valid bind-floor contact; using Ranger\n", profile->key);
+		const float source_height = R_AvatarHumanoidHeight (&selection.source_rig);
+		const float target_height = R_AvatarHumanoidHeight (&selection.target_rig);
+		if (source_height > 0.001f && target_height > 0.001f)
+		{
+			selection.normalized_profile = *profile;
+			selection.normalized_profile.display_scale *= source_height / target_height;
+			if (isfinite(selection.normalized_profile.display_scale) &&
+				selection.normalized_profile.display_scale > 0.0f)
+			{
+				selection.target_rig.profile = &selection.normalized_profile;
+				selection.humanoid = R_AvatarBuildPresentationContext (
+					&selection.source_rig, &selection.target_rig,
+					&selection.presentation) &&
+					R_AvatarBuildHumanoid (&selection.source_rig,
+						&selection.target_rig, &selection.presentation,
+						&selection.humanoid_map);
+			}
+		}
 	}
-	if (!floor_valid[id])
-		return false;
-	selection.target_to_canonical[11] += floor_correction_z[id];
+	if (!selection.humanoid)
+		selection.target_rig.profile = profile;
+	selection.humanoid_ik = selection.humanoid && r_avatar_humanoid.value != 2.0f;
+	if ((!selection.humanoid && !R_AvatarBuildPresentationContext (
+		&selection.source_rig, &selection.target_rig,
+		&selection.presentation)) ||
+		!R_VRIKRenderStageFloor (&selection, source, target))
+	{
+		if (!selection.humanoid)
+			return false;
+		/* Missing optional reference influences leave the original custom
+		 * package available through its generic retargeting policy. */
+		selection.humanoid = false;
+		selection.humanoid_ik = false;
+		selection.target_rig.profile = profile;
+		if (!R_AvatarBuildPresentationContext (&selection.source_rig,
+			&selection.target_rig, &selection.presentation) ||
+			!R_VRIKRenderStageFloor (&selection, source, target))
+			return false;
+	}
 	if (!isfinite (selection.target_to_canonical[11]))
 		return false;
 	selection.source_geometry = (const aliashdr_t *)source->extradata[PV_MD5];
@@ -328,13 +435,14 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 	selection.target_model = target;
 	selection.source_skeleton_data = source->md5_skeleton;
 	selection.target_skeleton_data = target->md5_skeleton;
-	selection.id = id;
 	selection.valid = true;
 	staged[player - 1] = selection;
 	/* Resolution borrowed selection's stack views; the published rigs must
 	 * instead borrow the views embedded in this frame's staged record. */
 	staged[player - 1].source_rig.live = &staged[player - 1].source_skeleton;
 	staged[player - 1].target_rig.live = &staged[player - 1].target_skeleton;
+	if (staged[player - 1].humanoid)
+		staged[player - 1].target_rig.profile = &staged[player - 1].normalized_profile;
 	return true;
 }
 
@@ -493,7 +601,7 @@ static qboolean R_VRIKRenderAttachProp (
 	r_vrik_candidate_t *candidate)
 {
 	const r_avatar_profile_t *profile = target_rig->profile;
-	r_avatar_presentation_context_t context;
+	const r_avatar_presentation_context_t *context = &selection->presentation;
 	int hand_semantic, source_hand, target_hand;
 	int selected_prop = -1, selected_joint = -1;
 	double closest = DBL_MAX, qmax;
@@ -517,10 +625,8 @@ static qboolean R_VRIKRenderAttachProp (
 	target_hand = target_rig->joint[hand_semantic];
 	if (source_hand < 0 || target_hand < 0 ||
 		!selection->source_model->avatar_builtin ||
-		!R_AvatarBuildPresentationContext(source_rig, target_rig, &context) ||
-		!isfinite(floor_correction_z[selection->id]))
+		!isfinite(selection->floor_correction_z))
 		return false;
-	R_AvatarPresentationAddCanonicalZ(&context, floor_correction_z[selection->id]);
 	for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
 	{
 		const int semantic = prop == MD5_AVATAR_PROP_GUN ? MD5_VRIK_GUN : MD5_VRIK_AXE;
@@ -554,11 +660,12 @@ static qboolean R_VRIKRenderAttachProp (
 		 r_rtshadows.value > 0 &&
 		 !GLMesh_AvatarPropBLASReady (
 			selection->source_model->avatar_prop_gpu[selected_prop])) ||
-		!R_AvatarBuildAttachedPropTransform(&context,
+		!R_AvatarBuildAttachedPropTransform(context,
 			source_palette[source_hand],
 			source_rig->live->joints[source_hand].bind,
 			target_palette[target_hand],
-			target_rig->live->joints[target_hand].bind,
+			selection->humanoid ? selection->humanoid_map.reference[hand_semantic] :
+				target_rig->live->joints[target_hand].bind,
 			source_palette[selected_joint],
 			candidate->attached_prop_to_canonical))
 		return false;
@@ -651,6 +758,135 @@ static int R_VRIKRenderCanonicalFrame (const entity_t *entity, const aliashdr_t 
 	return frame >= 0 && frame < source->numframes ? frame : 0;
 }
 
+static qboolean R_VRIKRenderRawHumanoidGoal (
+	const r_vrik_staged_avatar_t *selection,
+	const r_vrik_palette_output_t *ranger, const float raw[3], float goal[3])
+{
+	vec3_t model;
+	if (!selection || !ranger || !ranger->body_basis_valid || !raw || !goal)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+		model[axis] = ranger->body_basis[1][axis] * raw[0] -
+			ranger->body_basis[0][axis] * raw[1] +
+			ranger->body_basis[2][axis] * raw[2];
+	R_AvatarPresentationInversePoint (&selection->presentation, model, goal);
+	return isfinite(goal[0]) && isfinite(goal[1]) && isfinite(goal[2]);
+}
+
+/* The canonical Ranger solve may clamp tracked reach. Use its original
+ * pre-solve basis to map raw accepted goals into the selected body's frame,
+ * then solve on that body's physical limb lengths. */
+static qboolean R_VRIKRenderRefineHumanoidTracked (
+	const r_vrik_staged_avatar_t *selection, const vrik_pose_t *pose,
+	const r_vrik_lowerbody_targets_t *lower,
+	const r_vrik_palette_output_t *ranger, float (*palette)[12])
+{
+	const r_avatar_rig_t *rig = &selection->target_rig;
+	const md5_skeleton_view_t *skeleton = &selection->target_skeleton;
+	float saved[R_VRIK_RENDER_MAX_JOINTS][12], goals[19][3], endpoint[12], pole[3];
+	unsigned int targets = 0;
+	static const int tracker_semantics[VRIK_TRACKER_COUNT] = {
+		MD5_VRIK_HEAD, MD5_VRIK_HAND_L, MD5_VRIK_HAND_R};
+	static const int lower_semantics[R_VRIK_LOWER_ROLE_COUNT] = {
+		MD5_VRIK_HIP, MD5_VRIK_FOOT_L, MD5_VRIK_FOOT_R};
+	static const int upper_semantics[4] = {
+		MD5_VRIK_UPPERARM_L, MD5_VRIK_UPPERARM_R,
+		MD5_VRIK_UPPERLEG_L, MD5_VRIK_UPPERLEG_R};
+	if (!pose || !ranger || !ranger->body_basis_valid || !palette ||
+		!rig->valid || !skeleton->joint_count ||
+		skeleton->joint_count > R_VRIK_RENDER_MAX_JOINTS)
+		return false;
+	memcpy (saved, palette, skeleton->joint_count * sizeof (palette[0]));
+	/* Animation feet are the fallback goals for head-only crouches. */
+	for (int role = R_VRIK_LOWER_LEFT_FOOT; role <= R_VRIK_LOWER_RIGHT_FOOT; ++role)
+	{
+		const int semantic = lower_semantics[role], joint = rig->joint[semantic];
+		if (joint < 0 || (size_t)joint >= skeleton->joint_count)
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+			goals[semantic][axis] = palette[joint][axis * 4 + 3];
+		targets |= 1u << semantic;
+	}
+	for (int tracker = 0; tracker < VRIK_TRACKER_COUNT; ++tracker)
+	{
+		const unsigned char flag = tracker == VRIK_TRACKER_HEAD ?
+			VRIK_FLAG_HEAD_TRACKED : tracker == VRIK_TRACKER_LEFT_HAND ?
+			VRIK_FLAG_LEFT_HAND_TRACKED : VRIK_FLAG_RIGHT_HAND_TRACKED;
+		if (!(pose->flags & flag))
+			continue;
+		const int semantic = tracker_semantics[tracker];
+		if (!R_VRIKRenderRawHumanoidGoal (selection, ranger,
+			pose->position[tracker], goals[semantic]))
+			return false;
+		targets |= 1u << semantic;
+	}
+	if (lower)
+		for (int role = 0; role < R_VRIK_LOWER_ROLE_COUNT; ++role)
+		{
+			const unsigned char bit = R_VRIK_LOWER_BIT (role);
+			if (!(lower->present_mask & bit) ||
+				!((lower->tracked_mask | lower->predicted_mask) & bit) ||
+				!isfinite (lower->confidence[role]) || lower->confidence[role] <= 0.0f)
+				continue;
+			const int semantic = lower_semantics[role];
+			if (!R_VRIKRenderRawHumanoidGoal (selection, ranger,
+				lower->position[role], goals[semantic]))
+				return false;
+			targets |= 1u << semantic;
+		}
+	const int anchor = (targets & (1u << MD5_VRIK_HIP)) ?
+		MD5_VRIK_HIP : MD5_VRIK_HEAD;
+	if (targets & (1u << anchor))
+	{
+		const int root = rig->joint[MD5_VRIK_HIP], anchor_joint = rig->joint[anchor];
+		float delta[3];
+		if (root < 0 || anchor_joint < 0 ||
+			(size_t)root >= skeleton->joint_count ||
+			(size_t)anchor_joint >= skeleton->joint_count)
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+			delta[axis] = goals[anchor][axis] - palette[anchor_joint][axis * 4 + 3];
+		for (size_t joint = 0; joint < skeleton->joint_count; ++joint)
+		{
+			int parent = (int)joint;
+			while (parent >= 0 && parent != root)
+				parent = skeleton->joints[parent].parent;
+			if (parent != root)
+				continue;
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				palette[joint][axis * 4 + 3] += delta[axis];
+				if (!isfinite (palette[joint][axis * 4 + 3]))
+				{
+					memcpy (palette, saved, skeleton->joint_count * sizeof (palette[0]));
+					return false;
+				}
+			}
+		}
+	}
+	for (int limb = 0; limb < 4; ++limb)
+	{
+		const int upper = upper_semantics[limb], end = upper + 2;
+		const int lower_joint = rig->joint[upper + 1], end_joint = rig->joint[end];
+		if (!(targets & (1u << end)))
+			continue;
+		if (lower_joint < 0 || end_joint < 0 ||
+			(size_t)lower_joint >= skeleton->joint_count ||
+			(size_t)end_joint >= skeleton->joint_count)
+			continue;
+		memcpy (endpoint, palette[end_joint], sizeof (endpoint));
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			endpoint[axis * 4 + 3] = goals[end][axis];
+			pole[axis] = palette[lower_joint][axis * 4 + 3];
+		}
+		/* Each solve restores its input on failure. Other tracked limbs remain
+		 * useful, so keep their independently successful solves. */
+		R_AvatarSolveHumanoidLimb (rig, (float *)palette, upper, endpoint, pole);
+	}
+	return true;
+}
+
 static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	const r_vrik_staged_avatar_t *selection, r_vrik_candidate_t *candidate, float (*palette)[12])
 {
@@ -692,7 +928,9 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		!source_rig->valid || !target_rig->valid ||
 		source_rig->live != source_skeleton || target_rig->live != target_skeleton ||
 		source_rig->profile != R_AvatarProfileForId (PLAYER_AVATAR_RANGER) ||
-		target_rig->profile != R_VRIKRenderProfileForId (selection->id))
+		selection->base_profile != R_VRIKRenderProfileForId (selection->id) ||
+		target_rig->profile != (selection->humanoid ?
+			&selection->normalized_profile : selection->base_profile))
 		return false;
 
 	canonical_entity = *entity;
@@ -744,8 +982,12 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	else
 		result = R_VRIKBuildRangerAnimationPalette (source_skeleton, &candidate->lerpdata, &ranger);
 	if (result != R_VRIK_PALETTE_OK ||
-		!R_AvatarRetargetRangerOutput (source_rig, target_rig, &ranger,
-			palette, R_VRIK_RENDER_MAX_JOINTS))
+		(selection->humanoid ?
+			!R_AvatarRetargetHumanoid (source_rig, target_rig,
+				&selection->presentation, &selection->humanoid_map,
+				(const float *)source_palette, (float *)palette) :
+			!R_AvatarRetargetRangerOutput (source_rig, target_rig, &ranger,
+				palette, R_VRIK_RENDER_MAX_JOINTS)))
 		return false;
 	/* Optional tracked repairs retain successful independent stages. The
 	 * canonical palette and supplied lower targets remain authoritative. */
@@ -761,9 +1003,29 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		if (usable & R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP))
 			tracked_lower_mask |= R_AVATAR_TRACKED_HIP;
 	}
-	R_AvatarRefineBuiltinPalette (source_rig, target_rig, tracked,
-		(const float (*)[12])source_palette, floor_correction_z[selection->id],
-		tracked_lower_mask, palette, R_VRIK_RENDER_MAX_JOINTS);
+	if (!selection->humanoid)
+		R_AvatarRefineBuiltinPalette (source_rig, target_rig, tracked,
+			(const float (*)[12])source_palette, selection->floor_correction_z,
+			tracked_lower_mask, palette, R_VRIK_RENDER_MAX_JOINTS);
+	else if (selection->humanoid_ik && tracked &&
+		!R_VRIKRenderRefineHumanoidTracked (selection, &pose, lower_input,
+			&ranger, palette))
+		return false;
+	else if (selection->humanoid_ik && !tracked)
+	{
+		float endpoint[12], pole[3];
+		const int elbow = target_rig->joint[MD5_VRIK_LOWERARM_L];
+		if (elbow >= 0 && R_AvatarHumanoidDesktopSupportEndpoint (
+			source_rig, target_rig, &selection->presentation,
+			&selection->humanoid_map, (const float *)source_palette,
+			(const float *)palette, endpoint))
+		{
+			for (int axis = 0; axis < 3; ++axis)
+				pole[axis] = palette[elbow][axis * 4 + 3];
+			R_AvatarSolveHumanoidLimb (target_rig, (float *)palette,
+				MD5_VRIK_UPPERARM_L, endpoint, pole);
+		}
+	}
 	if (!R_VRIKRenderAttachProp(selection, source_rig, target_rig,
 		&pose, tracked, (const float (*)[12])source_palette,
 		(const float (*)[12])palette, candidate))

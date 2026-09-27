@@ -171,6 +171,13 @@ qboolean R_AvatarBuildHumanoid(const r_avatar_rig_t *source,
 qboolean R_AvatarRetargetHumanoid(const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
 	const r_avatar_humanoid_t *map, const float *source_palette, float *out);
+/* Carry the canonical support wrist through the calibrated dominant grip.
+ * The result is a target-model-space endpoint for the existing limb solver. */
+qboolean R_AvatarHumanoidDesktopSupportEndpoint (
+	const r_avatar_rig_t *source, const r_avatar_rig_t *target,
+	const r_avatar_presentation_context_t *context,
+	const r_avatar_humanoid_t *map, const float *source_palette,
+	const float *target_palette, float endpoint[12]);
 /* Rotation-only analytic IK: keeps every physical bind offset intact. Returns
  * residual distance for unreachable targets; negative means invalid input.
  * endpoint is a target-model-space rigid wrist/foot transform. */

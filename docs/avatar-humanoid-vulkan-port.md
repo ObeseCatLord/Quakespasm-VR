@@ -55,8 +55,14 @@ selected silhouette, feet, equipment, and shadow across both eyes and
 desktop. Profile CPU frame preparation with several peers and larger rigs
 before claiming a performance benefit. User headset testing remains separate.
 
-This is a migration plan, not a claim that the calibrated policy is already
-functional on 2.0.
+The frame adapter now stages custom-only modes `0/1/2`, a normalized profile,
+the calibrated reference floor, and one presentation shared by body and prop.
+Mode `1` maps raw tracked goals through the Ranger pre-solve basis and solves
+on target lengths; desktop mode `1` derives the support hand from the
+calibrated dominant grip. Mode `2` omits target IK. Failed optional reference
+data falls back to generic retargeting. Both Linux builds and the synthetic
+avatar fixture pass. Asset-backed desktop and VR presentation, shadows,
+tracking loss, and performance are not yet verified.
 
 ## Astra senior review disposition
 
@@ -69,4 +75,11 @@ calibrated wrist reference. All three are adopted above. The original MD5
 influences are available while parsing the model, but the former retained
 bind surface omitted them; 2.0 now retains a bounded optional copy for
 custom humanoids. A failed optional copy leaves the generic avatar path
-available. Calibrated frame admission and pose solving are still pending.
+available. The integrated frame path still needs the asset-backed proof above.
+
+The follow-up Astra code review found no confirmed P0/P1/P2 defect in the
+integrated adapter. It retained custom-only admission, mode fallback, staged
+pointer rebasing, mode-specific floor cache keys, the pre-solve tracked basis,
+hip-over-head authority, and calibrated equipment/support-hand transport.
+That review was read-only and did not establish in-game visual or timing
+results.

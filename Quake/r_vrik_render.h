@@ -4,6 +4,8 @@
 
 #include "quakedef.h"
 
+extern cvar_t r_avatar_humanoid;
+
 typedef struct r_vrik_prepared_palette_s
 {
 	const entity_t *entity;

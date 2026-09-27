@@ -24,6 +24,10 @@ typedef struct r_vrik_palette_output_s
 	qboolean muzzle_valid;
 	vec3_t muzzle_origin;
 	vec3_t muzzle_forward;
+	/* The pre-solve animation body basis used to map raw network targets.
+	 * Order is lateral, forward, up; valid only for a tracked solve. */
+	qboolean body_basis_valid;
+	vec3_t body_basis[3];
 } r_vrik_palette_output_t;
 
 /* Protocol-v3 lower targets sampled from one entity frame.  present_mask

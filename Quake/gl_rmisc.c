@@ -26,6 +26,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "r_ssao.h"
 #include "gl_heap.h"
+#include "r_vrik_render.h"
 #include <float.h>
 
 cvar_t r_lodbias = {"r_lodbias", "1", CVAR_ARCHIVE};
@@ -5027,6 +5028,7 @@ void R_Init (void)
 	Cmd_AddCommand ("vkmemstats", R_VulkanMemStats_f);
 
 	Cvar_RegisterVariable (&r_fullbright);
+	Cvar_RegisterVariable (&r_avatar_humanoid);
 	Cvar_RegisterVariable (&r_lightmap);
 	Cvar_RegisterVariable (&r_drawentities);
 	Cvar_RegisterVariable (&r_drawviewmodel);

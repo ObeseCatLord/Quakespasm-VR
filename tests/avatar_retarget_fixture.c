@@ -166,14 +166,16 @@ static void test_identity_and_locals(void)
 
 static void test_rotation_and_basis(void)
 {
-	fixture_t source, target; r_avatar_rig_t sr, tr; float solved[R_AVATAR_MAX_JOINTS * 12], output[R_AVATAR_MAX_JOINTS * 12], a[12], b[12], product[12], p[3] = {2,3,4}, q[3], back[3]; int i, upper;
+	fixture_t source, target; r_avatar_rig_t sr, tr; r_avatar_presentation_context_t context; float solved[R_AVATAR_MAX_JOINTS * 12], output[R_AVATAR_MAX_JOINTS * 12], a[12], b[12], product[12], p[3] = {2,3,4}, q[3], back[3]; int i, upper;
 	ranger(&source, 1); ranger(&target, 1);
 	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr)); assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &target.live, &tr));
 	for (i = 0; i < source.live.joint_count; ++i) memcpy(solved + i * 12, source.joints[i].bind, 12 * sizeof(float));
 	upper = sr.joint[MD5_VRIK_UPPERARM_L]; solved[upper * 12] = 0; solved[upper * 12 + 1] = -1; solved[upper * 12 + 4] = 1; solved[upper * 12 + 5] = 0; solved[upper * 12 + 10] = 1;
 	assert(R_AvatarRetargetPalette(&sr, &tr, solved, output)); assert(fabsf(output[upper * 12 + 1]) > .9f);
 	assert(R_AvatarCanonicalToTargetBasis(&tr, a)); assert(R_AvatarTargetToCanonicalBasis(&tr, b)); multiply(a, b, product); assert(fabsf(product[0] - 1) < .01f && fabsf(product[5] - 1) < .01f && fabsf(product[10] - 1) < .01f);
-	assert(R_AvatarTargetToCanonicalPresentation(&sr, &tr, a)); assert(R_AvatarCanonicalToTargetPresentation(&sr, &tr, b)); point(a, p, q); point(b, q, back); assert(fabsf(back[0] - p[0]) < .01f && fabsf(back[1] - p[1]) < .01f && fabsf(back[2] - p[2]) < .01f);
+	assert(R_AvatarTargetToCanonicalPresentation(&sr, &tr, a)); assert(R_AvatarBuildPresentationContext(&sr, &tr, &context));
+	for (i = 0; i < 12; ++i) assert(fabsf(context.forward[i] - a[i]) < .00001f);
+	assert(R_AvatarCanonicalToTargetPresentation(&sr, &tr, b)); point(a, p, q); point(b, q, back); assert(fabsf(back[0] - p[0]) < .01f && fabsf(back[1] - p[1]) < .01f && fabsf(back[2] - p[2]) < .01f);
 	assert(R_AvatarQuantizedDisplayScale(R_AvatarProfileForId(PLAYER_AVATAR_DOG)) > 1.3f);
 }
 
@@ -502,6 +504,25 @@ static void test_humanoid_lengths_and_contacts(void)
 	assert(R_AvatarResolveRig(&profile,&target.live,&tr));
 	assert(R_AvatarBuildPresentationContext(&sr,&tr,&ctx));
 	assert(R_AvatarBuildHumanoid(&sr,&tr,&ctx,&map));
+	/* The desktop support wrist follows canonical grip motion through the
+	 * calibrated dominant-hand attachment without changing limb lengths. */
+	{
+		float baseline[12], shifted[12];
+		int left = sr.joint[MD5_VRIK_HAND_L];
+		for(i=0;i<source.live.joint_count;++i)
+			memcpy(input+i*12,source.joints[i].bind,sizeof(source.joints[i].bind));
+		assert(R_AvatarRetargetHumanoid(&sr,&tr,&ctx,&map,input,pose));
+		assert(R_AvatarHumanoidDesktopSupportEndpoint(&sr,&tr,&ctx,&map,input,pose,baseline));
+		input[left*12+3]+=2.0f;
+		assert(R_AvatarRetargetHumanoid(&sr,&tr,&ctx,&map,input,pose));
+		assert(R_AvatarHumanoidDesktopSupportEndpoint(&sr,&tr,&ctx,&map,input,pose,shifted));
+		for(k=0;k<3;++k)
+			assert(fabsf((shifted[k*4+3]-baseline[k*4+3])-2.0f*ctx.inverse[k*4])<.002f);
+		for(k=0;k<3;++k)
+			pole[k]=pose[tr.joint[MD5_VRIK_LOWERARM_L]*12+k*4+3];
+		assert(R_AvatarSolveHumanoidLimb(&tr,pose,MD5_VRIK_UPPERARM_L,shifted,pole)>=0.0f);
+		assert_physical_lengths(&target,pose);
+	}
 	upper=tr.joint[MD5_VRIK_UPPERARM_L];end=tr.joint[MD5_VRIK_HAND_L];
 	for(angle=0;angle<16;++angle) {
 		float delta[12],a=angle*(float)M_PI/8;

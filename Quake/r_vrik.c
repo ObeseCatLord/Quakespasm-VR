@@ -791,7 +791,7 @@ static qboolean R_VRIKSolvePalette (const md5_skeleton_view_t *skeleton,
 	const int *jointindex, const vrik_pose_t *pose,
 	const r_vrik_lowerbody_targets_t *lower_targets, qboolean muzzleflash,
 	float (*palette)[12], qboolean *muzzle_valid,
-	vec3_t muzzle_origin, vec3_t muzzle_forward)
+	vec3_t muzzle_origin, vec3_t muzzle_forward, vec3_t body_basis[3])
 {
 	vec3_t lateral, forward, up, hip, oldhead, targethead, headdelta, torso;
 	vec3_t lefttarget, righttarget, weaponhandlocal = { 0, 0, 0 };
@@ -813,6 +813,9 @@ static qboolean R_VRIKSolvePalette (const md5_skeleton_view_t *skeleton,
 	if (!R_VRIKBuildBodyBasis (jointindex, (const float (*)[12])palette,
 		lateral, forward, up))
 		return false;
+	VectorCopy (lateral, body_basis[0]);
+	VectorCopy (forward, body_basis[1]);
+	VectorCopy (up, body_basis[2]);
 	/* Lower-body network targets are restricted to the donor's byte-verified
 	 * rerelease Ranger rig.  The inherited head/arm solve below still runs for
 	 * ordinary compatible MD5 models. */
@@ -1050,6 +1053,7 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 	size_t joint, component;
 	qboolean muzzle_valid;
 	vec3_t muzzle_origin, muzzle_forward;
+	vec3_t body_basis[3];
 	r_vrik_palette_result_t validation;
 
 	if (!pose)
@@ -1064,7 +1068,7 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 	R_VRIKLerpPalette (skeleton, lerpdata, palette);
 	if (!R_VRIKSolvePalette (skeleton, jointindex, pose, lower_targets,
 		muzzleflash, palette,
-		&muzzle_valid, muzzle_origin, muzzle_forward))
+		&muzzle_valid, muzzle_origin, muzzle_forward, body_basis))
 		return R_VRIK_PALETTE_INVALID_SKELETON;
 	for (joint = 0; joint < skeleton->joint_count; joint++)
 		for (component = 0; component < 12; component++)
@@ -1075,6 +1079,9 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 	out->muzzle_valid = muzzle_valid;
 	VectorCopy (muzzle_origin, out->muzzle_origin);
 	VectorCopy (muzzle_forward, out->muzzle_forward);
+	out->body_basis_valid = true;
+	for (int axis = 0; axis < 3; ++axis)
+		VectorCopy (body_basis[axis], out->body_basis[axis]);
 	return R_VRIK_PALETTE_OK;
 }
 
@@ -1100,6 +1107,8 @@ r_vrik_palette_result_t R_VRIKBuildRangerAnimationPalette (
 	out->muzzle_valid = false;
 	memset (out->muzzle_origin, 0, sizeof (out->muzzle_origin));
 	memset (out->muzzle_forward, 0, sizeof (out->muzzle_forward));
+	out->body_basis_valid = false;
+	memset (out->body_basis, 0, sizeof (out->body_basis));
 	return R_VRIK_PALETTE_OK;
 }
 
