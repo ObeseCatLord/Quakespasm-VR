@@ -659,6 +659,9 @@ entity boxes, rotated brush normals, stationary/startsolid, water contents and s
 It also latches a transient fluid crossing across an explicitly timed command's
 substeps, even when that command finishes dry, then clears the latch on the next
 command.
+It checks the selected stock-teleporter input rule in the production air-move
+function: backward input is suppressed during the deadline while sideways
+input remains effective; ordinary air movement remains unrestricted.
 It also checks inherited VR ladder pitch independence against the ordinary QSS-M
 ladder path, and raised-jump-speed non-VR swimming against explicit VR swimming.
 Both touch policies are checked through the production helper, including impact

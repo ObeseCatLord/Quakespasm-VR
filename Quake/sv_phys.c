@@ -7427,6 +7427,12 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 
 	movevars = trial_movevars;
 	pmove.pm_type = PM_NORMAL;
+	/* SV_AirMove ignores backward input during the stock teleporter's
+	 * teleport_time window. Waterjump is a separate native movement path. */
+	pmove.block_teleport_backmove =
+		!((int)ent->v.flags & FL_WATERJUMP) &&
+		client->private_pmove_waterjump_secs == 0.0f &&
+		qcvm->time < ent->v.teleport_time;
 	pmove.cmd = client->cmd;
 	pmove.cmd.seconds = seconds;
 	pmove.cmd.msec = command.msec;

@@ -1896,7 +1896,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			if (client->edict && !client->edict->free &&
 				client->edict->v.waterlevel == 0 &&
 				!((int)client->edict->v.flags & FL_WATERJUMP) &&
-				client->private_pmove_waterjump_secs == 0.0f)
+				client->private_pmove_waterjump_secs == 0.0f &&
+				qcvm->time >= client->edict->v.teleport_time)
 				ack_flags |= MOVEACK_FLAG_PREDICTION_ALLOWED;
 		}
 		if (client->private_move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE)

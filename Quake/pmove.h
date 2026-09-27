@@ -77,6 +77,8 @@ typedef struct
 	qboolean		jump_held;
 	float			jump_secs;	// msec since last jump
 	float		waterjumptime;
+	/* Server-only QuakeC teleport deadline: native AirMove ignores back input. */
+	qboolean		block_teleport_backmove;
 	int			pm_type;
 	vec3_t		player_mins;
 	vec3_t		player_maxs;

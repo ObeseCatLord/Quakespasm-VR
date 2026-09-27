@@ -72,6 +72,25 @@ PMove publication would erase that change. The zero-waterjump publication now
 preserves a Think-written deadline. Reachability with the pinned stock weapon
 Think and real-map timer behavior remain unverified.
 
+The stock QuakeC teleporter sets `teleport_time` and an exit velocity; it does
+not set `pausetime`. A later Astra review rejected a proposed `pausetime`
+adapter for this slice. The selected PMove command instead carries the active
+teleport deadline to the existing air/ground acceleration path, where only
+negative forward input is suppressed, matching `SV_AirMove`. Swimming,
+waterjump, lateral input, roomscale and hand movement retain their own paths.
+The selected snapshot withholds dry replay permission until the deadline
+expires, since client replay does not receive that deadline. The review also
+confirmed that `SV_WriteDamageToMessage` already emits `svc_setangle` on the
+replacement-delta snapshot path.
+
+| Astra decision | Disposition |
+| --- | --- |
+| Replace broad pause suppression with the native negative-forward rule. | Adopted in the shared PMove air path, enabled only by the selected server command. |
+| Do not infer a stock teleport from `pausetime` or import `teleport_time` into the waterjump countdown. | Adopted; no new persistent timer or freeze mode. |
+| Withhold selected replay permission while the deadline is active. | Adopted; replay remains authoritative-only for these snapshots. |
+| Preserve roomscale and Gorilla collision collection. | Adopted; no pause-based hand exclusion. |
+| Verify teleport orientation, exit trajectory and waterjump overlap against ordinary ownership. | Open; the focused PMove fixture checks only backward/sideways acceleration. |
+
 A dry ACK alone cannot guarantee that every pending client command stays dry.
 The shared PMove solver now latches fluid contact across all substeps in one
 command. Live replay under the selected PMove-engine authority discards its

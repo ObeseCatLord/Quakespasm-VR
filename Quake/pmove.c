@@ -1192,6 +1192,8 @@ void PM_AirMove (void)
 
 	fmove = pmove.cmd.forwardmove;
 	smove = pmove.cmd.sidemove;
+	if (pmove.block_teleport_backmove && fmove < 0)
+		fmove = 0;
 	VectorMA(forward, -DotProduct(forward, pmove.gravitydir), pmove.gravitydir, forward); //z=0
 	VectorMA(right, -DotProduct(right, pmove.gravitydir), pmove.gravitydir, right); //z=0
 	VectorNormalize (forward);

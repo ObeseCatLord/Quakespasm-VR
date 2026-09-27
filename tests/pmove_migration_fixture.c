@@ -207,6 +207,38 @@ static void check_transient_fluid_crossing (void)
 	assert (pmove.waterlevel == 0 && !pmove.fluid_contacted);
 }
 
+static void check_teleport_backmove (void)
+{
+	vec3_t blocked, unrestricted;
+
+	prepare ();
+	pmove.origin[2] = 128;
+	VectorSet (pmove.gravitydir, 0, 0, -1);
+	pmove.cmd.forwardmove = -200;
+	pmove.cmd.sidemove = 100;
+	pmove.block_teleport_backmove = true;
+	frametime = .1f;
+	AngleVectors (pmove.angles, forward, right, up);
+	PM_EnsureInitialized ();
+	PM_AirMove ();
+	VectorCopy (pmove.velocity, blocked);
+
+	prepare ();
+	pmove.origin[2] = 128;
+	VectorSet (pmove.gravitydir, 0, 0, -1);
+	pmove.cmd.forwardmove = -200;
+	pmove.cmd.sidemove = 100;
+	frametime = .1f;
+	AngleVectors (pmove.angles, forward, right, up);
+	PM_EnsureInitialized ();
+	PM_AirMove ();
+	VectorCopy (pmove.velocity, unrestricted);
+
+	near_value (blocked[0], 0, .01f);
+	assert (fabsf (blocked[1]) > 1.0f);
+	assert (unrestricted[0] < -1.0f);
+}
+
 int main (void)
 {
 	floor_model.type = mod_brush;
@@ -228,6 +260,7 @@ int main (void)
 	{
 		pr_checkextension.value = 1;
 		sv_fte_recursivehullckeck.value = fast;
+		check_teleport_backmove ();
 		check_transient_fluid_crossing ();
 		prepare ();
 		pmove.cmd.forwardmove = 320;
