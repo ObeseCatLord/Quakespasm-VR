@@ -9,6 +9,11 @@ The vkQuake port adds that small latch around its existing `SV_TouchLinks`
 callback. vkQuake continues to own trigger enumeration, edict retention,
 QuakeC execution, and co-op pickup handling. Source identity is cleared on
 observed exit, death, disconnect, map reset, or trigger free as appropriate.
+When a recognized teleport callback actually changes a live player's origin,
+that same boundary now publishes the existing private movement discontinuity.
+Selected clients can reset interpolation and speculative movement from the
+authoritative relocated owner snapshot. This does not classify unrelated
+QuakeC `setorigin` changes as teleports or add another trigger owner.
 
 | Astra senior review finding | Disposition |
 | --- | --- |
@@ -23,3 +28,5 @@ Static review and a local build cover integration only. Live acceptance still
 needs repeated contact, exit/re-entry, distinct trigger chains, slot and trigger
 reuse, death, and normal/co-op teleport behavior with the relevant mods. The
 inherited QuakeSpasm VR server behavior is the reference for these checks.
+Private-client acceptance also needs a completed move ACK and owner snapshot
+after a stock or instant trigger, with no interpolation across the relocation.

@@ -499,6 +499,10 @@ static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
 	clientnum = NUM_FOR_EDICT (ent) - 1;
 	if (clientnum < 0 || clientnum >= MAX_SCOREBOARD)
 		return;
+	/* This callback is an identified teleport and actually relocated the
+	 * player. Tell private snapshot/replay ownership at this exact boundary;
+	 * unrelated QuakeC setorigin adjustments must not become discontinuities. */
+	SV_PrivatePlayerTeleported (ent);
 	recent = &sv_recent_teleport_triggers[clientnum];
 	recent->trigger = touch;
 	if (SV_IsInstantTeleportTrigger (touch))
