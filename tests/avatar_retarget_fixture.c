@@ -65,7 +65,7 @@ static void origin(float m[12], float x, float y, float z)
 static void add(fixture_t *f, int *count, const char *name, int parent, float x, float y, float z)
 {
 	int n = (*count)++;
-	strncpy(f->joints[n].name, name, sizeof(f->joints[n].name) - 1);
+	snprintf(f->joints[n].name, sizeof(f->joints[n].name), "%s", name);
 	f->joints[n].parent = parent;
 	if (parent < 0) ident(f->joints[n].bind, x, y, z);
 	else { float local[12]; ident(local, x, y, z); multiply(f->joints[parent].bind, local, f->joints[n].bind); }
@@ -370,7 +370,9 @@ static void test_all_profile_palettes_are_bounded(void)
 {
 	fixture_t source, target;
 	r_avatar_rig_t sr, tr;
-	float solved[R_AVATAR_MAX_JOINTS * 12], output[R_AVATAR_MAX_JOINTS * 12];
+	r_avatar_presentation_context_t context;
+	r_avatar_retarget_binds_t binds;
+	float solved[R_AVATAR_MAX_JOINTS * 12], output[R_AVATAR_MAX_JOINTS * 12], prepared[R_AVATAR_MAX_JOINTS * 12];
 	int avatar, joint, component;
 
 	ranger(&source, 1);
@@ -381,6 +383,11 @@ static void test_all_profile_palettes_are_bounded(void)
 		named_profile(&target, R_AvatarProfileForId(avatar));
 		assert(R_AvatarResolveRig(R_AvatarProfileForId(avatar), &target.live, &tr));
 		assert(R_AvatarRetargetPalette(&sr, &tr, solved, output));
+		assert(R_AvatarBuildPresentationContext(&sr, &tr, &context));
+		assert(R_AvatarPrepareRetargetBinds(&sr, &tr, &binds));
+		assert(R_AvatarRetargetPalettePreparedWithContext(&sr, &tr, &context,
+			&binds, solved, prepared));
+		assert(!memcmp(output, prepared, target.live.joint_count * 12 * sizeof(float)));
 		for (joint = 0; joint < target.live.joint_count; ++joint)
 			for (component = 0; component < 12; ++component)
 				assert(isfinite(output[joint * 12 + component]) &&
@@ -420,7 +427,8 @@ static void test_preserve_hip_rotation(void)
 	fixture_t source, target;
 	r_avatar_rig_t sr, tr;
 	r_avatar_presentation_context_t context;
-	float solved[R_AVATAR_MAX_JOINTS * 12], output[R_AVATAR_MAX_JOINTS * 12];
+	r_avatar_retarget_binds_t binds;
+	float solved[R_AVATAR_MAX_JOINTS * 12], output[R_AVATAR_MAX_JOINTS * 12], prepared[R_AVATAR_MAX_JOINTS * 12];
 	float rotate[12], inversehip[12], local[12], tailbindlocal[12];
 	int hip, tail, i;
 
@@ -439,6 +447,10 @@ static void test_preserve_hip_rotation(void)
 	hip = sr.joint[MD5_VRIK_HIP]; rotation_z(rotate); rotate[3] = 4; rotate[7] = -3; rotate[11] = 2;
 	multiply(rotate, source.joints[hip].bind, solved + hip * 12);
 	assert(R_AvatarRetargetPaletteWithContext(&sr, &tr, &context, solved, output));
+	assert(R_AvatarPrepareRetargetBinds(&sr, &tr, &binds));
+	assert(R_AvatarRetargetPalettePreparedWithContext(&sr, &tr, &context,
+		&binds, solved, prepared));
+	assert(!memcmp(output, prepared, target.live.joint_count * 12 * sizeof(float)));
 	hip = tr.joint[MD5_VRIK_HIP];
 	for (i = 0; i < 12; ++i) if ((i % 4) != 3)
 		assert(fabsf(output[hip * 12 + i] - target.joints[hip].bind[i]) < .001f);
@@ -589,10 +601,87 @@ static void test_large_humanoid_branch(void)
 	assert(fabsf(palette[255*12+3]-before[255*12+3])>0.01f);
 }
 
+static void test_large_prepared_retarget(void)
+{
+	fixture_t source, target;
+	r_avatar_rig_t sr, tr;
+	r_avatar_presentation_context_t context;
+	r_avatar_retarget_binds_t binds;
+	float input[R_AVATAR_MAX_JOINTS * 12];
+	float direct[R_AVATAR_MAX_JOINTS * 12], prepared[R_AVATAR_MAX_JOINTS * 12];
+	float turn[12];
+	int count = 19;
+	ranger(&source, 1);
+	ranger(&target, 2);
+	for (int i = 19; i < R_AVATAR_MAX_JOINTS; ++i)
+	{
+		char name[32];
+		snprintf(name, sizeof(name), "finger_%d", i);
+		add(&target, &count, name, i == 19 ? 8 : i - 1, 0.125f, 0, 0);
+	}
+	target.live.joint_count = count;
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr));
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &target.live, &tr));
+	assert(R_AvatarBuildPresentationContext(&sr, &tr, &context));
+	assert(R_AvatarPrepareRetargetBinds(&sr, &tr, &binds));
+	for (int i = 0; i < source.live.joint_count; ++i)
+		memcpy(input + i * 12, source.joints[i].bind, 12 * sizeof(float));
+	rotation_x(turn);
+	turn[3] = 2;
+	multiply(turn, source.joints[sr.joint[MD5_VRIK_HAND_L]].bind,
+		input + sr.joint[MD5_VRIK_HAND_L] * 12);
+	assert(R_AvatarRetargetPaletteWithContext(&sr, &tr, &context, input, direct));
+	assert(R_AvatarRetargetPalettePreparedWithContext(&sr, &tr, &context,
+		&binds, input, prepared));
+	assert(!memcmp(direct, prepared, sizeof(direct)));
+	/* A replacement model cannot borrow the prior model's bind cache. */
+	fixture_t replacement = target;
+	replacement.live.joints = replacement.joints;
+	tr.live = &replacement.live;
+	assert(!R_AvatarRetargetPalettePreparedWithContext(&sr, &tr, &context,
+		&binds, input, prepared));
+}
+
+static void test_rotated_bind_prepared_retarget(void)
+{
+	fixture_t source, target;
+	r_avatar_rig_t sr, tr;
+	r_avatar_presentation_context_t context;
+	r_avatar_retarget_binds_t binds;
+	float source_turn[12], target_turn[12], motion[12];
+	float input[R_AVATAR_MAX_JOINTS * 12];
+	float direct[R_AVATAR_MAX_JOINTS * 12], prepared[R_AVATAR_MAX_JOINTS * 12];
+	ranger(&source, 1);
+	ranger(&target, 2);
+	rotation_x(source_turn);
+	rotation_z(target_turn);
+	for (int i = 0; i < source.live.joint_count; ++i)
+		multiply(source_turn, source.joints[i].bind, source.joints[i].bind);
+	for (int i = 0; i < target.live.joint_count; ++i)
+		multiply(target_turn, target.joints[i].bind, target.joints[i].bind);
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &source.live, &sr));
+	assert(R_AvatarResolveRig(R_AvatarProfileForId(PLAYER_AVATAR_RANGER), &target.live, &tr));
+	assert(R_AvatarBuildPresentationContext(&sr, &tr, &context));
+	assert(R_AvatarPrepareRetargetBinds(&sr, &tr, &binds));
+	for (int i = 0; i < source.live.joint_count; ++i)
+		memcpy(input + i * 12, source.joints[i].bind, 12 * sizeof(float));
+	rotation_z(motion);
+	motion[3] = 2;
+	motion[7] = -3;
+	multiply(motion, source.joints[sr.joint[MD5_VRIK_HAND_R]].bind,
+		input + sr.joint[MD5_VRIK_HAND_R] * 12);
+	assert(R_AvatarRetargetPaletteWithContext(&sr, &tr, &context, input, direct));
+	assert(R_AvatarRetargetPalettePreparedWithContext(&sr, &tr, &context,
+		&binds, input, prepared));
+	assert(!memcmp(direct, prepared, target.live.joint_count * 12 * sizeof(float)));
+}
+
 int main(void)
 {
 	test_humanoid_lengths_and_contacts();
 	test_large_humanoid_branch();
+	test_large_prepared_retarget();
+	test_rotated_bind_prepared_retarget();
 	test_identity_and_locals(); test_rotation_and_basis(); test_dynamic_presentation_basis(); test_profile_basis_policies(); test_ancestor_translation_applied_once(); test_rejection_and_monsters(); test_all_profile_palettes_are_bounded(); test_absolute_global_transport(); test_preserve_hip_rotation(); test_nonunit_presentation_roundtrips();
 	puts("avatar retarget fixture: ok"); return 0;
 }

@@ -3356,6 +3356,10 @@ void COM_SwitchGame (const char *paths)
 		Con_Printf ("\"game\" is already \"%s\"\n", COM_GetGameNames (true));
 		return;
 	}
+	/* Retire the previous desktop end-render task before disconnect and model
+	 * reset invalidate its CPU-side owners. */
+	if (!isDedicated)
+		GL_SynchronizeEndRenderingTask ();
 
 	com_modified = true;
 

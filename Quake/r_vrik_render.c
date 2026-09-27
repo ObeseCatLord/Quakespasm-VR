@@ -57,6 +57,7 @@ typedef struct r_vrik_staged_avatar_s
 	r_avatar_profile_t normalized_profile;
 	r_avatar_humanoid_t humanoid_map;
 	r_avatar_presentation_context_t presentation;
+	const r_avatar_retarget_binds_t *retarget_binds;
 	int id;
 	float floor_correction_z;
 	float target_to_canonical[12];
@@ -84,6 +85,7 @@ typedef struct r_vrik_rig_cache_s
 	const md5_skeleton_data_t *source_skeleton, *target_skeleton;
 	const r_avatar_profile_t *profile;
 	r_avatar_rig_t source_rig, target_rig;
+	r_avatar_retarget_binds_t retarget_binds;
 	r_avatar_presentation_context_t generic_presentation, humanoid_presentation;
 	r_avatar_humanoid_t humanoid_map;
 	float humanoid_display_scale;
@@ -372,6 +374,10 @@ static qboolean R_VRIKRenderResolveRigs (r_vrik_staged_avatar_t *selection,
 		cache->source_skeleton = source->md5_skeleton;
 		cache->target_skeleton = target->md5_skeleton;
 		cache->profile = profile;
+		/* Skeleton binds and semantic ownership are model lifetime data.
+		 * Admission owns this work; frame preparation only transfers poses. */
+		R_AvatarPrepareRetargetBinds (&cache->source_rig,
+			&cache->target_rig, &cache->retarget_binds);
 		/* Never retain a pointer to this caller's stack-owned skeleton view. */
 		cache->source_rig.live = NULL;
 		cache->target_rig.live = NULL;
@@ -381,6 +387,8 @@ static qboolean R_VRIKRenderResolveRigs (r_vrik_staged_avatar_t *selection,
 	selection->target_rig = cache->target_rig;
 	selection->source_rig.live = &selection->source_skeleton;
 	selection->target_rig.live = &selection->target_skeleton;
+	selection->retarget_binds = cache->retarget_binds.valid ?
+		&cache->retarget_binds : NULL;
 	return true;
 }
 
@@ -1067,9 +1075,13 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 				(const float *)source_palette, (float *)palette) :
 			/* Staging already resolved this bind-only transform. Rebuilding it
 			 * for every generic pose repeats the same rig basis work. */
-			!R_AvatarRetargetPaletteWithContext (source_rig, target_rig,
-				&selection->presentation, (const float *)source_palette,
-				(float *)palette);
+			!(selection->retarget_binds ?
+				R_AvatarRetargetPalettePreparedWithContext (source_rig, target_rig,
+					&selection->presentation, selection->retarget_binds,
+					(const float *)source_palette, (float *)palette) :
+				R_AvatarRetargetPaletteWithContext (source_rig, target_rig,
+					&selection->presentation, (const float *)source_palette,
+					(float *)palette));
 	if (profile_retarget)
 	{
 		rs_avatarretarget_us += (Sys_DoubleTime () - retarget_start) * 1000000.0;

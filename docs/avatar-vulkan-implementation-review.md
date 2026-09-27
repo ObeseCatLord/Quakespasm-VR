@@ -165,3 +165,35 @@ links. A local isolated `-O2` probe on this machine measured 2.36 to 1.52
 microseconds per 19-joint transfer and 11.4 to 10.6 microseconds for a synthetic
 256-joint chain (300,000 and 20,000 iterations respectively). This measures
 only the generic transfer, not full avatar preparation or in-game FPS.
+
+The admitted rig cache now also owns bind-only source inverses, target
+bind-local transforms, and semantic ownership. The generic Vulkan frame path
+reuses these for each pose; the uncached public retarget API stays available
+for other callers and as the behavior reference. The focused fixture compares
+bit-identical palettes for every built-in profile, a Dog with an unmapped
+tail, and a 256-joint chain; it rejects a cache borrowed by a different
+skeleton. In an isolated `-O2` probe on this machine, the final 19-joint
+transfer took 1.61 microseconds uncached versus 1.41 prepared (200,000 calls),
+and a synthetic 256-joint target took 10.88 versus 5.93 microseconds (20,000
+calls). Reversing the loop order gave 1.40 versus 1.54 and 5.96 versus 10.74
+microseconds, respectively. These remain isolated CPU probes, not in-game
+frame-time or FPS results. The extra bind table is model-lifetime data and is
+invalidated with the existing rig admission cache. Switching games and
+toggling enhanced models now join the prior desktop end-render task before
+invalidating that cache and freeing alias skeletons.
+
+### Prepared-bind review disposition
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Retain the cache and shared transfer core | Adopt. The old entry point and calibrated humanoid path remain; the existing admission cache owns the new table. |
+| Join end-render work before game-switch retirement | Adopt in `COM_SwitchGame`, before client/model teardown. |
+| Clear the cache before enhanced-model alias reload | Adopt in `Mod_EnhancedModels_f`, after the task join and before model release. |
+| Document semantic-map stability | Adopt in `r_avatar.h`; pointer/count identity alone does not detect in-place map or bind edits. Current renderer re-resolves on model/profile changes. |
+| Add rotated-bind parity | Adopt. The focused fixture now compares exact cached/uncached output with rotated source and target bind bases; it passes under ASan/UBSan and `-O2` on this machine. |
+| Replace static storage with sparse allocation | Reject for now. About 1 MiB of fixed reservation is simpler than another allocation lifetime; no runtime memory pressure has been demonstrated. |
+
+The read-only review was requested as `gpt-6-astra` at max effort, but its
+runtime did not expose effective variant/effort metadata. Treat its findings
+as advisory rather than a verified Astra Max certification. A full reload
+and re-admission behavior check and real multi-peer timing remain open.

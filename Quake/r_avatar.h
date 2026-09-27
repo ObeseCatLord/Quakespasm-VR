@@ -140,6 +140,19 @@ typedef struct r_avatar_rig_s {
 	qboolean valid;
 } r_avatar_rig_t;
 
+/* Bind-only work shared by every pose of an admitted source/target pair.
+ * The joint pointers refer to model-owned skeleton data, not a staged view.
+ * Reprepare after either rig's semantic mapping, virtual mask, hierarchy or
+ * bind matrices change; pointer/count identity alone cannot detect those. */
+typedef struct r_avatar_retarget_binds_s {
+	const md5_skeleton_joint_t *source_joints, *target_joints;
+	int source_count, target_count;
+	int owner[R_AVATAR_MAX_JOINTS];
+	float source_inverse[MD5_VRIK_JOINT_COUNT][12];
+	float target_local[R_AVATAR_MAX_JOINTS][12];
+	qboolean valid;
+} r_avatar_retarget_binds_t;
+
 /* One target-model -> canonical-Ranger presentation map.  rotation is the
  * rigid target body basis in Ranger coordinates; forward/inverse include the
  * quantized display scale and the floor/hip anchor translation. */
@@ -216,6 +229,12 @@ qboolean R_AvatarBuildAttachedPropTransform (
 qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
 	const float *source_palette, float *target_palette);
+qboolean R_AvatarPrepareRetargetBinds (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, r_avatar_retarget_binds_t *out);
+qboolean R_AvatarRetargetPalettePreparedWithContext (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	const r_avatar_retarget_binds_t *binds, const float *source_palette,
+	float *target_palette);
 qboolean R_AvatarRetargetPalette (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const float *source_palette, float *target_palette);
 /* Checked bridge from the donor VRIK result to the inherited flat CPU

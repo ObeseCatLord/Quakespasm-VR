@@ -246,6 +246,11 @@ static void Mod_EnhancedModels_f (cvar_t *var)
 	int		  i;
 	qmodel_t *mod;
 
+	/* A previous desktop task may still be reading the old skeleton/rig.
+	 * Retire its CPU work and invalidate bind-only avatar data before alias
+	 * models can be freed and reloaded at the same addresses. */
+	GL_SynchronizeEndRenderingTask ();
+	R_VRIKRenderResetAdmission ();
 	R_FreeAllEntityBLASes ();
 
 	for (i = 0, mod = mod_known; i < mod_numknown; i++, mod++)

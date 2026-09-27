@@ -513,19 +513,78 @@ qboolean R_AvatarBuildAttachedPropTransform (
 	return true;
 }
 
-qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
-	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
-	const float *source_palette, float *target_palette)
+qboolean R_AvatarPrepareRetargetBinds (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, r_avatar_retarget_binds_t *out)
 {
-	int i, semantic, owner[R_AVATAR_MAX_JOINTS];
+	int i, semantic;
+	float inverse[12];
+	if (!out)
+		return false;
+	memset(out, 0, sizeof(*out));
+	if (!source || !target || !source->valid || !target->valid ||
+		!source->live || !target->live || !source->live->joints || !target->live->joints ||
+		R_AvatarJointCount(source->live) > R_AVATAR_MAX_JOINTS ||
+		R_AvatarJointCount(target->live) > R_AVATAR_MAX_JOINTS)
+		return false;
+	out->source_joints = source->live->joints;
+	out->target_joints = target->live->joints;
+	out->source_count = R_AvatarJointCount(source->live);
+	out->target_count = R_AvatarJointCount(target->live);
+	for (i = 0; i < R_AVATAR_MAX_JOINTS; ++i)
+		out->owner[i] = -1;
+	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic)
+	{
+		const int joint = target->joint[semantic];
+		const int source_joint = source->joint[semantic];
+		if (joint >= out->target_count || source_joint >= out->source_count)
+			return false;
+		if (joint >= 0 && !(target->virtual_mask & (1u << semantic)))
+			out->owner[joint] = semantic;
+		if (source_joint >= 0 && !(source->virtual_mask & (1u << semantic)))
+			R_AvatarInverseRigid(source->live->joints[source_joint].bind,
+				out->source_inverse[semantic]);
+	}
+	for (i = 0; i < out->target_count; ++i)
+	{
+		const int parent = target->live->joints[i].parent;
+		if (parent < -1 || parent >= i)
+			return false;
+		if (parent < 0)
+			memcpy(out->target_local[i], target->live->joints[i].bind,
+				sizeof(out->target_local[i]));
+		else
+		{
+			R_AvatarInverseRigid(target->live->joints[parent].bind, inverse);
+			R_AvatarMultiply(inverse, target->live->joints[i].bind,
+				out->target_local[i]);
+		}
+	}
+	out->valid = true;
+	return true;
+}
+
+static qboolean R_AvatarRetargetPaletteInternal (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	const r_avatar_retarget_binds_t *binds, const float *source_palette,
+	float *target_palette)
+{
+	int i, semantic, local_owner[R_AVATAR_MAX_JOINTS];
+	const int *owner = binds ? binds->owner : local_owner;
 	float local[12], inv[12], desired[12], delta[12], mapped[12], rotation_inverse[12];
 	if (!source || !target || !context || !source->valid || !target->valid || !source_palette || !target_palette ||
+		!source->live || !target->live ||
 		R_AvatarJointCount(source->live) > R_AVATAR_MAX_JOINTS || R_AvatarJointCount(target->live) > R_AVATAR_MAX_JOINTS) return false;
+	if (binds && (!binds->valid || binds->source_joints != source->live->joints ||
+		binds->target_joints != target->live->joints ||
+		binds->source_count != R_AvatarJointCount(source->live) ||
+		binds->target_count != R_AvatarJointCount(target->live))) return false;
 	for (i = 0; i < R_AvatarJointCount(source->live); ++i) if (!R_AvatarOrthonormal(source_palette + i * 12)) return false;
-	for (i = 0; i < R_AVATAR_MAX_JOINTS; ++i) owner[i] = -1;
-	for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic) {
-		int joint = target->joint[semantic];
-		if (joint >= 0 && !(target->virtual_mask & (1u << semantic))) owner[joint] = semantic;
+	if (!binds) {
+		for (i = 0; i < R_AVATAR_MAX_JOINTS; ++i) local_owner[i] = -1;
+		for (semantic = 0; semantic < MD5_VRIK_JOINT_COUNT; ++semantic) {
+			int joint = target->joint[semantic];
+			if (joint >= 0 && !(target->virtual_mask & (1u << semantic))) local_owner[joint] = semantic;
+		}
 	}
 	R_AvatarInverseRigid(context->rotation, rotation_inverse);
 	for (i = 0; i < R_AvatarJointCount(target->live); ++i) {
@@ -537,8 +596,13 @@ qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 			 * delta through the presentation body's rigid basis, but map origins
 			 * solely through L^-1 so non-unit display scale never contaminates a
 			 * bone rotation. */
-			R_AvatarInverseRigid(source->live->joints[sj].bind, inv);
-			R_AvatarMultiply(source_palette + sj * 12, inv, delta);
+			if (binds)
+				R_AvatarMultiply(source_palette + sj * 12,
+					binds->source_inverse[semantic], delta);
+			else {
+				R_AvatarInverseRigid(source->live->joints[sj].bind, inv);
+				R_AvatarMultiply(source_palette + sj * 12, inv, delta);
+			}
 			delta[3] = delta[7] = delta[11] = 0;
 			R_AvatarMultiply(delta, context->rotation, mapped);
 			R_AvatarMultiply(rotation_inverse, mapped, delta);
@@ -569,15 +633,34 @@ qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 		}
 		else
 		{
+			const float *bind_local = local;
 			/* Unmapped joints retain their authored bind-local transform. */
-			if (parent < 0) memcpy(local, target->live->joints[i].bind, sizeof(local));
+			if (binds) bind_local = binds->target_local[i];
+			else if (parent < 0) memcpy(local, target->live->joints[i].bind, sizeof(local));
 			else { R_AvatarInverseRigid(target->live->joints[parent].bind, inv); R_AvatarMultiply(inv, target->live->joints[i].bind, local); }
-			if (parent < 0) memcpy(target_palette + i * 12, local, sizeof(local));
-			else R_AvatarMultiply(target_palette + parent * 12, local, target_palette + i * 12);
+			if (parent < 0) memcpy(target_palette + i * 12, bind_local, sizeof(local));
+			else R_AvatarMultiply(target_palette + parent * 12, bind_local, target_palette + i * 12);
 		}
 		if (!R_AvatarOrthonormal(target_palette + i * 12)) return false;
 	}
 	return true;
+}
+
+qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	const float *source_palette, float *target_palette)
+{
+	return R_AvatarRetargetPaletteInternal(source, target, context, NULL,
+		source_palette, target_palette);
+}
+
+qboolean R_AvatarRetargetPalettePreparedWithContext (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	const r_avatar_retarget_binds_t *binds, const float *source_palette,
+	float *target_palette)
+{
+	return binds && R_AvatarRetargetPaletteInternal(source, target, context,
+		binds, source_palette, target_palette);
 }
 
 qboolean R_AvatarRetargetPalette (const r_avatar_rig_t *source,
