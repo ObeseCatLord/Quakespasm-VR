@@ -174,7 +174,8 @@ unsigned int sv_protocol_pext1 = PEXT1_SUPPORTED_SERVER; // spike
 unsigned int sv_protocol_pext2 = PEXT2_SUPPORTED_SERVER; // spike
 
 static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
-static cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
+/* Rendering skyrooms is deferred; do not expand entity visibility by default. */
+static cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "0", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
 static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};

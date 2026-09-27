@@ -994,7 +994,10 @@ static void R_MarkSurfacesPrepare (void *unused)
 	nearwaterportal = false;
 	for (i = 0; i < r_viewleaf->nummarksurfaces; i++)
 		if (cl.worldmodel->surfaces[r_viewleaf->firstmarksurface[i]].flags & SURF_DRAWTURB)
+		{
 			nearwaterportal = true;
+			break;
+		}
 
 	// choose vis data
 	if (r_novis.value || r_viewleaf->contents == CONTENTS_SOLID || r_viewleaf->contents == CONTENTS_SKY)
