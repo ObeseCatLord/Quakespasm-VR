@@ -113,3 +113,11 @@ to match `cl.viewent.model`. Axe and custom models remain outside this slice:
 the schema has no ranged/melee classification or general cutting-edge
 geometry. This broadens the compiled path but does not prove shots near a wall
 or restore the inherited default.
+
+The same allowlist now includes the seven official Hipnotic/Rogue ranged
+viewmodels (`v_laserg`, `v_prox`, `v_lava`, `v_lava2`, `v_multi`, `v_multi2`, and
+`v_plasma`). The existing calibrated-muzzle and server-capability gates still
+apply. Axe and hammer models remain on the separate melee edge path, and
+mod-defined ranged/melee classification remains unresolved. A Linux build
+passed; mission-pack near-wall behavior and the inherited default are not yet
+qualified.

@@ -2172,11 +2172,18 @@ qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 
 qboolean VR_WeaponCalibrationStockRangedViewmodel(const char *name)
 {
+	/* The stock collision endpoint is also valid for the two official
+	 * mission-pack ranged sets. Keep melee axe/hammer models on their
+	 * separate edge/contact path. Mod-defined geometry needs its own policy. */
 	static const char *const models[] = {
 		"progs/v_shot.mdl", "progs/v_shot2.mdl",
 		"progs/v_nail.mdl", "progs/v_nail2.mdl",
 		"progs/v_rock.mdl", "progs/v_rock2.mdl",
-		"progs/v_light.mdl"
+		"progs/v_light.mdl",
+		"progs/v_laserg.mdl", "progs/v_prox.mdl",
+		"progs/v_lava.mdl", "progs/v_lava2.mdl",
+		"progs/v_multi.mdl", "progs/v_multi2.mdl",
+		"progs/v_plasma.mdl"
 	};
 
 	if (!name)
