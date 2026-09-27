@@ -652,11 +652,13 @@ static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
 {
 	const qboolean score_or_death = sb_showscores || cl.stats[STAT_HEALTH] <= 0;
 	const qboolean csqc_hud = scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud;
+	const qboolean csqc_scores_only = scr_style.value < 1.0f &&
+		cl.qcvm.extfuncs.CSQC_DrawScores && !cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm;
 
 	/* Native score/death stays on CANVAS_SBAR. A CSQC-owned scoreboard
 	 * uses its own virtual canvas and is deliberately left on the flat path. */
 	return SCR_VRHUDFrameEligible (frame) && isfinite (scr_style.value) && scr_style.value < 2.0f &&
-		!(csqc_hud && (qcvm || score_or_death));
+		!(csqc_hud && (qcvm || score_or_death)) && !(csqc_scores_only && score_or_death);
 }
 
 static qboolean SCR_VRModernSbarFrameEligible (const vrxr_frame_t *frame)

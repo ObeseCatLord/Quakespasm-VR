@@ -938,6 +938,32 @@ static void Sbar_DrawClassic (cb_context_t *cbx)
 
 	if (sb_showscores || cl.stats[STAT_HEALTH] <= 0)
 	{
+		/* A scores-only CSQC HUD owns the gameplay scoreboard too. Keep its
+		 * canvas and VM call on this once-per-frame GUI path. */
+		if (scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawScores &&
+			!cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm)
+		{
+			csqc_display_t display = SCR_GetCSQCDisplay ();
+			GL_SetCanvas (cbx, CANVAS_CSQC);
+			PR_SwitchQCVM (&cl.qcvm);
+			pr_global_struct->frametime = host_frametime;
+			if (qcvm->extglobals.cltime)
+				*qcvm->extglobals.cltime = realtime;
+			if (qcvm->extglobals.clframetime)
+				*qcvm->extglobals.clframetime = host_frametime;
+			if (qcvm->extglobals.player_localentnum)
+				*qcvm->extglobals.player_localentnum = cl.viewentity;
+			pr_global_struct->time = cl.time;
+			Sbar_SortFrags ();
+			G_VECTORSET (OFS_PARM0, display.width / display.scale,
+				display.height / display.scale, 0);
+			G_FLOAT (OFS_PARM1) = sb_showscores;
+			if (key_dest != key_menu)
+				PR_ExecuteProgram (cl.qcvm.extfuncs.CSQC_DrawScores);
+			PR_SwitchQCVM (NULL);
+			return;
+		}
+
 		Sbar_DrawPicAlpha (cbx, 0, 0, sb_scorebar, scr_sbaralpha.value); // johnfitz -- scr_sbaralpha
 		Sbar_DrawScoreboard (cbx);
 	}
