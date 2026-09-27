@@ -943,12 +943,23 @@ static void R_SetupContext (cb_context_t *cbx)
 
 static void R_PrepareDebugEntityInfo (void);
 
+/* Light animation and dynamic-light marking are frame work. A skyroom is an
+ * additional camera view of this same frame, so neither may advance again
+ * when that view is prepared. */
+static void R_SetupFrameBeforeMark (void)
+{
+	// Need to do these early because dynamic light maps update during R_MarkSurfaces.
+	if (!r_gpulightmapupdate.value)
+		R_PushDlights ();
+	R_AnimateLight ();
+}
+
 /*
 ===============
 R_SetupViewBeforeMark
 ===============
 */
-static void R_SetupViewBeforeMark (void *unused)
+static void R_SetupViewBeforeMark (void)
 {
 	// Map both edges so the scene viewport and AO use exactly the same pixels.
 	const int view_y = vid.height - glheight + r_refdef.vrect.y;
@@ -961,11 +972,6 @@ static void R_SetupViewBeforeMark (void *unused)
 	// bmodel_instances_index any later would race the read in R_DrawIndirectBrushes
 	if (indirect)
 		R_ClearBModelInstanceClaims ();
-
-	// Need to do those early because we now update dynamic light maps during R_MarkSurfaces
-	if (!r_gpulightmapupdate.value)
-		R_PushDlights ();
-	R_AnimateLight ();
 
 	// build the transformation matrix for the given view angles
 	VectorCopy (r_refdef.vieworg, r_origin);
@@ -1034,6 +1040,12 @@ static void R_SetupViewBeforeMark (void *unused)
 		r_lightmap_cheatsafe = false;
 	}
 	// johnfitz
+}
+
+static void R_SetupFrameAndViewBeforeMark (void *unused)
+{
+	R_SetupFrameBeforeMark ();
+	R_SetupViewBeforeMark ();
 }
 
 //==============================================================================
@@ -2717,7 +2729,7 @@ void R_RenderView (
 
 	if (use_tasks)
 	{
-		task_handle_t before_mark = Task_AllocateAndAssignFunc (R_SetupViewBeforeMark, NULL, 0);
+		task_handle_t before_mark = Task_AllocateAndAssignFunc (R_SetupFrameAndViewBeforeMark, NULL, 0);
 		Task_AddDependency (setup_frame_task, before_mark);
 		if (draw_gui_task != INVALID_TASK_HANDLE)
 			Task_AddDependency (before_mark, draw_gui_task);
@@ -2856,7 +2868,7 @@ void R_RenderView (
 	}
 	else
 	{
-		R_SetupViewBeforeMark (NULL);
+		R_SetupFrameAndViewBeforeMark (NULL);
 		R_MarkSurfaces (use_tasks, INVALID_TASK_HANDLE, NULL, NULL, NULL); // johnfitz -- create texture chains from PVS
 		GL_PrepareVRIKRenderTask (NULL);
 		R_UpdateWarpTextures (NULL);
