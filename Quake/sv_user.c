@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_user.c -- server code for moving users
 
 #include "quakedef.h"
+#include "player_avatar.h"
 
 edict_t *sv_player;
 
@@ -1362,6 +1363,100 @@ SV_ReadClientMessage
 Returns false if the client should be killed
 ===================
 */
+static qboolean SV_AvatarCommandPrefix (const char *s, const char *name)
+{
+	while (*s == ' ' || *s == '\t')
+		s++;
+	return !q_strncasecmp (s, name, strlen (name));
+}
+
+static qboolean SV_AvatarCommandIs (const char *s, const char *name)
+{
+	size_t length = strlen (name);
+	while (*s == ' ' || *s == '\t')
+		s++;
+	return !q_strncasecmp (s, name, length) && (unsigned char)s[length] <= ' ';
+}
+
+static qboolean SV_HandleAvatarCapability (const char *s)
+{
+	if (!SV_AvatarCommandPrefix (s, "avatar_cap"))
+		return false;
+	if (!SV_AvatarCommandIs (s, "avatar_cap") ||
+		!PlayerAvatar_ParseCapabilityCommand (s) || host_client->avatar_capable)
+		return true;
+	host_client->avatar_capable = true;
+	SV_SendAvatarTable (host_client);
+	Con_DPrintf ("Avatar: client %s negotiated protocol %d\n", host_client->name,
+		PLAYER_AVATAR_PROTOCOL_VERSION);
+	return true;
+}
+
+static qboolean SV_HandleCustomAvatarCapability (const char *s)
+{
+	if (!SV_AvatarCommandPrefix (s, "avatar_custom_cap"))
+		return false;
+	if (!SV_AvatarCommandIs (s, "avatar_custom_cap") ||
+		!host_client->avatar_capable ||
+		!PlayerAvatar_ParseCustomCapabilityCommand (s) ||
+		host_client->avatar_custom_capable)
+		return true;
+	host_client->avatar_custom_capable = true;
+	SV_SendAvatarTable (host_client);
+	Con_DPrintf ("Avatar: client %s negotiated custom protocol %d\n",
+		host_client->name, PLAYER_AVATAR_CUSTOM_PROTOCOL_VERSION);
+	return true;
+}
+
+static qboolean SV_HandleAvatarSet (const char *s)
+{
+	int avatar_id;
+	qboolean had_custom;
+
+	if (!SV_AvatarCommandPrefix (s, "avatar_set"))
+		return false;
+	if (!SV_AvatarCommandIs (s, "avatar_set") ||
+		!host_client->avatar_capable ||
+		!PlayerAvatar_ParseSetCommand (s, &avatar_id))
+		return true;
+	had_custom = host_client->avatar_custom_key[0] != 0;
+	host_client->avatar_custom_key[0] = 0;
+	host_client->avatar_custom_digest[0] = 0;
+	if (host_client->avatar_id == avatar_id)
+	{
+		if (had_custom)
+			SV_BroadcastAvatarSlot ((int)(host_client - svs.clients), avatar_id);
+		return true;
+	}
+	host_client->avatar_id = (unsigned char)avatar_id;
+	SV_BroadcastAvatarSlot ((int)(host_client - svs.clients), avatar_id);
+	return true;
+}
+
+static qboolean SV_HandleCustomAvatarSet (const char *s)
+{
+	char key[PLAYER_AVATAR_CUSTOM_KEY_MAX + 1];
+	char digest[PLAYER_AVATAR_CUSTOM_DIGEST_MAX + 1];
+
+	if (!SV_AvatarCommandPrefix (s, "avatar_custom_set"))
+		return false;
+	if (!SV_AvatarCommandIs (s, "avatar_custom_set") ||
+		!host_client->avatar_capable || !host_client->avatar_custom_capable ||
+		!PlayerAvatar_ParseCustomSetCommand (s, key, sizeof (key), digest,
+			sizeof (digest)))
+		return true;
+	if (host_client->avatar_id == PLAYER_AVATAR_RANGER &&
+		!strcmp (host_client->avatar_custom_key, key) &&
+		!strcmp (host_client->avatar_custom_digest, digest))
+		return true;
+	strcpy (host_client->avatar_custom_key, key);
+	strcpy (host_client->avatar_custom_digest, digest);
+	host_client->avatar_id = PLAYER_AVATAR_RANGER;
+	SV_BroadcastAvatarSlot ((int)(host_client - svs.clients),
+		PLAYER_AVATAR_RANGER);
+	return true;
+}
+
 static qboolean SV_HandleVRIKCapability(const char *s)
 {
     const char *value = s;
@@ -1605,6 +1700,11 @@ qboolean SV_ReadClientMessage (void)
 
 		case clc_stringcmd: {
 			s = MSG_ReadString ();
+			if (SV_HandleAvatarCapability (s) ||
+				SV_HandleCustomAvatarCapability (s) ||
+				SV_HandleAvatarSet (s) ||
+				SV_HandleCustomAvatarSet (s))
+				break;
 			if (SV_HandleGorillaCapability (s))
 				break;
 			if (SV_HandleVoiceCapability (s))

@@ -2449,6 +2449,14 @@ static void Send_Spawn_Info (client_t *c, qboolean loadgame)
 
 	if (!(c->protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
 		SV_WriteClientdataToMessage (c, &c->message);
+
+	/* SZ_Clear above may discard early avatar updates or offers. Rebuild the
+	 * table after signon data; the send path retries entries that do not fit. */
+	SV_SendAvatarTable (c);
+	if (!c->avatar_capable)
+		c->avatar_offer_pending |= AVATAR_OFFER_NUMERIC;
+	if (!c->avatar_custom_capable)
+		c->avatar_offer_pending |= AVATAR_OFFER_CUSTOM;
 }
 
 static byte *Host_LoadgameClientEdictSnapshot (int clientnum)

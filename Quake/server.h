@@ -28,6 +28,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vrik_codec.h"
 #include "voice_protocol.h"
 #include "vr_gorilla_types.h"
+#include "player_avatar.h"
+
+#define AVATAR_OFFER_NUMERIC 1u
+#define AVATAR_OFFER_CUSTOM 2u
 
 #define SERVER_INFO_STRING_SIZE 8192
 
@@ -225,6 +229,13 @@ typedef struct client_s
 	unsigned int protocol_qsvr; // selected private wire profile; zero is public
 	unsigned int protocol_pext1;
 	unsigned int protocol_pext2;
+	qboolean avatar_capable;
+	qboolean avatar_custom_capable;
+	unsigned char avatar_id;
+	char avatar_custom_key[PLAYER_AVATAR_CUSTOM_KEY_MAX + 1];
+	char avatar_custom_digest[PLAYER_AVATAR_CUSTOM_DIGEST_MAX + 1];
+	unsigned short avatar_dirty_slots;
+	unsigned char avatar_offer_pending; // numeric/custom offers awaiting reliable space
 	qboolean vr_gorilla_capable;
 	vr_gorilla_state_t vr_gorilla_state;
 	unsigned int vr_gorilla_reset_generation;
@@ -548,6 +559,8 @@ qboolean SV_CheckBottom (edict_t *ent);
 qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink);
 
 void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg);
+void SV_SendAvatarTable (client_t *client);
+void SV_BroadcastAvatarSlot (int slot, int avatar_id);
 
 void SV_MoveToGoal (void);
 

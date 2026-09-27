@@ -26,9 +26,144 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "pmove.h"
 #include "vr_weapon_calibration.h"
 #include "vr_weapon_menu.h"
+#include "player_avatar.h"
 
 server_t		sv;
 server_static_t svs;
+
+/* Queue a slot's numeric projection and custom descriptor together. */
+static qboolean SV_WriteAvatarSlot (client_t *client, int slot, int avatar_id,
+	const char *custom_key, const char *custom_digest)
+{
+	char numeric_text[64];
+	char custom_text[128];
+	size_t required;
+
+	if (!client || !client->avatar_capable ||
+		!PlayerAvatar_BuildSlotCommand (true, numeric_text,
+			sizeof (numeric_text), slot, avatar_id))
+		return false;
+	if (client->avatar_custom_capable &&
+		!PlayerAvatar_BuildCustomSlotCommand (true, custom_text,
+			sizeof (custom_text), slot, custom_key, custom_digest))
+		return false;
+	required = strlen (numeric_text) + 2; // svc_stufftext and NUL
+	if (client->avatar_custom_capable)
+		required += strlen (custom_text) + 2;
+	if (client->message.overflowed || client->message.cursize < 0 ||
+		client->message.maxsize <= 0 ||
+		client->message.cursize > client->message.maxsize ||
+		required > (size_t)(client->message.maxsize - client->message.cursize))
+		return false;
+
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, numeric_text);
+	if (client->avatar_custom_capable)
+	{
+		MSG_WriteByte (&client->message, svc_stufftext);
+		MSG_WriteString (&client->message, custom_text);
+	}
+	return true;
+}
+
+static void SV_FlushAvatarSlots (client_t *client)
+{
+	int slot;
+
+	if (!client || !client->active || !client->netconnection ||
+		!client->avatar_capable)
+		return;
+	for (slot = 0; slot < svs.maxclients && slot < PLAYER_AVATAR_MAX_SLOTS; slot++)
+	{
+		unsigned short bit = (unsigned short)(1u << slot);
+		client_t *source = &svs.clients[slot];
+		int avatar_id;
+		const char *custom_key = NULL;
+		const char *custom_digest = NULL;
+
+		if (!(client->avatar_dirty_slots & bit))
+			continue;
+		avatar_id = source->active && PlayerAvatar_IsValidId (source->avatar_id) ?
+			source->avatar_id : PLAYER_AVATAR_RANGER;
+		if (source->active && source->avatar_custom_key[0] &&
+			PlayerAvatar_ValidCustomKey (source->avatar_custom_key) &&
+			PlayerAvatar_ValidCustomDigest (source->avatar_custom_digest))
+		{
+			avatar_id = PLAYER_AVATAR_RANGER;
+			custom_key = source->avatar_custom_key;
+			custom_digest = source->avatar_custom_digest;
+		}
+		if (!SV_WriteAvatarSlot (client, slot, avatar_id, custom_key, custom_digest))
+			return; // retain this and later slots for a reliable retry
+		client->avatar_dirty_slots &= (unsigned short)~bit;
+	}
+}
+
+void SV_SendAvatarTable (client_t *client)
+{
+	int slot;
+
+	if (!client || !client->avatar_capable)
+		return;
+	for (slot = 0; slot < svs.maxclients && slot < PLAYER_AVATAR_MAX_SLOTS; slot++)
+		client->avatar_dirty_slots |= (unsigned short)(1u << slot);
+}
+
+void SV_BroadcastAvatarSlot (int slot, int avatar_id)
+{
+	int recipient;
+
+	if (slot < 0 || slot >= svs.maxclients || slot >= PLAYER_AVATAR_MAX_SLOTS ||
+		!PlayerAvatar_IsValidId (avatar_id))
+		return;
+	for (recipient = 0; recipient < svs.maxclients; recipient++)
+		if (svs.clients[recipient].active && svs.clients[recipient].avatar_capable)
+			svs.clients[recipient].avatar_dirty_slots |= (unsigned short)(1u << slot);
+}
+
+static void SV_AppendAvatarOffers (client_t *client)
+{
+	static const char *offers[] = {
+		"//avatar_protocol 1\n", "//avatar_custom_protocol 1\n"
+	};
+	size_t i;
+
+	if (!client || !client->active || !client->netconnection ||
+		client->message.overflowed || client->message.cursize < 0 ||
+		client->message.maxsize <= 0 ||
+		client->message.cursize > client->message.maxsize)
+		return;
+	for (i = 0; i < countof (offers); i++)
+	{
+		unsigned char bit = (unsigned char)(1u << i);
+		if (!(client->avatar_offer_pending & bit) ||
+			strlen (offers[i]) + 2 >
+				(size_t)(client->message.maxsize - client->message.cursize))
+			continue;
+		MSG_WriteByte (&client->message, svc_stufftext);
+		MSG_WriteString (&client->message, offers[i]);
+		client->avatar_offer_pending &= (unsigned char)~bit;
+	}
+}
+
+/* The donor's drop path leaves client storage intact. Retire any old avatar
+ * on the next server send, before that slot can describe a new occupant. */
+static void SV_ClearDroppedAvatarSlots (void)
+{
+	int slot;
+
+	for (slot = 0; slot < svs.maxclients && slot < PLAYER_AVATAR_MAX_SLOTS; slot++)
+	{
+		client_t *client = &svs.clients[slot];
+		if (client->active || (client->avatar_id == PLAYER_AVATAR_RANGER &&
+			!client->avatar_custom_key[0] && !client->avatar_custom_digest[0]))
+			continue;
+		client->avatar_id = PLAYER_AVATAR_RANGER;
+		client->avatar_custom_key[0] = 0;
+		client->avatar_custom_digest[0] = 0;
+		SV_BroadcastAvatarSlot (slot, PLAYER_AVATAR_RANGER);
+	}
+}
 
 static char localmodels[MAX_MODELS][8]; // inline model names for precache
 
@@ -2595,6 +2730,7 @@ void SV_SendServerinfo (client_t *client)
 	client->akimbo_last_advertised_mask = -1;
 	client->spawned = false; // need prespawn, spawn, etc
 	client->voice_protocol_offered = false;
+	client->avatar_offer_pending = AVATAR_OFFER_NUMERIC | AVATAR_OFFER_CUSTOM;
 
 	// assume some safe defaults if we early out.
 	client->limit_unreliable = 1024;
@@ -2844,6 +2980,7 @@ retry:
 				client->voice_protocol_offered = true;
 			}
 		}
+		SV_AppendAvatarOffers (client);
 	}
 
 	// try and flush the reliable NOW, in case the qc is evil
@@ -2949,11 +3086,15 @@ void SV_ConnectClient (int clientnum)
 	SV_ResetPrivateCommandQueue (client);
 	SV_ResetPrivateVRContactState (client);
 	client->netconnection = netconnection;
+	client->avatar_id = PLAYER_AVATAR_RANGER;
 	client->voice_generation = SV_NextVoiceGeneration ();
 
 	strcpy (client->name, "unconnected");
 	client->active = true;
 	client->spawned = false;
+	/* A reused slot must show Ranger to capable peers until its new owner
+	 * selects an avatar. */
+	SV_BroadcastAvatarSlot (clientnum, PLAYER_AVATAR_RANGER);
 	client->spawn_parms_pending = defer_spawn_parms;
 	client->edict = ent;
 	client->message.data = client->msgbuf;
@@ -4305,6 +4446,7 @@ void SV_SendClientMessages (void)
 	int i;
 
 	SV_ExpireVRIKPoses ();
+	SV_ClearDroppedAvatarSlots ();
 
 	// update frags, names, etc
 	SV_UpdateToReliableMessages ();
@@ -4414,6 +4556,8 @@ void SV_SendClientMessages (void)
 			SV_DropClient (false);
 			continue;
 		}
+		SV_AppendAvatarOffers (host_client);
+		SV_FlushAvatarSlots (host_client);
 
 		if (host_client->message.cursize || host_client->dropasap)
 		{
