@@ -62,7 +62,10 @@ it does not prove Enyo gameplay parity by itself.
 ## Current rule and remaining acceptance
 
 Keep the legacy parser so installed QBJ3 and Enyo profiles still load, but
-`mp_*` values are inert in runtime lookups. `VR_WeaponCalibrationLookupHeld`
+`mp_*` values are inert in runtime lookups. Commit `2c2e3d44` removed their
+stored schema fields and global accumulation: loading validates each old
+three-component value and discards it. No separate multiplayer offset state
+remains. `VR_WeaponCalibrationLookupHeld`
 and `VR_WeaponCalibrationLookupMuzzle` provide the same per-weapon values in
 solo, listen-server co-op, and dedicated-server co-op. `r_alias.c` uses the held
 lookup for viewmodel placement, while `VR_WeaponCalibrationCurrentMuzzle` and
@@ -77,7 +80,10 @@ The editor exposes only shared held and muzzle adjustment commands. On an
 explicit save, it removes legacy per-weapon MP keys from the selected block;
 it does not rewrite unrelated weapon blocks or a global legacy MP key. Loading
 an existing file does not change that file. Focused calibration and reload
-fixtures verify that MP fields do not alter the shared lookups.
+fixtures verify that legacy MP keys do not alter the shared lookups, that an
+explicit save strips per-weapon MP keys, and that malformed old values fail
+validation. The Linux executable build and focused parser, calibration, save,
+reload, and model-selector fixtures pass.
 
 For release acceptance, compare the same QBJ3 pistol and an Enyo projectile
 weapon in solo, listen-server co-op, and dedicated-server co-op. Hold weapon,
