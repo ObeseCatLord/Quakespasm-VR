@@ -30,6 +30,15 @@ static qboolean	  localconnectpending = false;
 static qsocket_t *loop_client = NULL;
 static qsocket_t *loop_server = NULL;
 
+static void Loop_ResetSequences (qsocket_t *sock)
+{
+	sock->ackSequence = 0;
+	sock->sendSequence = 0;
+	sock->unreliableSendSequence = 0;
+	sock->receiveSequence = 0;
+	sock->unreliableReceiveSequence = 0;
+}
+
 int Loop_Init (void)
 {
 	if (cls.state == ca_dedicated)
@@ -79,6 +88,7 @@ qsocket_t *Loop_Connect (const char *host)
 	loop_client->receiveMessageLength = 0;
 	loop_client->sendMessageLength = 0;
 	loop_client->canSend = true;
+	Loop_ResetSequences (loop_client);
 
 	if (!loop_server)
 	{
@@ -93,6 +103,7 @@ qsocket_t *Loop_Connect (const char *host)
 	loop_server->receiveMessageLength = 0;
 	loop_server->sendMessageLength = 0;
 	loop_server->canSend = true;
+	Loop_ResetSequences (loop_server);
 
 	loop_client->driverdata = (void *)loop_server;
 	loop_server->driverdata = (void *)loop_client;
@@ -137,7 +148,8 @@ int Loop_GetMessage (qsocket_t *sock)
 	if (ret == 2)
 	{ // unreliables have sequences that we (now) care about so that clients can ack them.
 		sock->unreliableReceiveSequence =
-			sock->receiveMessage[4] | (sock->receiveMessage[5] << 8) | (sock->receiveMessage[6] << 16) | (sock->receiveMessage[7] << 24);
+			(unsigned int)sock->receiveMessage[4] | ((unsigned int)sock->receiveMessage[5] << 8) |
+			((unsigned int)sock->receiveMessage[6] << 16) | ((unsigned int)sock->receiveMessage[7] << 24);
 		sock->unreliableReceiveSequence++;
 		SZ_Write (&net_message, &sock->receiveMessage[8], length);
 		length = IntAlign (length + 8);
@@ -206,10 +218,11 @@ int Loop_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 {
 	byte *buffer;
 	int	 *bufferLength;
-	int	  sequence = sock->unreliableSendSequence++;
+	unsigned int sequence;
 
 	if (!sock->driverdata)
 		return -1;
+	sequence = sock->unreliableSendSequence++;
 
 	bufferLength = &((qsocket_t *)sock->driverdata)->receiveMessageLength;
 
@@ -254,8 +267,10 @@ qboolean Loop_CanSendUnreliableMessage (qsocket_t *sock)
 
 void Loop_Close (qsocket_t *sock)
 {
+	localconnectpending = false;
 	if (sock->driverdata)
 		((qsocket_t *)sock->driverdata)->driverdata = NULL;
+	sock->driverdata = NULL;
 	sock->receiveMessageLength = 0;
 	sock->sendMessageLength = 0;
 	sock->canSend = true;

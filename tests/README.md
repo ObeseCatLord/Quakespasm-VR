@@ -818,6 +818,20 @@ omit unrelated engine owners; the codecs and wire primitives are not mocked.
 These checks do not qualify private admission, clock sampling, redundant command
 history, completed-simulation ACKs, replay or networked gameplay.
 
+## Local loopback reconnect sequencing
+
+`loopback_sequence_fixture.c` exercises local reliable delivery, a sequence
+crossing the high bit, reconnect with reused sockets, and closed-peer cleanup
+through the real loopback transport. It does not replace a live local game.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections -fsanitize=undefined \
+  tests/loopback_sequence_fixture.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/quakespasm-loopback-sequence
+/tmp/quakespasm-loopback-sequence
+```
+
 ## Shared UDP socket and NAT rebinding
 
 `datagram_rebind_fixture.c` drives the real virtual-client `Datagram_GetMessage`
