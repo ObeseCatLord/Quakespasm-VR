@@ -518,7 +518,7 @@ qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 	const float *source_palette, float *target_palette)
 {
 	int i, semantic, owner[R_AVATAR_MAX_JOINTS];
-	float local[12], inv[12], desired[12], delta[12], mapped[12];
+	float local[12], inv[12], desired[12], delta[12], mapped[12], rotation_inverse[12];
 	if (!source || !target || !context || !source->valid || !target->valid || !source_palette || !target_palette ||
 		R_AvatarJointCount(source->live) > R_AVATAR_MAX_JOINTS || R_AvatarJointCount(target->live) > R_AVATAR_MAX_JOINTS) return false;
 	for (i = 0; i < R_AvatarJointCount(source->live); ++i) if (!R_AvatarOrthonormal(source_palette + i * 12)) return false;
@@ -527,11 +527,10 @@ qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 		int joint = target->joint[semantic];
 		if (joint >= 0 && !(target->virtual_mask & (1u << semantic))) owner[joint] = semantic;
 	}
+	R_AvatarInverseRigid(context->rotation, rotation_inverse);
 	for (i = 0; i < R_AvatarJointCount(target->live); ++i) {
 		int parent = target->live->joints[i].parent;
 		semantic = owner[i];
-		if (parent < 0) memcpy(local, target->live->joints[i].bind, sizeof(local));
-		else { R_AvatarInverseRigid(target->live->joints[parent].bind, inv); R_AvatarMultiply(inv, target->live->joints[i].bind, local); }
 		if (semantic >= 0 && source->joint[semantic] >= 0 && !(source->virtual_mask & (1u << semantic))) {
 			int sj = source->joint[semantic];
 			/* Absolute global transport: rotate the canonical global animation
@@ -542,8 +541,7 @@ qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 			R_AvatarMultiply(source_palette + sj * 12, inv, delta);
 			delta[3] = delta[7] = delta[11] = 0;
 			R_AvatarMultiply(delta, context->rotation, mapped);
-			R_AvatarInverseRigid(context->rotation, inv);
-			R_AvatarMultiply(inv, mapped, delta);
+			R_AvatarMultiply(rotation_inverse, mapped, delta);
 			R_AvatarMultiply(delta, target->live->joints[i].bind, desired);
 			/* Profiles with bind-relative unmapped children keep their authored
 			 * Hip orientation so those children remain in their intended plane. */
@@ -565,11 +563,18 @@ qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
 				(context->inverse[4] * (source_palette[sj * 12 + 3] - source->live->joints[sj].bind[3]) + context->inverse[5] * (source_palette[sj * 12 + 7] - source->live->joints[sj].bind[7]) + context->inverse[6] * (source_palette[sj * 12 + 11] - source->live->joints[sj].bind[11]));
 			desired[11] = target->live->joints[i].bind[11] +
 				(context->inverse[8] * (source_palette[sj * 12 + 3] - source->live->joints[sj].bind[3]) + context->inverse[9] * (source_palette[sj * 12 + 7] - source->live->joints[sj].bind[7]) + context->inverse[10] * (source_palette[sj * 12 + 11] - source->live->joints[sj].bind[11]));
-			if (parent < 0) memcpy(local, desired, sizeof(local));
-			else { R_AvatarInverseRigid(target_palette + parent * 12, inv); R_AvatarMultiply(inv, desired, local); }
+			/* desired is already global. A parent-relative roundtrip only adds
+			 * matrix work and floating-point error for these owned joints. */
+			memcpy(target_palette + i * 12, desired, sizeof(desired));
 		}
-		if (parent < 0) memcpy(target_palette + i * 12, local, sizeof(local));
-		else R_AvatarMultiply(target_palette + parent * 12, local, target_palette + i * 12);
+		else
+		{
+			/* Unmapped joints retain their authored bind-local transform. */
+			if (parent < 0) memcpy(local, target->live->joints[i].bind, sizeof(local));
+			else { R_AvatarInverseRigid(target->live->joints[parent].bind, inv); R_AvatarMultiply(inv, target->live->joints[i].bind, local); }
+			if (parent < 0) memcpy(target_palette + i * 12, local, sizeof(local));
+			else R_AvatarMultiply(target_palette + parent * 12, local, target_palette + i * 12);
+		}
 		if (!R_AvatarOrthonormal(target_palette + i * 12)) return false;
 	}
 	return true;

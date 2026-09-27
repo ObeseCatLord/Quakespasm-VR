@@ -146,3 +146,14 @@ palette ownership. The Dog lower-body fixture compares the two routes after a
 nonzero floor correction, a failed-limb rollback, and a tracked-hip turn; their
 resulting palettes match. The Linux debug build passes. This is source-level
 redundancy removal, not a measured frame-time or headset performance gain.
+
+The generic retargeter's owned semantic joints now write their already-global
+pose directly. They no longer build and discard an authored bind-local pose or
+convert the solved global pose to a parent-local pose and immediately back.
+The presentation rotation inverse is also calculated once per palette. Unmapped
+children still use their authored bind-local transforms. The retarget and
+lower-body fallback fixtures pass under ASan/UBSan, and the Linux debug build
+links. A local isolated `-O2` probe on this machine measured 2.36 to 1.52
+microseconds per 19-joint transfer and 11.4 to 10.6 microseconds for a synthetic
+256-joint chain (300,000 and 20,000 iterations respectively). This measures
+only the generic transfer, not full avatar preparation or in-game FPS.
