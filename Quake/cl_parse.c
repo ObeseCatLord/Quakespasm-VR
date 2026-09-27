@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "steam.h"
 #include "vr_input.h"
 #include "vrik_codec.h"
+#include "player_avatar.h"
 
 /* v4 keeps the existing v3 pose body while adding reliable generation admission. */
 entity_t *CL_EntityNum (int num);
@@ -252,6 +253,44 @@ static qboolean CL_OfferVoiceProtocol (const char *command)
 	}
 	Con_DPrintf ("Voice: negotiated protocol %d with server\n",
 		VOICE_PROTOCOL_VERSION);
+	return true;
+}
+
+static qboolean CL_OfferAvatarProtocol (const char *command)
+{
+	static const char name[] = "avatar_protocol";
+	int offered, pending;
+
+	if (strncmp (command, name, sizeof (name) - 1) ||
+		(command[sizeof (name) - 1] &&
+		 command[sizeof (name) - 1] != ' ' &&
+		 command[sizeof (name) - 1] != '\t'))
+		return false;
+	/* Consume malformed extension traffic without executing it as a command. */
+	offered = cl.avatar_protocol_offered;
+	pending = cl.avatar_cap_pending;
+	if (PlayerAvatar_LatchProtocolOffer (command, &offered, &pending,
+		cl.avatar_cap_sent))
+	{
+		cl.avatar_protocol_offered = offered;
+		cl.avatar_cap_pending = pending;
+	}
+	return true;
+}
+
+static qboolean CL_ParseAvatarSlot (const char *command)
+{
+	static const char name[] = "avatar_slot";
+	int slot, id;
+
+	if (strncmp (command, name, sizeof (name) - 1) ||
+		(command[sizeof (name) - 1] &&
+		 command[sizeof (name) - 1] != ' ' &&
+		 command[sizeof (name) - 1] != '\t'))
+		return false;
+	if (cl.avatar_protocol_offered &&
+		PlayerAvatar_ParseSlotCommand (command, &slot, &id))
+		cl.avatar_ids[slot] = (unsigned char)id;
 	return true;
 }
 
@@ -3090,6 +3129,10 @@ void CL_ParseServerMessage (void)
 				if (CL_OfferVRIKProtocol (str + 2))
 					break;
 				if (CL_OfferVoiceProtocol (str + 2))
+					break;
+				if (CL_OfferAvatarProtocol (str + 2))
+					break;
+				if (CL_ParseAvatarSlot (str + 2))
 					break;
 				if (CL_ParseVRIKRetirement (str + 2))
 					break;

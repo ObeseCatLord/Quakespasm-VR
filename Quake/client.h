@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define _CLIENT_H_
 
 #include "voice_protocol.h"
+#include "player_avatar.h"
 
 // client.h
 
@@ -316,6 +317,12 @@ typedef struct
 	qboolean vrik_protocol_offered;
 	qboolean vrik_cap_sent;
 	unsigned char vrik_protocol_version;
+	/* Optional inherited cosmetic identity protocol; zero is Ranger. */
+	qboolean avatar_protocol_offered;
+	qboolean avatar_cap_sent;
+	qboolean avatar_cap_pending;
+	qboolean avatar_set_pending;
+	unsigned char avatar_ids[MAX_SCOREBOARD];
 	/* Optional opaque Opus transport, independent of PEXT and VRIK. */
 	qboolean voice_protocol_offered;
 	qboolean voice_cap_sent;
@@ -358,6 +365,7 @@ typedef struct
 // cvars
 //
 extern cvar_t cl_name;
+extern cvar_t cl_avatar;
 
 extern cvar_t cl_topcolor, cl_bottomcolor;
 

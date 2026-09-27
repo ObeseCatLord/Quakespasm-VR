@@ -40,6 +40,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 // these two are not intended to be set directly
 cvar_t cl_name = {"_cl_name", "player", CVAR_ARCHIVE_GAME | CVAR_USERINFO};
+cvar_t cl_avatar = {"cl_avatar", "ranger", CVAR_ARCHIVE_GAME};
 
 cvar_t cl_topcolor = {"topcolor", "0", CVAR_ARCHIVE_GAME | CVAR_USERINFO};
 cvar_t cl_bottomcolor = {"bottomcolor", "0", CVAR_ARCHIVE_GAME | CVAR_USERINFO};
@@ -95,6 +96,58 @@ static cl_autoreconnect_t cl_autoreconnect;
 static char cl_last_connect_endpoint[MAX_OSPATH];
 static unsigned int cl_last_connect_legacy_qsvr;
 static qboolean cl_last_connect_valid;
+
+static void CL_TrySendAvatarSelection (void)
+{
+	int id;
+	char command[32];
+	int length;
+
+	if (!cl.avatar_set_pending || !cl.avatar_cap_sent ||
+		cls.state != ca_connected || cls.demoplayback)
+		return;
+	id = PlayerAvatar_IdForKey (cl_avatar.string);
+	if (id < 0)
+		return;
+	length = q_snprintf (command, sizeof (command), "avatar_set %d", id);
+	if (length < 0 || length >= (int)sizeof (command) ||
+		cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		(size_t)cls.message.cursize + 1 + (size_t)length + 1 >
+		(size_t)cls.message.maxsize)
+		return;
+	MSG_WriteByte (&cls.message, clc_stringcmd);
+	MSG_WriteString (&cls.message, command);
+	cl.avatar_set_pending = false;
+}
+
+static void CL_TrySendAvatarCapability (void)
+{
+	if (!cl.avatar_cap_pending || cl.avatar_cap_sent ||
+		cls.state != ca_connected || cls.demoplayback ||
+		cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		(size_t)cls.message.cursize + 1 + sizeof ("avatar_cap 1") >
+		(size_t)cls.message.maxsize)
+		return;
+	MSG_WriteByte (&cls.message, clc_stringcmd);
+	MSG_WriteString (&cls.message, "avatar_cap 1");
+	cl.avatar_cap_pending = false;
+	cl.avatar_cap_sent = true;
+	cl.avatar_set_pending = true;
+	CL_TrySendAvatarSelection ();
+}
+
+static void CL_AvatarChanged (cvar_t *var)
+{
+	if (PlayerAvatar_IdForKey (var->string) < 0)
+	{
+		Con_Warning ("cl_avatar: unsupported avatar \"%s\"; using ranger\n",
+			var->string);
+		Cvar_SetQuick (var, PlayerAvatar_KeyForId (PLAYER_AVATAR_RANGER));
+		return;
+	}
+	cl.avatar_set_pending = true;
+	CL_TrySendAvatarSelection ();
+}
 
 typedef struct
 {
@@ -246,6 +299,11 @@ void CL_Disconnect (void)
 	NET_DatagramConnectCancel ();
 	SpatialWorld_Clear ();
 	CL_ResetVRIKState ();
+	cl.avatar_protocol_offered = false;
+	cl.avatar_cap_sent = false;
+	cl.avatar_cap_pending = false;
+	cl.avatar_set_pending = false;
+	memset (cl.avatar_ids, PLAYER_AVATAR_RANGER, sizeof (cl.avatar_ids));
 	CL_ResetWeaponContactState ();
 	CL_ResetVoiceTransportState ();
 	Voice_ResetConnection ();
@@ -2366,6 +2424,8 @@ void CL_SendCmd (void)
 
 	if (cls.state != ca_connected)
 		return;
+	CL_TrySendAvatarCapability ();
+	CL_TrySendAvatarSelection ();
 
 	// get basic movement from keyboard
 	CL_BaseMove (&cmd);
@@ -2851,6 +2911,9 @@ void CL_Init (void)
 	cmd_function_t *cmd;
 
 	Cvar_RegisterVariable (&cl_name);
+	Cvar_RegisterVariable (&cl_avatar);
+	Cvar_SetCallback (&cl_avatar, CL_AvatarChanged);
+	CL_AvatarChanged (&cl_avatar);
 	Cvar_RegisterVariable (&cl_topcolor);
 	Cvar_RegisterVariable (&cl_bottomcolor);
 	Cmd_AddCommand ("_cl_color", CL_LegacyColor_f); // for loading vanilla configs (we have separate qw-style topcolor/bottomcolor userinfo cvars instead)
