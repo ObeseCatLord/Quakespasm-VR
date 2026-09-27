@@ -2541,6 +2541,8 @@ enum
 static int vr_options_cursor;
 static qboolean vr_options_gameplay_page;
 static int vr_options_gameplay_cursor;
+static qboolean vr_options_joystick_page;
+static int vr_options_joystick_cursor;
 static qboolean vr_options_fbt_page;
 static int vr_options_fbt_cursor;
 
@@ -2558,13 +2560,31 @@ enum
 	VR_GAMEPLAY_IMMERSIVE_MELEE,
 	VR_GAMEPLAY_WEAPON_COLLISION,
 	VR_GAMEPLAY_VRIK,
+	VR_GAMEPLAY_JOYSTICK_SETUP,
 	VR_GAMEPLAY_ITEMS
 };
 
-static const char *const vr_gameplay_cvars[VR_GAMEPLAY_ITEMS] = {
+static const char *const vr_gameplay_cvars[VR_GAMEPLAY_JOYSTICK_SETUP] = {
 	"vr_lefthanded", "vr_aimmode", "vr_deadzone", "vr_world_scale",
 	"vr_floor_offset", "vr_movement_mode", "vr_snap_turn", "vr_turn_speed",
 	"vr_180_snap_turn", "vr_immersive_melee", "vr_weapon_collision", "vr_vrik"
+};
+
+enum
+{
+	VR_JOYSTICK_DEADZONE,
+	VR_JOYSTICK_EXPONENT,
+	VR_JOYSTICK_TRUNCATE,
+	VR_JOYSTICK_MOVE_SPEED,
+	VR_JOYSTICK_YAW_MULTIPLIER,
+	VR_JOYSTICK_MENU_DEADZONE,
+	VR_JOYSTICK_ITEMS
+};
+
+static const char *const vr_joystick_cvars[VR_JOYSTICK_ITEMS] = {
+	"vr_joystick_axis_deadzone", "vr_joystick_axis_exponent",
+	"vr_joystick_deadzone_trunc", "vr_movement_speed",
+	"vr_joystick_yaw_multi", "vr_joystick_axis_menu_deadzone_extra"
 };
 
 enum
@@ -2618,6 +2638,7 @@ static void M_Menu_VROptions_f (void)
 	key_dest = key_menu;
 	m_state = m_vroptions;
 	vr_options_gameplay_page = false;
+	vr_options_joystick_page = false;
 	vr_options_fbt_page = false;
 	m_entersound = true;
 }
@@ -3021,9 +3042,19 @@ static void M_VROptions_FBTDraw (cb_context_t *cbx, int top)
 
 static void M_VROptions_GameplayAdjust (int dir)
 {
-	cvar_t *var = Cvar_FindVar (vr_gameplay_cvars[vr_options_gameplay_cursor]);
+	cvar_t *var;
 	float current, next;
 
+	if (vr_options_gameplay_cursor == VR_GAMEPLAY_JOYSTICK_SETUP)
+	{
+		if (dir > 0)
+		{
+			S_LocalSound ("misc/menu3.wav");
+			vr_options_joystick_page = true;
+		}
+		return;
+	}
+	var = Cvar_FindVar (vr_gameplay_cvars[vr_options_gameplay_cursor]);
 	if (!var)
 		return;
 	S_LocalSound ("misc/menu3.wav");
@@ -3102,7 +3133,8 @@ static void M_VROptions_GameplayDraw (cb_context_t *cbx, int top)
 	static const char *const labels[VR_GAMEPLAY_ITEMS] = {
 		"Left Handed", "Aim Mode", "Aim Deadzone", "World Scale",
 		"Floor Offset", "Move Direction", "Turn Mode", "Turn Speed",
-		"180 Snap Turn", "Immersive Melee", "Weapon Collision", "Player VRIK"
+		"180 Snap Turn", "Immersive Melee", "Weapon Collision", "Player VRIK",
+		"Joystick Tuning"
 	};
 	static const char *const aim_modes[] = {
 		"Head yaw", "Head yaw+P", "Mouse yaw", "Mouse yaw+P",
@@ -3111,7 +3143,8 @@ static void M_VROptions_GameplayDraw (cb_context_t *cbx, int top)
 	static const char *const movement_modes[] = {"Follow head", "Follow hand", "Raw input"};
 	for (int item = 0; item < VR_GAMEPLAY_ITEMS; ++item)
 	{
-		const cvar_t *var = Cvar_FindVar (vr_gameplay_cvars[item]);
+		const cvar_t *var = item == VR_GAMEPLAY_JOYSTICK_SETUP ? NULL :
+			Cvar_FindVar (vr_gameplay_cvars[item]);
 		const float value = var && isfinite (var->value) ? var->value : 0.0f;
 		const int y = top + item * CHARACTER_SIZE;
 		M_Print (cbx, MENU_LABEL_X, y, labels[item]);
@@ -3145,11 +3178,117 @@ static void M_VROptions_GameplayDraw (cb_context_t *cbx, int top)
 		case VR_GAMEPLAY_TURN_SPEED:
 			M_Print (cbx, MENU_VALUE_X, y, va ("%.2f", value));
 			break;
+		case VR_GAMEPLAY_JOYSTICK_SETUP:
+			M_Print (cbx, MENU_VALUE_X, y, "Open");
+			break;
 		}
 	}
 	M_Mouse_UpdateListCursor (&vr_options_gameplay_cursor, MENU_CURSOR_X, 320,
 		top, CHARACTER_SIZE, VR_GAMEPLAY_ITEMS, 0);
 	Draw_Character (cbx, MENU_CURSOR_X, top + vr_options_gameplay_cursor * CHARACTER_SIZE,
+		12 + ((int)(realtime * 4) & 1));
+}
+
+static void M_VROptions_JoystickAdjust (int dir)
+{
+	cvar_t *var = Cvar_FindVar (vr_joystick_cvars[vr_options_joystick_cursor]);
+	float current, next;
+
+	if (!var)
+		return;
+	current = var->value;
+	switch (vr_options_joystick_cursor)
+	{
+	case VR_JOYSTICK_DEADZONE:
+		next = CLAMP (0.0f, M_VROptions_ClampFinite (current, 0.25f, 0.0f, 0.5f) + dir * 0.05f, 0.5f);
+		break;
+	case VR_JOYSTICK_EXPONENT:
+		next = CLAMP (0.25f, M_VROptions_ClampFinite (current, 1.0f, 0.25f, 4.0f) + dir * 0.1f, 4.0f);
+		break;
+	case VR_JOYSTICK_TRUNCATE:
+		next = !isfinite (current) || current == 0.0f ? 1.0f : 0.0f;
+		break;
+	case VR_JOYSTICK_MOVE_SPEED:
+	case VR_JOYSTICK_YAW_MULTIPLIER:
+		next = CLAMP (0.0f, M_VROptions_ClampFinite (current, 1.0f, 0.0f, 4.0f) + dir * 0.1f, 4.0f);
+		break;
+	case VR_JOYSTICK_MENU_DEADZONE:
+		next = CLAMP (0.0f, M_VROptions_ClampFinite (current, 0.25f, 0.0f, 0.45f) + dir * 0.05f, 0.45f);
+		break;
+	default:
+		return;
+	}
+	S_LocalSound ("misc/menu3.wav");
+	Cvar_SetValueQuick (var, next);
+}
+
+static void M_VROptions_JoystickKey (int key)
+{
+	switch (key)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		vr_options_joystick_page = false;
+		break;
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		M_VROptions_JoystickAdjust (1);
+		break;
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		vr_options_joystick_cursor = (vr_options_joystick_cursor + VR_JOYSTICK_ITEMS - 1) % VR_JOYSTICK_ITEMS;
+		break;
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		vr_options_joystick_cursor = (vr_options_joystick_cursor + 1) % VR_JOYSTICK_ITEMS;
+		break;
+	case K_LEFTARROW:
+		M_VROptions_JoystickAdjust (-1);
+		break;
+	case K_RIGHTARROW:
+		M_VROptions_JoystickAdjust (1);
+		break;
+	}
+}
+
+static void M_VROptions_JoystickDraw (cb_context_t *cbx, int top)
+{
+	static const char *const labels[VR_JOYSTICK_ITEMS] = {
+		"Stick Deadzone", "Stick Exponent", "Truncate Deadzone",
+		"Move Speed", "Turn Multiplier", "Menu Deadzone Add"
+	};
+	static const float fallbacks[VR_JOYSTICK_ITEMS] = {0.25f, 1.0f, 1.0f, 1.0f, 1.0f, 0.25f};
+
+	for (int item = 0; item < VR_JOYSTICK_ITEMS; ++item)
+	{
+		const cvar_t *var = Cvar_FindVar (vr_joystick_cvars[item]);
+		const float value = var && isfinite (var->value) ? var->value : fallbacks[item];
+		const int y = top + item * CHARACTER_SIZE;
+		M_Print (cbx, MENU_LABEL_X, y, labels[item]);
+		switch (item)
+		{
+		case VR_JOYSTICK_DEADZONE:
+		case VR_JOYSTICK_MENU_DEADZONE:
+			M_Print (cbx, MENU_VALUE_X, y, va ("%.0f%%", value * 100.0f));
+			break;
+		case VR_JOYSTICK_EXPONENT:
+			M_Print (cbx, MENU_VALUE_X, y, va ("%.2f", value));
+			break;
+		case VR_JOYSTICK_TRUNCATE:
+			M_DrawCheckbox (cbx, MENU_VALUE_X, y, value != 0.0f);
+			break;
+		case VR_JOYSTICK_MOVE_SPEED:
+		case VR_JOYSTICK_YAW_MULTIPLIER:
+			M_Print (cbx, MENU_VALUE_X, y, va ("%.1fx", value));
+			break;
+		}
+	}
+	M_Mouse_UpdateListCursor (&vr_options_joystick_cursor, MENU_CURSOR_X, 320,
+		top, CHARACTER_SIZE, VR_JOYSTICK_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + vr_options_joystick_cursor * CHARACTER_SIZE,
 		12 + ((int)(realtime * 4) & 1));
 }
 
@@ -3260,6 +3399,11 @@ static void M_VROptions_Adjust (int dir)
 
 static void M_VROptions_Key (int key)
 {
+	if (vr_options_joystick_page)
+	{
+		M_VROptions_JoystickKey (key);
+		return;
+	}
 	if (vr_options_gameplay_page)
 	{
 		M_VROptions_GameplayKey (key);
@@ -3330,6 +3474,11 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+	if (vr_options_joystick_page)
+	{
+		M_VROptions_JoystickDraw (cbx, top);
+		return;
+	}
 	if (vr_options_gameplay_page)
 	{
 		M_VROptions_GameplayDraw (cbx, top);
