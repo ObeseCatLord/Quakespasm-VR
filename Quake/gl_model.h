@@ -384,6 +384,7 @@ typedef struct aliashdr_s
 	aliashdr_t		   *nextsurface; // spike
 	int					numjoints;	 // spike -- for md5
 	poseverttype_t		poseverttype;
+	qboolean			avatar_static_prop; // private one-joint Ranger prop; static BLAS input
 	/* Valid only after GLMesh_UploadBuffers inspects the exact uploaded MD5 vertices. */
 	double				tracked_cull_qmax;
 	qboolean			tracked_cull_qmax_valid;
@@ -805,6 +806,7 @@ typedef struct qmodel_s
 	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
 	md5_avatar_bind_surface_t *avatar_bind_surfaces; // optional private avatar bind geometry
 	md5_avatar_prop_t avatar_props[MD5_AVATAR_PROP_COUNT]; // verified Ranger only
+	aliashdr_t *avatar_prop_gpu[MD5_AVATAR_PROP_COUNT]; // model-owned private one-joint views
 	qboolean avatar_builtin; // private verified-pack cosmetic admission
 	int avatar_custom_id; // fixed local package ID, -1 unless admitted
 	byte *avatar_custom_rgba[2]; // stable in-memory texture reload sources

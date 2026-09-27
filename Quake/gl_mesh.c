@@ -851,7 +851,11 @@ void GLMesh_UploadBuffers (
 		buffer_create_info.size = totalvbosize;
 		buffer_create_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 		if (vulkan_globals.ray_query)
+		{
 			buffer_create_info.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+			if (hdr->avatar_static_prop)
+				buffer_create_info.usage |= VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+		}
 		err = vkCreateBuffer (vulkan_globals.device, &buffer_create_info, NULL, &hdr->vertex_buffer);
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateBuffer failed with code %i", (int)err);
@@ -961,6 +965,9 @@ void GLMesh_DeleteAllMeshBuffers (void)
 		m = &mod_known[j];
 		if (m->needload || m->type != mod_alias)
 			continue;
+
+		for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+			GLMesh_DeleteMeshBuffers (m->avatar_prop_gpu[prop]);
 
 		for (int i = 0; i < PV_SIZE; ++i)
 		{

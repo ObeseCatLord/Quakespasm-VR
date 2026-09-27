@@ -97,6 +97,22 @@ static void Mod_FreeAvatarProps (md5_avatar_prop_t props[MD5_AVATAR_PROP_COUNT])
 	}
 }
 
+static void Mod_FreeAvatarPropGPU (aliashdr_t *views[MD5_AVATAR_PROP_COUNT])
+{
+	for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+	{
+		aliashdr_t *surface = views[prop];
+		GLMesh_DeleteMeshBuffers (surface);
+		while (surface)
+		{
+			aliashdr_t *next = surface->nextsurface;
+			Mem_Free (surface);
+			surface = next;
+		}
+		views[prop] = NULL;
+	}
+}
+
 /* Donor common.c verifies the official rerelease Ranger mesh and animation
  * by exact length and CRC32.  Verify the bytes selected by this loader so
  * same-named custom replacements never inherit lower-body provenance. */
@@ -605,6 +621,7 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 {
 	Mod_FreeAvatarBindSurfaces (mod->avatar_bind_surfaces);
 	mod->avatar_bind_surfaces = NULL;
+	Mod_FreeAvatarPropGPU (mod->avatar_prop_gpu);
 	Mod_FreeAvatarProps (mod->avatar_props);
 	mod->is_generated_akimbo_half = false;
 	mod->avatar_builtin = false;
@@ -5623,6 +5640,93 @@ invalid:
 	return false;
 }
 
+/* Upload only the byte-verified Ranger's rigid equipment. Each view borrows
+ * the source surface's textures, but owns its one-joint mesh buffers. The
+ * identity pose leaves vertices in Gun/Axe bone-local space for the later
+ * per-player attachment transform. */
+static qboolean MD5_UploadRangerPropViews (
+	qmodel_t *mod, aliashdr_t *source_head, size_t source_count,
+	const md5_avatar_prop_t props[MD5_AVATAR_PROP_COUNT],
+	aliashdr_t *views[MD5_AVATAR_PROP_COUNT])
+{
+	jointpose_t identity = {{0}};
+	identity.mat[0] = identity.mat[5] = identity.mat[10] = 1.0f;
+	for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+	{
+		aliashdr_t **tail = &views[prop];
+		for (const md5_avatar_prop_surface_t *piece = props[prop].surfaces;
+			piece; piece = piece->next)
+		{
+			aliashdr_t *source = source_head;
+			aliashdr_t *hdr;
+			md5vert_t *vertices;
+			size_t vertex_bytes;
+			if (piece->source_surface_index < 0 ||
+				(size_t)piece->source_surface_index >= source_count ||
+				piece->numverts <= 0 || piece->numverts > (int)UINT16_MAX + 1 ||
+				piece->numindexes <= 0 || piece->numindexes % 3 ||
+				!piece->vertices || !piece->indexes ||
+				!Mod_CheckedSizeMul ((size_t)piece->numverts, sizeof (*vertices), &vertex_bytes))
+				return false;
+			for (int index = 0; index < piece->source_surface_index; ++index)
+			{
+				if (!source)
+					return false;
+				source = source->nextsurface;
+			}
+			if (!source || source->numskins < 0 || source->numskins > MAX_SKINS)
+				return false;
+
+			hdr = Mem_Alloc (sizeof (*hdr));
+			if (!hdr)
+				return false;
+			memset (hdr, 0, sizeof (*hdr));
+			*tail = hdr;
+			tail = &hdr->nextsurface;
+			hdr->ident = source->ident;
+			hdr->version = source->version;
+			hdr->numskins = source->numskins;
+			hdr->skinwidth = source->skinwidth;
+			hdr->skinheight = source->skinheight;
+			hdr->numverts = hdr->numverts_vbo = piece->numverts;
+			hdr->numindexes = piece->numindexes;
+			hdr->numtris = piece->numindexes / 3;
+			hdr->numframes = hdr->numposes = hdr->numjoints = 1;
+			hdr->poseverttype = PV_MD5;
+			hdr->avatar_static_prop = true;
+			hdr->scale[0] = hdr->scale[1] = hdr->scale[2] = 1.0f;
+			hdr->frames[0].firstpose = 0;
+			hdr->frames[0].numposes = 1;
+			hdr->frames[0].interval = 0.1f;
+		memcpy (hdr->gltextures, source->gltextures, sizeof (hdr->gltextures));
+		memcpy (hdr->fbtextures, source->fbtextures, sizeof (hdr->fbtextures));
+
+			vertices = Mem_Alloc (vertex_bytes);
+			if (!vertices)
+				return false;
+			memset (vertices, 0, vertex_bytes);
+			for (int vertex = 0; vertex < piece->numverts; ++vertex)
+			{
+				const md5_avatar_prop_vertex_t *input = &piece->vertices[vertex];
+				md5vert_t *output = &vertices[vertex];
+				VectorCopy (input->xyz, output->xyz);
+				VectorCopy (input->normal, output->norm);
+				output->st[0] = input->st[0];
+				output->st[1] = input->st[1];
+				output->joint_weights[0] = 255;
+				output->joint_indices[0] = 0;
+				output->joint_position_x[0] = input->xyz[0];
+				output->joint_position_y[0] = input->xyz[1];
+				output->joint_position_z[0] = input->xyz[2];
+			}
+			GLMesh_UploadBuffers (mod, hdr, piece->indexes, (byte *)vertices,
+				NULL, &identity, NULL, 0);
+			Mem_Free (vertices);
+		}
+	}
+	return true;
+}
+
 typedef struct md5animjoint_s
 {
 	unsigned int flags, offset;
@@ -6642,6 +6746,7 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	md5_avatar_bind_surface_t *bind_surfaces = NULL;
 	md5_avatar_bind_surface_t **bind_tail = &bind_surfaces;
 	md5_avatar_prop_t ranger_props[MD5_AVATAR_PROP_COUNT] = {{0}};
+	aliashdr_t *ranger_prop_gpu[MD5_AVATAR_PROP_COUNT] = {NULL};
 	md5_avatar_prop_surface_t **prop_tails[MD5_AVATAR_PROP_COUNT] = {
 		&ranger_props[MD5_AVATAR_PROP_GUN].surfaces,
 		&ranger_props[MD5_AVATAR_PROP_AXE].surfaces};
@@ -7196,6 +7301,9 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		(!ranger_props[MD5_AVATAR_PROP_GUN].numindexes ||
 		 !ranger_props[MD5_AVATAR_PROP_AXE].numindexes))
 		MD5ERROR ("%s: incomplete Ranger prop geometry\n", fname);
+	if (capture_ranger_props && !MD5_UploadRangerPropViews (
+		mod, outhdr, nummeshes, ranger_props, ranger_prop_gpu))
+		MD5ERROR ("%s: couldn't prepare Ranger prop meshes\n", fname);
 	if (mod_custom_avatar && com_token[0])
 		MD5ERROR ("%s: trailing custom avatar mesh data\n", fname);
 
@@ -7229,9 +7337,11 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	mod->md5_skeleton = retained_skeleton;
 	mod->avatar_bind_surfaces = bind_surfaces;
 	memcpy (mod->avatar_props, ranger_props, sizeof (ranger_props));
+	memcpy (mod->avatar_prop_gpu, ranger_prop_gpu, sizeof (ranger_prop_gpu));
 	retained_skeleton = NULL;
 	bind_surfaces = NULL;
 	memset (ranger_props, 0, sizeof (ranger_props));
+	memset (ranger_prop_gpu, 0, sizeof (ranger_prop_gpu));
 
 	radius = sqrtf (radius);
 	mod->rmins[0] = mod->rmins[1] = mod->rmins[2] = -radius;
@@ -7256,6 +7366,7 @@ error:
 	// Recoverable replacement-model failures fall back to the MDL, so release
 	// any partial MD5 state that Sys_Error used to abandon by terminating.
 	Mod_FreeAvatarBindSurfaces (bind_surfaces);
+	Mod_FreeAvatarPropGPU (ranger_prop_gpu);
 	Mod_FreeAvatarProps (ranger_props);
 	TEMP_FREE (weight);
 	TEMP_FREE (vinfo);
