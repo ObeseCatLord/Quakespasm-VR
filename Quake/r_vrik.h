@@ -90,4 +90,11 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 	qboolean muzzleflash,
 	r_vrik_palette_output_t *out);
 
+/* Canonical Ranger animation for an alternate desktop body, or a peer whose
+ * tracking is absent. Uses the same interpolation and validation as the live
+ * VRIK solve, without inventing a tracked pose or changing donor MD5 state. */
+r_vrik_palette_result_t R_VRIKBuildRangerAnimationPalette (
+	const md5_skeleton_view_t *skeleton, const lerpdata_t *lerpdata,
+	r_vrik_palette_output_t *out);
+
 #endif /* R_VRIK_H */

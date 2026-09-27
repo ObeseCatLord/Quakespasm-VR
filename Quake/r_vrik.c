@@ -1002,19 +1002,13 @@ static qboolean R_VRIKPoseValid (const vrik_pose_t *pose)
 	return true;
 }
 
-r_vrik_palette_result_t R_VRIKBuildRangerPalette (
+static r_vrik_palette_result_t R_VRIKValidateAnimationInput (
 	const md5_skeleton_view_t *skeleton, const lerpdata_t *lerpdata,
-	const vrik_pose_t *pose, const r_vrik_lowerbody_targets_t *lower_targets,
-	qboolean muzzleflash,
-	r_vrik_palette_output_t *out)
+	const r_vrik_palette_output_t *out)
 {
-	int jointindex[R_VRIK_JOINT_COUNT];
-	float palette[R_VRIK_MAX_JOINTS][12];
 	size_t joint, component;
-	qboolean muzzle_valid;
-	vec3_t muzzle_origin, muzzle_forward;
 
-	if (!skeleton || !lerpdata || !pose || !out || !out->matrices)
+	if (!skeleton || !lerpdata || !out || !out->matrices)
 		return R_VRIK_PALETTE_INVALID_ARGUMENT;
 	if (!skeleton->joints || !skeleton->absolute_poses ||
 		!skeleton->joint_count || !skeleton->pose_count ||
@@ -1028,10 +1022,6 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 		return R_VRIK_PALETTE_INVALID_SKELETON;
 	if (out->capacity < skeleton->joint_count)
 		return R_VRIK_PALETTE_INSUFFICIENT_CAPACITY;
-	if (!R_VRIKPoseValid (pose))
-		return R_VRIK_PALETTE_INVALID_POSE;
-	if (!R_VRIKResolveJoints (skeleton, jointindex))
-		return R_VRIK_PALETTE_INVALID_SKELETON;
 	for (joint = 0; joint < skeleton->joint_count; joint++)
 	{
 		const md5_skeleton_joint_t *info = &skeleton->joints[joint];
@@ -1046,6 +1036,31 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 				skeleton->joint_count + joint][component]))
 				return R_VRIK_PALETTE_INVALID_SKELETON;
 	}
+	return R_VRIK_PALETTE_OK;
+}
+
+r_vrik_palette_result_t R_VRIKBuildRangerPalette (
+	const md5_skeleton_view_t *skeleton, const lerpdata_t *lerpdata,
+	const vrik_pose_t *pose, const r_vrik_lowerbody_targets_t *lower_targets,
+	qboolean muzzleflash,
+	r_vrik_palette_output_t *out)
+{
+	int jointindex[R_VRIK_JOINT_COUNT];
+	float palette[R_VRIK_MAX_JOINTS][12];
+	size_t joint, component;
+	qboolean muzzle_valid;
+	vec3_t muzzle_origin, muzzle_forward;
+	r_vrik_palette_result_t validation;
+
+	if (!pose)
+		return R_VRIK_PALETTE_INVALID_ARGUMENT;
+	validation = R_VRIKValidateAnimationInput (skeleton, lerpdata, out);
+	if (validation != R_VRIK_PALETTE_OK)
+		return validation;
+	if (!R_VRIKPoseValid (pose))
+		return R_VRIK_PALETTE_INVALID_POSE;
+	if (!R_VRIKResolveJoints (skeleton, jointindex))
+		return R_VRIK_PALETTE_INVALID_SKELETON;
 	R_VRIKLerpPalette (skeleton, lerpdata, palette);
 	if (!R_VRIKSolvePalette (skeleton, jointindex, pose, lower_targets,
 		muzzleflash, palette,
@@ -1060,6 +1075,31 @@ r_vrik_palette_result_t R_VRIKBuildRangerPalette (
 	out->muzzle_valid = muzzle_valid;
 	VectorCopy (muzzle_origin, out->muzzle_origin);
 	VectorCopy (muzzle_forward, out->muzzle_forward);
+	return R_VRIK_PALETTE_OK;
+}
+
+r_vrik_palette_result_t R_VRIKBuildRangerAnimationPalette (
+	const md5_skeleton_view_t *skeleton, const lerpdata_t *lerpdata,
+	r_vrik_palette_output_t *out)
+{
+	int jointindex[R_VRIK_JOINT_COUNT];
+	float palette[R_VRIK_MAX_JOINTS][12];
+	r_vrik_palette_result_t validation =
+		R_VRIKValidateAnimationInput (skeleton, lerpdata, out);
+	if (validation != R_VRIK_PALETTE_OK)
+		return validation;
+	if (!R_VRIKResolveJoints (skeleton, jointindex))
+		return R_VRIK_PALETTE_INVALID_SKELETON;
+	R_VRIKLerpPalette (skeleton, lerpdata, palette);
+	for (size_t joint = 0; joint < skeleton->joint_count; ++joint)
+		for (int component = 0; component < 12; ++component)
+			if (!isfinite (palette[joint][component]))
+				return R_VRIK_PALETTE_INVALID_SKELETON;
+	memcpy (out->matrices, palette, skeleton->joint_count * sizeof (*palette));
+	out->joint_count = skeleton->joint_count;
+	out->muzzle_valid = false;
+	memset (out->muzzle_origin, 0, sizeof (out->muzzle_origin));
+	memset (out->muzzle_forward, 0, sizeof (out->muzzle_forward));
 	return R_VRIK_PALETTE_OK;
 }
 
