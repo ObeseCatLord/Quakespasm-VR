@@ -1115,9 +1115,15 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, int alphapass, int chain, qboolean
 		switch (currententity->model->type)
 		{
 		case mod_alias:
+		{
+			const int before_aliaspolys = aliaspolys;
 			R_DrawAliasModel (cbx, currententity, &aliaspolys);
-			++aliaspasses;
+			/* Culled or rejected aliases do not submit geometry. Keep this
+			 * counter useful when diagnosing large-map visible work. */
+			if (aliaspolys > before_aliaspolys)
+				++aliaspasses;
 			break;
+		}
 		case mod_brush:
 			R_DrawBrushModel (
 				cbx, currententity, chain, &brushpolys, alphapass && R_UseAlphaSort (), !alphapass && opaque_with_transparent_water,

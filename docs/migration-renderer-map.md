@@ -81,6 +81,14 @@ without a repeatable route or headset timing. Keep PERF-017 open for scenes
 with genuinely repeated visible models and measure any proposed cull against
 frame time and both-eye visibility before claiming a gain.
 
+The `rs_aliaspasses` diagnostic now increments after `R_DrawAliasModel` only
+when that call adds model triangles. The startup-view figure above used the
+older attempted-entity counter and must not be compared directly with new
+`scr_speeds 2` output. The revised value counts accepted alias-model calls,
+not exact Vulkan draw commands or GPU fragments; multi-surface models and
+separate passes still need their own measurements. This counter correction
+does not change culling or rendering.
+
 ## Current-branch two-eye indirect culling
 
 The indirect compute pass now tests world-surface backfaces against both actual
