@@ -64,6 +64,9 @@ int VRXR_VulkanFoveationFixedAvailable(void);
 int VRXR_VulkanFoveationEyeAvailable(void);
 /* Runtime extension discovery only; this does not prove Vulkan device support. */
 int VRXR_VulkanSwapchainImageFlagsSupported(void);
+/* The attached runtime accepted transfer-source usage on its color images.
+ * Requesting it at attachment does not guarantee that the runtime accepts it. */
+int VRXR_VulkanTransferSourceAvailable(void);
 /* Attached-session format for pipeline warmup; no image is acquired/exposed.
  * Returns UNDEFINED before a completed attachment or after terminal loss. */
 VkFormat VRXR_VulkanColorFormat(void);

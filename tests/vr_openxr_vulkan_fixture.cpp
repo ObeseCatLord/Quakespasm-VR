@@ -46,6 +46,13 @@ static XrResult XRAPI_PTR create_array(XrSession,const XrSwapchainCreateInfo *in
  assert(info->arraySize==2 && info->width==24 && info->height==40 && info->sampleCount==1);
  ++array_creates;*out=(XrSwapchain)(uintptr_t)11;return XR_SUCCESS;
 }
+static XrResult optional_create_result;
+static XrResult XRAPI_PTR reject_optional_swapchain(XrSession,const XrSwapchainCreateInfo *info,XrSwapchain *) {
+ assert(info->arraySize==2 && info->width==24 && info->height==40);
+ assert(!!(info->usageFlags&XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT)==
+  !!(g.vk.extraUsage&XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT));
+ return optional_create_result;
+}
 static XrResult XRAPI_PTR images(XrSwapchain,uint32_t capacity,uint32_t *count,XrSwapchainImageBaseHeader *base) {
  *count=3;
  if(capacity) for(int i=0;i<3;++i) reinterpret_cast<XrSwapchainImageVulkan2KHR *>(base)[i].image=(VkImage)(uintptr_t)(200+i);
@@ -201,6 +208,22 @@ int main() {
  g.chain[0].handle=(XrSwapchain)(uintptr_t)11;g.chain[0].acquired=g.chain[0].waited=true;g.xr.ReleaseSwapchainImage=queue_release;g.xr.EndFrame=queue_end;
  array_result=XR_SUCCESS;end_frame(false);assert(!queue_lock_depth && queue_locks==queue_unlocks && !error_logs);
  g.frameBegun=true;g.chain[0].acquired=g.chain[0].waited=true;end_result=XR_ERROR_RUNTIME_FAILURE;end_frame(false);assert(g.terminal && !queue_lock_depth && queue_locks==queue_unlocks && error_logs==1);
+ // Only a swapchain's explicit feature rejection authorizes dropping the
+ // optional mirror usage. Other errors must not silently change the request.
+ reset();g.vk.arrayLayers=2;g.session=(XrSession)(uintptr_t)9;
+ g.xr.EnumerateViewConfigurationViews=stereo_config;g.xr.EnumerateSwapchainFormats=formats;
+ g.xr.CreateSwapchain=reject_optional_swapchain;
+ g.vk.extraUsage=XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
+ optional_create_result=XR_ERROR_FEATURE_UNSUPPORTED;
+ assert(!create_swapchains() && g.vk.optionalTransferSourceUnsupported);
+ g.vk.optionalTransferSourceUnsupported=false;
+ optional_create_result=XR_ERROR_RUNTIME_FAILURE;
+ assert(!create_swapchains() && !g.vk.optionalTransferSourceUnsupported);
+ g.vk.extraUsage=0;optional_create_result=XR_ERROR_FEATURE_UNSUPPORTED;
+ assert(!create_swapchains() && !g.vk.optionalTransferSourceUnsupported);
+ g.initialized=true;g.vk.extraUsage=XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
+ assert(VRXR_VulkanTransferSourceAvailable());
+ g.terminal=true;assert(!VRXR_VulkanTransferSourceAvailable());
  reset();g.vk.arrayLayers=2;assert(VRXR_SetVulkanQueueCallbacks(queue_lock,queue_unlock,&queue_lock_depth));g.session=(XrSession)(uintptr_t)9;g.initialized=true;
  g.xr.EnumerateViewConfigurationViews=stereo_config;g.xr.EnumerateSwapchainFormats=formats;
  g.xr.CreateSwapchain=create_array;g.xr.EnumerateSwapchainImages=images;

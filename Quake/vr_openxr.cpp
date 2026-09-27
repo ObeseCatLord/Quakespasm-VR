@@ -138,6 +138,7 @@ struct VulkanBinding {
 	std::vector<VulkanQueue> queues;
 	VkFormat format;
 	XrSwapchainUsageFlags extraUsage;
+	bool optionalTransferSourceUnsupported;
 	uint32_t arrayLayers;
 	bool densityMaps;
 	bool fragmentDensityMapEnabled;
@@ -148,7 +149,7 @@ struct VulkanBinding {
 	void (*unlockQueue)(void *);
 	void *queueOwner;
 	VulkanBinding() : getProc(0), instance(VK_NULL_HANDLE), physicalDevice(VK_NULL_HANDLE),
-		device(VK_NULL_HANDLE), requirements(), format(VK_FORMAT_UNDEFINED), extraUsage(0), arrayLayers(1), densityMaps(false), fragmentDensityMapEnabled(false), densityImageFlags(0), retireImages(0), owner(0), lockQueue(0), unlockQueue(0), queueOwner(0) {}
+		device(VK_NULL_HANDLE), requirements(), format(VK_FORMAT_UNDEFINED), extraUsage(0), optionalTransferSourceUnsupported(false), arrayLayers(1), densityMaps(false), fragmentDensityMapEnabled(false), densityImageFlags(0), retireImages(0), owner(0), lockQueue(0), unlockQueue(0), queueOwner(0) {}
 };
 struct State {
 	LoaderHandle loader;
@@ -685,7 +686,11 @@ static bool create_swapchains() {
 				info.next=&imageFlags;
 			}
 		}
-		if(!ok("xrCreateSwapchain",g.xr.CreateSwapchain(g.session,&info,&chain.handle))) return false;
+		const XrResult createResult=g.xr.CreateSwapchain(g.session,&info,&chain.handle);
+		if(createResult==XR_ERROR_FEATURE_UNSUPPORTED &&
+		   (g.vk.extraUsage&XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT))
+			g.vk.optionalTransferSourceUnsupported=true;
+		if(!ok("xrCreateSwapchain",createResult)) return false;
 		uint32_t imageCount=0; if(!ok("xrEnumerateSwapchainImages",g.xr.EnumerateSwapchainImages(chain.handle,0,&imageCount,0)) || !imageCount) return false;
 		if(g.useVulkan) {
 			chain.vulkanImages.resize(imageCount);
@@ -1006,6 +1011,7 @@ static void destroy_session_resources() {
 	/* Engine input reapplies the archived setting on its next pass. */
 	g.trackerEnabled=false;
 	g.vk.format=VK_FORMAT_UNDEFINED; g.vk.extraUsage=0;
+	g.vk.optionalTransferSourceUnsupported=false;
 	g.vk.arrayLayers=1; g.vk.densityMaps=false; g.vk.densityImageFlags=0; g.vk.retireImages=0; g.vk.owner=0;
 }
 static void destroy_resources() {
@@ -1418,6 +1424,7 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 	const VkImageUsageFlags allowed=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
 	if(extra_image_usage&~allowed) return 0;
 	g.vk.extraUsage=0;
+	g.vk.optionalTransferSourceUnsupported=false;
 	if(extra_image_usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT) g.vk.extraUsage|=XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
 	if(extra_image_usage&VK_IMAGE_USAGE_TRANSFER_DST_BIT) g.vk.extraUsage|=XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 	if(extra_image_usage&VK_IMAGE_USAGE_SAMPLED_BIT) g.vk.extraUsage|=XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
@@ -1428,8 +1435,18 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 	binding.queueFamilyIndex=queue_family; binding.queueIndex=queue_index;
 	XrSessionCreateInfo create={XR_TYPE_SESSION_CREATE_INFO}; create.systemId=g.system; create.next=&binding;
 	if(!ok("xrCreateSession Vulkan",g.xr.CreateSession(g.instance,&create,&g.session)) || !finish_session() || g.terminal) {
+		/* A mirror's transfer source is optional. Keep the same density-map
+		 * profile on this retry; only then consider the existing density fallback. */
+		const bool retryWithoutTransferSource=!!(extra_image_usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT) &&
+			g.vk.optionalTransferSourceUnsupported && !g.terminal;
 		const bool retryWithoutDensityMaps=density_maps && !g.terminal;
 		VRXR_DetachVulkan();
+		if(retryWithoutTransferSource) {
+			say("OpenXR: runtime rejected optional mirror transfer source; retrying without desktop mirror");
+			return VRXR_AttachVulkan(queue_family,queue_index,
+				extra_image_usage&~VK_IMAGE_USAGE_TRANSFER_SRC_BIT,array_layers,
+				retire_images,owner,density_maps,density_image_flags);
+		}
 		if(retryWithoutDensityMaps) {
 			say("OpenXR: runtime density-map setup failed; retrying ordinary VR swapchains");
 			return VRXR_AttachVulkan(queue_family,queue_index,extra_image_usage,array_layers,
@@ -1445,6 +1462,10 @@ extern "C" int VRXR_VulkanFoveationEyeSupported(void) { return g.useVulkan && g.
 extern "C" int VRXR_VulkanFoveationFixedAvailable(void) { return g.useVulkan && g.session && g.vk.densityMaps && g.foveationFixedAvailable ? 1 : 0; }
 extern "C" int VRXR_VulkanFoveationEyeAvailable(void) { return g.useVulkan && g.session && g.vk.densityMaps && g.foveationEyeAvailable ? 1 : 0; }
 extern "C" int VRXR_VulkanSwapchainImageFlagsSupported(void) { return g.useVulkan && g.vulkanSwapchainImageFlagsSupported ? 1 : 0; }
+extern "C" int VRXR_VulkanTransferSourceAvailable(void) {
+	return g.useVulkan && g.initialized && g.session && !g.terminal &&
+		(g.vk.extraUsage&XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT) ? 1 : 0;
+}
 extern "C" VkFormat VRXR_VulkanColorFormat(void) {
 	return g.useVulkan && g.initialized && g.session && !g.terminal ? g.vk.format : VK_FORMAT_UNDEFINED;
 }
