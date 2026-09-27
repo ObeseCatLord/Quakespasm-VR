@@ -67,6 +67,23 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 /tmp/quakespasm-vr-akimbo-stale-fixture
 ```
 
+`vr_akimbo_crosshair_fixture.c` runs the production crosshair-ray selector with
+prepared left/right pair anchors. It checks two distinct rays, dominant-hand
+selection and handedness, single-ray fallback, and no ray on an invalid hand or
+non-rendering frame. The per-hand positions and angles are stubbed; this does
+not verify model alignment or headset images.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-unused-function -Wno-sign-compare \
+  -Wno-missing-field-initializers -ffunction-sections -fdata-sections \
+  -fsanitize=address,undefined -fno-omit-frame-pointer -IQuake \
+  tests/vr_akimbo_crosshair_fixture.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/qsvr-akimbo-crosshair-fixture
+ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-akimbo-crosshair-fixture
+```
+
 ## VR weapon schema parser
 
 `vr_weapon_schema_fixture.c` exercises the bounded staging parser against the
