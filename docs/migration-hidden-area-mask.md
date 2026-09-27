@@ -172,3 +172,19 @@ run the program or measure GPU time.
 | Reuse the world traversal for hidden-sample depth replay. | Adopt. Replay runs in the existing world secondary before SSAO preparation. |
 | Treat default SSAO as performance-qualified now. | Reject. Direct replay regenerates index batches and both routes repeat geometry work; compare complete frame times before claiming a gain. |
 | Limit to indirect rendering or replace replay with a fixed guard immediately. | Defer. Neither policy is justified by measured cost or a conservative AO sampling bound. |
+
+## KHR attachment shading-rate coexistence
+
+The renderer now permits the world-scoped hidden-area mask when its
+`VK_KHR_fragment_shading_rate` attachment is active. The masked opaque world
+pipelines inherit vkQuake's per-draw dynamic rate and continue to select the
+eye or explicitly chosen fixed rate map. The stencil writer and hidden-depth
+replay use their pipeline's default full-rate combiner, so coverage and restored
+depth are recorded at pixel/sample granularity. The [Vulkan fragment-operation
+rules](https://docs.vulkan.org/spec/latest/chapters/fragops.html) define the
+stencil test per sample, and the [fragment-shading-rate rules](https://docs.vulkan.org/spec/latest/chapters/primsrast.html#primsrast-fragment-shading-rate)
+define the default 1×1 rate and `KEEP` combiners when no rate state is supplied.
+This is a source-level compatibility argument; no headset image comparison or
+net timing has been performed with both features enabled. The separate
+FB/META fragment-density-map path remains gated because it uses a coarse color
+pass and full-rate depth replay with different stencil/sample behavior.
