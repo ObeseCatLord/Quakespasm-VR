@@ -47,6 +47,11 @@ static qpic_t *sb_face_invis_invuln;
 
 qboolean sb_showscores;
 
+qboolean Sbar_IsShowingScores (void)
+{
+	return sb_showscores;
+}
+
 int sb_lines; // scan lines to draw
 
 static qpic_t *rsb_invbar[2];

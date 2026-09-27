@@ -18,4 +18,20 @@ For up to 16 players, use stencil references 1–16. Before each mask/ring pair,
 
 The mask and ring need flat-color alias/MD5 pipeline modes with depth testing and depth writes disabled, plus bounded inflation matching the donor model formats. Reuse vkQuake's geometry buffers, interpolation, tracked VRIK palettes, stereo shader correction and command contexts. Merely selecting an unlit textured pipeline is insufficient. Avoid a copied player entity because palette lookup keys on the original entity pointer.
 
-The first proof is one animated remote MDL behind a wall with scoreboard held and released, both eyes, 1× MSAA and ordinary transparency. It must show an outline without changing scene depth. Then verify two overlapping players and distinct stencil references. Before calling the feature complete, cover MD3, MD5/MD5_8/VRIK, MSAA, OIT/MBOIT, SSAO/sky, desktop fallback, wheel selection and foreground layering. The ordinary closed-wheel weapon and depth-tested name tags currently draw earlier than the proposed late VR outline; their layering needs explicit correction or a demonstrated acceptable visual result. No silhouette code or runtime proof is claimed by this document.
+The first runtime proof is one animated remote MDL behind a wall with scoreboard held and released, both eyes, 1× MSAA and ordinary transparency. It must show an outline without changing scene depth. Then verify two overlapping players and distinct stencil references. Before calling the feature complete, cover MD3, MD5/MD5_8/VRIK, MSAA, OIT/MBOIT, SSAO/sky, desktop fallback, wheel selection and foreground layering.
+
+## Implementation and senior-review disposition
+
+The `2.0` implementation now reuses `GL_DrawAliasFrame` for all player geometry/poses and prepared VRIK palettes. A flat-color shader flag and dedicated pipeline modes render normal-scale stencil masks, inflated rings, and filled silhouettes without adding a framebuffer or renderer. VR records the mask/ring pairs in the existing late writable scene subpass after one stencil-only clear. Desktop records filled silhouettes in the late FTE subpass. The hovered co-op wheel action is read through the existing validated action identity; its filled highlight follows scoreboard rings. VR name tags and wheel meshes follow the highlights, with the held weapon last when the co-op scoreboard or VR wheel needs that ordering. Ordinary stereo frames keep vkQuake's original early weapon placement.
+
+An Astra Max implementation review verified the current Vulkan/pass approach and found four correctness issues. The follow-up changes are:
+
+| Review finding | Disposition |
+| --- | --- |
+| FTE filled highlights could inherit a zero projection when particles emitted no geometry | **Adopted:** each overlay model draw pushes the scene projection explicitly after binding its pipeline. |
+| Ring pipelines disabled back-face culling, doubling alpha on closed meshes | **Adopted:** mask/ring retain vkQuake's normal back-face culling; fills remain two-sided as in the donor. |
+| Early playspace wheel meshes could be covered by later through-wall highlights | **Adopted:** VR wheel meshes draw after highlights in the existing late MAIN subpass; playspace depth remains intact. |
+| Moving every stereo weapon after transparency changed ordinary frames | **Adapted:** late weapon recording applies only to co-op scoreboard or open VR wheel frames; ordinary stereo and desktop retain the original draw order. |
+| Separate framebuffer/pass or duplicate animation renderer | **Rejected:** existing pass and alias/MD5 draw path suffice. |
+
+The Linux build succeeds after these changes. Static review and compilation do not prove images or performance. Physical headset testing is deferred to the user, and Windows/ARM verification remains later work. The renderer still needs runtime checks for both eyes, overlapping players, animation formats, OIT modes, MSAA, SSAO/sky, and wheel/depth ordering before visual parity is claimed.

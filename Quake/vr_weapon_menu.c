@@ -2579,6 +2579,23 @@ static qboolean VR_WeaponMenu_ActionHoverValid (
 		 !strcmp (vr_weapon_menu_hover_action_name, action->player_name));
 }
 
+int VR_WeaponMenu_HoveredCoopPlayer (void)
+{
+	if (!VR_WeaponMenu_IsOpenVR () || !VR_WeaponMenu_SessionValid () ||
+		!vr_weapon_menu_frame_valid ||
+		vr_weapon_menu_frame.generation != vr_weapon_menu_session_generation)
+		return -1;
+	for (int index = 0; index < vr_weapon_menu_frame.action_count; ++index)
+	{
+		const vr_weapon_menu_action_t *action = &vr_weapon_menu_frame.actions[index];
+		if (action->kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER &&
+			VR_WeaponMenu_ActionHoverValid (action) &&
+			VR_WeaponMenu_ActionStillValid (action))
+			return action->slot;
+	}
+	return -1;
+}
+
 int VR_WeaponMenu_Release (void)
 {
 	const vr_weapon_menu_catalog_t *catalog = VR_WeaponMenu_CurrentCatalog ();

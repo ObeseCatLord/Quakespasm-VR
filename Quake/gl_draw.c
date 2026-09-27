@@ -1655,8 +1655,8 @@ void Draw_String_3D (cb_context_t *cbx, vec3_t coords, float size, const char *s
 	vulkan_globals.vk_cmd_draw (cbx->cb, num_verts, 1, 0, 0);
 }
 
-/* The co-op name tag reuses world glyph geometry and scene projection. Its
- * late-particle pipeline tests depth without writing it, as in OpenVR. */
+/* Co-op name tags reuse world glyph geometry and scene projection. Their
+ * late scene pipelines test depth without writing it, as in OpenVR. */
 void Draw_String_3DColor (cb_context_t *cbx, const vec3_t origin, const vec3_t right, const vec3_t up,
 	float size, const char *str, const vec3_t color, float alpha)
 {

@@ -209,6 +209,11 @@ typedef struct vulkan_memory_s
 #define MODEL_PIPELINE_SHOWTRIS			   4
 #define MODEL_PIPELINE_SHOWTRIS_DEPTH_TEST 5
 #define MODEL_PIPELINE_COUNT			   6
+#define COOP_OVERLAY_MASK			   0
+#define COOP_OVERLAY_RING			   1
+#define COOP_OVERLAY_FILL			   2
+#define COOP_OVERLAY_FILL_LATE		   3
+#define COOP_OVERLAY_PIPELINE_COUNT	   4
 #define FTE_PARTICLE_PIPELINE_COUNT		   16
 #define MAX_BATCH_SIZE					   65536
 #define NUM_WORLD_CBX					   6
@@ -479,16 +484,19 @@ typedef struct
 	vulkan_pipeline_t		 sky_cube_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT][2];
 	vulkan_pipeline_t		 sky_layer_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT][2];
 	vulkan_pipeline_t		 alias_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_COUNT];
+	vulkan_pipeline_t		 alias_coop_overlay_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][COOP_OVERLAY_PIPELINE_COUNT];
 	vulkan_pipeline_t		 alias_opposite_front_face_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_SHOWTRIS];
 	vulkan_pipeline_t		 alias_wboit_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 alias_mboit_moment_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 alias_mboit_composite_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_COUNT];
+	vulkan_pipeline_t		 md5_coop_overlay_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][COOP_OVERLAY_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_opposite_front_face_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_SHOWTRIS];
 	vulkan_pipeline_t		 md5_wboit_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_mboit_moment_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_mboit_composite_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_8_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_COUNT];
+	vulkan_pipeline_t		 md5_8_coop_overlay_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][COOP_OVERLAY_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_8_opposite_front_face_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][MODEL_PIPELINE_SHOWTRIS];
 	vulkan_pipeline_t		 md5_8_wboit_pipelines[MODEL_PIPELINE_COUNT];
 	vulkan_pipeline_t		 md5_8_mboit_moment_pipelines[MODEL_PIPELINE_COUNT];
@@ -898,6 +906,8 @@ void R_UploadLightmaps (void);
 void R_DrawWorld_ShowTris (cb_context_t *cbx);
 void R_DrawBrushModel_ShowTris (cb_context_t *cbx, entity_t *e);
 void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e);
+qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t color,
+	float alpha, float inflate, qboolean ring);
 void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e);
 void R_DrawParticles_ShowTris (cb_context_t *cbx);
 void R_DrawSpriteModel_ShowTris (cb_context_t *cbx, entity_t *e);

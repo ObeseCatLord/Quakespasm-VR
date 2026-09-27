@@ -2275,6 +2275,9 @@ R_DrawParticlesTask
 ================
 */
 static void R_DrawCoopNametags (cb_context_t *cbx);
+static void R_DrawCoopFilledSilhouettes (cb_context_t *cbx);
+static void R_DrawCoopPlayerOutlines (cb_context_t *cbx);
+static void R_DrawCoopWheelSelectedSilhouette (cb_context_t *cbx);
 
 static void R_DrawParticlesTask (void *unused)
 {
@@ -2295,7 +2298,99 @@ static void R_DrawParticlesTask (void *unused)
 	R_SceneViewport (fte_blend_cbx, 0.0f);
 	PScript_DrawParticles (fte_blend_cbx);
 	R_SceneViewport (fte_blend_cbx, 0.0f);
-	R_DrawCoopNametags (fte_blend_cbx);
+	R_DrawCoopFilledSilhouettes (fte_blend_cbx);
+	if (!vulkan_globals.stereo_active)
+		R_DrawCoopNametags (fte_blend_cbx);
+}
+
+static void R_CoopPlayerShirtColor (int player, float boost, float min_peak, vec3_t color)
+{
+	const byte *rgb = (const byte *)&d_8to24table[((cl.scores[player].colors >> 4) & 15) * 16 + 8];
+	for (int axis = 0; axis < 3; ++axis)
+		color[axis] = rgb[axis] / 255.0f;
+	const float peak = q_max (color[0], q_max (color[1], color[2]));
+	const float scale = peak > 0.0f ? q_max (boost, min_peak / peak) : 0.0f;
+	for (int axis = 0; axis < 3; ++axis)
+		color[axis] = peak > 0.0f ? color[axis] * scale : min_peak;
+}
+
+static qboolean R_CoopOverlayPlayerValid (int entity_index)
+{
+	return entity_index > 0 && entity_index <= cl.maxclients &&
+		entity_index <= MAX_SCOREBOARD && entity_index < cl.num_entities &&
+		entity_index != cl.viewentity && cl.scores[entity_index - 1].name[0] &&
+		cl.entities[entity_index].model && cl.entities[entity_index].model->type == mod_alias;
+}
+
+static void R_DrawCoopFilledSilhouettes (cb_context_t *cbx)
+{
+	if (vulkan_globals.stereo_active || !Sbar_IsShowingScores () ||
+		cl.gametype != GAME_COOP || !cl.scores || !r_drawentities.value)
+		return;
+	R_BeginDebugUtilsLabel (cbx, "co-op filled silhouettes");
+	for (int entity_index = 1; entity_index <= cl.maxclients &&
+		entity_index <= MAX_SCOREBOARD && entity_index < cl.num_entities; ++entity_index)
+	{
+		if (!R_CoopOverlayPlayerValid (entity_index))
+			continue;
+		vec3_t color;
+		R_CoopPlayerShirtColor (entity_index - 1, 1.5f, 0.45f, color);
+		R_DrawAliasCoopOverlay (cbx, &cl.entities[entity_index], color, 0.35f, 1.04f, false);
+	}
+	R_EndDebugUtilsLabel (cbx);
+}
+
+static void R_DrawCoopWheelSelectedSilhouette (cb_context_t *cbx)
+{
+	if (!vulkan_globals.stereo_active || cl.gametype != GAME_COOP ||
+		!cl.scores || !r_drawentities.value)
+		return;
+	const int player = VR_WeaponMenu_HoveredCoopPlayer ();
+	if (player < 0 || !R_CoopOverlayPlayerValid (player + 1))
+		return;
+	vec3_t color;
+	R_CoopPlayerShirtColor (player, 1.8f, 0.5f, color);
+	R_BeginDebugUtilsLabel (cbx, "co-op wheel-selected silhouette");
+	R_DrawAliasCoopOverlay (cbx, &cl.entities[player + 1], color, 0.52f, 1.04f, false);
+	R_EndDebugUtilsLabel (cbx);
+}
+
+static void R_DrawCoopPlayerOutlines (cb_context_t *cbx)
+{
+	if (!vulkan_globals.stereo_active || !Sbar_IsShowingScores () ||
+		cl.gametype != GAME_COOP || !cl.scores || !r_drawentities.value)
+		return;
+	int eligible = 0;
+	for (int entity_index = 1; entity_index <= cl.maxclients &&
+		entity_index <= MAX_SCOREBOARD && entity_index < cl.num_entities; ++entity_index)
+		eligible += R_CoopOverlayPlayerValid (entity_index);
+	if (!eligible)
+		return;
+
+	/* Clear only stencil. Multiview broadcasts the one-layer clear rect to
+	 * both eyes. Unique references preserve each overlapping player's ring. */
+	const VkClearAttachment clear = {
+		.aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT,
+		.clearValue.depthStencil = {.depth = 0.0f, .stencil = 0},
+	};
+	const VkClearRect rect = {
+		.rect = {{0, 0}, {vid.render_width, vid.render_height}},
+		.baseArrayLayer = 0,
+		.layerCount = 1,
+	};
+	vkCmdClearAttachments (cbx->cb, 1, &clear, 1, &rect);
+	R_BeginDebugUtilsLabel (cbx, "co-op player outlines");
+	for (int entity_index = 1; entity_index <= cl.maxclients &&
+		entity_index <= MAX_SCOREBOARD && entity_index < cl.num_entities; ++entity_index)
+	{
+		if (!R_CoopOverlayPlayerValid (entity_index))
+			continue;
+		vec3_t color;
+		R_CoopPlayerShirtColor (entity_index - 1, 1.0f, 0.0f, color);
+		vkCmdSetStencilReference (cbx->cb, VK_STENCIL_FACE_FRONT_AND_BACK, (uint32_t)entity_index);
+		R_DrawAliasCoopOverlay (cbx, &cl.entities[entity_index], color, 0.7f, 1.05f, true);
+	}
+	R_EndDebugUtilsLabel (cbx);
 }
 
 static void R_DrawFBTCalibrationVisuals (cb_context_t *cbx)
@@ -2345,8 +2440,7 @@ static void R_DrawCoopNametags (cb_context_t *cbx)
 		entity_t *entity = &cl.entities[entity_index];
 		vec3_t origin, shadow_origin, color;
 		char label[MAX_SCOREBOARDNAME + 5];
-		float scale, peak, boost;
-		byte *rgb;
+		float scale;
 		if (entity_index == cl.viewentity || !entity->model ||
 			entity->model->type != mod_alias || !cl.scores[player].name[0])
 			continue;
@@ -2363,13 +2457,7 @@ static void R_DrawCoopNametags (cb_context_t *cbx)
 		else
 			q_strlcpy (label, cl.scores[player].name, sizeof (label));
 
-		rgb = (byte *)&d_8to24table[((cl.scores[player].colors >> 4) & 15) * 16 + 8];
-		for (int axis = 0; axis < 3; ++axis)
-			color[axis] = rgb[axis] / 255.0f;
-		peak = q_max (color[0], q_max (color[1], color[2]));
-		boost = peak > 0 ? q_max (1.65f, 0.55f / peak) : 0.0f;
-		for (int axis = 0; axis < 3; ++axis)
-			color[axis] = peak > 0 ? color[axis] * boost : 0.55f;
+		R_CoopPlayerShirtColor (player, 1.65f, 0.55f, color);
 
 		VectorMA (origin, 0.35f, vright, shadow_origin);
 		VectorMA (shadow_origin, -0.35f, vup, shadow_origin);
@@ -2387,11 +2475,15 @@ R_DrawViewModelTask
 static void R_DrawViewModelTask (void *unused)
 {
 	const qboolean foreground_wheel = VR_WeaponMenu_UsesForegroundDepth ();
+	const qboolean late_vr_weapon = vulkan_globals.stereo_active &&
+		(foreground_wheel || VR_WeaponMenu_IsOpenVR () ||
+			(cl.gametype == GAME_COOP && Sbar_IsShowingScores ()));
 	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_VIEW_MODEL];
 	R_SetupContext (cbx);
-	if (!foreground_wheel)
+	if (!late_vr_weapon)
+		R_DrawViewModel (cbx); // ordinary stereo and desktop retain vkQuake's depth/transparency order
+	if (!vulkan_globals.stereo_active && !foreground_wheel)
 	{
-		R_DrawViewModel (cbx); // johnfitz -- moved here from R_RenderView
 		/* The wheel is scene geometry, independent of the held weapon's hide gates. */
 		const int wheel_polys = VR_WeaponMenu_DrawModels (cbx);
 		if (wheel_polys)
@@ -2406,30 +2498,40 @@ static void R_DrawViewModelTask (void *unused)
 	R_ShowPointFile (cbx);
 	R_DrawFBTCalibrationVisuals (cbx);
 
-	if (foreground_wheel)
+	if (vulkan_globals.stereo_active)
 	{
 		cbx = vulkan_globals.secondary_cb_contexts[SCBX_WHEEL_FOREGROUND];
 		R_SetupContext (cbx);
-		const VkClearAttachment depth_clear = {
-			.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-			.clearValue.depthStencil = {.depth = 0.0f, .stencil = 0},
-		};
-		const VkClearRect clear_rect = {
-			.rect = {{0, 0}, {vid.render_width, vid.render_height}},
-			.baseArrayLayer = 0,
-			.layerCount = 1,
-		};
-		vkCmdClearAttachments (cbx->cb, 1, &depth_clear, 1, &clear_rect);
+		R_DrawCoopPlayerOutlines (cbx);
+		R_DrawCoopWheelSelectedSilhouette (cbx);
+		R_DrawCoopNametags (cbx);
+		if (foreground_wheel)
+		{
+			const VkClearAttachment depth_clear = {
+				.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+				.clearValue.depthStencil = {.depth = 0.0f, .stencil = 0},
+			};
+			const VkClearRect clear_rect = {
+				.rect = {{0, 0}, {vid.render_width, vid.render_height}},
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			};
+			vkCmdClearAttachments (cbx->cb, 1, &depth_clear, 1, &clear_rect);
 
-		/* Clear once, then preserve the legacy wheel-before-held-weapon order. */
+		}
+		/* Through-wall overlays precede the wheel, which precedes the held
+		 * weapon. A playspace wheel keeps scene depth; the foreground wheel
+		 * clears depth only for its existing presentation mode. */
 		const int wheel_polys = VR_WeaponMenu_DrawModels (cbx);
 		if (wheel_polys)
 		{
 			Atomic_AddUInt32 (&rs_aliaspolys, wheel_polys);
 			Atomic_IncrementUInt32 (&rs_aliaspasses);
 		}
-		R_DrawViewModel (cbx);
-		if (r_showtris.value >= 1 && r_showtris.value <= 2 && cl.maxclients <= 1 && vulkan_globals.non_solid_fill)
+		if (late_vr_weapon)
+			R_DrawViewModel (cbx);
+		if (foreground_wheel && r_showtris.value >= 1 && r_showtris.value <= 2 &&
+			cl.maxclients <= 1 && vulkan_globals.non_solid_fill)
 		{
 			R_BeginDebugUtilsLabel (cbx, "show viewmodel tris");
 			R_ShowViewModelTris (cbx);

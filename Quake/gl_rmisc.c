@@ -3373,8 +3373,8 @@ static void R_CreateBasicPipelines ()
 		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_BASIC_BLEND][stage][variant], &infos, basic_layout, "basic_blend");
 	}
 
-	/* Only co-op tags need basic glyphs after transparency. Reuse the FTE
-	 * subpass, which reads scene depth and follows its blended particles. */
+	/* Desktop tags follow blended particles in FTE. Stereo tags follow the
+	 * late stencil outlines in the writable main subpass. */
 	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
 	{
 		R_CopyPipelineCreateInfos (&infos, &base);
@@ -3388,6 +3388,12 @@ static void R_CreateBasicPipelines ()
 		infos.shader_stages[1].module = basic_frag_module;
 		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_COOP_NAMETAG][SUBPASS_FTE_PARTICLES][variant],
 			&infos, vulkan_globals.basic_pipeline_layout, "coop_nametag");
+		if (vulkan_globals.stereo_active)
+		{
+			R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
+			R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_COOP_NAMETAG][SUBPASS_MAIN][variant],
+				&infos, vulkan_globals.basic_pipeline_layout, "coop_nametag_stereo_late");
+		}
 	}
 
 	/* Depth-tested world glyphs are only emitted by the OpenXR wheel. Avoid
@@ -4024,6 +4030,46 @@ void R_SetWorldFragmentShadingRate (cb_context_t *cbx, qboolean eligible)
 R_CreateAliasPipelines
 ===============
 */
+static void R_CreateCoopOverlayPipelineSet (
+	vulkan_pipeline_t pipelines[MAIN_RENDER_PASS_VARIANT_COUNT][COOP_OVERLAY_PIPELINE_COUNT],
+	const pipeline_create_infos_t *base, vulkan_pipeline_layout_t layout, const char *name)
+{
+	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
+		for (int mode = 0; mode < COOP_OVERLAY_PIPELINE_COUNT; ++mode)
+		{
+			if (vulkan_globals.stereo_active ? mode == COOP_OVERLAY_FILL : mode != COOP_OVERLAY_FILL)
+				continue;
+			pipeline_create_infos_t infos;
+			R_CopyPipelineCreateInfos (&infos, base);
+			R_SetPipelineRenderPassVariant (&infos,
+				mode == COOP_OVERLAY_FILL ? SUBPASS_FTE_PARTICLES : SUBPASS_MAIN, variant);
+			infos.shader_stages[1].module = alias_frag_module;
+			if (mode == COOP_OVERLAY_FILL || mode == COOP_OVERLAY_FILL_LATE)
+				infos.rasterization_state.cullMode = VK_CULL_MODE_NONE;
+			infos.depth_stencil_state.depthTestEnable = VK_FALSE;
+			infos.depth_stencil_state.depthWriteEnable = VK_FALSE;
+			infos.blend_attachment_states[0].blendEnable = mode == COOP_OVERLAY_MASK ? VK_FALSE : VK_TRUE;
+			if (mode == COOP_OVERLAY_MASK || mode == COOP_OVERLAY_RING)
+			{
+				infos.dynamic_states[infos.dynamic_state.dynamicStateCount++] = VK_DYNAMIC_STATE_STENCIL_REFERENCE;
+				infos.depth_stencil_state.stencilTestEnable = VK_TRUE;
+				infos.depth_stencil_state.front = (VkStencilOpState){
+					.failOp = VK_STENCIL_OP_KEEP,
+					.passOp = mode == COOP_OVERLAY_MASK ? VK_STENCIL_OP_REPLACE : VK_STENCIL_OP_KEEP,
+					.depthFailOp = VK_STENCIL_OP_KEEP,
+					.compareOp = mode == COOP_OVERLAY_MASK ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_NOT_EQUAL,
+					.compareMask = 0xff,
+					.writeMask = mode == COOP_OVERLAY_MASK ? 0xff : 0,
+				};
+				infos.depth_stencil_state.back = infos.depth_stencil_state.front;
+				if (mode == COOP_OVERLAY_MASK)
+					infos.blend_attachment_states[0].colorWriteMask = 0;
+			}
+			R_CreateGraphicsPipeline (&pipelines[variant][mode], &infos, layout,
+				va ("%s_coop_overlay_%d_%d", name, variant, mode));
+		}
+}
+
 static void R_CreateAliasPipelines ()
 {
 	pipeline_create_infos_t base;
@@ -4119,6 +4165,8 @@ static void R_CreateAliasPipelines ()
 			}
 		}
 	}
+	R_CreateCoopOverlayPipelineSet (vulkan_globals.alias_coop_overlay_pipelines,
+		&base, layout, "alias");
 }
 
 /*
@@ -4225,6 +4273,9 @@ static void R_CreateMD5PipelineSet (
 			}
 		}
 	}
+	R_CreateCoopOverlayPipelineSet (
+		!strcmp (name, "md5_8") ? vulkan_globals.md5_8_coop_overlay_pipelines : vulkan_globals.md5_coop_overlay_pipelines,
+		&base, layout, name);
 }
 
 static void R_CreateMD5Pipelines ()
@@ -4843,6 +4894,20 @@ void R_DestroyPipelines (void)
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.md5_8_mboit_composite_pipelines[i].handle, NULL);
 		vulkan_globals.md5_8_mboit_composite_pipelines[i].handle = VK_NULL_HANDLE;
 	}
+	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
+		for (int mode = 0; mode < COOP_OVERLAY_PIPELINE_COUNT; ++mode)
+		{
+			vulkan_pipeline_t *overlays[] = {
+				&vulkan_globals.alias_coop_overlay_pipelines[variant][mode],
+				&vulkan_globals.md5_coop_overlay_pipelines[variant][mode],
+				&vulkan_globals.md5_8_coop_overlay_pipelines[variant][mode],
+			};
+			for (int model = 0; model < countof (overlays); ++model)
+			{
+				vkDestroyPipeline (vulkan_globals.device, overlays[model]->handle, NULL);
+				overlays[model]->handle = VK_NULL_HANDLE;
+			}
+		}
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.postprocess_pipeline.handle, NULL);
 	vulkan_globals.postprocess_pipeline.handle = VK_NULL_HANDLE;
 	if (vulkan_globals.wboit_resolve_pipeline.handle != VK_NULL_HANDLE)

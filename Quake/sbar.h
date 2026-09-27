@@ -31,6 +31,7 @@ extern int sb_lines; // scan lines to draw
 void Sbar_Init (void);
 void Sbar_LoadPics (void);
 qboolean Sbar_IsADWideCSQCHud (void);
+qboolean Sbar_IsShowingScores (void);
 
 void Sbar_Draw (cb_context_t *cbx);
 // called every frame by screen

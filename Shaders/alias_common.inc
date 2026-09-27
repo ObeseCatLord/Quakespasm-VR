@@ -4,6 +4,11 @@
 
 vec4 AliasFragmentColor ()
 {
+	/* Co-op overlays reuse the animated alias/MD5 vertex path but render a
+	 * constant color without sampling skins, lighting, or fog. */
+	if ((ubo.flags & 0x8) != 0)
+		return vec4 (in_color.rgb, ubo.entalpha);
+
 	vec4 result = texture (diffuse_tex, in_texcoord.xy);
 
 #if ALIAS_ALPHA_TEST

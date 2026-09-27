@@ -115,7 +115,7 @@ static void GL_DrawAliasFrame (
 	cb_context_t *cbx, entity_t *e, aliashdr_t *paliashdr, const aliashdr_t *selected_geometry, lerpdata_t lerpdata, gltexture_t *tx, gltexture_t *fb,
 	float model_matrix[16], float entity_alpha,
 	qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, int showtris, qboolean opposite_front_face, qboolean force_unlit,
-	qboolean allow_tracked_palette)
+	qboolean allow_tracked_palette, int coop_overlay_mode)
 {
 	vulkan_pipeline_t pipeline;
 	const r_vrik_prepared_palette_t *tracked_palette = NULL;
@@ -147,13 +147,18 @@ static void GL_DrawAliasFrame (
 		vulkan_pipeline_t *mboit_composite_pipelines =
 			(paliashdr->poseverttype == PV_MD5_8) ? vulkan_globals.md5_8_mboit_composite_pipelines : vulkan_globals.md5_mboit_composite_pipelines;
 
-		if (use_opposite_front_face)
+		if (coop_overlay_mode >= 0)
+			pipeline = (paliashdr->poseverttype == PV_MD5_8 ?
+				vulkan_globals.md5_8_coop_overlay_pipelines : vulkan_globals.md5_coop_overlay_pipelines)[cbx->pipeline_variant][coop_overlay_mode];
+		else if (use_opposite_front_face)
 			pipeline = opposite_front_face_pipelines[cbx->pipeline_variant][pipeline_index];
 		else
 			pipeline = R_PipelineForSubpassType (
 				cbx->subpass_type, pipelines[cbx->pipeline_variant][pipeline_index], wboit_pipelines[pipeline_index], mboit_moment_pipelines[pipeline_index],
 				mboit_composite_pipelines[pipeline_index]);
 	}
+	else if (coop_overlay_mode >= 0)
+		pipeline = vulkan_globals.alias_coop_overlay_pipelines[cbx->pipeline_variant][coop_overlay_mode];
 	else if (use_opposite_front_face)
 		pipeline = vulkan_globals.alias_opposite_front_face_pipelines[cbx->pipeline_variant][pipeline_index];
 	else
@@ -162,6 +167,9 @@ static void GL_DrawAliasFrame (
 			vulkan_globals.alias_mboit_moment_pipelines[pipeline_index], vulkan_globals.alias_mboit_composite_pipelines[pipeline_index]);
 
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+	if (coop_overlay_mode >= 0)
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0,
+			sizeof (vulkan_globals.view_projection_matrix), vulkan_globals.view_projection_matrix);
 
 	float blend;
 
@@ -188,6 +196,8 @@ static void GL_DrawAliasFrame (
 
 		if (force_unlit || r_fullbright_cheatsafe || (r_lightmap_cheatsafe && r_fullbright.value))
 			ubo->flags |= 0x2;
+		if (coop_overlay_mode >= 0)
+			ubo->flags |= 0x8;
 
 		if (paliashdr->poseverttype == PV_QUAKE3)
 			ubo->flags |= 0x4;
@@ -228,6 +238,8 @@ static void GL_DrawAliasFrame (
 		ubo->flags = (fb != NULL) ? 0x1 : 0x0;
 		if (force_unlit || r_fullbright_cheatsafe || (r_lightmap_cheatsafe && r_fullbright.value))
 			ubo->flags |= 0x2;
+		if (coop_overlay_mode >= 0)
+			ubo->flags |= 0x8;
 		ubo->entalpha = entity_alpha;
 		ubo->joints_offsets[0] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose1 * paliashdr->numjoints;
 		ubo->joints_offsets[1] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose2 * paliashdr->numjoints;
@@ -897,7 +909,7 @@ static void R_DrawAliasSurfaces (
 
 		GL_DrawAliasFrame (
 			cbx, e, hdr, selected_geometry, lerpdata, tx, fb, model_matrix, entity_alpha, alphatest, shadevector, lightcolor, false,
-			opposite_front_face, force_unlit, allow_tracked_palette);
+			opposite_front_face, force_unlit, allow_tracked_palette, -1);
 
 		if (aliaspolys)
 			*aliaspolys += hdr->numtris;
@@ -966,6 +978,67 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	R_DrawAliasSurfaces (
 		cbx, e, paliashdr, paliashdr, lerpdata, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, true,
 		opposite_front_face, aliaspolys);
+}
+
+/* Preserve the normal geometry, animation, and prepared VRIK palette path.
+ * The caller owns the pass and (for rings) the stencil reference. */
+qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t color,
+	float alpha, float inflate, qboolean ring)
+{
+	if (!cbx || !e || !e->model || e->model->type != mod_alias || !color ||
+		!isfinite (alpha) || alpha <= 0.0f || alpha > 1.0f ||
+		!isfinite (inflate) || inflate < 1.0f || inflate > 1.2f)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (color[axis]))
+			return false;
+	if ((ring && cbx->subpass_type != SUBPASS_MAIN) ||
+		(!ring && cbx->subpass_type != SUBPASS_FTE_PARTICLES && cbx->subpass_type != SUBPASS_MAIN))
+		return false;
+
+	aliashdr_t *geometry = (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum);
+	if (!geometry || !nulltexture)
+		return false;
+
+	lerpdata_t lerpdata;
+	R_SetupAliasFrame (e, geometry, &lerpdata);
+	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
+	float model_matrix[16];
+	if (R_AliasModelMatrix (e, geometry, &lerpdata, model_matrix) < 0 ||
+		!R_AliasMatrixIsFinite (model_matrix))
+		return false;
+
+	float inflated_matrix[16];
+	memcpy (inflated_matrix, model_matrix, sizeof (inflated_matrix));
+	if (inflate != 1.0f)
+	{
+		/* MDL vertices occupy [0,255]; MD3 and MD5 center at zero. */
+		const float center = geometry->poseverttype == PV_QUAKE1 ? 127.5f : 0.0f;
+		float scale[16], translate[16];
+		TranslationMatrix (translate, center, center, center);
+		MatrixMultiply (inflated_matrix, translate);
+		ScaleMatrix (scale, inflate, inflate, inflate);
+		MatrixMultiply (inflated_matrix, scale);
+		TranslationMatrix (translate, -center, -center, -center);
+		MatrixMultiply (inflated_matrix, translate);
+		if (!R_AliasMatrixIsFinite (inflated_matrix))
+			return false;
+	}
+
+	vec3_t shadevector = {0.0f, 0.0f, 0.0f};
+	vec3_t mask_color = {0.0f, 0.0f, 0.0f};
+	vec3_t overlay_color;
+	VectorCopy (color, overlay_color);
+	if (ring)
+		for (aliashdr_t *surface = geometry; surface; surface = surface->nextsurface)
+			GL_DrawAliasFrame (cbx, e, surface, geometry, lerpdata, nulltexture, NULL,
+				model_matrix, 1.0f, false, shadevector, mask_color, 0, false, true, true, COOP_OVERLAY_MASK);
+	for (aliashdr_t *surface = geometry; surface; surface = surface->nextsurface)
+		GL_DrawAliasFrame (cbx, e, surface, geometry, lerpdata, nulltexture, NULL,
+			inflated_matrix, alpha, false, shadevector, overlay_color, 0, false, true, true,
+			ring ? COOP_OVERLAY_RING :
+			cbx->subpass_type == SUBPASS_MAIN ? COOP_OVERLAY_FILL_LATE : COOP_OVERLAY_FILL);
+	return true;
 }
 
 void R_DrawPreparedWheelAliasModel (
@@ -1076,7 +1149,7 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	{
 		GL_DrawAliasFrame (
 			cbx, e, hdr, paliashdr, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value,
-			opposite_front_face, false, true);
+			opposite_front_face, false, true, -1);
 	}
 }
 
