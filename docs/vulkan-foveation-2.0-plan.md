@@ -6,19 +6,20 @@ remain in place. Eye-tracked foveation is an optional reduction in **opaque
 world fragment shading**; it does not cull geometry or change PVS, frustum,
 weapon, HUD, water, cutout, or transparent rendering.
 
-## Runtime route priority (September 2026)
+## Backend priority (September 2026)
 
-Prefer the runtime-managed `XR_FB_foveation` +
+Use the existing `VK_KHR_fragment_shading_rate` eye-map path as the production
+baseline while qualifying hardware. Evaluate the runtime-managed `XR_FB_foveation` +
 `XR_FB_foveation_configuration` + `XR_FB_foveation_vulkan` +
-`XR_FB_swapchain_update_state` + `XR_META_foveation_eye_tracked` route **when
-the complete extension set, Vulkan density-map feature, and end-to-end image
-contract are available and qualified on that runtime/device pair**. Valve
-[lists exactly this route for Steam Frame](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom),
-so qualify it first for both PC streaming and Linux ARM standalone. The META
+`XR_FB_swapchain_update_state` + `XR_META_foveation_eye_tracked` route for a
+runtime/device pair only when its complete extension set, image contract,
+supported graphics settings, and net frame-time advantage are demonstrated.
+Valve [lists that route for Steam Frame](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom),
+so evaluate it for both PC streaming and Linux ARM standalone. The META
 profile lets the runtime choose the per-eye gaze pattern without requiring an
-application-visible gaze action. Do not use a headset-name allowlist: query the
-active runtime and graphics device. Other headsets exposing this complete route
-may use it after the same qualification.
+application-visible gaze action. Query the active runtime and graphics device,
+not a headset-name allowlist. Other headsets exposing the complete route may
+use it after the same qualification.
 
 The route is not universally more compatible. Khronos specifies
 [`XR_META_foveation_eye_tracked`](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_META_foveation_eye_tracked.html)
@@ -27,20 +28,21 @@ as an optional, unratified extension dependent on both FB extensions; the
 also requires `VK_EXT_fragment_density_map`. The [Khronos runtime inventory](https://github.khronos.org/OpenXR-Inventory/runtime_extension_support.html)
 does not list FB/META foveation for Monado's desktop Linux runtime in its
 published submissions, and is not a substitute for querying the installed
-runtime. Keep `XR_EXT_eye_gaze_interaction` plus vkQuake's existing
-`VK_KHR_fragment_shading_rate` backend for Beyond 2e/Monado and any other
-runtime with gaze but without the complete FB/META route. If neither usable
+runtime. Keep `XR_EXT_eye_gaze_interaction` plus vkQuake's existing KHR
+backend for Beyond 2e/Monado and other runtimes with gaze. If neither usable
 path exists, render at full rate. A runtime/device switch currently requires
-a renderer restart because the Vulkan feature selection is made at device
-creation.
+a renderer restart because Vulkan feature selection occurs at device creation.
 
 This is a priority for qualification, **not** an unconditional default switch:
 the FB/META code remains behind `-vk-runtime-foveation` until borrowed-image
 format, layout/readiness, gaze alignment, protected-depth replay, and net GPU
 frame time are proven on the target runtime. In particular, the extra
 coarse-world/depth-replay passes can erase a density-map shading gain on some
-maps. Compare both routes where available at the same resolution and scene,
-including `mj4m1`, before preferring one for performance. `vr_eye_tracking`
+maps. The default `vid_fsaa 4` currently disables the FDM pass while a selected
+FDM device cannot use KHR; choosing FDM solely from extension discovery would
+lose working foveation. Compare both routes where available at the same
+resolution, MSAA setting and scene, including `mj4m1`, before choosing one for
+performance. `vr_eye_tracking`
 must still gate eye mode; inaccessible or invalid gaze must restore full-rate
 rendering. Fixed foveation remains explicit opt-in and is never a fallback.
 
@@ -73,6 +75,55 @@ rendering. Fixed foveation remains explicit opt-in and is never a fallback.
   substitute for testing button and pose behavior on hardware.
 - Desktop Vulkan and headsets without accessible gaze retain their existing
   rendering. Fixed mode is optional even without eye tracking.
+
+## One-backend and quad-view decision gate
+
+Only one Vulkan foveation feature family is enabled per device. Khronos
+[forbids enabling fragment density maps and KHR attachment shading rate
+together](https://docs.vulkan.org/refpages/latest/refpages/source/VkDeviceCreateInfo.html),
+and the current device setup selects one before creating Vulkan resources.
+Keep the two source adapters only while the release targets require different
+capabilities: FB/META is [Valve's documented Steam Frame
+route](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom),
+while desktop Monado has no published FB/META foveation submission in the
+[Khronos runtime inventory](https://github.khronos.org/OpenXR-Inventory/runtime_extension_support.html).
+The inventory is self-reported and cannot replace querying the installed
+runtime. Startup now reports the XR foveation/gaze capabilities, Vulkan KHR/FDM
+candidates, and selected device route. Delete the FB adapter only if KHR eye
+foveation is functional and competitive on **all** intended eye-tracked release
+targets, including Frame streaming and standalone, Beyond/Monado, and Windows.
+Delete KHR only if the complete FB/META route passes the same target matrix and
+beats or matches KHR at comparable quality and graphics settings. If the
+targets truly split, keep two thin adapters behind one policy, with one active
+per Vulkan device. Neither deletion is justified by extension names alone;
+unsupported targets still render full rate.
+
+The current OpenXR session is **two primary stereo views**, with two-layer
+Vulkan multiview. Neither KHR shading rate nor FB/META density maps makes it
+quad-view rendering. OpenXR 1.1 defines the optional
+[`PRIMARY_STEREO_WITH_FOVEATED_INSET` four-view
+configuration](https://registry.khronos.org/OpenXR/specs/1.1-khr/html/xrspec.html#view_configurations),
+which can save pixels when the two wide views are rendered at lower resolution
+and the two inset views follow gaze. It also requires four view images,
+per-frame inset FoVs, compositor support, separate culling/presentation, and
+more geometry work; the specification says the wide views must still render
+the inset region for compositor blending. Valve's Frame guide lists FB/META
+foveation, not quad views, and the published [runtime extension
+inventory](https://github.khronos.org/OpenXR-Inventory/runtime_extension_support.html)
+lists `XR_VARJO_quad_views` only for Android XR and Varjo submissions, not
+SteamVR or desktop Monado. Core 1.1 support must be checked by enumerating
+view configurations on the actual runtime. Do not replace the two-view path
+until an intended runtime advertises the four-view configuration and a
+representative `mj4m1` route demonstrates better total GPU frame time and
+both-eye image quality at the same central angular resolution.
+
+The latest Astra senior review retains KHR as the production baseline because
+the FB path currently adds a coarse-color pass and full-rate depth replay, and
+the default MSAA setting disables its density-map pass after device selection.
+FB/META may still win on Frame through runtime-controlled gaze or hardware
+density-map behavior; that requires device evidence. The review also rejects
+quad views as the default until target support and a net frame-time gain are
+shown. Quad-view qualification is deferred.
 
 ## Minimal renderer adapter
 
@@ -137,6 +188,9 @@ draws; a depth prepass is not a portable substitute under FDM.
 | A parallel renderer or pass compiler would duplicate vkQuake policy | Reject; adapt the existing pass compiler at RenderPass2 emission. |
 | MSAA, supersampling and non-layered multiview affect savings/correctness | Adopt sample-aware rates, report no benefit under supersampling, merge eye maps to the finer rate when single-layer. |
 | FB/META profile update is separate from KHR shading-rate images | Keep it out of the KHR path; qualify a runtime-density-map backend later. |
+| A single backend is desirable but cross-target support is unproven | Retain KHR as production baseline and FB/META as an opt-in qualification path; remove one only after the full release-target matrix passes. |
+| FB's coarse-color pass plus depth replay may erase density-map savings; default MSAA currently disables it | Require matched-scene GPU timing, image-quality comparison, and graphics-setting compatibility before promoting FB. |
+| Quad-view inset could reduce peripheral pixels but adds geometry and needs runtime support | Defer it while qualifying the current two-view multiview path. |
 
 ## Implementation and qualification status
 

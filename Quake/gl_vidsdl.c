@@ -1988,6 +1988,7 @@ static void GL_InitDevice (void)
 #endif
 
 #if defined(VK_EXT_fragment_density_map)
+	const qboolean khr_shading_rate_candidate = fragment_shading_rate_feature_enabled;
 	// VID initializes before saved configs execute, so the current mode cvar
 	// cannot safely select a fixed-only FB device. Keep the KHR eye path when
 	// META eye capability is absent; the runtime route is still development-only.
@@ -2008,6 +2009,12 @@ static void GL_InitDevice (void)
 	}
 	else if (COM_CheckParm ("-vk-runtime-foveation") && fragment_density_map_candidate)
 		Con_Printf ("OpenXR runtime has no META eye-foveation capability; keeping KHR shading rate when available.\n");
+	if (openxr_vulkan_binding)
+		Con_Printf ("OpenXR foveation device: KHR attachment %s, FB density map %s, selected %s.\n",
+			khr_shading_rate_candidate ? "capable" : "unavailable",
+			fragment_density_map_candidate ? "candidate" : "unavailable",
+			fragment_density_map_feature_enabled ? "FB development path" :
+			(fragment_shading_rate_feature_enabled ? "KHR" : "full rate"));
 #endif
 
 #ifdef __APPLE__ // MoltenVK lies about this

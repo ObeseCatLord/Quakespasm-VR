@@ -1132,6 +1132,14 @@ static bool discover_runtime() {
 	g.gazeSupported=g.gazeSupported && gaze.supportsEyeGazeInteraction==XR_TRUE;
 	g.xdevSupported=g.xdevSupported && xdev.supportsXDevSpace==XR_TRUE;
 	g.foveationEyeSupported=g.foveationEyeSupported && foveationEye.supportsFoveationEyeTracked==XR_TRUE;
+	{
+		char line[192];
+		std::snprintf(line,sizeof(line),
+			"OpenXR foveation extensions: FB set %s, META eye profile %s, EXT gaze action %s",
+			g.foveationSupported ? "yes" : "no", g.foveationEyeSupported ? "yes" : "no",
+			g.gazeSupported ? "yes" : "no");
+		say(line);
+	}
 	XrInstanceProperties instanceProperties={XR_TYPE_INSTANCE_PROPERTIES};
 	if(ok("xrGetInstanceProperties",g.xr.GetInstanceProperties(g.instance,&instanceProperties))) std::memcpy(g.runtime,instanceProperties.runtimeName,sizeof(g.runtime));
 	g.runtime[sizeof(g.runtime)-1]=0;
