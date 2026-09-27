@@ -218,12 +218,14 @@ contract is unchanged. Add small donor draw/context hooks for prepared geometry
 and material data; do not copy the current monolithic `r_alias.c` over the donor
 or introduce a second asset/model manager.
 
-Preserve inherited OpenVR support as well as OpenXR. Reuse its input/pose backend;
-current OpenVR submission uses GL textures, so Vulkan compositor integration is
-still explicit work. Keeping an OpenVR DLL import alone is insufficient. Retain
-inherited dependencies such as `openvr.h`, bindings, assets and defaults even when
-they do not appear in the inherited-to-product diff. Ordinary desktop and
-non-eye-tracked VR must continue to work.
+Preserve inherited VR behavior through the OpenXR adapter, including poses,
+controller bindings, haptics, menus, avatars and session continuity. The later
+[feature-map runtime decision](migration-feature-map.md#implementation-order-and-architecture)
+sets OpenXR and desktop as release targets; a second OpenVR Vulkan compositor
+is not required. Keep the old `openvr.h` and OpenGL transport in the source
+reference for behavioral comparison, and migrate assets/defaults that still
+serve the OpenXR product. Ordinary desktop and non-eye-tracked VR must continue
+to work.
 
 ### 4. Integrate stereo and optional effects within donor ownership
 
@@ -341,6 +343,11 @@ No builds, runtime tests or exhaustive per-behavior qualification were performed
 | Specify CSQC scheduling and retain prediction/host cadence together | Adopted. Added the donor worker-HUD incompatibility and a narrow owner-thread adaptation; pinned interoperability references are required |
 | Make inherited OpenVR preservation unconditional | Adopted. Included Vulkan compositor work and unchanged inherited dependencies/assets/defaults in the ledger |
 | Do not infer speed or maintainability from clean merges or file counts | Adopted. Performance comparisons and a substantive upstream merge rehearsal remain qualification requirements |
+
+The OpenVR row records that review's historical disposition. The later user
+release target supersedes its runtime-backend requirement: preserve the
+behaviors through OpenXR, without implementing a second compositor. See
+[runtime migration qualification](migration-feature-map.md#implementation-order-and-architecture).
 
 Outstanding uncertainties are adapter size, full ledger equivalence, measured
 performance and runtime/device qualification. They require implementation evidence,
