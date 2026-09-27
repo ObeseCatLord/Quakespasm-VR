@@ -6998,8 +6998,6 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 	if (cmd && cmd->vr_gorilla.flags &&
 		!VRG_InputValid (&cmd->vr_gorilla))
 		return "invalid raw Gorilla input";
-	if ((int)ent->v.flags & FL_WATERJUMP)
-		return "waterjump state is outside the dry trial";
 	for (i = 0; i < 3; i++)
 	{
 		if (!isfinite (ent->v.origin[i]))
@@ -7008,8 +7006,8 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 			return "owner has a non-finite velocity";
 	}
 	SV_CheckWater (ent);
-	if (ent->v.waterlevel != 0)
-		return "owner is not dry";
+	if (ent->v.waterlevel < 0 || ent->v.waterlevel > 3)
+		return "invalid owner water level";
 
 	customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
 	if (customphysics && customphysics->function)
@@ -7116,6 +7114,40 @@ static void SV_PrivateWalkTrialDrop (client_t *client, const char *reason)
 		SV_DropClient (false);
 }
 
+/* The pinned stock PreThink owns water sounds, damage and flags. Its velocity
+ * drag and ledge-jump impulse overlap the selected PMove owner. Adapt the
+ * inherited SV_FilterLegacyPMoveQCVelocityDelta at this command boundary:
+ * remove only those stock velocity edits, preserving any residual QC force.
+ * A zeroed velocity may be an intentional teleport pause and stays zero. */
+static void SV_PrivateWalkTrialReconcileQCWater (edict_t *ent,
+	const vec3_t before, int before_flags, int before_waterlevel,
+	float before_health, float before_teleport_time, float seconds)
+{
+	vec3_t delta, stock_drag;
+	const int after_flags = (int)ent->v.flags;
+	const float after_teleport_time = ent->v.teleport_time;
+	const qboolean qc_waterjump = (after_flags & FL_WATERJUMP) &&
+		(before_waterlevel == 2) &&
+		(!(before_flags & FL_WATERJUMP) ||
+		 after_teleport_time > before_teleport_time ||
+		 fabsf (ent->v.velocity[2] - 225.0f) < MOVE_EPSILON);
+
+	if (VectorCompare (ent->v.velocity, vec3_origin) &&
+		!VectorCompare (before, vec3_origin))
+		return;
+	VectorSubtract (ent->v.velocity, before, delta);
+	VectorClear (stock_drag);
+	if (before_waterlevel > 0 && !(before_flags & FL_WATERJUMP) &&
+		before_health >= 0)
+	{
+		VectorScale (before, -0.8f * before_waterlevel * seconds, stock_drag);
+		VectorSubtract (delta, stock_drag, delta);
+	}
+	if (qc_waterjump)
+		delta[2] -= 225.0f - (before[2] + stock_drag[2]);
+	VectorAdd (before, delta, ent->v.velocity);
+}
+
 /* This owner runs only for explicitly selected private peers. Queue retirement
  * remains in SV_FinishPrivateUsercmds, after this function reports completion. */
 static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client,
@@ -7129,8 +7161,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	double saved_host_frametime = host_frametime;
 	float saved_qc_frametime = pr_global_struct->frametime;
 	vec3_t bounds[2], prethink_velocity;
-	float seconds, prethink_flags, prethink_teleport_time;
-	int prethink_groundentity;
+	float seconds, prethink_health, prethink_teleport_time, postthink_teleport_time;
+	float premove_teleport_time;
+	int prethink_flags, prethink_groundentity, prethink_waterlevel;
+	qboolean qc_waterjump_started;
 	qboolean run_command = false, was_grounded = false, weapon_alive;
 	qboolean friendly_fire_scope;
 	qboolean command_completed = false, suppress_trigger = false;
@@ -7324,12 +7358,15 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	pr_global_struct->frametime = seconds;
 	SV_ClientUpdateAnglesForClient (client);
 	SV_ApplyPrivateRoomScaleMove (ent, client);
+	SV_CheckWater (ent);
 
 	VectorCopy (ent->v.velocity, prethink_velocity);
-	prethink_flags = ent->v.flags;
+	prethink_flags = (int)ent->v.flags;
 	prethink_groundentity = (int)ent->v.groundentity;
+	prethink_waterlevel = (int)ent->v.waterlevel;
+	prethink_health = ent->v.health;
 	prethink_teleport_time = ent->v.teleport_time;
-	was_grounded = ((int)prethink_flags & FL_ONGROUND) != 0;
+	was_grounded = (prethink_flags & FL_ONGROUND) != 0;
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->frametime = seconds;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
@@ -7342,6 +7379,15 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		failure = "player removed during PreThink";
 		goto cleanup;
 	}
+	qc_waterjump_started = !(prethink_flags & FL_WATERJUMP) &&
+		((int)ent->v.flags & FL_WATERJUMP);
+	postthink_teleport_time = ent->v.teleport_time;
+	if (prethink_waterlevel > 0 || ((int)ent->v.flags & FL_WATERJUMP))
+		SV_PrivateWalkTrialReconcileQCWater (ent, prethink_velocity,
+			prethink_flags, prethink_waterlevel, prethink_health,
+			prethink_teleport_time, seconds);
+	/* Keep QC's metadata visible through the scheduled weapon Think. PMove
+	 * still owns the movement timer and publishes its final flag below. */
 	/* Stock QC owns jump sounds and flags; PMove owns the actual dry jump
 	 * impulse. Preserve a teleporter's deliberate pause at zero velocity. */
 	if (was_grounded && (command.buttons & 2) && ent->v.teleport_time <= qcvm->time &&
@@ -7412,6 +7458,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	pmove.numtouch = 0;
 	pmove.onground = false;
 	pmove.groundent = 0;
+	/* A scheduled QC Think can change this after PlayerPreThink. Do not
+	 * restore an earlier deadline over that callback when PMove clears a
+	 * waterjump timer. */
+	premove_teleport_time = ent->v.teleport_time;
 	if (was_grounded || ((int)ent->v.flags & FL_ONGROUND))
 	{
 		int groundprog = (int)ent->v.groundentity;
@@ -7506,6 +7556,20 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		ent->v.flags = (int)ent->v.flags & ~FL_JUMPRELEASED;
 	else
 		ent->v.flags = (int)ent->v.flags | FL_JUMPRELEASED;
+	if (result_waterjump_secs > 0.0f)
+	{
+		ent->v.flags = (int)ent->v.flags | FL_WATERJUMP;
+		ent->v.teleport_time = qcvm->time + result_waterjump_secs;
+	}
+	else
+	{
+		ent->v.flags = (int)ent->v.flags & ~FL_WATERJUMP;
+		if (premove_teleport_time == postthink_teleport_time)
+			ent->v.teleport_time = (prethink_flags & FL_WATERJUMP) ? 0.0f :
+				(qc_waterjump_started ? prethink_teleport_time : postthink_teleport_time);
+		else
+			ent->v.teleport_time = premove_teleport_time;
+	}
 	ent->v.waterlevel = pmove.waterlevel;
 	ent->v.watertype = CONTENTS_EMPTY;
 	if (pmove.watertype & CONTENTBIT_LAVA)

@@ -2,11 +2,12 @@
 
 This is the follow-up Astra Max senior review of the selected per-command
 stock-QuakeC movement owner on `2.0`. It corrects the earlier design brief:
-**prediction is already enabled** for an active selected client. The server
+**prediction was already enabled** for an active selected dry client. The server
 sets `MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED` in
 `Quake/sv_main.c:1884-1894`, and the client publishes successful replay in
-`Quake/cl_main.c:1837`. The trial remains default-off and dry-only. This review
-does not qualify wet movement or unrestricted private prediction.
+`Quake/cl_main.c:1837`. The trial remains default-off. The water adapter now
+admits wet states after a dry selection but withholds prediction while wet or
+waterjumping; its real-map behavior remains unqualified.
 
 ## Verified architecture and decision
 
@@ -23,9 +24,12 @@ At review time the server seeded `pmove.waterjumptime = 0` and exported only
 jump debounce (`STAT_PRIVATE_JUMP_SECS`). The current adapter now retains and
 exports the authoritative waterjump timer as `STAT_PRIVATE_WATERJUMP_SECS`,
 requires its receipt in selected snapshots, and seeds client replay from it
-before command-journal propagation. The dry-only gate still prevents claiming
-water support. Before permitting wet prediction, QuakeC/PMove water ownership
-and the actual waterjump trajectory must be qualified. The existing `PM_PlayerMove`
+before command-journal propagation. A follow-up adapter now admits water
+through the selected PMove owner and filters stock QuakeC water drag and ledge
+impulse from its PreThink velocity delta. It publishes PMove's waterjump flag
+and expiry back to QuakeC while keeping the existing completed-command ACK.
+Before permitting wet prediction, this handoff and the actual waterjump
+trajectory must be qualified on a real map. The existing `PM_PlayerMove`
 categorizes water and handles swimming, friction, and ledge waterjump; it must
 remain the movement solver for selected commands. Changes to admission,
 snapshot permission, QC velocity ownership, waterjump state, and completed
@@ -36,6 +40,10 @@ is a useful behavior reference, not proof of byte-for-byte identity with this
 trial's pinned `progs.dat`. Its `PlayerPreThink` calls `WaterMove` and
 `CheckWaterJump`; `WaterMove` modifies velocity in water and `CheckWaterJump`
 can set `FL_WATERJUMP`, upward velocity and a two-second `teleport_time`.
+The configured Straight `id1/pak0.pak` contains a `progs.dat` with the trial's
+exact 340014-byte size and CRC16 `0x0bf8`, so that installed asset is a suitable
+local test target. Those two checks do not prove it was compiled from the
+linked QuakeC source.
 `Quake/pmove.c:1927-2089` also categorizes water, applies friction and detects
 ledge waterjumps. QSS-M restores the velocity from before stock PreThink when
 its PMove owner runs (`QSS-M/Quake/sv_user.c:673-686`), explicitly avoiding
@@ -50,9 +58,17 @@ other QuakeC forces. Its `SV_RunPMoveForEntity` seeds PMove waterjump from
 `FL_WATERJUMP` and `teleport_time`, then publishes the resulting timer back to
 the edict (`:5777-5845`). It is a behavior reference, not a drop-in server
 transplant: that fork runs a different QC cadence and owns movement policy
-transitions outside `2.0`'s selected queue. Port only the velocity/timer
-translation at the existing selected-command boundary, and check teleporter
-pause, ledge jump, and QuakeC-authored force separately.
+transitions outside `2.0`'s selected queue. The selected-command boundary now
+uses its velocity/timer translation as a reference. A synthetic fixture checks
+the velocity handoff; teleporter pause, ledge jump, and QuakeC-authored force
+still need the real-map command/ACK proof below.
+
+A follow-up Astra source review found no confirmed P0/P1 in the pinned stock
+scope, but identified a conditional callback overwrite: scheduled weapon Think
+can change `teleport_time` after PreThink, and restoring the earlier value at
+PMove publication would erase that change. The zero-waterjump publication now
+preserves a Think-written deadline. Reachability with the pinned stock weapon
+Think and real-map timer behavior remain unverified.
 
 ## Acceptance proof for the water slice
 

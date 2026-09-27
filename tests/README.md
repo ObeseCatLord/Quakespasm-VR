@@ -1373,8 +1373,27 @@ For this focused Linux loopback probe, use fresh client/server profiles, the
 debug-symbol Linux binary, GDB with Python support, and stock `e1m1` assets. The
 owner must qualify as a live, dry stock WALK/SLIDEBOX player with the pinned
 stock `progs.dat`; raw Gorilla hands are accepted, while trusted Gorilla
-motion, custom physics and riding a pusher are outside the trial. Start a fresh
-selected private server:
+motion, custom physics and riding a pusher are outside the trial.
+
+After selection, the current adapter continues the same per-command owner
+through water and withholds prediction permission while wet or waterjumping.
+Its QuakeC/PMove water velocity handoff has a focused fixture:
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-sanitize-recover=all -fno-omit-frame-pointer \
+  tests/private_water_velocity_fixture.c Quake/mathlib.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-private-water-asan
+ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-private-water-asan
+```
+
+This checks removal of stock drag and ledge impulse, preservation of another
+QuakeC force and a deliberate pause. It is not a real-map water trajectory or
+mixed-peer proof; the selected water path remains experimental.
+
+Start a fresh selected private server:
 
 ```sh
 "$QSVR_BINARY" -dedicated 4 -ip 127.0.0.1 -port 28792 \

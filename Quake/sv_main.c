@@ -864,8 +864,9 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 	if (sv.numcustomstats)
 		return "custom stats are outside the stock movement-stat trial";
 	if (client->edict->v.movetype != MOVETYPE_WALK ||
-		client->edict->v.solid != SOLID_SLIDEBOX || client->edict->v.waterlevel != 0)
-		return "requires a dry WALK/SOLID_SLIDEBOX owner";
+		client->edict->v.solid != SOLID_SLIDEBOX ||
+		(!client->private_pmove_walk_selected && client->edict->v.waterlevel != 0))
+		return "requires a stock WALK/SOLID_SLIDEBOX owner, dry at selection";
 	if (client->cmd.vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
 	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
@@ -1888,7 +1889,16 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			client->vr_gorilla_last_sequence == client->private_completed_move &&
 			SV_GorillaAckStateIsFinite (client);
 		if (selected && !sv.paused)
-			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED;
+		{
+			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE;
+			/* Wet movement and an active ledge jump keep the selected command
+			 * owner, but replay remains gated until QC/PMove parity is proven. */
+			if (client->edict && !client->edict->free &&
+				client->edict->v.waterlevel == 0 &&
+				!((int)client->edict->v.flags & FL_WATERJUMP) &&
+				client->private_pmove_waterjump_secs == 0.0f)
+				ack_flags |= MOVEACK_FLAG_PREDICTION_ALLOWED;
+		}
 		if (client->private_move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE)
 			ack_flags |= MOVEACK_FLAG_DISCONTINUITY;
 		if (gorilla_ack)
