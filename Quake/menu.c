@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "in_sdl.h"
 #include "r_ssao.h"
 #include "vr_input.h"
+#include "vr_foveation_policy.h"
 #include "vr_fbt_storage.h"
 #include "view.h"
 #include "addon_catalog.h"
@@ -2999,11 +3000,12 @@ static void M_VROptions_Adjust (int dir)
 	switch (vr_options_cursor)
 	{
 	case VR_OPT_EYE_TRACKING:
-		Cvar_SetValueQuick (&vr_eye_tracking, vr_eye_tracking.value == 0 ? 1 : 0);
+		Cvar_SetValueQuick (&vr_eye_tracking,
+			VRF_EyeTrackingEnabled (vr_eye_tracking.value) ? 0 : 1);
 		break;
 	case VR_OPT_FOVEATION:
 	{
-		int mode = CLAMP (0, (int)vr_foveation.value, 2);
+		int mode = VRF_RequestedMode (vr_foveation.value);
 		mode = (mode + (dir > 0 ? 1 : 2)) % 3;
 		Cvar_SetValueQuick (&vr_foveation, (float)mode);
 		break;
@@ -3142,7 +3144,7 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 	static const char *const crosshair_modes[] = {"off", "point", "line"};
 	qpic_t *p;
 	const int top = MENU_TOP;
-	const int foveation = CLAMP (0, (int)vr_foveation.value, 2);
+	const int foveation = VRF_RequestedMode (vr_foveation.value);
 	const int mirror = isfinite (vr_mirror.value) && vr_mirror.value >= 0.0f &&
 		vr_mirror.value <= 2.0f ? (int)vr_mirror.value : 1;
 	const int follow = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
@@ -3165,7 +3167,8 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 	}
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_EYE_TRACKING, "Eye Tracking");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_EYE_TRACKING, vr_eye_tracking.value != 0);
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_EYE_TRACKING,
+		VRF_EyeTrackingEnabled (vr_eye_tracking.value));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, "Foveation");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_modes[foveation]);
