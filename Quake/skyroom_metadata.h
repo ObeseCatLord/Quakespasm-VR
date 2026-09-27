@@ -37,4 +37,22 @@ static inline qboolean Skyroom_ParseMetadata (const char *text, float values[8],
 	return true;
 }
 
+/* The inherited camera rule applies independently to the center view and
+ * each eye: skyroom origin + parallax * viewer origin. Keep the server PVS
+ * origin and future renderer view origins on this same rule. */
+static inline qboolean Skyroom_ViewOrigin (const float skyroom[4], const float viewer[3], float out[3])
+{
+	if (!skyroom || !viewer || !out)
+		return false;
+	for (int i = 0; i < 3; ++i)
+	{
+		if (!isfinite (skyroom[i]) || !isfinite (skyroom[3]) || !isfinite (viewer[i]))
+			return false;
+		out[i] = skyroom[i] + skyroom[3] * viewer[i];
+		if (!isfinite (out[i]))
+			return false;
+	}
+	return true;
+}
+
 #endif

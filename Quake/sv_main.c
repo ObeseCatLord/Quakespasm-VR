@@ -3300,8 +3300,7 @@ static void SV_AddSkyRoomPVS (const vec3_t org, qmodel_t *worldmodel)
 	vec3_t skyorg;
 	if (!sv_skyroom_pvs.value || !sv.skyroom_pos_known || !worldmodel || !worldmodel->nodes)
 		return;
-	VectorMA (sv.skyroom_pos, sv.skyroom_pos[3], org, skyorg);
-	if (!isfinite (skyorg[0]) || !isfinite (skyorg[1]) || !isfinite (skyorg[2]))
+	if (!Skyroom_ViewOrigin (sv.skyroom_pos, org, skyorg))
 		return;
 	/* SV_FatPVS already cleared and populated the shared fatpvs buffer for
 	 * this viewer. Extend that buffer instead of replacing the main PVS. */

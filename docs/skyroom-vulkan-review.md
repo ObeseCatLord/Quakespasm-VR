@@ -87,3 +87,38 @@ verified map or label a synthetic fixture as such.
 The initial preparation on `2.0` parses client/server worldspawn metadata and
 adds the server-side skyroom PVS union. It does not render a skyroom view. The
 vertical proof and renderer work above remain open.
+
+## Render ownership checkpoint (2026-09-27)
+
+`R_DescribeFrame` compiles one scene view's world, entities, SSAO, sky,
+transparency, particles, and UI into ordered graphics work. `R_RecordFrame`
+executes the recorded secondary contexts only after the render tasks finish.
+The current `R_MarkSurfacesPrepare` resets the world texture chains and
+`surfvis` for each mark. In indirect mode `R_IndirectComputeDispatch` uploads
+that one `surfvis` bitset to a double-buffered, **one-view-per-frame** GPU
+visibility region and generates one indirect-command set. Recording a second
+view with the current buffers would therefore make one view consume the other
+view's visibility. Reusing the same secondary context would likewise replace
+its recorded commands before the frame executes. A second call to
+`R_RenderView` is not a valid adapter.
+
+The incremental design keeps the current scene graph and adds a view slot to
+its existing visibility/command owners. Record the skyroom and main views
+serially at first, preserving each view's chains or `surfvis`, matrices,
+entity set, and secondary contexts until execution. The skyroom view must skip
+frame-wide animation/particle simulation and viewmodel/HUD work; the main view
+retains these once per frame. The first code separation moved light animation
+and dynamic-light marking out of view setup without changing current task
+ordering. `Skyroom_ViewOrigin` now owns the inherited parallax formula used by
+server PVS and future center/eye cameras; each eye still needs its own input.
+
+The first render-pass experiment remains a color-preserving skyroom prepass
+followed by cleared main-view depth. `R_CreateGraphicsPasses` can load
+attachments after an earlier pass, but the current scene depth and MSAA
+attachment policies require explicit validation before using that path.
+Inspect the actual color/depth/stencil layouts with standard, OIT, MBOIT,
+MSAA, SSAO, OpenXR hidden-area stencil, and density-map configurations. If
+color preservation cannot satisfy those combinations, use an offscreen
+skyroom target and composition in the same compiled frame graph. Do not add a
+second renderer or make indirect rendering silently reuse the main view's
+visibility.
