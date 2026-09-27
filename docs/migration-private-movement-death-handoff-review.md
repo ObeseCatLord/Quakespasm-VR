@@ -52,3 +52,16 @@ end to end. A packet ACK, isolated fixture or successful build is not by
 itself parity proof. Current sandbox execution denies ptrace and UDP sockets,
 so the real-map loopback run needs an environment that permits them. Headset,
 eye-tracking, Windows and ARM qualification remain separate.
+
+## Native owner reuse checkpoint
+
+`SV_Physics_ClientNativeFrame` now contains the unchanged ordinary client
+QuakeC/weapon/movement/PostThink body. Its caller passes the exact input
+sequence that may be marked complete; the public/private ordinary path still
+passes `lastmovemessage`, preserving its previous behavior. The selected
+dispatcher remains a separate gate in `SV_Physics_Client` and still rejects
+unsupported state. This extraction is the minimal reuse boundary for a later
+terminal-state adapter: do not call the native frame after a selected command
+has already run callbacks, and do not pass the selected queue's accepted tail
+as the completed sequence. The Linux debug binary builds with the extraction;
+no death/respawn behavior is qualified by that build.

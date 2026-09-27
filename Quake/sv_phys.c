@@ -7960,14 +7960,16 @@ static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
 	return braced;
 }
 
-static void SV_Physics_Client (edict_t *ent, int num)
+/* The existing world-frame QuakeC and native movement owner. Pass the exact
+ * sequence whose input this frame consumed; a future selected-state adapter
+ * must never substitute the latest accepted (possibly still queued) tail. */
+static void SV_Physics_ClientNativeFrame (edict_t *ent, int num, int completed_move)
 {
 	sv_client_move_frame_t move_frame;
 	sv_vr_weapon_pose_scope_t weapon_scope;
 	client_t *client = &svs.clients[num - 1];
 	edict_t				  *retained_pusher;
-	int completed_move, movetype, dispatch_movetype;
-	unsigned queue_offset;
+	int movetype, dispatch_movetype;
 	qboolean frame_completed = false;
 	qboolean suppress_trigger = false, saved_button0 = false;
 	qboolean gorilla_braced = false;
@@ -7976,29 +7978,6 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	qboolean friendly_fire_scope;
 	vec3_t callback_origin, callback_delta;
 
-	if (!svs.clients[num - 1].active)
-		return; // unconnected slot
-	if (ent->free || ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
-		SV_ClearRecentInstantTeleportTriggerForClientSlot (num - 1);
-	SV_VRContactObserveSpawn (client);
-
-	if (!svs.clients[num - 1].knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
-		return; // don't spam prethinks before we called putclientinserver.
-
-	if (SV_PrivateWalkTrialSelected (client))
-	{
-		/* Bound catch-up work while preserving each command's QC lifecycle. */
-		for (queue_offset = 0; queue_offset < 8; queue_offset++)
-		{
-			if (!client->active || !SV_PrivateWalkTrialSelected (client) ||
-				!SV_Physics_ClientPrivateWalkTrial (ent, client,
-					queue_offset, queue_offset == 0))
-				break;
-		}
-		return;
-	}
-
-	completed_move = client->lastmovemessage;
 	ED_Retain (ent);
 	if (svs.clients[num - 1].protocol_qsvr == QSVR_PROTOCOL_PINNED)
 		SV_ApplyPrivateRoomScaleMove (ent, &svs.clients[num - 1]);
@@ -8155,6 +8134,36 @@ done:
 	if (retained_pusher)
 		ED_Release (retained_pusher);
 	ED_Release (ent);
+}
+
+static void SV_Physics_Client (edict_t *ent, int num)
+{
+	client_t *client = &svs.clients[num - 1];
+	unsigned queue_offset;
+
+	if (!client->active)
+		return; // unconnected slot
+	if (ent->free || ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
+		SV_ClearRecentInstantTeleportTriggerForClientSlot (num - 1);
+	SV_VRContactObserveSpawn (client);
+
+	if (!client->knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
+		return; // don't spam prethinks before we called putclientinserver.
+
+	if (SV_PrivateWalkTrialSelected (client))
+	{
+		/* Bound catch-up work while preserving each command's QC lifecycle. */
+		for (queue_offset = 0; queue_offset < 8; queue_offset++)
+		{
+			if (!client->active || !SV_PrivateWalkTrialSelected (client) ||
+				!SV_Physics_ClientPrivateWalkTrial (ent, client,
+					queue_offset, queue_offset == 0))
+				break;
+		}
+		return;
+	}
+
+	SV_Physics_ClientNativeFrame (ent, num, client->lastmovemessage);
 }
 
 //============================================================================
