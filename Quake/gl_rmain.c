@@ -32,6 +32,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_weapon_calibration.h"
 #include "r_vrik_render.h"
 #include "vr_weapon_menu.h"
+#include "voice.h"
 
 #include <float.h>
 #include <math.h>
@@ -102,6 +103,7 @@ static struct
 } vr_fbt_visual_frame;
 
 cvar_t r_drawentities = {"r_drawentities", "1", CVAR_NONE};
+cvar_t cl_coop_nametags = {"cl_coop_nametags", "1", CVAR_ARCHIVE};
 cvar_t r_drawviewmodel = {"r_drawviewmodel", "1", CVAR_NONE};
 cvar_t scr_speeds = {"scr_speeds", "0", CVAR_NONE};
 cvar_t r_pos = {"r_pos", "0", CVAR_NONE};
@@ -2272,6 +2274,8 @@ static void R_DrawAlphaEntitiesTask (int index, void *use_tasks)
 R_DrawParticlesTask
 ================
 */
+static void R_DrawCoopNametags (cb_context_t *cbx);
+
 static void R_DrawParticlesTask (void *unused)
 {
 	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_PARTICLES];
@@ -2290,6 +2294,8 @@ static void R_DrawParticlesTask (void *unused)
 	cb_context_t *fte_blend_cbx = vulkan_globals.secondary_cb_contexts[SCBX_FTE_PARTICLES_BLEND];
 	R_SceneViewport (fte_blend_cbx, 0.0f);
 	PScript_DrawParticles (fte_blend_cbx);
+	R_SceneViewport (fte_blend_cbx, 0.0f);
+	R_DrawCoopNametags (fte_blend_cbx);
 }
 
 static void R_DrawFBTCalibrationVisuals (cb_context_t *cbx)
@@ -2316,6 +2322,59 @@ static void R_DrawFBTCalibrationVisuals (cb_context_t *cbx)
 		for (char *character = label; *character; ++character)
 			*character |= 0x80;
 		Draw_String_3D (cbx, label_origin, 8.0f, label);
+	}
+	R_EndDebugUtilsLabel (cbx);
+}
+
+/* The source co-op tags follow translucent effects and test scene depth.
+ * Reuse the existing late particle subpass; its stereo basic vertex shader
+ * projects the same world glyphs independently into both OpenXR views. */
+static void R_DrawCoopNametags (cb_context_t *cbx)
+{
+	extern gltexture_t *char_texture;
+	const vec3_t black = {0, 0, 0};
+	if (!cl_coop_nametags.value || cl.gametype != GAME_COOP || !r_drawentities.value ||
+		!cl.scores || !char_texture)
+		return;
+
+	R_BeginDebugUtilsLabel (cbx, "co-op nametags");
+	for (int entity_index = 1; entity_index <= cl.maxclients &&
+		entity_index <= MAX_SCOREBOARD && entity_index < cl.num_entities; ++entity_index)
+	{
+		const int player = entity_index - 1;
+		entity_t *entity = &cl.entities[entity_index];
+		vec3_t origin, shadow_origin, color;
+		char label[MAX_SCOREBOARDNAME + 5];
+		float scale, peak, boost;
+		byte *rgb;
+		if (entity_index == cl.viewentity || !entity->model ||
+			entity->model->type != mod_alias || !cl.scores[player].name[0])
+			continue;
+
+		scale = ENTSCALE_DECODE (entity->netstate.scale);
+		if (!isfinite (scale) || scale <= 0 || !isfinite (entity->model->maxs[2]))
+			continue;
+		VectorCopy (entity->origin, origin);
+		origin[2] += entity->model->maxs[2] * scale + 7.0f;
+		if (!isfinite (origin[0]) || !isfinite (origin[1]) || !isfinite (origin[2]))
+			continue;
+		if (Voice_SpeakerTalking (player))
+			q_snprintf (label, sizeof (label), "((%s))", cl.scores[player].name);
+		else
+			q_strlcpy (label, cl.scores[player].name, sizeof (label));
+
+		rgb = (byte *)&d_8to24table[((cl.scores[player].colors >> 4) & 15) * 16 + 8];
+		for (int axis = 0; axis < 3; ++axis)
+			color[axis] = rgb[axis] / 255.0f;
+		peak = q_max (color[0], q_max (color[1], color[2]));
+		boost = peak > 0 ? q_max (1.65f, 0.55f / peak) : 0.0f;
+		for (int axis = 0; axis < 3; ++axis)
+			color[axis] = peak > 0 ? color[axis] * boost : 0.55f;
+
+		VectorMA (origin, 0.35f, vright, shadow_origin);
+		VectorMA (shadow_origin, -0.35f, vup, shadow_origin);
+		Draw_String_3DColor (cbx, shadow_origin, vright, vup, 3.0f, label, black, 0.65f);
+		Draw_String_3DColor (cbx, origin, vright, vup, 3.0f, label, color, 1.0f);
 	}
 	R_EndDebugUtilsLabel (cbx);
 }

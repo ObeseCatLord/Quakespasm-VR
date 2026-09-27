@@ -1655,6 +1655,36 @@ void Draw_String_3D (cb_context_t *cbx, vec3_t coords, float size, const char *s
 	vulkan_globals.vk_cmd_draw (cbx->cb, num_verts, 1, 0, 0);
 }
 
+/* The co-op name tag reuses world glyph geometry and scene projection. Its
+ * late-particle pipeline tests depth without writing it, as in OpenVR. */
+void Draw_String_3DColor (cb_context_t *cbx, const vec3_t origin, const vec3_t right, const vec3_t up,
+	float size, const char *str, const vec3_t color, float alpha)
+{
+	if (!str || !*str || !char_texture)
+		return;
+	const byte vertex_color[4] = {
+		(byte)(CLAMP (0.0f, color[0], 1.0f) * 255.0f),
+		(byte)(CLAMP (0.0f, color[1], 1.0f) * 255.0f),
+		(byte)(CLAMP (0.0f, color[2], 1.0f) * 255.0f),
+		(byte)(CLAMP (0.0f, alpha, 1.0f) * 255.0f),
+	};
+	VkBuffer buffer;
+	VkDeviceSize buffer_offset;
+	const int num_verts = Draw_BuildStringVertices_3D (origin, right, up, size, str,
+		vertex_color, &buffer, &buffer_offset);
+	if (num_verts == 0)
+		return;
+
+	R_BindGraphicsPipeline (cbx, PIPELINE_COOP_NAMETAG);
+	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0,
+		sizeof (vulkan_globals.view_projection_matrix), vulkan_globals.view_projection_matrix);
+	Fog_DisableGFog (cbx);
+	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
+	vulkan_globals.vk_cmd_bind_descriptor_sets (cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+		cbx->current_pipeline.layout.handle, 0, 1, &char_texture->descriptor_set, 0, NULL);
+	vulkan_globals.vk_cmd_draw (cbx->cb, num_verts, 1, 0, 0);
+}
+
 void Draw_String_3DDepth (
 	cb_context_t *cbx, const vec3_t origin, const vec3_t right, const vec3_t up, float size, const char *str, const vec3_t color)
 {

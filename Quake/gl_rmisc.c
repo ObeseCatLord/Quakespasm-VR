@@ -45,6 +45,7 @@ extern cvar_t r_waterwarpcompute;
 extern cvar_t r_oldskyleaf;
 extern cvar_t r_drawworld;
 extern cvar_t r_showtris;
+extern cvar_t cl_coop_nametags;
 extern cvar_t r_showskel;
 extern cvar_t r_showbboxes;
 extern cvar_t r_showbboxes_think;
@@ -3372,6 +3373,23 @@ static void R_CreateBasicPipelines ()
 		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_BASIC_BLEND][stage][variant], &infos, basic_layout, "basic_blend");
 	}
 
+	/* Only co-op tags need basic glyphs after transparency. Reuse the FTE
+	 * subpass, which reads scene depth and follows its blended particles. */
+	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
+	{
+		R_CopyPipelineCreateInfos (&infos, &base);
+		R_SetPipelineRenderPassVariant (&infos, SUBPASS_FTE_PARTICLES, variant);
+		infos.color_blend_state.attachmentCount = MAIN_COLOR_ATTACHMENT_COUNT;
+		infos.blend_attachment_states[0].blendEnable = VK_TRUE;
+		infos.rasterization_state.cullMode = VK_CULL_MODE_NONE;
+		infos.depth_stencil_state.depthTestEnable = VK_TRUE;
+		infos.depth_stencil_state.depthWriteEnable = VK_FALSE;
+		infos.shader_stages[0].module = basic_vert_module;
+		infos.shader_stages[1].module = basic_frag_module;
+		R_CreateGraphicsPipeline (&graphics_pipelines[PIPELINE_COOP_NAMETAG][SUBPASS_FTE_PARTICLES][variant],
+			&infos, vulkan_globals.basic_pipeline_layout, "coop_nametag");
+	}
+
 	/* Depth-tested world glyphs are only emitted by the OpenXR wheel. Avoid
 	 * compiling an extra scene pipeline for ordinary desktop sessions. */
 	if (vulkan_globals.stereo_active)
@@ -4978,6 +4996,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_oldskyleaf);
 	Cvar_RegisterVariable (&r_drawworld);
 	Cvar_RegisterVariable (&r_showtris);
+	Cvar_RegisterVariable (&cl_coop_nametags);
 	Cvar_RegisterVariable (&r_showskel);
 	Cvar_RegisterVariable (&r_showbboxes);
 	Cvar_RegisterVariable (&r_showbboxes_think);
