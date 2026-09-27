@@ -46,6 +46,10 @@ Quake CRC16 `0x2ad3`, and vkQuake's folded-MD4 `0x5960bef3` (computed with
 the actual `Quake/mdfour.c` implementation). Its function table labels
 `PlayerPreThink`, `PlayerPostThink`, `PlayerJump`, `WaterMove`, and
 `CheckWaterJump` in `client.qc`; it has no `SV_RunClientCommand` function.
+The binary global-definition table exposes `map_jumpheight` as a saved float
+at global slot 582; its field-definition table exposes `onladder` and the
+jump-boots state. A future adapter should resolve and validate these names
+against the pinned identity, rather than hard-code the slot in generic PMove.
 The installed `decomp` archive contains a decompiled `client.qc` and a
 `progs.src` whose header identifies an FTEQCC 5753 build. That archive and
 the separate `my_progs/client.qc` are **not byte-identical**; do not treat

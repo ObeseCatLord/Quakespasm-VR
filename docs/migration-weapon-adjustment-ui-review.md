@@ -1,5 +1,11 @@
 # Controller weapon adjustment on the vkQuake 2.0 client
 
+> Historical design review. The multiplayer overlay described below was
+> removed from runtime calibration in `71eec741`. The current rule is one held
+> and one muzzle offset per weapon for solo and multiplayer; see
+> `migration-weapon-calibration-unification.md`. Legacy `mp_*` fields are parsed
+> for old profiles but do not affect rendering or firing commands.
+
 ## Decision and scale
 
 Restore the inherited `vradjustweapon` and `vradjustmuzzle` behavior with the
