@@ -297,6 +297,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	entity_t canonical_entity;
 	float source_palette[R_VRIK_RENDER_MAX_JOINTS][12];
 	r_vrik_palette_result_t result;
+	qboolean tracked;
 
 	if (!selection || !selection->valid || selection->entity != entity ||
 		selection->id <= PLAYER_AVATAR_RANGER || selection->id >= PLAYER_AVATAR_COUNT ||
@@ -354,7 +355,8 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	ranger.matrices = source_palette;
 	ranger.capacity = R_VRIK_RENDER_MAX_JOINTS;
 	ranger.joint_count = 0;
-	if (R_VRIKSampleEntityPose (entity, &pose))
+	tracked = R_VRIKSampleEntityPose (entity, &pose);
+	if (tracked)
 	{
 		if (R_VRIKSampleEntityLowerTargets (entity, &lower_targets))
 			lower_input = &lower_targets;
@@ -367,6 +369,10 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		!R_AvatarRetargetRangerOutput (&source_rig, &target_rig, &ranger,
 			palette, R_VRIK_RENDER_MAX_JOINTS))
 		return false;
+	/* Optional target-only repairs roll back on failure. The canonical tracked
+	 * palette and its real lower targets remain the authority for this frame. */
+	R_AvatarRefineBuiltinPalette (&source_rig, &target_rig, tracked,
+		palette, R_VRIK_RENDER_MAX_JOINTS);
 
 	candidate->entity = entity;
 	candidate->model = selection->target_model;

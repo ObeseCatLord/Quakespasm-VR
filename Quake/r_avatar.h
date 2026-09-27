@@ -207,6 +207,11 @@ qboolean R_AvatarRetargetPalette (const r_avatar_rig_t *source,
 qboolean R_AvatarRetargetRangerOutput (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const r_vrik_palette_output_t *ranger,
 	float (*target_palette)[12], size_t target_capacity);
+/* Optional built-in target-palette repairs. A numerical or hierarchy failure
+ * leaves the already retargeted palette unchanged. */
+qboolean R_AvatarRefineBuiltinPalette (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, qboolean tracked,
+	float (*target_palette)[12], size_t target_capacity);
 
 /* Single-rig semantic body bases: canonical body forward/left/up to this
  * rig's model space and its inverse.  Cross-rig presentation should use the

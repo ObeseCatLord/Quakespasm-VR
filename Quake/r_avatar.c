@@ -759,6 +759,198 @@ fail:
 	memcpy(palette,saved,R_AvatarJointCount(rig->live)*12*sizeof(float));return -1;
 }
 
+/* The desktop animal torso is bind-local under the animated Hip. Ranger's
+ * upper-spine twists are not a useful animation for Dog or Fiend anatomy. */
+static qboolean R_AvatarStabilizeDesktopUpperBody(const r_avatar_rig_t *rig,
+	float *palette)
+{
+	int hip=rig->joint[MD5_VRIK_HIP], semantic=rig->profile->desktop_upperbody_bind_root;
+	int root, joint;
+	float inverse[12], local[12];
+	if(semantic<=0)return true;
+	if(semantic>=MD5_VRIK_JOINT_COUNT || hip<0)return false;
+	root=rig->joint[semantic];
+	if(root<0)return true;
+	if(!R_AvatarDescendant(rig->live,root,hip))return false;
+	R_AvatarInverseRigid(rig->live->joints[hip].bind,inverse);
+	for(joint=0;joint<R_AvatarJointCount(rig->live);++joint)
+		if(R_AvatarDescendant(rig->live,joint,root)) {
+			R_AvatarMultiply(inverse,rig->live->joints[joint].bind,local);
+			R_AvatarMultiply(palette+hip*12,local,palette+joint*12);
+		}
+	return true;
+}
+
+/* Master caps the Hip-descendant posture turn for the named animal profiles.
+ * Refuse the ambiguous partial-antipode instead of choosing an arbitrary axis. */
+static qboolean R_AvatarLimitedTurn(const float from[3],const float to[3],
+	float degrees,float turn[12])
+{
+	float a[3],b[3],axis[3],cosine,sine,angle,limit,t;
+	int r,c;
+	memcpy(a,from,sizeof(a));memcpy(b,to,sizeof(b));
+	if(!R_AvatarNormalize3(a)||!R_AvatarNormalize3(b)||
+		!isfinite(degrees)||degrees<=0)return false;
+	cosine=fmaxf(-1.0f,fminf(1.0f,DotProduct(a,b)));
+	axis[0]=a[1]*b[2]-a[2]*b[1];
+	axis[1]=a[2]*b[0]-a[0]*b[2];
+	axis[2]=a[0]*b[1]-a[1]*b[0];
+	sine=sqrtf(DotProduct(axis,axis));
+	angle=atan2f(sine,cosine);
+	limit=degrees*(float)M_PI/180.0f;
+	if(angle>limit && sine<0.0001f)return false;
+	if(sine<0.000001f) {
+		if(cosine<0)return false;
+		R_AvatarIdentity(turn);return true;
+	}
+	for(r=0;r<3;++r)axis[r]/=sine;
+	t=fminf(angle,limit);cosine=cosf(t);sine=sinf(t);
+	R_AvatarIdentity(turn);
+	for(r=0;r<3;++r)for(c=0;c<3;++c)
+		turn[r*4+c]=(r==c?cosine:0)+(1-cosine)*axis[r]*axis[c];
+	turn[1]-=sine*axis[2];turn[2]+=sine*axis[1];
+	turn[4]+=sine*axis[2];turn[6]-=sine*axis[0];
+	turn[8]-=sine*axis[1];turn[9]+=sine*axis[0];
+	return R_AvatarOrthonormal(turn);
+}
+
+static qboolean R_AvatarApplyDesktopUprightPosture(const r_avatar_rig_t *rig,
+	const r_avatar_presentation_context_t *context,float *palette)
+{
+	const r_avatar_profile_t *profile=rig->profile;
+	float from[3],to[3],hiporigin[3],turn[12],old[12],rotated[12];
+	int hip=rig->joint[MD5_VRIK_HIP],head=rig->joint[MD5_VRIK_HEAD],joint,r;
+	if(profile->posture_policy!=R_AVATAR_POSTURE_UPRIGHT)return true;
+	if(hip<0||head<0||!R_AvatarDescendant(rig->live,head,hip))return false;
+	for(r=0;r<3;++r) {
+		hiporigin[r]=palette[hip*12+r*4+3];
+		from[r]=palette[head*12+r*4+3]-hiporigin[r];
+		to[r]=context->inverse[r*4]*context->source_semantic_vertical[0]+
+			context->inverse[r*4+1]*context->source_semantic_vertical[1]+
+			context->inverse[r*4+2]*context->source_semantic_vertical[2];
+	}
+	if(!R_AvatarLimitedTurn(from,to,profile->posture_degrees,turn))return false;
+	for(joint=0;joint<R_AvatarJointCount(rig->live);++joint)
+		if(joint!=hip && R_AvatarDescendant(rig->live,joint,hip)) {
+			memcpy(old,palette+joint*12,sizeof(old));
+			R_AvatarMultiply(turn,old,rotated);
+			for(r=0;r<3;++r)
+				rotated[r*4+3]=hiporigin[r]+
+				turn[r*4]*(old[3]-hiporigin[0])+
+				turn[r*4+1]*(old[7]-hiporigin[1])+
+				turn[r*4+2]*(old[11]-hiporigin[2]);
+			memcpy(palette+joint*12,rotated,sizeof(rotated));
+		}
+	return true;
+}
+
+/* Reattach the original arm-local rotation and authored link translation to
+ * the corrected torso. This includes Dog's unmapped foreleg link. */
+static qboolean R_AvatarRebuildDesktopAnimalArms(const r_avatar_rig_t *rig,
+	const float *animated,float *palette)
+{
+	int roots[2],hands[2],side,joint,parent;
+	float inverse[12],local[12],bindlocal[12];
+	for(side=0;side<2;++side) {
+		int shoulder=side?MD5_VRIK_SHOULDER_R:MD5_VRIK_SHOULDER_L;
+		int upper=side?MD5_VRIK_UPPERARM_R:MD5_VRIK_UPPERARM_L;
+		roots[side]=rig->joint[(rig->virtual_mask&(1u<<shoulder))?upper:shoulder];
+		hands[side]=rig->joint[side?MD5_VRIK_HAND_R:MD5_VRIK_HAND_L];
+		if(roots[side]<0||hands[side]<0||
+			!R_AvatarDescendant(rig->live,hands[side],roots[side]))return false;
+	}
+	if(R_AvatarDescendant(rig->live,roots[0],roots[1])||
+		R_AvatarDescendant(rig->live,roots[1],roots[0]))return false;
+	for(joint=0;joint<R_AvatarJointCount(rig->live);++joint)
+		if(R_AvatarDescendant(rig->live,joint,roots[0])||
+			R_AvatarDescendant(rig->live,joint,roots[1])) {
+			parent=rig->live->joints[joint].parent;
+			if(parent<0||parent>=joint)return false;
+			R_AvatarInverseRigid(animated+parent*12,inverse);
+			R_AvatarMultiply(inverse,animated+joint*12,local);
+			R_AvatarInverseRigid(rig->live->joints[parent].bind,inverse);
+			R_AvatarMultiply(inverse,rig->live->joints[joint].bind,bindlocal);
+			local[3]=bindlocal[3];local[7]=bindlocal[7];local[11]=bindlocal[11];
+			R_AvatarMultiply(palette+parent*12,local,palette+joint*12);
+			if(joint==hands[0]||joint==hands[1]) {
+				int r;for(r=0;r<3;++r)
+					memcpy(palette+joint*12+r*4,animated+joint*12+r*4,3*sizeof(float));
+			}
+		}
+	return true;
+}
+
+/* Vore's paired outer legs can inherit an inward knee despite unchanged foot
+ * contacts. Reuse the existing bounded limb solve only for direct chains. */
+static qboolean R_AvatarRepairInwardOuterLegs(const r_avatar_rig_t *rig,float *palette)
+{
+	float lateral[3],roots[2][3],pole[3],toward[3],bend[3],endpoint[12];
+	int side,r;
+	for(side=0;side<2;++side) {
+		int upper=rig->joint[side?MD5_VRIK_UPPERLEG_R:MD5_VRIK_UPPERLEG_L];
+		for(r=0;r<3;++r)roots[side][r]=palette[upper*12+r*4+3];
+	}
+	for(r=0;r<3;++r)lateral[r]=roots[1][r]-roots[0][r];
+	if(!R_AvatarNormalize3(lateral))return true;
+	for(side=0;side<2;++side) {
+		int semantic=side?MD5_VRIK_UPPERLEG_R:MD5_VRIK_UPPERLEG_L;
+		int upper=rig->joint[semantic],lower=rig->joint[semantic+1],foot=rig->joint[semantic+2];
+		float outward,residual,scale;
+		if(rig->live->joints[lower].parent!=upper||
+			rig->live->joints[foot].parent!=lower)continue;
+		for(r=0;r<3;++r) {
+			toward[r]=palette[foot*12+r*4+3]-roots[side][r];
+			bend[r]=palette[lower*12+r*4+3]-roots[side][r];
+		}
+		if(!R_AvatarNormalize3(toward))continue;
+		scale=DotProduct(bend,toward);
+		for(r=0;r<3;++r)bend[r]-=scale*toward[r];
+		outward=DotProduct(bend,lateral)*(side?1.0f:-1.0f);
+		if(!isfinite(outward))return false;
+		if(outward>=-0.0001f)continue;
+		scale=R_AvatarJointDistance(palette+upper*12,palette+lower*12);
+		for(r=0;r<3;++r)pole[r]=roots[side][r]+(side?1.0f:-1.0f)*lateral[r]*scale;
+		memcpy(endpoint,palette+foot*12,sizeof(endpoint));
+		residual=R_AvatarSolveHumanoidLimb(rig,palette,semantic,endpoint,pole);
+		if(!isfinite(residual)||residual<0||residual>0.01f)return false;
+	}
+	return true;
+}
+
+qboolean R_AvatarRefineBuiltinPalette(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target,qboolean tracked,
+	float (*target_palette)[12],size_t target_capacity)
+{
+	r_avatar_presentation_context_t context;
+	float saved[R_AVATAR_MAX_JOINTS*12];
+	const r_avatar_profile_t *profile;
+	size_t bytes;
+	int joint;
+	if(!source||!target||!source->valid||!target->valid||!target->profile||
+		!target_palette||R_AvatarJointCount(target->live)>R_AVATAR_MAX_JOINTS||
+		target_capacity<target->live->joint_count)return false;
+	profile=target->profile;
+	if(tracked || (profile->id!=PLAYER_AVATAR_DOG &&
+		profile->id!=PLAYER_AVATAR_FIEND && !profile->mirror_outer_leg_poles))
+		return true;
+	bytes=target->live->joint_count*12*sizeof(float);
+	memcpy(saved,target_palette,bytes);
+	if(((profile->id==PLAYER_AVATAR_DOG||profile->id==PLAYER_AVATAR_FIEND) &&
+		(!R_AvatarBuildPresentationContext(source,target,&context)||
+		 !R_AvatarStabilizeDesktopUpperBody(target,(float *)target_palette)||
+		 !R_AvatarApplyDesktopUprightPosture(target,&context,(float *)target_palette)||
+		 !R_AvatarRebuildDesktopAnimalArms(target,saved,(float *)target_palette)))||
+		(profile->mirror_outer_leg_poles &&
+		 !R_AvatarRepairInwardOuterLegs(target,(float *)target_palette)))
+		goto rollback;
+	for(joint=0;joint<R_AvatarJointCount(target->live);++joint)
+		if(!R_AvatarOrthonormal(target_palette[joint]))goto rollback;
+	return true;
+rollback:
+	memcpy(target_palette,saved,bytes);
+	return false;
+}
+
 qboolean R_AvatarCanonicalToTargetBasis (const r_avatar_rig_t *rig, float out[12])
 {
 	return R_AvatarBuildBindBodyBasis(rig, out);
