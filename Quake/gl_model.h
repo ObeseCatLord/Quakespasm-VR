@@ -526,6 +526,33 @@ typedef struct md5_avatar_bind_surface_s
 	unsigned short *indexes;
 } md5_avatar_bind_surface_t;
 
+/* The verified Ranger's rigid Gun/Axe triangles, in their leaf-joint local
+ * coordinates. Each surface retains its source material by surface index. */
+typedef struct md5_avatar_prop_vertex_s
+{
+	vec3_t xyz;
+	vec3_t normal;
+	float st[2];
+} md5_avatar_prop_vertex_t;
+
+typedef struct md5_avatar_prop_surface_s
+{
+	struct md5_avatar_prop_surface_s *next;
+	int source_surface_index;
+	int numverts;
+	int numindexes;
+	md5_avatar_prop_vertex_t *vertices;
+	unsigned short *indexes;
+} md5_avatar_prop_surface_t;
+
+enum { MD5_AVATAR_PROP_GUN, MD5_AVATAR_PROP_AXE, MD5_AVATAR_PROP_COUNT };
+typedef struct md5_avatar_prop_s
+{
+	md5_avatar_prop_surface_t *surfaces;
+	int numverts;
+	int numindexes;
+} md5_avatar_prop_t;
+
 /*
 ==============================================================================
 MD3 MODELS
@@ -777,6 +804,7 @@ typedef struct qmodel_s
 	byte *extradata[PV_SIZE]; // only access through Mod_Extradata
 	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
 	md5_avatar_bind_surface_t *avatar_bind_surfaces; // optional private avatar bind geometry
+	md5_avatar_prop_t avatar_props[MD5_AVATAR_PROP_COUNT]; // verified Ranger only
 	qboolean avatar_builtin; // private verified-pack cosmetic admission
 	int avatar_custom_id; // fixed local package ID, -1 unless admitted
 	byte *avatar_custom_rgba[2]; // stable in-memory texture reload sources
