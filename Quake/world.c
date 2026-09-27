@@ -487,12 +487,12 @@ static qboolean SV_ShouldSkipRecentTeleportTrigger (edict_t *touch, edict_t *ent
 }
 
 static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
-	const vec3_t origin_before)
+	const vec3_t origin_before, qboolean executed_teleport)
 {
 	sv_recent_teleport_trigger_t *recent;
 	int clientnum;
 
-	if (!SV_IsTeleportTrigger (touch) || !SV_IsActiveClientEdict (ent) ||
+	if (!executed_teleport || !SV_IsActiveClientEdict (ent) ||
 		VectorCompare (ent->v.origin, origin_before))
 		return;
 
@@ -503,6 +503,10 @@ static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
 	 * player. Tell private snapshot/replay ownership at this exact boundary;
 	 * unrelated QuakeC setorigin adjustments must not become discontinuities. */
 	SV_PrivatePlayerTeleported (ent);
+	/* A one-shot trigger can remove itself in its callback. The relocation is
+	 * still real, but there is no surviving source to suppress on re-entry. */
+	if (touch->free)
+		return;
 	recent = &sv_recent_teleport_triggers[clientnum];
 	recent->trigger = touch;
 	if (SV_IsInstantTeleportTrigger (touch))
@@ -2440,9 +2444,11 @@ static void SV_TouchLinks (edict_t *ent)
 		pr_global_struct->other = EDICT_TO_PROG (ent);
 		pr_global_struct->time = qcvm->time;
 		vec3_t origin_before;
+		const qboolean executed_teleport = SV_IsTeleportTrigger (touch);
 		VectorCopy (ent->v.origin, origin_before);
 		PR_ExecuteProgram (touch->v.touch);
-		SV_RecordRecentTeleportTrigger (touch, ent, origin_before);
+		SV_RecordRecentTeleportTrigger (touch, ent, origin_before,
+			executed_teleport);
 
 		if (shared_pickup)
 		{

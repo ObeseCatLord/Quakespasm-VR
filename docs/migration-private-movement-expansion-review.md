@@ -42,10 +42,12 @@ is a useful behavior reference, not proof of byte-for-byte identity with this
 trial's pinned `progs.dat`. Its `PlayerPreThink` calls `WaterMove` and
 `CheckWaterJump`; `WaterMove` modifies velocity in water and `CheckWaterJump`
 can set `FL_WATERJUMP`, upward velocity and a two-second `teleport_time`.
-The configured Straight `id1/pak0.pak` contains a `progs.dat` with the trial's
-exact 340014-byte size and CRC16 `0x0bf8`, so that installed asset is a suitable
-local test target. Those two checks do not prove it was compiled from the
-linked QuakeC source.
+The configured Straight `id1/pak0.pak` contains a `progs.dat` matching all
+three trial admission values: 340014 bytes, CRC16 `0x0bf8`, and vkQuake's
+XOR-folded MD4 block hash `0xcf69c3e2`. These were independently computed from
+the installed PAK entry using the engine's CRC/MD4 conventions. It is a
+suitable local test target. Identity with the linked rerelease QuakeC source
+is still unproven.
 `Quake/pmove.c:1927-2089` also categorizes water, applies friction and detects
 ledge waterjumps. QSS-M restores the velocity from before stock PreThink when
 its PMove owner runs (`QSS-M/Quake/sv_user.c:673-686`), explicitly avoiding
@@ -93,6 +95,45 @@ replacement-delta snapshot path.
 | Withhold selected replay permission while the deadline is active. | Adopted; replay remains authoritative-only for these snapshots. |
 | Preserve roomscale and Gorilla collision collection. | Adopted; no pause-based hand exclusion. |
 | Verify teleport orientation, exit trajectory and waterjump overlap against ordinary ownership. | Open; the focused PMove fixture checks only backward/sideways acceleration and the forced-angle handoff is source-verified. |
+
+## Waterjump-to-teleport overlap: Astra senior review
+
+Stock QuakeC's waterjump sets `FL_WATERJUMP` and a two-second
+`teleport_time`; its teleporter relocates the player and sets a new
+0.7-second deadline without clearing that flag. The selected command records
+PMove's waterjump countdown before touch callbacks and commits it afterward.
+Consequently, a pre-teleport countdown can survive the relocation, and the
+next command may shorten or replace the QuakeC deadline. Source ordering
+establishes the hazard, but no installed-map trajectory has yet demonstrated
+its occurrence or the correct native outcome. Native `SV_WaterJump` also sets
+horizontal velocity from `movedir`; its flag suppresses gravity and stepping.
+Clearing the timer solely to protect the teleporter's exit velocity would
+change those behaviors.
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Keep the present timer policy pending an ordinary-versus-selected trajectory. | **Adopt.** No speculative timer reset or new owner is added. This overlap remains unqualified. |
+| Clear the countdown at the recognized teleport callback and preserve the QC deadline/velocity. | **Defer.** It misses an in-flight PMove result and may diverge from native `movedir`, gravity and stepping behavior. |
+| Emulate native `SV_WaterJump` before selected PMove. | **Defer.** Native client consumption precedes PreThink; a helper call at the selected post-PreThink boundary does not reproduce that cadence. |
+| Include maintenance, `force_retouch`, and source-trigger cooldown in the proof. | **Adopt.** A commit-only fix would miss callbacks outside a completed selected command; changing the deadline also changes the existing source-suppression key. |
+
+The local non-headset gate uses the same installed `progs.dat` for ordinary
+and selected dedicated-server/desktop-loopback runs with controlled
+water-ledge and stock-teleporter geometry. First compare one command per world
+frame; then selected batching and a no-command maintenance/retouch case.
+Require an actual recognized relocation while entering with `FL_WATERJUMP`
+and a positive selected countdown, at dry and wet destinations, plus an
+ordinary teleport control. Capture origin, velocity, `movedir`, waterlevel,
+flag, QC deadline, retained countdown, discontinuity epoch, callback count,
+and completed sequence through the first post-teleport steps and expiry.
+The chosen adapter must preserve once-only trigger effects and completed-only
+ACKs while matching the reference flag/deadline/exit trajectory. If the
+comparison favors a teleport cancellation policy, the existing semantic
+relocation notification is the narrow boundary, but any in-flight PMove result
+must also be invalidated before command completion.
+The reviewer was explicitly dispatched as `gpt-6-astra` at `max` effort;
+the subagent runtime did not expose effective settings for independent
+verification of that selection.
 
 A dry ACK alone cannot guarantee that every pending client command stays dry.
 The shared PMove solver now latches fluid contact across all substeps in one

@@ -14,6 +14,9 @@ that same boundary now publishes the existing private movement discontinuity.
 Selected clients can reset interpolation and speculative movement from the
 authoritative relocated owner snapshot. This does not classify unrelated
 QuakeC `setorigin` changes as teleports or add another trigger owner.
+Trigger identity is captured before executing QuakeC, so a one-shot callback
+that frees its trigger still publishes the relocation; only the now-absent
+source latch is skipped.
 
 | Astra senior review finding | Disposition |
 | --- | --- |
