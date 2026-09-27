@@ -1327,6 +1327,7 @@ typedef struct {
 	int slot;
 	char label[MAX_SCOREBOARDNAME];
 	char player_name[MAX_SCOREBOARDNAME];
+	float color[2][3]; /* prepared normal/hover colors for scene and UI tasks */
 	float left;
 	float top;
 	float width;
@@ -1867,11 +1868,27 @@ static int VR_WeaponMenu_BuildActions (const vr_weapon_menu_catalog_t *catalog,
 		VR_WeaponMenu_FitActionLabel (action->label, sizeof (action->label),
 			action->player_name, max_width, scale);
 		action->height = row_height;
-			action->width = q_min ((float)strlen (action->label) *
+		action->width = q_min ((float)strlen (action->label) *
 				CHARACTER_SIZE * scale + 12.0f * scale, max_width);
-			action->left = right_left;
-			action->top = center_y - teleport_count * row_pitch * 0.5f +
-				(row_pitch - row_height) * 0.5f + i * row_pitch;
+		action->left = right_left;
+		action->top = center_y - teleport_count * row_pitch * 0.5f +
+			(row_pitch - row_height) * 0.5f + i * row_pitch;
+	}
+	for (int i = 0; i < count; ++i)
+	{
+		vr_weapon_menu_action_t *action = &actions[i];
+		if (action->kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER)
+		{
+			VR_WeaponMenu_PlayerLabelColor (action->slot, false, action->color[0]);
+			VR_WeaponMenu_PlayerLabelColor (action->slot, true, action->color[1]);
+		}
+		else
+		{
+			action->color[0][0] = action->color[0][1] =
+				action->color[0][2] = 0.82f;
+			action->color[1][0] = action->color[1][2] = 0.45f;
+			action->color[1][1] = 1.85f;
+		}
 	}
 	return count;
 }
@@ -1897,18 +1914,6 @@ static int VR_WeaponMenu_Actions (struct cb_context_s *context,
 		{
 			const qboolean is_selected = i == selected &&
 				(!highlight_by_id || actions[i].id == hover_id);
-			float text_color[3];
-			if (actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER)
-				VR_WeaponMenu_PlayerLabelColor (actions[i].slot, is_selected,
-					text_color);
-			else if (is_selected)
-			{
-				text_color[0] = 0.45f;
-				text_color[1] = 1.85f;
-				text_color[2] = 0.45f;
-			}
-			else
-				text_color[0] = text_color[1] = text_color[2] = 0.82f;
 
 			Draw_Fill ((cb_context_t *)context, actions[i].left, actions[i].top,
 				actions[i].width, actions[i].height,
@@ -1918,7 +1923,8 @@ static int VR_WeaponMenu_Actions (struct cb_context_s *context,
 				actions[i].top + (actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER ||
 				 actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_SPAWN ?
 				 q_max (0.0f, (actions[i].height - 8.0f * scale) * 0.5f) :
-				 8.0f * scale), actions[i].label, scale, text_color);
+				 8.0f * scale), actions[i].label, scale,
+				actions[i].color[is_selected ? 1 : 0]);
 		}
 	return selected;
 }
@@ -2365,6 +2371,49 @@ static qboolean VR_WeaponMenu_CullPreparedMesh (const qmodel_t *model,
 	return R_CullBox (mins, maxs);
 }
 
+/* Playspace actions share the prepared UI hit rectangles, but their glyphs
+ * belong to the scene so a wall hides them just as it hides wheel meshes. */
+static void VR_WeaponMenu_DrawWorldActions (cb_context_t *cbx,
+	const vr_weapon_menu_frame_t *frame, const vec3_t right, const vec3_t down)
+{
+	const float *m = frame->world_from_ndc;
+	const float pixel_scale = (2.0f / glwidth) *
+		sqrtf (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+	const float menu_scale = CLAMP (0.85f,
+		q_min (glwidth, glheight) / 720.0f, 1.5f);
+	const float glyph_size = CHARACTER_SIZE * menu_scale * pixel_scale;
+	const float outline = glyph_size / CHARACTER_SIZE;
+	const vec3_t black = {0.0f, 0.0f, 0.0f};
+	vec3_t up;
+	if (!isfinite (glyph_size) || glyph_size <= 0.0f)
+		return;
+	VectorScale (down, -1.0f, up);
+	for (int i = 0; i < frame->action_count; ++i)
+	{
+		const vr_weapon_menu_action_t *action = &frame->actions[i];
+		vec3_t origin, shifted;
+		float x, y;
+		if (action->width <= 0.0f || action->height <= 0.0f || !action->label[0])
+			continue;
+		x = (action->left + action->width * 0.5f) * (2.0f / glwidth) - 1.0f;
+		y = (action->top + action->height * 0.5f) * (2.0f / glheight) - 1.0f;
+		for (int axis = 0; axis < 3; ++axis)
+			origin[axis] = m[12 + axis] + m[axis] * x + m[4 + axis] * y;
+		if (!isfinite (origin[0]) || !isfinite (origin[1]) || !isfinite (origin[2]))
+			continue;
+		VectorMA (origin, -outline, right, shifted);
+		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, action->label, black);
+		VectorMA (origin, outline, right, shifted);
+		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, action->label, black);
+		VectorMA (origin, -outline, up, shifted);
+		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, action->label, black);
+		VectorMA (origin, outline, up, shifted);
+		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, action->label, black);
+		Draw_String_3DDepth (cbx, origin, right, up, glyph_size, action->label,
+			action->color[action->id == vr_weapon_menu_hover_id ? 1 : 0]);
+	}
+}
+
 int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 {
 	cb_context_t *cbx = (cb_context_t *)context;
@@ -2455,6 +2504,8 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 				8.0f * text_scale, ammo_text, color);
 		}
 	}
+	if (frame->playspace)
+		VR_WeaponMenu_DrawWorldActions (cbx, frame, right, down);
 	return aliaspolys;
 }
 
@@ -2786,7 +2837,10 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 				visible[i].top + 22.0f * scale, entry->label, scale);
 		GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 	}
-	selected_action = VR_WeaponMenu_Actions (cbx, actions, action_count, scale,
+	selected_action = VR_WeaponMenu_Actions (
+		vr_weapon_menu_open_vr && vr_weapon_menu_frame_valid &&
+		vr_weapon_menu_frame.panel_valid && vr_weapon_menu_frame.playspace ?
+		NULL : cbx, actions, action_count, scale,
 		pointer_x, pointer_y, vr_weapon_menu_open_vr, vr_weapon_menu_hover_id);
 	if (vr_weapon_menu_open_vr && (selected_action < 0 ||
 		vr_weapon_menu_hover_id != actions[selected_action].id))

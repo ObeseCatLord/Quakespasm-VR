@@ -1688,7 +1688,7 @@ void Draw_String_3DColor (cb_context_t *cbx, const vec3_t origin, const vec3_t r
 void Draw_String_3DDepth (
 	cb_context_t *cbx, const vec3_t origin, const vec3_t right, const vec3_t up, float size, const char *str, const vec3_t color)
 {
-	if (!str || !*str)
+	if (!str || !*str || !char_texture)
 		return;
 
 	const byte vertex_color[4] = {

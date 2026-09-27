@@ -1,11 +1,13 @@
 # Weapon-wheel migration seam
 
-The inherited wheel is still a required 2.0 behavior. A stock-weapon desktop
-Vulkan slice and an OpenXR panel with controller-ray selection are
-implemented. The OpenXR panel now defaults to a hand-pose-anchored playspace
-placement, with the earlier view placement retained as a VR option. Its flat
-Vulkan presentation is still short of the inherited 3D weapon layout. The
-full mod catalogue and inherited 3D presentation remain to be ported. The source of truth is
+The inherited wheel is still a required 2.0 behavior. Desktop Vulkan and
+OpenXR share its catalog, release policy and action hitboxes. The OpenXR wheel
+defaults to hand-anchored playspace placement, with view placement retained as
+an option. Its scene path now draws prepared 3D weapon models, ammo and
+playspace action labels through vkQuake's existing Vulkan pipelines; the
+catalog also supports runtime viewmodel discovery. Live controller interaction,
+representative mod assets and both-eye presentation still need qualification.
+The source of truth is
 `quakespasm-openvr/Quake/vr.c` at the pinned MAIN
 commit in [migration-feature-map.md](migration-feature-map.md), particularly
 its catalog and selection policy (`VR_WeaponIsOwned`,
@@ -53,8 +55,9 @@ authoritative; matching schema entries enrich its metadata. Without a roster,
 valid schema weapons supply the catalog. Exact-gated built-in profiles now
 cover Dwell, Alkaline/Limjam, Enyo, QBJ3, Mjolnir, MG3, Hipnotic and Rogue;
 the server now relays matching optional inventory fields and validated ammo
-capacity stats. Runtime discovery and source special action entries still need
-adapters. These are code paths pending the user's gameplay qualification.
+capacity stats. Runtime discovery, Quick Save/Load, player teleport and spawn
+teleport use the shared wheel owner. These are code paths pending the user's
+gameplay qualification.
 
 Do not transplant source `vr.c` or its immediate-mode OpenGL drawing. Keep
 vkQuake's `cl_input.c` command owner, OpenXR frame snapshot in `vr_input.c`,

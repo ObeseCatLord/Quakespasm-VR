@@ -161,3 +161,15 @@ or foveation-based geometry rejection was added.
 The Linux Meson build and whitespace check pass. Actual stereo-edge imagery
 and net frame-time savings remain unmeasured; this does not establish a
 large-map performance gain.
+
+## Playspace action labels
+
+Quick Save/Load and co-op player/spawn actions now draw as depth-tested world
+glyphs in the same scene context as the weapon models. Their positions come
+from the wheel's prepared action rectangles, so pointer hitboxes and label
+placement retain one layout owner. Normal and hovered shirt/action colors are
+copied during frame preparation; parallel scene and UI recording only read the
+snapshot. The playspace UI pass no longer paints flat action cards over these
+labels. Desktop and legacy view-anchored action presentation stay on their
+existing UI path. The Linux debug build passes; both-eye readability, wall
+occlusion and controller release remain visual/gameplay qualification gates.
