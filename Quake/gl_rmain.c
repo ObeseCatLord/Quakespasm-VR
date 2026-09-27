@@ -200,6 +200,58 @@ qboolean R_CullBox (vec3_t emins, vec3_t emaxs)
 	}
 	return false;
 }
+/* The selected animated mesh can extend well beyond progs/player.mdl. Share
+ * the conservative GPU-skinning bound between frustum and alpha sorting. */
+static qboolean R_PreparedAvatarWorldBounds (const entity_t *e,
+	const r_vrik_prepared_palette_t *tracked, vec3_t mins, vec3_t maxs)
+{
+	const aliashdr_t *header = tracked->geometry;
+	if (!tracked->tracked_cull_valid || !header || !isfinite (tracked->tracked_cull_local_bound) ||
+		tracked->tracked_cull_local_bound < 0.0)
+		return false;
+	double origin_radius_squared = 0.0;
+	double max_header_scale = 0.0;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		const double scale_origin = header->scale_origin[axis];
+		const double header_scale = header->scale[axis];
+		if (!isfinite (tracked->tracked_cull_origin[axis]) || !isfinite (scale_origin) || !isfinite (header_scale))
+			return false;
+		origin_radius_squared += scale_origin * scale_origin;
+		if (max_header_scale < fabs (header_scale))
+			max_header_scale = fabs (header_scale);
+	}
+	const double entity_scale = fabs ((double)ENTSCALE_DECODE (e->netstate.scale));
+	if (!isfinite (entity_scale) || !isfinite (origin_radius_squared))
+		return false;
+	const double world_radius = entity_scale *
+		(sqrt (origin_radius_squared) + max_header_scale * tracked->tracked_cull_local_bound);
+	if (!isfinite (world_radius) || world_radius < 0.0)
+		return false;
+	/* Cover float rounding in GPU skinning, model transforms, and large BSP2 coordinates. */
+	double origin_magnitude_squared = 0.0;
+	for (int axis = 0; axis < 3; ++axis)
+		origin_magnitude_squared += (double)tracked->tracked_cull_origin[axis] * tracked->tracked_cull_origin[axis];
+	if (!isfinite (origin_magnitude_squared))
+		return false;
+	const double outward_radius = world_radius +
+		64.0 * FLT_EPSILON * (1.0 + sqrt (origin_magnitude_squared) + world_radius);
+	if (!isfinite (outward_radius) || outward_radius < 0.0 || outward_radius > FLT_MAX)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		const double lower = (double)tracked->tracked_cull_origin[axis] - outward_radius;
+		const double upper = (double)tracked->tracked_cull_origin[axis] + outward_radius;
+		if (!isfinite (lower) || !isfinite (upper) || lower < -FLT_MAX || upper > FLT_MAX)
+			return false;
+		mins[axis] = nextafterf ((float)lower, -INFINITY);
+		maxs[axis] = nextafterf ((float)upper, INFINITY);
+		if (!isfinite (mins[axis]) || !isfinite (maxs[axis]))
+			return false;
+	}
+	return true;
+}
+
 /*
 ===============
 R_CullModelForEntity -- johnfitz -- uses correct bounds based on rotation
@@ -217,53 +269,7 @@ qboolean R_CullModelForEntity (entity_t *e)
 			tracked->model == e->model &&
 			tracked->geometry == (aliashdr_t *)Mod_Extradata_CheckSkin (e->model, e->skinnum));
 	if (prepared_geometry_matches)
-	{
-		const aliashdr_t *header = tracked->geometry;
-		if (!tracked->tracked_cull_valid || !header || !isfinite (tracked->tracked_cull_local_bound) ||
-			tracked->tracked_cull_local_bound < 0.0)
-			return false;
-		double origin_radius_squared = 0.0;
-		double max_header_scale = 0.0;
-		for (int axis = 0; axis < 3; ++axis)
-		{
-			const double scale_origin = header->scale_origin[axis];
-			const double header_scale = header->scale[axis];
-			if (!isfinite (tracked->tracked_cull_origin[axis]) || !isfinite (scale_origin) || !isfinite (header_scale))
-				return false;
-			origin_radius_squared += scale_origin * scale_origin;
-			if (max_header_scale < fabs (header_scale))
-				max_header_scale = fabs (header_scale);
-		}
-		const double entity_scale = fabs ((double)ENTSCALE_DECODE (e->netstate.scale));
-		if (!isfinite (entity_scale) || !isfinite (origin_radius_squared))
-			return false;
-		const double world_radius = entity_scale *
-			(sqrt (origin_radius_squared) + max_header_scale * tracked->tracked_cull_local_bound);
-		if (!isfinite (world_radius) || world_radius < 0.0)
-			return false;
-		/* Cover float rounding in GPU skinning, model transforms, and large BSP2 coordinates. */
-		double origin_magnitude_squared = 0.0;
-		for (int axis = 0; axis < 3; ++axis)
-			origin_magnitude_squared += (double)tracked->tracked_cull_origin[axis] * tracked->tracked_cull_origin[axis];
-		if (!isfinite (origin_magnitude_squared))
-			return false;
-		const double outward_radius = world_radius +
-			64.0 * FLT_EPSILON * (1.0 + sqrt (origin_magnitude_squared) + world_radius);
-		if (!isfinite (outward_radius) || outward_radius < 0.0 || outward_radius > FLT_MAX)
-			return false;
-		for (int axis = 0; axis < 3; ++axis)
-		{
-			const double lower = (double)tracked->tracked_cull_origin[axis] - outward_radius;
-			const double upper = (double)tracked->tracked_cull_origin[axis] + outward_radius;
-			if (!isfinite (lower) || !isfinite (upper) || lower < -FLT_MAX || upper > FLT_MAX)
-				return false;
-			mins[axis] = nextafterf ((float)lower, -INFINITY);
-			maxs[axis] = nextafterf ((float)upper, INFINITY);
-			if (!isfinite (mins[axis]) || !isfinite (maxs[axis]))
-				return false;
-		}
-		return R_CullBox (mins, maxs);
-	}
+		return R_PreparedAvatarWorldBounds (e, tracked, mins, maxs) ? R_CullBox (mins, maxs) : false;
 
 	if (e->angles[0] || e->angles[2]) // pitch or roll
 	{
@@ -2181,12 +2187,20 @@ static void R_SortAlphaEntitiesTask (void *unused)
 		}
 
 		vec3_t		center;
+		vec3_t		avatar_mins, avatar_maxs;
+		const r_vrik_prepared_palette_t *avatar = R_VRIKRenderLookup (currententity);
+		const qboolean avatar_bounds = avatar && avatar->alternate_avatar && avatar->model &&
+			avatar->model->type == mod_alias &&
+			avatar->geometry == (const aliashdr_t *)avatar->model->extradata[PV_MD5] &&
+			R_PreparedAvatarWorldBounds (currententity, avatar, avatar_mins, avatar_maxs);
 		const float scalefactor = ENTSCALE_DECODE (currententity->netstate.scale);
 		float		dist_squared = 0;
 		for (int j = 0; j < 3; ++j)
 		{
-			const float mins = currententity->origin[j] + scalefactor * currententity->model->mins[j];
-			const float maxs = currententity->origin[j] + scalefactor * currententity->model->maxs[j];
+			const float mins = avatar_bounds ? avatar_mins[j] :
+				currententity->origin[j] + scalefactor * currententity->model->mins[j];
+			const float maxs = avatar_bounds ? avatar_maxs[j] :
+				currententity->origin[j] + scalefactor * currententity->model->maxs[j];
 			center[j] = (mins + maxs) / 2;
 			const float dist = q_max (0.0f, q_max (mins - r_refdef.vieworg[j], r_refdef.vieworg[j] - maxs));
 			dist_squared += dist * dist;
@@ -2670,6 +2684,7 @@ void R_RenderView (
 
 		task_handle_t sort_transparents = Task_AllocateAndAssignFunc (R_SortAlphaEntitiesTask, NULL, 0);
 		Task_AddDependency (store_efrags, sort_transparents);
+		Task_AddDependency (prepare_vrik_palettes_task, sort_transparents);
 
 		task_handle_t draw_sky_task = Task_AllocateAndAssignFunc (R_DrawSkyTask, NULL, 0);
 		Task_AddDependency (store_efrags, draw_sky_task);
