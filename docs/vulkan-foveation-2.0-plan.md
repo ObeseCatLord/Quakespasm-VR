@@ -68,25 +68,27 @@ weapon, HUD, water, cutout, or transparent rendering.
 
 The old `openxr` branch provides reusable gaze freshness, eye-ray and angular
 tile math, plus a prior Vulkan implementation to consult. Its separate renderer
-is not imported. Runtime FB/META fragment-density-map foveation is the
-preferred next backend **after** its borrowed-image and protected-depth
-contract is qualified. The KHR path does not establish that contract and
-remains the fallback for capable devices without a qualified runtime route.
+is not imported. Runtime FB/META fragment-density-map foveation now has an
+explicit `-vk-runtime-foveation` development path: it requests borrowed density
+images, creates runtime profiles, updates the selected profile each frame, and
+uses a separate coarse-world pass with full-rate depth replay. This path is
+**not** automatically selected. The borrowed-image format, layout/readiness,
+gaze alignment, and protected-depth behavior still need target-runtime proof.
+The KHR path remains available on capable devices without a qualified runtime
+route; the two Vulkan feature paths require a device restart to switch.
 
-For the Steam Frame standalone target, that runtime path is a release
-feature gap: `GL_OpenXRAttach` currently passes `density_maps=0` to the reused
-backend, and `VRXR_UpdateVulkanFoveation` has no renderer callsite. Valve's
-[custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
-lists those runtime extensions, while its [Unreal guidance](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/unreal)
-recommends runtime-provided VRS. Adding it requires an attachment/image-lifetime
-adapter inside vkQuake's existing pass graph; the portable KHR path remains
-useful on GPUs that expose it. No current source evidence proves either path
-works on Steam Frame hardware yet.
-The [Steam Frame FDM senior design review](migration-steam-frame-foveation-review.md)
-sets the implementation boundary: runtime FDM and this KHR backend need
-mutually exclusive Vulkan device features. The follow-up review selects a
-separate coarse-world pass followed by full-rate world-depth replay before
-protected draws; a depth prepass is not a portable substitute under FDM.
+Valve's [Steam Frame custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
+lists the FB/META extensions for Frame. The [Khronos FB Vulkan extension](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_FB_foveation_vulkan.html)
+defines the borrowed density image, and the [META eye extension](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XR_META_foveation_eye_tracked.html)
+adds an eye-tracked profile. These are runtime capabilities, not headset-wide
+guarantees. Prefer FB/META only on runtime/device pairs that pass the
+end-to-end proof, including Steam Frame streaming and standalone; keep KHR or
+full-rate rendering elsewhere. The user eye-tracking toggle gates eye mode,
+and fixed foveation remains explicit opt-in only. See the
+[Steam Frame senior design disposition](migration-steam-frame-foveation-review.md)
+for the pass, image, and fallback constraints. That review requires a separate
+coarse-world pass followed by full-rate world-depth replay before protected
+draws; a depth prepass is not a portable substitute under FDM.
 
 ## Astra senior-review disposition
 
