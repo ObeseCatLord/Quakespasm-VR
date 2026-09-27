@@ -305,6 +305,13 @@ not qualified by the local build.
 | MOD-013 — Mod bindlist input actions, single-player console impulses and map/mod switching | MAIN:Quake/vr.c:152 (VR_MigrateModBindings_f); MAIN:Quake/menu.c:1540 (bindlist); MAIN:Quake/cl_input.c:75 (impulse) | Quake/keys.c;Quake/menu.c;Quake/cl_input.c; **ADAPT**, P3 | Mod-defined use/alternate actions and giveall remain usable; legitimate impulses are not lost during input/pacing changes. |
 | MOD-014 — Optional compatibility controls and debug entity/field overlays | MAIN:Quake/gl_rmain.c:133 (r_showfields); MAIN:Quake/pr_edict.c:43 (nomonsters); MAIN:Quake/menu.c:1119 (scr_centerprintbg) | Quake/menu.c;Quake/gl_rmain.c;Quake/pr_edict.c; **DONOR-ADAPT**, P3 | Expose existing options without overriding mod policy; diagnostic overlays honor limits and work in readable stereo/desktop canvases. |
 
+MOD-013 now includes the inherited `+button3` through `+button8` commands.
+`+use` and `+button3` share bit 2, while buttons 4–8 fill the remaining move-byte
+bits. The existing public and private command readers project these bits into
+optional QuakeC fields before callbacks; selected per-command and terminal
+frames update the same fields. The Linux debug build passes. Mod-specific binds
+and live QuakeC response remain part of the MOD-013 acceptance check.
+
 ### Discovery and interface
 
 | ID / behavior | Pinned source evidence | Destination / treatment | Acceptance |

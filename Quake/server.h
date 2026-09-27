@@ -573,6 +573,7 @@ void SV_MoveToGoal (void);
 void SV_ConnectClient (int clientnum); // called from the netcode to add new clients. also called from pr_ext to spawn new botclients.
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
+void SV_SetClientExtraButtons (edict_t *ent, unsigned int buttons);
 void SV_ResetPrivateCommandQueue (client_t *client);
 void SV_ResetGorillaClient (client_t *client);
 void SV_GorillaInvalidateAccepted (client_t *client);

@@ -7347,6 +7347,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		ent->v.button0 = !suppress_trigger &&
 			(command.buttons & BUTTON_ATTACK) != 0;
 		ent->v.button2 = (command.buttons & 2) != 0;
+		SV_SetClientExtraButtons (ent, command.buttons);
 		ent->v.impulse = 0;
 		host_frametime = 0;
 		pr_global_struct->frametime = 0;
@@ -7441,6 +7442,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	ent->v.button0 = !suppress_trigger &&
 		(command.buttons & BUTTON_ATTACK) != 0;
 	ent->v.button2 = (command.buttons & 2) != 0;
+	SV_SetClientExtraButtons (ent, command.buttons);
 	ent->v.impulse = command.impulse;
 	host_frametime = seconds;
 	pr_global_struct->frametime = seconds;
@@ -8360,6 +8362,7 @@ static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
 	VectorCopy (staged.viewangles, ent->v.v_angle);
 	ent->v.button0 = (staged.buttons & BUTTON_ATTACK) != 0;
 	ent->v.button2 = (staged.buttons & 2) != 0;
+	SV_SetClientExtraButtons (ent, staged.buttons);
 	ent->v.impulse = staged.impulse;
 	host_client = client;
 	sv_player = ent;

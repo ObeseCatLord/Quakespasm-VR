@@ -57,6 +57,7 @@ kbutton_t in_mlook = {.state = 1}, in_klook;
 kbutton_t in_left, in_right, in_forward, in_back;
 kbutton_t in_lookup, in_lookdown, in_moveleft, in_moveright;
 kbutton_t in_strafe, in_speed, in_use, in_jump, in_attack;
+static kbutton_t in_button4, in_button5, in_button6, in_button7, in_button8;
 kbutton_t in_up, in_down;
 
 int in_impulse;
@@ -328,6 +329,19 @@ void IN_UseUp (void)
 {
 	KeyUp (&in_use);
 }
+
+/* +use and +button3 share the same QuakeC button, as in the inherited
+ * input mapping. Keep the later mod buttons in the existing command byte. */
+static void IN_Button4Down (void) { KeyDown (&in_button4); }
+static void IN_Button4Up (void) { KeyUp (&in_button4); }
+static void IN_Button5Down (void) { KeyDown (&in_button5); }
+static void IN_Button5Up (void) { KeyUp (&in_button5); }
+static void IN_Button6Down (void) { KeyDown (&in_button6); }
+static void IN_Button6Up (void) { KeyUp (&in_button6); }
+static void IN_Button7Down (void) { KeyDown (&in_button7); }
+static void IN_Button7Up (void) { KeyUp (&in_button7); }
+static void IN_Button8Down (void) { KeyDown (&in_button8); }
+static void IN_Button8Up (void) { KeyUp (&in_button8); }
 void IN_JumpDown (void)
 {
 	KeyDown (&in_jump);
@@ -548,6 +562,8 @@ void CL_BaseMove (usercmd_t *cmd)
 static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 {
 	unsigned int bits;
+	kbutton_t *extra_buttons[] = {&in_button4, &in_button5, &in_button6,
+		&in_button7, &in_button8};
 	//
 	// send button bits
 	//
@@ -569,6 +585,13 @@ static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 		bits |= 4;
 	if (isfinal)
 		in_use.state &= ~2;
+	for (size_t i = 0; i < countof (extra_buttons); ++i)
+	{
+		if (extra_buttons[i]->state & 3)
+			bits |= 1u << (i + 3);
+		if (isfinal)
+			extra_buttons[i]->state &= ~2;
+	}
 
 	cmd->buttons = bits;
 	cmd->impulse = in_impulse;
@@ -1173,6 +1196,18 @@ void CL_InitInput (void)
 	Cmd_AddCommand ("-attack", IN_AttackUp);
 	Cmd_AddCommand ("+use", IN_UseDown);
 	Cmd_AddCommand ("-use", IN_UseUp);
+	Cmd_AddCommand ("+button3", IN_UseDown);
+	Cmd_AddCommand ("-button3", IN_UseUp);
+	Cmd_AddCommand ("+button4", IN_Button4Down);
+	Cmd_AddCommand ("-button4", IN_Button4Up);
+	Cmd_AddCommand ("+button5", IN_Button5Down);
+	Cmd_AddCommand ("-button5", IN_Button5Up);
+	Cmd_AddCommand ("+button6", IN_Button6Down);
+	Cmd_AddCommand ("-button6", IN_Button6Up);
+	Cmd_AddCommand ("+button7", IN_Button7Down);
+	Cmd_AddCommand ("-button7", IN_Button7Up);
+	Cmd_AddCommand ("+button8", IN_Button8Down);
+	Cmd_AddCommand ("-button8", IN_Button8Up);
 	Cmd_AddCommand ("+jump", IN_JumpDown);
 	Cmd_AddCommand ("-jump", IN_JumpUp);
 	Cmd_AddCommand ("impulse", IN_Impulse);

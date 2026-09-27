@@ -1018,9 +1018,30 @@ void SV_ReadClientMove (usercmd_t *move)
 	host_client->edict->v.button0 = (buttonbits & 1) >> 0;
 	// button1 was meant to be 'use', but got reused by too many mods to get implemented now
 	host_client->edict->v.button2 = (buttonbits & 2) >> 1;
+	SV_SetClientExtraButtons (host_client->edict, buttonbits);
 
 	if (newimpulse)
 		host_client->edict->v.impulse = newimpulse;
+}
+
+/* QSS-M's optional QuakeC button3..8 fields use the remaining bits of the
+ * existing move byte. The same projection is used by public and selected
+ * private commands, so a mod sees its buttons before each QC callback. */
+void SV_SetClientExtraButtons (edict_t *ent, unsigned int buttons)
+{
+	eval_t *field;
+	if ((field = GetEdictFieldValue (ent, qcvm->extfields.button3)))
+		field->_float = (buttons >> 2) & 1u;
+	if ((field = GetEdictFieldValue (ent, qcvm->extfields.button4)))
+		field->_float = (buttons >> 3) & 1u;
+	if ((field = GetEdictFieldValue (ent, qcvm->extfields.button5)))
+		field->_float = (buttons >> 4) & 1u;
+	if ((field = GetEdictFieldValue (ent, qcvm->extfields.button6)))
+		field->_float = (buttons >> 5) & 1u;
+	if ((field = GetEdictFieldValue (ent, qcvm->extfields.button7)))
+		field->_float = (buttons >> 6) & 1u;
+	if ((field = GetEdictFieldValue (ent, qcvm->extfields.button8)))
+		field->_float = (buttons >> 7) & 1u;
 }
 
 /* The explicit private profile uses complete, redundant commands in each
@@ -1307,6 +1328,7 @@ static qboolean SV_ReadPrivateClientMove (void)
 	VectorCopy (readcmd.viewangles, host_client->edict->v.v_angle);
 	host_client->edict->v.button0 = (readcmd.buttons & 1) != 0;
 	host_client->edict->v.button2 = (readcmd.buttons & 2) != 0;
+	SV_SetClientExtraButtons (host_client->edict, readcmd.buttons);
 	if (readcmd.impulse)
 		host_client->edict->v.impulse = readcmd.impulse;
 	return true;
@@ -1331,6 +1353,7 @@ static qboolean SV_ClearPrivateInput (client_t *client)
 	memset (&client->cmd.vr_gorilla_motion, 0, sizeof (client->cmd.vr_gorilla_motion));
 	client->edict->v.button0 = 0;
 	client->edict->v.button2 = 0;
+	SV_SetClientExtraButtons (client->edict, 0);
 	client->edict->v.impulse = 0;
 	return true;
 }
@@ -1365,6 +1388,7 @@ void SV_FinishPrivateUsercmds (void)
 		memset (client->cmd.vr_roomscalemove, 0, sizeof (client->cmd.vr_roomscalemove));
 		client->edict->v.button0 = (client->cmd.buttons & 1) != 0;
 		client->edict->v.button2 = (client->cmd.buttons & 2) != 0;
+		SV_SetClientExtraButtons (client->edict, client->cmd.buttons);
 		client->edict->v.impulse = 0;
 	}
 }
