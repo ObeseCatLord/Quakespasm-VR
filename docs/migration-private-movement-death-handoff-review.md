@@ -139,3 +139,40 @@ PreThink or scheduled weapon Think still needs a shared remaining-phase
 continuation. Death from a callback that invalidates the owner remains a
 disconnect. The Linux debug build passes; contact-death behavior has not yet
 been observed on a live stock map.
+
+## Early callback continuation checkpoint
+
+The native client frame now has three entry phases: fresh, after an already-run
+PreThink, and after an already-run scheduled weapon Think. The ordinary caller
+uses the fresh phase, preserving its callback order. When a selected command
+dies in either earlier callback, the shared native remainder runs the still-due
+weapon/movement/PostThink phases with the world clock. The current command's
+dead contact/Gorilla samples are fenced first. The native remainder is passed
+the *previous* completed ACK; the selected completion tail advances the killed
+command only after that remainder succeeds. Maintenance deaths run the same
+remaining phases without manufacturing an ACK. If the remainder respawns the
+player, selected batching stops until the next world frame.
+
+This source-level checkpoint builds on Linux. The native move-frame capture
+occurs when the remainder starts, after the selected callback; selected WALK
+admission rejects an existing moving-pusher owner, but same-callback support
+changes and exact stock-QC behavior have not been exercised live. The senior
+review of this phase adapter is recorded below. Physical contact, death and respawn
+packet sequences still need the end-to-end comparison before enabling the
+trial by default.
+
+## Early phase senior-review disposition
+
+Astra found one concrete source-level correctness risk: the selected command
+removed stock-QC water drag and dry jump velocity *before* scheduled weapon
+Think so PMove could replace them. If that Think killed the player, the native
+remainder inherited velocity that PMove would no longer consume. **Adopted:**
+the PMove-only reconciliation now runs after weapon Think survives. Think sees
+native QC velocity, and a Think that writes velocity keeps its own result;
+the selected path does not overwrite it with a jump rewind. The ordinary
+fresh-frame native path remains the same. The Linux debug build passes.
+
+The review found no additional concrete callback duplication or ACK/contact
+ordering defect in the phase adapter. The after-Think velocity-write policy,
+corpse momentum, callback counts, and release/press respawn still require a
+live stock-QC comparison; source review and compilation do not prove parity.

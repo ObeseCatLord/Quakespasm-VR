@@ -7185,6 +7185,38 @@ static void SV_PrivateWalkTrialReconcileQCWater (edict_t *ent,
 	VectorAdd (before, delta, ent->v.velocity);
 }
 
+typedef enum
+{
+	SV_CLIENT_NATIVE_FRESH,
+	SV_CLIENT_NATIVE_AFTER_PRETHINK,
+	SV_CLIENT_NATIVE_AFTER_WEAPON_THINK
+} sv_client_native_start_t;
+
+static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
+	int completed_move, sv_client_native_start_t start,
+	qboolean prior_weapon_think_ran);
+
+static qboolean SV_PrivateWalkTrialContinueTerminal (edict_t *ent,
+	client_t *client, const usercmd_t *command, sv_client_native_start_t start,
+	double world_frametime, float world_qc_frametime)
+{
+	/* The callback that killed the owner has already run. Consume its dead
+	 * contact sample, then let only the remaining native frame phases run.
+	 * The selected completion tail, not this continuation, commits its ACK. */
+	if (!SV_VRContactDrainQueued (ent, client, (int)command->sequence))
+		return false;
+	SV_ResetGorillaClient (client);
+	client->vr_gorilla_last_sequence = (int)command->sequence;
+	client->vr_gorilla_cursor_valid = true;
+	client->private_move_native_frame = true;
+	client->private_move_resume_pending = true;
+	host_frametime = world_frametime;
+	pr_global_struct->frametime = world_qc_frametime;
+	return SV_Physics_ClientNativeFromPhase (ent, NUM_FOR_EDICT (ent),
+		client->private_completed_move, start,
+		start == SV_CLIENT_NATIVE_AFTER_WEAPON_THINK);
+}
+
 /* This owner runs only for explicitly selected private peers. Queue retirement
  * remains in SV_FinishPrivateUsercmds, after this function reports completion. */
 static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client,
@@ -7197,7 +7229,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	usercmd_t command, ownership_command, *queued = NULL;
 	double saved_host_frametime = host_frametime;
 	float saved_qc_frametime = pr_global_struct->frametime;
-	vec3_t bounds[2], prethink_velocity;
+	vec3_t bounds[2], prethink_velocity, preweapon_velocity;
 	float seconds, prethink_health, prethink_teleport_time, postthink_teleport_time;
 	float premove_teleport_time;
 	int prethink_flags, prethink_groundentity, prethink_waterlevel;
@@ -7206,6 +7238,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	qboolean friendly_fire_scope;
 	qboolean command_completed = false, suppress_trigger = false;
 	qboolean terminal_completed = false;
+	qboolean terminal_native_completed = false;
 	const char *failure = NULL;
 	float result_jump_secs = 0, result_waterjump_secs = 0;
 	vr_gorilla_state_t result_gorilla;
@@ -7327,6 +7360,14 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			failure = "player removed during maintenance PreThink";
 			goto cleanup;
 		}
+		if (SV_PrivateWalkTrialTerminalState (client))
+		{
+			if (!SV_PrivateWalkTrialContinueTerminal (ent, client, &command,
+				SV_CLIENT_NATIVE_AFTER_PRETHINK, saved_host_frametime,
+				saved_qc_frametime))
+				failure = "terminal maintenance PreThink continuation failed";
+			goto cleanup;
+		}
 		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 			goto cleanup;
 		/* Scheduled Think follows the host clock even without a move command. */
@@ -7343,6 +7384,14 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			&ownership_command, &suppress_trigger);
 		host_frametime = 0;
 		pr_global_struct->frametime = 0;
+		if (SV_PrivateWalkTrialTerminalState (client))
+		{
+			if (!SV_PrivateWalkTrialContinueTerminal (ent, client, &command,
+				SV_CLIENT_NATIVE_AFTER_WEAPON_THINK, saved_host_frametime,
+				saved_qc_frametime))
+				failure = "terminal maintenance weapon Think continuation failed";
+			goto cleanup;
+		}
 		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 			goto cleanup;
 		SV_LinkEdict (ent, true);
@@ -7418,22 +7467,29 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		failure = "player removed during PreThink";
 		goto cleanup;
 	}
+	if (SV_PrivateWalkTrialTerminalState (client))
+	{
+		if (!SV_PrivateWalkTrialContinueTerminal (ent, client, &command,
+			SV_CLIENT_NATIVE_AFTER_PRETHINK, saved_host_frametime,
+			saved_qc_frametime))
+		{
+			failure = "terminal PreThink continuation failed";
+			goto cleanup;
+		}
+		if (client->private_pmove_credit_msec < command.msec)
+		{
+			failure = "command-time credit changed during callbacks";
+			goto cleanup;
+		}
+		terminal_completed = terminal_native_completed = true;
+		goto complete_terminal_command;
+	}
 	qc_waterjump_started = !(prethink_flags & FL_WATERJUMP) &&
 		((int)ent->v.flags & FL_WATERJUMP);
 	postthink_teleport_time = ent->v.teleport_time;
-	if (prethink_waterlevel > 0 || ((int)ent->v.flags & FL_WATERJUMP))
-		SV_PrivateWalkTrialReconcileQCWater (ent, prethink_velocity,
-			prethink_flags, prethink_waterlevel, prethink_health,
-			prethink_teleport_time, seconds);
-	/* Keep QC's metadata visible through the scheduled weapon Think. PMove
-	 * still owns the movement timer and publishes its final flag below. */
-	/* Stock QC owns jump sounds and flags; PMove owns the actual dry jump
-	 * impulse. Preserve a teleporter's deliberate pause at zero velocity. */
-	if (was_grounded && (command.buttons & 2) && ent->v.teleport_time <= qcvm->time &&
-		(prethink_teleport_time <= qcvm->time || ent->v.teleport_time == prethink_teleport_time) &&
-		!(VectorCompare (ent->v.velocity, vec3_origin) &&
-			!VectorCompare (prethink_velocity, vec3_origin)))
-		VectorCopy (prethink_velocity, ent->v.velocity);
+	/* Weapon Think must see native QC's velocity. PMove-only drag/jump
+	 * reconciliation runs only if that callback survives and leaves velocity
+	 * alone; a callback velocity write remains authoritative. */
 	SV_CheckVelocity (ent);
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
@@ -7441,6 +7497,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	 * duration; ordinary PMove below still consumes the complete command. */
 	SV_VRMeleeRefreshTriggerSuppression (client, ent,
 		&ownership_command, &suppress_trigger);
+	VectorCopy (ent->v.velocity, preweapon_velocity);
 	host_frametime = saved_host_frametime;
 	pr_global_struct->frametime = saved_qc_frametime;
 	weapon_alive = SV_RunPrivateVRWeaponThink (ent, client, &client->cmd);
@@ -7453,6 +7510,40 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	}
 	SV_VRMeleeRefreshTriggerSuppression (client, ent,
 		&ownership_command, &suppress_trigger);
+	if (SV_PrivateWalkTrialTerminalState (client))
+	{
+		if (!SV_PrivateWalkTrialContinueTerminal (ent, client, &command,
+			SV_CLIENT_NATIVE_AFTER_WEAPON_THINK, saved_host_frametime,
+			saved_qc_frametime))
+		{
+			failure = "terminal weapon Think continuation failed";
+			goto cleanup;
+		}
+		if (client->private_pmove_credit_msec < command.msec)
+		{
+			failure = "command-time credit changed during callbacks";
+			goto cleanup;
+		}
+		terminal_completed = terminal_native_completed = true;
+		goto complete_terminal_command;
+	}
+	if (VectorCompare (ent->v.velocity, preweapon_velocity))
+	{
+		if (prethink_waterlevel > 0 || ((int)ent->v.flags & FL_WATERJUMP))
+			SV_PrivateWalkTrialReconcileQCWater (ent, prethink_velocity,
+				prethink_flags, prethink_waterlevel, prethink_health,
+				prethink_teleport_time, seconds);
+		/* Stock QC owns jump sounds and flags; PMove owns the dry impulse.
+		 * Preserve a teleporter's deliberate pause at zero velocity. */
+		if (was_grounded && (command.buttons & 2) &&
+			ent->v.teleport_time <= qcvm->time &&
+			(prethink_teleport_time <= qcvm->time ||
+			 ent->v.teleport_time == prethink_teleport_time) &&
+			!(VectorCompare (ent->v.velocity, vec3_origin) &&
+			  !VectorCompare (prethink_velocity, vec3_origin)))
+			VectorCopy (prethink_velocity, ent->v.velocity);
+	}
+	SV_CheckVelocity (ent);
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	if (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
@@ -7700,7 +7791,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	/* A QC relocation, surface replacement or contact callback fences all
 	 * hands accepted at the old origin. Never publish the pre-callback solver
 	 * result as the baseline for a later replay command. */
-	if (!gorilla_command_cutoff && client->vr_gorilla_capable &&
+	if (!terminal_native_completed && !gorilla_command_cutoff &&
+		client->vr_gorilla_capable &&
 		sv_gorilla.value &&
 		client->vr_gorilla_reset_generation == gorilla_reset_generation)
 	{
@@ -7715,15 +7807,16 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		else
 			SV_GorillaInvalidateAccepted (client);
 	}
+complete_terminal_command:
 	client->private_completed_move = (int)command.sequence;
 	client->private_pmove_last_cmd = command;
 	client->private_pmove_last_cmd_valid = true;
 	client->private_pmove_jump_secs = terminal_completed ? 0.0f : result_jump_secs;
 	client->private_pmove_waterjump_secs = terminal_completed ? 0.0f : result_waterjump_secs;
-	if (terminal_completed)
+	if (terminal_completed && !terminal_native_completed)
 		SV_ResetGorillaClient (client);
 	client->private_pmove_credit_msec -= command.msec;
-	if (client->private_pmove_credit_msec < 0.000001)
+	if (terminal_native_completed || client->private_pmove_credit_msec < 0.000001)
 		client->private_pmove_credit_msec = 0;
 	client->cmd = command;
 	client->cmd.impulse = 0;
@@ -7736,7 +7829,8 @@ cleanup:
 		ent->v.button0 = (command.buttons & BUTTON_ATTACK) != 0;
 	/* Only accepted commands refresh the pre-death snapshot.  The refresh
 	 * helper also requires an active, spawned, living client. */
-	if (command_completed && client->active && client->spawned &&
+	if (command_completed && !terminal_native_completed &&
+		client->active && client->spawned &&
 		client->edict == ent && !ent->free)
 		SV_CoopRespawnRefreshClientInventory (ent);
 	if (failure)
@@ -8011,7 +8105,9 @@ static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
  * sequence whose input this frame consumed; the selected terminal adapter
  * must never substitute an accepted but unconsumed tail.
  * Return success only if PostThink and the owner lifetime completed. */
-static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num, int completed_move)
+static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
+	int completed_move, sv_client_native_start_t start,
+	qboolean prior_weapon_think_ran)
 {
 	sv_client_move_frame_t move_frame;
 	sv_vr_weapon_pose_scope_t weapon_scope;
@@ -8022,12 +8118,13 @@ static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num, int complet
 	qboolean suppress_trigger = false, saved_button0 = false;
 	qboolean gorilla_braced = false;
 	qboolean gorilla_swim_intent = false;
-	qboolean gorilla_dispatch, weapon_think_ran = false;
+	qboolean gorilla_dispatch, weapon_think_ran = prior_weapon_think_ran;
 	qboolean friendly_fire_scope;
 	vec3_t callback_origin, callback_delta;
 
 	ED_Retain (ent);
-	if (svs.clients[num - 1].protocol_qsvr == QSVR_PROTOCOL_PINNED)
+	if (start == SV_CLIENT_NATIVE_FRESH &&
+		svs.clients[num - 1].protocol_qsvr == QSVR_PROTOCOL_PINNED)
 		SV_ApplyPrivateRoomScaleMove (ent, &svs.clients[num - 1]);
 	SV_CaptureClientMoveFrameBeforeQC (ent, &move_frame);
 	retained_pusher = move_frame.pusher;
@@ -8038,6 +8135,21 @@ static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num, int complet
 	// call standard client pre-think
 	//
 	saved_button0 = ent->v.button0 != 0;
+	if (start == SV_CLIENT_NATIVE_AFTER_PRETHINK)
+	{
+		VectorCopy (ent->v.origin, callback_origin);
+		goto after_prethink;
+	}
+	if (start == SV_CLIENT_NATIVE_AFTER_WEAPON_THINK)
+	{
+		/* The selected owner entered weapon Think from stock WALK. Native
+		 * dispatch retains that pre-Think type unless Gorilla reselects. */
+		movetype = dispatch_movetype = MOVETYPE_WALK;
+		gorilla_dispatch = client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+			client->vr_gorilla_capable && sv_gorilla.value;
+		VectorCopy (ent->v.origin, callback_origin);
+		goto after_weapon_think;
+	}
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 		suppress_trigger = SV_VRMeleeSuppressNativeTrigger (client, ent,
 			&client->cmd);
@@ -8051,6 +8163,7 @@ static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num, int complet
 	VectorCopy (ent->v.origin, callback_origin);
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 
+after_prethink:
 	assert_always (!ent->free);
 	VectorSubtract (ent->v.origin, callback_origin, callback_delta);
 	if (VectorLength (callback_delta) > .01f)
@@ -8097,6 +8210,7 @@ static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num, int complet
 	default:
 		Host_EndGame ("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
 	}
+after_weapon_think:
 	VectorSubtract (ent->v.origin, callback_origin, callback_delta);
 	if (VectorLength (callback_delta) > .01f)
 		SV_GorillaInvalidateAccepted (client);
@@ -8183,6 +8297,13 @@ done:
 		ED_Release (retained_pusher);
 	ED_Release (ent);
 	return owner_completed;
+}
+
+static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num,
+	int completed_move)
+{
+	return SV_Physics_ClientNativeFromPhase (ent, num, completed_move,
+		SV_CLIENT_NATIVE_FRESH, false);
 }
 
 /* A dead selected owner uses the ordinary world-frame dispatcher from its
@@ -8305,7 +8426,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 				!SV_Physics_ClientPrivateWalkTrial (ent, client,
 					queue_offset, queue_offset == 0))
 				break;
-			if (SV_PrivateWalkTrialTerminalState (client))
+			if (SV_PrivateWalkTrialTerminalState (client) ||
+				client->private_move_native_frame)
 				break;
 		}
 		return;
