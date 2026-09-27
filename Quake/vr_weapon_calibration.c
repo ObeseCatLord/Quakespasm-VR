@@ -2272,13 +2272,52 @@ qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out)
 	return true;
 }
 
+/* q30a1024's W_FireSpikes and Mjolnir's W_FireSpikes/Crossbow launch from
+ * self.origin + 16 up, without the stock rocket's eight-forward component.
+ * Keep this at the QC source boundary rather than creating source-only held
+ * calibration slots; an authored muzzle_source_offset remains additive. */
+static qboolean VR_WeaponCalibrationUpOnlySource(const char *viewmodel)
+{
+	const char *game = COM_SkipPath(com_gamedir);
+	static const char *const q30_models[] = {
+		"progs/v_nail.mdl", "progs/v_nail2.mdl"
+	};
+	static const char *const mjolnir_models[] = {
+		"progs/ad171/v_nail.mdl", "progs/ad171/v_nail2.mdl",
+		"progs/its/v_crossbow1.mdl", "progs/its/v_crossbow2.mdl"
+	};
+	const char *const *models;
+	size_t count;
+
+	if (!game || !viewmodel)
+		return false;
+	if (!q_strcasecmp(game, "q30a1024"))
+	{
+		models = q30_models;
+		count = sizeof(q30_models) / sizeof(q30_models[0]);
+	}
+	else if (!q_strcasecmp(game, "mjolnir"))
+	{
+		models = mjolnir_models;
+		count = sizeof(mjolnir_models) / sizeof(mjolnir_models[0]);
+	}
+	else
+		return false;
+	for (size_t i = 0; i < count; ++i)
+		if (!q_strcasecmp(viewmodel, models[i]))
+			return true;
+	return false;
+}
+
 void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 	int weapon_bit, const vec3_t angles, float viewheight, vec3_t out)
 {
 	static const vec3_t default_angles = {0.0f, 0.0f, 0.0f};
 	static const vec3_t default_forward_offset = {0.0f, 0.0f, 8.0f};
+	static const vec3_t up_only_offset = {0.0f, 0.0f, 0.0f};
 	const vr_weapon_calibration_slot_t *calibration = NULL;
 	const float *safe_angles = angles;
+	const float *forward_offset;
 	vec3_t source_world;
 	int slot;
 	int component;
@@ -2290,6 +2329,8 @@ void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 
 	if (!angles || !VR_CalibrationVectorIsFinite(angles))
 		safe_angles = default_angles;
+	forward_offset = VR_WeaponCalibrationUpOnlySource(viewmodel) ?
+		up_only_offset : default_forward_offset;
 
 	if (vr_weapon_calibration_initialized && viewmodel && viewmodel[0])
 	{
@@ -2303,10 +2344,10 @@ void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 
 	if (!spawn_at_self_origin)
 	{
-		if (!VR_LocomotionAimOffsetToWorld(default_forward_offset,
+		if (!VR_LocomotionAimOffsetToWorld(forward_offset,
 											  safe_angles, 1.0f, source_world))
 		{
-			source_world[0] = 8.0f;
+			source_world[0] = forward_offset[2];
 			source_world[1] = 0.0f;
 			source_world[2] = 0.0f;
 		}

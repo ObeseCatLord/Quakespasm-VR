@@ -158,7 +158,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -ffunction-sections -fdata-sections -fsanitize=address,undefined \
   -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
   tests/vr_weapon_calibration_reload_fixture.c \
-  Quake/vr_weapon_calibration.c Quake/vr_weapon_schema.c Quake/common.c \
+  Quake/vr_weapon_calibration.c Quake/vr_weapon_schema.c \
+  Quake/vr_locomotion.c Quake/mathlib.c Quake/common.c \
   -Wl,--gc-sections -Wl,--wrap=COM_LoadFile \
   $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/quakespasm-vr-weapon-calibration-reload-fixture

@@ -400,6 +400,17 @@ int main(void)
 		0.0f, 0.0f, 8.5f);
 	AssertClassicProfile("progs/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f,
 		0.25f, 0.0f, 0.0f, 41.0f);
+	/* q30's nail QuakeC uses self.origin + 16 up; rockets retain the
+	 * ordinary eight-forward source. */
+	{
+		vec3_t source, angles = {0, 0, 0};
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_nail.mdl",
+			IT_NAILGUN, angles, 22.0f, source);
+		AssertVector(source, 0.0f, 0.0f, 16.0f);
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_rock.mdl",
+			IT_ROCKET_LAUNCHER, angles, 22.0f, source);
+		AssertVector(source, 8.0f, 0.0f, 16.0f);
+	}
 
 	/* Only hash-confirmed Mjolnir ad171 copies receive canonical AD values. */
 	strcpy(com_gamedir, "/fixtures/mjolnir");
@@ -411,6 +422,17 @@ int main(void)
 		"progs/ad171/v_shot2.mdl", false, held, &held_scale));
 	assert(!VR_WeaponCalibrationLookupHeld(
 		"progs/ad171/v_nail.mdl", false, held, &held_scale));
+	{
+		vec3_t source, angles = {0, 0, 0};
+		VR_WeaponCalibrationProjectileSourceOffset(
+			"progs/ad171/v_nail.mdl", IT_NAILGUN, angles, 22.0f,
+			source);
+		AssertVector(source, 0.0f, 0.0f, 16.0f);
+		VR_WeaponCalibrationProjectileSourceOffset(
+			"progs/its/v_crossbow1.mdl", 0, angles, 22.0f,
+			source);
+		AssertVector(source, 0.0f, 0.0f, 16.0f);
+	}
 
 	/* Mjolnir schema data overrides an alias and reload restores the baseline. */
 	fixture_file_contents =
