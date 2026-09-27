@@ -199,3 +199,33 @@ alternatives bind those draws to that pass. Actual density-map coarse-color
 frames remain gated because their separate color pass and full-rate depth
 replay need a different stencil/sample policy. This is a source-level
 compatibility argument, not a measured speedup or headset image validation.
+
+## Coarse FB/META mask decision, senior review
+
+The reviewed next step keeps hidden-area world rejection disabled during an
+actual fragment-density-map coarse-color frame. [Vulkan fragment operations](https://docs.vulkan.org/spec/latest/chapters/fragops.html)
+leave the association of multi-pixel fragments with depth/stencil samples
+implementation-dependent at partially covered boundaries. A shader `discard`
+has the same coverage problem because one invocation can supply multiple
+pixels. Neither the existing hidden mesh nor a full-rate stencil writer proves
+that every rejected coarse fragment lies wholly outside both visible eye
+regions. Final black coverage remains available independently.
+
+| Review finding | Disposition |
+| --- | --- |
+| Coarse color uses `SCBX_DENSITY_WORLD`, while the current mask writer only records in `SCBX_WORLD`. | Adopt: do not remove the coarse-frame gate as a purported fix; it would mask only later protected color. |
+| Density and ordinary framebuffers bind the same depth image, but the density pass discards its depth/stencil contents and the ordinary pass clears them. | Correct the design model: these are separate *content lifetimes*, not separate image allocations. Keep the ordinary full-rate depth replay before protected draws and SSAO. |
+| A new frame graph or unconditional KHR preference would duplicate policy without proving a gain. | Reject for this change; retain the current pass compiler and independently qualify the runtime FDM contract. |
+| A guard-region depth replay might reduce work. | Defer until a conservative AO sampling bound and whole-frame timing demonstrate a useful saving. |
+
+If a qualified runtime and GPU justify a coarse mask experiment, extend the
+existing density scene context and pipeline alternatives. Initialize its
+stencil before any reader; a zero load-op clear is preferable to adding an
+in-pass clear. The current full-extent `vkCmdClearAttachments` is not itself
+an edge bug: the [Vulkan clear rule](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdClearAttachments.html)
+warns that FDM clears can extend outside a *partial* clear rectangle. A safe
+mask still needs a conservative bound for coarse fragment footprints, both-eye
+projection, offsets, and later color/depth sampling. Compare visible edge
+pixels, protected geometry, AO/depth, and total GPU frame time through
+coarse→full-rate→coarse transitions. Source review cannot replace headset/GPU
+qualification; the user will perform physical device tests later.
