@@ -713,6 +713,7 @@ static int Datagram_ProcessPacket (unsigned int length, qsocket_t *sock, struct 
 qsocket_t *Datagram_GetAnyMessage (void)
 {
 	qsocket_t		*s;
+	qsocket_t		*next;
 	struct qsockaddr addr;
 	int				 length;
 	unsigned int	 queued_length;
@@ -774,8 +775,10 @@ qsocket_t *Datagram_GetAnyMessage (void)
 			// stray packet... ignore it and just try the next
 		}
 	}
-	for (s = net_activeSockets; s; s = s->next)
+	for (s = net_activeSockets; s; s = next)
 	{
+		/* SV_DropClient frees s and rewrites s->next into the free list. */
+		next = s->next;
 		if (s->driver != net_driverlevel)
 			continue;
 		if (!s->isvirtual)
