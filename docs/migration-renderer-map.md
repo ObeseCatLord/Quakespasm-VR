@@ -231,8 +231,13 @@ The alignment findings prompted a narrow portability fix: packed sprite
 headers/intervals now load through aligned copies, and the image-resizer's
 scalar coefficient moves use byte-preserving `memcpy`. A full sanitizer build
 with only those two production-file changes loaded `mj4m1` and exited 0;
-neither prior alignment diagnostic recurred. Fifteen remaining UBSan nonnull
-argument diagnostics in the MD5 animation parser are a separate investigation.
+neither prior alignment diagnostic recurred. That run also reported fifteen
+UBSan nonnull-argument diagnostics in the MD5 animation parser. A later
+source review found no confirmed current null-to-nonnull call: `ddf0079e`
+guards the zero-joint bind-pose `memcpy` that previously ran once per pose,
+and the current token parser accepts a null cursor. The count is consistent
+with the old zero-joint path, but the raw diagnostic locations and a focused
+sanitizer reproducer are unavailable, so this is not a verified runtime fix.
 
 `08d38a79` now rejects MD5 animation component counts that exceed the loaded
 file or overflow the temporary float allocation, and checks joint component
