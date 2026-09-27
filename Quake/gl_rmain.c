@@ -2573,6 +2573,7 @@ void R_RenderView (
 		task_handle_t draw_view_model_task = Task_AllocateAndAssignFunc (R_DrawViewModelTask, NULL, 0);
 		Task_AddDependency (before_mark, draw_view_model_task);
 		Task_AddDependency (begin_rendering_task, draw_view_model_task);
+		Task_AddDependency (prepare_vrik_palettes_task, draw_view_model_task);
 		Task_AddDependency (draw_view_model_task, draw_done_task);
 
 		Atomic_StoreUInt32 (&next_visedict, 0u);
@@ -2622,6 +2623,7 @@ void R_RenderView (
 		Task_AddDependency (before_mark, draw_particles_task);
 		Task_AddDependency (emit_particles_task, draw_particles_task);
 		Task_AddDependency (begin_rendering_task, draw_particles_task);
+		Task_AddDependency (prepare_vrik_palettes_task, draw_particles_task);
 		Task_AddDependency (draw_particles_task, draw_done_task);
 
 		task_handle_t build_tlas_task = Task_AllocateAndAssignFunc (R_BuildTopLevelAccelerationStructure, NULL, 0);
