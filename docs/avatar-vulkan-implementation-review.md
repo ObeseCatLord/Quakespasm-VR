@@ -67,11 +67,13 @@ a reusable general VRM avatar runtime. A VRM importer would still need the
 tracked-pose mapping and would need to use the existing Vulkan palette/skin
 path to meet the performance goal.
 
-The inherited opt-in calibrated humanoid policy is still a separate 2.0
-migration gap: `R_AvatarRetargetHumanoid` exists, but frame preparation
-currently calls the generic palette retargeter. Preserve the donor's target
-lengths and tracked IK when wiring that policy into the selected-avatar path;
-manual clips or the Alicia VRM spike do not supply equivalent behavior.
+The inherited opt-in calibrated humanoid policy was wired into the Vulkan
+avatar frame path in `102e201c`. Complete custom humanoids can use calibrated
+retargeting, target-length tracked IK, and the desktop support-hand solve;
+mode `0` and incomplete rigs retain generic retargeting. The integrated path
+builds and passes its synthetic fixture, but asset-backed presentation and
+timing remain unverified. Manual clips or the Alicia VRM spike do not supply
+equivalent tracked behavior.
 
 For performance qualification, measure full frame preparation by active
 avatar count, rig size, desktop versus tracked pose, and stereo mode. If
