@@ -31,6 +31,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_input.h"
 #include "vrik_codec.h"
 #include "player_avatar.h"
+#include "custom_avatar.h"
 
 /* v4 keeps the existing v3 pose body while adding reliable generation admission. */
 entity_t *CL_EntityNum (int num);
@@ -291,6 +292,68 @@ static qboolean CL_ParseAvatarSlot (const char *command)
 	if (cl.avatar_protocol_offered &&
 		PlayerAvatar_ParseSlotCommand (command, &slot, &id))
 		cl.avatar_ids[slot] = (unsigned char)id;
+	return true;
+}
+
+static qboolean CL_OfferCustomAvatarProtocol (const char *command)
+{
+	static const char name[] = "avatar_custom_protocol";
+	int offered, pending;
+
+	if (strncmp (command, name, sizeof (name) - 1) ||
+		(command[sizeof (name) - 1] &&
+		 command[sizeof (name) - 1] != ' ' &&
+		 command[sizeof (name) - 1] != '\t'))
+		return false;
+	offered = cl.avatar_custom_protocol_offered;
+	pending = cl.avatar_custom_cap_pending;
+	if (PlayerAvatar_LatchCustomProtocolOffer (command, &offered, &pending,
+		cl.avatar_custom_cap_sent))
+	{
+		cl.avatar_custom_protocol_offered = offered;
+		cl.avatar_custom_cap_pending = pending;
+	}
+	return true;
+}
+
+static qboolean CL_ParseCustomAvatarSlot (const char *command)
+{
+	static const char name[] = "avatar_custom_slot";
+	char key[PLAYER_AVATAR_CUSTOM_KEY_MAX + 1];
+	char digest[PLAYER_AVATAR_CUSTOM_DIGEST_MAX + 1];
+	int slot, id, clear;
+	qboolean changed;
+
+	if (strncmp (command, name, sizeof (name) - 1) ||
+		(command[sizeof (name) - 1] &&
+		 command[sizeof (name) - 1] != ' ' &&
+		 command[sizeof (name) - 1] != '\t'))
+		return false;
+	if (!cl.avatar_custom_protocol_offered ||
+		!PlayerAvatar_ParseCustomSlotCommand (command, &slot, key,
+			sizeof (key), digest, sizeof (digest), &clear))
+		return true;
+	if (clear)
+	{
+		cl.avatar_custom_keys[slot][0] = 0;
+		cl.avatar_custom_digests[slot][0] = 0;
+		return true;
+	}
+	changed = strcmp (cl.avatar_custom_keys[slot], key) ||
+		strcmp (cl.avatar_custom_digests[slot], digest);
+	q_strlcpy (cl.avatar_custom_keys[slot], key,
+		sizeof (cl.avatar_custom_keys[slot]));
+	q_strlcpy (cl.avatar_custom_digests[slot], digest,
+		sizeof (cl.avatar_custom_digests[slot]));
+	id = CustomAvatar_Resolve (key, digest);
+	if (id < 0)
+	{
+		if (changed)
+			Con_Warning ("Avatar: custom package %s unavailable or differs locally; using ranger\n",
+				key);
+		id = PLAYER_AVATAR_RANGER;
+	}
+	cl.avatar_ids[slot] = (unsigned char)id;
 	return true;
 }
 
@@ -3133,6 +3196,10 @@ void CL_ParseServerMessage (void)
 				if (CL_OfferAvatarProtocol (str + 2))
 					break;
 				if (CL_ParseAvatarSlot (str + 2))
+					break;
+				if (CL_OfferCustomAvatarProtocol (str + 2))
+					break;
+				if (CL_ParseCustomAvatarSlot (str + 2))
 					break;
 				if (CL_ParseVRIKRetirement (str + 2))
 					break;

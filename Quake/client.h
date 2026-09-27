@@ -323,6 +323,11 @@ typedef struct
 	qboolean avatar_cap_pending;
 	qboolean avatar_set_pending;
 	unsigned char avatar_ids[MAX_SCOREBOARD];
+	qboolean avatar_custom_protocol_offered;
+	qboolean avatar_custom_cap_sent;
+	qboolean avatar_custom_cap_pending;
+	char avatar_custom_keys[MAX_SCOREBOARD][PLAYER_AVATAR_CUSTOM_KEY_MAX + 1];
+	char avatar_custom_digests[MAX_SCOREBOARD][PLAYER_AVATAR_CUSTOM_DIGEST_MAX + 1];
 	/* Optional opaque Opus transport, independent of PEXT and VRIK. */
 	qboolean voice_protocol_offered;
 	qboolean voice_cap_sent;

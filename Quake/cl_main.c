@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "pmove.h"
 #include "vr_input.h"
 #include "vr_weapon_menu.h"
+#include "custom_avatar.h"
 
 #ifdef QSVR_SHADOW_TRACE
 #include <stdio.h>
@@ -100,16 +101,28 @@ static qboolean cl_last_connect_valid;
 static void CL_TrySendAvatarSelection (void)
 {
 	int id;
-	char command[32];
+	const custom_avatar_t *custom;
+	char command[128];
 	int length;
 
 	if (!cl.avatar_set_pending || !cl.avatar_cap_sent ||
 		cls.state != ca_connected || cls.demoplayback)
 		return;
-	id = PlayerAvatar_IdForKey (cl_avatar.string);
+	id = CustomAvatar_IdForKey (cl_avatar.string);
 	if (id < 0)
 		return;
-	length = q_snprintf (command, sizeof (command), "avatar_set %d", id);
+	custom = CustomAvatar_Get (id);
+	if (custom && !cl.avatar_custom_cap_sent)
+	{
+		/* Keep the local custom choice queued for a possible later offer. */
+		id = PLAYER_AVATAR_RANGER;
+		custom = NULL;
+	}
+	if (custom)
+		length = q_snprintf (command, sizeof (command), "avatar_custom_set %s %s",
+			custom->key, custom->digest);
+	else
+		length = q_snprintf (command, sizeof (command), "avatar_set %d", id);
 	if (length < 0 || length >= (int)sizeof (command) ||
 		cls.message.cursize < 0 || cls.message.maxsize < 0 ||
 		(size_t)cls.message.cursize + 1 + (size_t)length + 1 >
@@ -136,13 +149,29 @@ static void CL_TrySendAvatarCapability (void)
 	CL_TrySendAvatarSelection ();
 }
 
+static void CL_TrySendCustomAvatarCapability (void)
+{
+	if (!cl.avatar_custom_cap_pending || cl.avatar_custom_cap_sent ||
+		!cl.avatar_cap_sent || cls.state != ca_connected || cls.demoplayback ||
+		cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		(size_t)cls.message.cursize + 1 + sizeof ("avatar_custom_cap 1") >
+		(size_t)cls.message.maxsize)
+		return;
+	MSG_WriteByte (&cls.message, clc_stringcmd);
+	MSG_WriteString (&cls.message, "avatar_custom_cap 1");
+	cl.avatar_custom_cap_pending = false;
+	cl.avatar_custom_cap_sent = true;
+	cl.avatar_set_pending = true;
+	CL_TrySendAvatarSelection ();
+}
+
 static void CL_AvatarChanged (cvar_t *var)
 {
-	if (PlayerAvatar_IdForKey (var->string) < 0)
+	if (CustomAvatar_IdForKey (var->string) < 0)
 	{
 		Con_Warning ("cl_avatar: unsupported avatar \"%s\"; using ranger\n",
 			var->string);
-		Cvar_SetQuick (var, PlayerAvatar_KeyForId (PLAYER_AVATAR_RANGER));
+		Cvar_SetQuick (var, CustomAvatar_KeyForId (PLAYER_AVATAR_RANGER));
 		return;
 	}
 	cl.avatar_set_pending = true;
@@ -304,6 +333,11 @@ void CL_Disconnect (void)
 	cl.avatar_cap_pending = false;
 	cl.avatar_set_pending = false;
 	memset (cl.avatar_ids, PLAYER_AVATAR_RANGER, sizeof (cl.avatar_ids));
+	cl.avatar_custom_protocol_offered = false;
+	cl.avatar_custom_cap_sent = false;
+	cl.avatar_custom_cap_pending = false;
+	memset (cl.avatar_custom_keys, 0, sizeof (cl.avatar_custom_keys));
+	memset (cl.avatar_custom_digests, 0, sizeof (cl.avatar_custom_digests));
 	CL_ResetWeaponContactState ();
 	CL_ResetVoiceTransportState ();
 	Voice_ResetConnection ();
@@ -2425,6 +2459,7 @@ void CL_SendCmd (void)
 	if (cls.state != ca_connected)
 		return;
 	CL_TrySendAvatarCapability ();
+	CL_TrySendCustomAvatarCapability ();
 	CL_TrySendAvatarSelection ();
 
 	// get basic movement from keyboard
@@ -2907,6 +2942,7 @@ void CL_Init (void)
 
 	CL_InitInput ();
 	CL_InitTEnts ();
+	CustomAvatar_Init ();
 
 	cmd_function_t *cmd;
 

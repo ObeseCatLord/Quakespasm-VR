@@ -1,0 +1,235 @@
+/* Semantic re-release avatar rigs and Ranger-palette retargeting. */
+#ifndef R_AVATAR_H
+#define R_AVATAR_H
+
+#include "quakedef.h"
+#include "player_avatar.h"
+
+typedef struct r_vrik_palette_output_s r_vrik_palette_output_t;
+
+#define R_AVATAR_MAX_JOINTS 256
+
+/* Avatar-local semantic order inherited from master. Missing optional joints are -1. */
+typedef enum
+{
+	MD5_VRIK_HIP,
+	MD5_VRIK_SPINE1,
+	MD5_VRIK_SPINE2,
+	MD5_VRIK_NECK,
+	MD5_VRIK_HEAD,
+	MD5_VRIK_SHOULDER_L,
+	MD5_VRIK_UPPERARM_L,
+	MD5_VRIK_LOWERARM_L,
+	MD5_VRIK_HAND_L,
+	MD5_VRIK_SHOULDER_R,
+	MD5_VRIK_UPPERARM_R,
+	MD5_VRIK_LOWERARM_R,
+	MD5_VRIK_HAND_R,
+	MD5_VRIK_UPPERLEG_L,
+	MD5_VRIK_LOWERLEG_L,
+	MD5_VRIK_FOOT_L,
+	MD5_VRIK_UPPERLEG_R,
+	MD5_VRIK_LOWERLEG_R,
+	MD5_VRIK_FOOT_R,
+	MD5_VRIK_GUN,
+	MD5_VRIK_AXE,
+	MD5_VRIK_SMALL_FLAME,
+	MD5_VRIK_BIG_FLAME,
+	MD5_VRIK_JOINT_COUNT
+} r_avatar_semantic_joint_t;
+
+typedef enum r_avatar_family_e {
+	R_AVATAR_FAMILY_HUMANOID = 0,
+	R_AVATAR_FAMILY_DIGITIGRADE,
+	R_AVATAR_FAMILY_QUADRUPED,
+	/* Vore's centre leg intentionally remains bind-following. */
+	R_AVATAR_FAMILY_TRIPOD
+} r_avatar_family_t;
+
+typedef enum r_avatar_equipment_policy_e {
+	/* Use the canonical Ranger prop bones. */
+	R_AVATAR_EQUIPMENT_RANGER = 0,
+	/* Ignore authored monster equipment and attach the actual player weapon. */
+	R_AVATAR_EQUIPMENT_ATTACH_HAND
+} r_avatar_equipment_policy_t;
+
+typedef enum r_avatar_basis_policy_e {
+	/* Preserve the original head-forward, shoulder-left humanoid basis. */
+	R_AVATAR_BASIS_HUMANOID = 0,
+	/* Use feet-to-hip as up and head-facing as the presentation forward axis. */
+	R_AVATAR_BASIS_FEET_UP_HEAD_FORWARD
+} r_avatar_basis_policy_t;
+
+typedef enum r_avatar_posture_policy_e {
+	/* Leave the authored retargeted body posture untouched. */
+	R_AVATAR_POSTURE_AUTHORED = 0,
+	/* Turn the declared torso branch upright around the Hip pivot. */
+	R_AVATAR_POSTURE_UPRIGHT
+} r_avatar_posture_policy_t;
+
+#define R_AVATAR_CAP_HEAD             (1u << 0)
+#define R_AVATAR_CAP_ARMS             (1u << 1)
+#define R_AVATAR_CAP_LEGS             (1u << 2)
+#define R_AVATAR_CAP_RETARGET         (1u << 3)
+#define R_AVATAR_CAP_STANDARD_WEAPON  (1u << 4)
+
+/* A semantic can be present solely for downstream IK; it does not receive a
+ * second ambiguous animation delta when it aliases a real target joint. */
+#define R_AVATAR_MAP_VIRTUAL          (1u << 0)
+
+typedef struct r_avatar_joint_map_s {
+	const char *name;
+	unsigned char flags;
+} r_avatar_joint_map_t;
+
+typedef struct r_avatar_profile_s {
+	player_avatar_id_t id;
+	const char *key;
+	const char *model_path;
+	r_avatar_family_t family;
+	unsigned int capabilities;
+	float display_scale;
+	r_avatar_equipment_policy_t equipment_policy;
+	const char *native_equipment_joint[4];
+	r_avatar_joint_map_t joint[MD5_VRIK_JOINT_COUNT];
+	r_avatar_basis_policy_t basis_policy;
+	/* Empty entries retain the legacy all-body floor contact behaviour. */
+	const char *contact_root[4];
+	qboolean desktop_refine;
+	float arm_pole_outward;
+	float arm_pole_back;
+	qboolean mirror_outer_leg_poles;
+	/* Optional model-specific post-retarget posture correction.  It rotates the
+	 * complete Hip-descendant hierarchy rather than selected model joints. */
+	r_avatar_posture_policy_t posture_policy;
+	/* A bounded Hip-descendant turn for rigs whose authored torso is nearly
+	 * horizontal.  Zero retains the full policy turn for legacy callers. */
+	float posture_degrees;
+	float head_forward_axis[3];
+	qboolean preserve_hip_rotation;
+	/* Retained exclusively for tracked profile arm solves. */
+	float arm_pole_up;
+	/* Solve the physical parent chain when a semantic endpoint skips joints. */
+	qboolean actual_path_ik;
+	/* Desktop-only stable weapon pose.  The socket is body-relative, so the
+	 * animated Ranger fist cannot turn a detached monster weapon backwards. */
+	qboolean desktop_weapon_socket;
+	float desktop_weapon_forward;
+	float desktop_weapon_up;
+	/* Gun-local left support anchor.  A zero vector mirrors the validated
+	 * dominant grip across the gun's forward/up plane. */
+	float desktop_weapon_support[3];
+	/* Desktop animal upper-body branch rebuilt from target bind-local transforms
+	 * under the current Hip before posture/grip repair; a nonpositive value
+	 * disables it (preserving zero-initialized legacy profiles). */
+	int desktop_upperbody_bind_root;
+	/* Desktop-only offhand repair derived from the attached dominant-hand prop.
+	 * This deliberately has no world-space anchor. */
+	qboolean desktop_support_hand;
+} r_avatar_profile_t;
+
+/* Runtime resolution borrows the caller's donor skeleton view. Keep that view
+ * alive through retargeting; its joint pointers remain model owned. joint[]
+ * are target semantic indices; canonical_joint[] retain Ranger semantics. */
+typedef struct r_avatar_rig_s {
+	const r_avatar_profile_t *profile;
+	const md5_skeleton_view_t *live;
+	int joint[MD5_VRIK_JOINT_COUNT];
+	int canonical_joint[MD5_VRIK_JOINT_COUNT];
+	unsigned int virtual_mask;
+	qboolean valid;
+} r_avatar_rig_t;
+
+/* One target-model -> canonical-Ranger presentation map.  rotation is the
+ * rigid target body basis in Ranger coordinates; forward/inverse include the
+ * quantized display scale and the floor/hip anchor translation. */
+typedef struct r_avatar_presentation_context_s {
+	float rotation[12];
+	float scale;
+	float forward[12];
+	float inverse[12];
+	/* The source rig's authored semantic vertical and facing axes in source
+	 * model space.  These avoid treating raw model axes as Ranger body axes
+	 * when a target-only presentation refinement needs its semantic frame. */
+	float source_semantic_vertical[3];
+	float source_semantic_facing[3];
+} r_avatar_presentation_context_t;
+
+/* Anatomical rotation calibration, independent of mesh/material format.
+ * Offsets map source joint axes to target skin-bind axes. Reference matrices
+ * are the target orientations in the source reference silhouette, NOT new
+ * inverse binds. Keep the authored skin binds unchanged. */
+typedef struct r_avatar_humanoid_s {
+	float offset[19][12];
+	float reference[19][12];
+	float motion_scale;
+} r_avatar_humanoid_t;
+
+qboolean R_AvatarBuildHumanoid(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	r_avatar_humanoid_t *out);
+qboolean R_AvatarRetargetHumanoid(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	const r_avatar_humanoid_t *map, const float *source_palette, float *out);
+/* Rotation-only analytic IK: keeps every physical bind offset intact. Returns
+ * residual distance for unreachable targets; negative means invalid input.
+ * endpoint is a target-model-space rigid wrist/foot transform. */
+float R_AvatarSolveHumanoidLimb(const r_avatar_rig_t *rig, float *palette,
+	int upper_semantic, const float endpoint[12], const float pole[3]);
+/* Head-to-ankles anatomical height; excludes hair, hats and carried props. */
+float R_AvatarHumanoidHeight(const r_avatar_rig_t *rig);
+
+const r_avatar_profile_t *R_AvatarProfileForId (int id);
+const r_avatar_profile_t *R_AvatarProfileForModelPath (const char *path);
+qboolean R_AvatarResolveRig (const r_avatar_profile_t *profile,
+	const md5_skeleton_view_t *live, r_avatar_rig_t *out);
+
+/* Translates a solved canonical Ranger global palette to target global
+ * matrices.  For each owned semantic, it transports the GLOBAL bind-to-pose
+ * rotation and global origin displacement through the presentation basis,
+ * then reconstructs target locals against already solved parents.  Unmapped
+ * joints keep their authored bind-local transforms. */
+qboolean R_AvatarBuildPresentationContext (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, r_avatar_presentation_context_t *out);
+void R_AvatarPresentationAddCanonicalZ (r_avatar_presentation_context_t *context,
+	float z);
+void R_AvatarPresentationPoint (const r_avatar_presentation_context_t *context,
+	const float in[3], float out[3]);
+void R_AvatarPresentationInversePoint (const r_avatar_presentation_context_t *context,
+	const float in[3], float out[3]);
+qboolean R_AvatarRetargetPaletteWithContext (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_avatar_presentation_context_t *context,
+	const float *source_palette, float *target_palette);
+qboolean R_AvatarRetargetPalette (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const float *source_palette, float *target_palette);
+/* Checked bridge from the donor VRIK result to the inherited flat CPU
+ * retargeter. The caller must pass the Ranger skeleton used by the solve. */
+qboolean R_AvatarRetargetRangerOutput (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const r_vrik_palette_output_t *ranger,
+	float (*target_palette)[12], size_t target_capacity);
+
+/* Single-rig semantic body bases: canonical body forward/left/up to this
+ * rig's model space and its inverse.  Cross-rig presentation should use the
+ * full source+target affine functions below, which preserve Ranger's actual
+ * authored model-space basis rather than assuming world axes. */
+qboolean R_AvatarCanonicalToTargetBasis (const r_avatar_rig_t *rig,
+	float out[12]);
+qboolean R_AvatarTargetToCanonicalBasis (const r_avatar_rig_t *rig,
+	float out[12]);
+
+/* Legacy forward/inverse presentation wrappers.  These hip-anchored base
+ * affines include the selected display scale and translation that anchors
+ * target bind Hip to canonical Ranger bind Hip, but do not include the
+ * renderer's visible-mesh floor correction.  They are for skinned
+ * points/vectors and refinement targets only, never for the rigid bone
+ * palette itself. */
+qboolean R_AvatarTargetToCanonicalPresentation (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, float out[12]);
+qboolean R_AvatarCanonicalToTargetPresentation (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, float out[12]);
+
+/* Renderer scale is rounded to a stable 1/4096th to avoid tiny platform
+ * differences changing cached presentation transforms. */
+float R_AvatarQuantizedDisplayScale (const r_avatar_profile_t *profile);
+
+#endif /* R_AVATAR_H */

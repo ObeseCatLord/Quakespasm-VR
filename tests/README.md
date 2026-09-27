@@ -2,11 +2,29 @@
 
 ## Avatar identity and protocol parser
 
+`avatar_retarget_fixture.c` ports the inherited semantic profiles and CPU
+retarget checks to the donor `md5_skeleton_view_t`. It covers all built-in
+profile maps, global palette transport, presentation transforms, humanoid
+limb lengths, and the checked bridge from an `R_VRIKBuildRangerPalette`
+output. The bridge test uses a synthetic solved palette; it does not run the
+VRIK solver or render a model. Run it on Linux with:
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare \
+  -Wno-missing-field-initializers -IQuake \
+  tests/avatar_retarget_fixture.c Quake/r_avatar.c \
+  $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/avatar-retarget-fixture
+/tmp/avatar-retarget-fixture
+```
+
 `avatar_protocol_fixture.c` links the source master pure parser. It checks
 builtin identities, canonical protocol commands, capability latching, custom
-key and digest validation, and custom slot updates and clears. The module is
-compiled into vkQuake, but this slice does not wire gameplay, client, or server
-callers to it.
+key and digest validation, and custom slot updates and clears. The client and
+server now negotiate these identities; the local package registry only
+resolves installed matching digests. Loading and drawing selected custom models
+in Vulkan is a separate renderer integration step.
 
 ```sh
 cc -std=c11 -Wall -Wextra -Werror \
