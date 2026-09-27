@@ -114,6 +114,12 @@ already route through the same `vr_haptic` gate before physical-hand mapping
 and focused OpenXR dispatch. The read-only donor/2.0 call-chain audit found no
 missing haptic adapter. Controller/runtime behavior still needs device proof.
 
+For VR-011 and WPN-012, an admitted akimbo pair now prepares two independent
+controller aim rays using the existing per-hand pair anchors and renders both
+pointers in the stereo scene. Ordinary weapons, non-controller aim modes, and
+desktop crosshairs keep their existing single-pointer paths. Linux compilation
+passes; QBJ3/Enyo headset alignment and impact matching remain unqualified.
+
 For VR-015, the OpenXR backend exposes per-eye hidden triangles and the Vulkan
 postprocess subpass now covers those regions in black after UI. The
 [hidden-area mask boundary and senior review](migration-hidden-area-mask.md)

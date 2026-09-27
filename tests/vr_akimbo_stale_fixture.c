@@ -30,6 +30,11 @@ qboolean VR_WeaponCalibrationAdjustActive (void)
 	return false;
 }
 
+qboolean VR_WeaponMenu_IsOpenVR (void)
+{
+	return false;
+}
+
 qboolean V_TrackedSessionActive (void)
 {
 	return true;
@@ -74,6 +79,16 @@ void *Mod_Extradata_CheckSkin (qmodel_t *model, int skinnum)
 }
 
 qboolean Mod_GetStockAxeEdge (qmodel_t *model, int skinnum,
+	stockaxe_edge_t *out)
+{
+	(void)model;
+	(void)skinnum;
+	(void)out;
+	++unreachable_admission_calls;
+	return false;
+}
+
+qboolean Mod_GetAlkalineAxeEdge (qmodel_t *model, int skinnum,
 	stockaxe_edge_t *out)
 {
 	(void)model;

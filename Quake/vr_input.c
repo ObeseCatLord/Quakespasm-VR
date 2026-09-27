@@ -4294,34 +4294,39 @@ static void VR_InputPreparePrivatePose (usercmd_t *pending, int dominant,
 			grip, raw_world_muzzle, contact_modelindex, contact_model);
 }
 
-qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
+static qboolean VR_InputCrosshairContextValid (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	const int dominant = VR_InputDominantPhysicalHand ();
+	return frame && frame->should_render && VR_InputControllerAim () &&
+		cls.state == ca_connected && cls.signon == SIGNONS &&
+		!cls.demoplayback && !cl.intermission && cl.entities &&
+		cl.viewentity > 0 && cl.viewentity < cl.num_entities;
+}
+
+static qboolean VR_InputCrosshairAimRayForHand (int physical_hand,
+	qboolean paired, vec3_t start, vec3_t forward)
+{
 	vec3_t body_offset, hand_angles, local_muzzle, world_muzzle, right, up;
 	vec3_t collision_origin, collision_offset;
 	entity_t *view_player;
 
-	if (!start || !forward || !frame || !frame->should_render ||
-		!VR_InputControllerAim () || cls.state != ca_connected ||
-		cls.signon != SIGNONS || cls.demoplayback || cl.intermission ||
-		!cl.entities || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
-		!V_TrackedPresentationHandBodyOffset (dominant, body_offset) ||
-		!V_TrackedPresentationHandAngles (dominant, hand_angles))
+	if (physical_hand < 0 || physical_hand > 1 ||
+		!V_TrackedPresentationHandBodyOffset (physical_hand, body_offset) ||
+		!V_TrackedPresentationHandAngles (physical_hand, hand_angles))
 		return false;
 
 	view_player = &cl.entities[cl.viewentity];
-	if (V_AkimboPairReady ())
+	if (paired)
 	{
-		entity_t *pair = V_AkimboPairEntity (dominant);
+		entity_t *pair = V_AkimboPairEntity (physical_hand);
 		vec3_t anchor, raw_origin, raw_angles, render_delta;
 		/* The rendered fist may have animation palm compensation. Aiming uses
 		 * the tracked grip and the same fixed anchor as the pair command. */
-		if (!pair || !V_TrackedPresentationHandWorldPose (dominant,
+		if (!pair || !V_TrackedPresentationHandWorldPose (physical_hand,
 			raw_origin, raw_angles) ||
-			!V_AkimboTransformAnchor (dominant, pair->angles, anchor))
+			!V_AkimboTransformAnchor (physical_hand, pair->angles, anchor))
 			return false;
-		V_AkimboPairCollisionOffset (dominant, render_delta);
+		V_AkimboPairCollisionOffset (physical_hand, render_delta);
 		VectorAdd (raw_origin, render_delta, start);
 		VectorAdd (start, anchor, start);
 	}
@@ -4333,7 +4338,7 @@ qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
 			cl.viewent.model != cl.model_precache[modelindex] ||
 			!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
 			!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
-				vr_gunmodelscale.value, vr_gunmodelpitch.value, dominant == 0,
+				vr_gunmodelscale.value, vr_gunmodelpitch.value, physical_hand == 0,
 				world_muzzle))
 			return false;
 		/* Held origin already includes the render stair and collision delta. */
@@ -4343,7 +4348,7 @@ qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
 	{
 		if (!VR_WeaponCalibrationCurrentMuzzle (local_muzzle) ||
 			!VR_LocomotionMuzzleOffsetToWorld (local_muzzle, hand_angles,
-				vr_gunmodelscale.value, vr_gunmodelpitch.value, dominant == 0,
+				vr_gunmodelscale.value, vr_gunmodelpitch.value, physical_hand == 0,
 				world_muzzle))
 			return false;
 		if (V_TrackedWeaponCollisionPresentation (collision_origin,
@@ -4359,6 +4364,32 @@ qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
 		if (!isfinite (start[i]) || !isfinite (forward[i]))
 			return false;
 	return true;
+}
+
+qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward)
+{
+	if (!start || !forward || !VR_InputCrosshairContextValid ())
+		return false;
+	return VR_InputCrosshairAimRayForHand (VR_InputDominantPhysicalHand (),
+		V_AkimboPairReady (), start, forward);
+}
+
+int VR_InputCrosshairAimRays (vec3_t starts[2], vec3_t forwards[2])
+{
+	if (!starts || !forwards || !VR_InputCrosshairContextValid ())
+		return 0;
+	if (V_AkimboPairReady ())
+	{
+		/* Both pointers use the exact prepared pair anchors and tracked
+		 * hands used for firing. Publish neither if one pose is invalid. */
+		for (int hand = 0; hand < 2; ++hand)
+			if (!VR_InputCrosshairAimRayForHand (hand, true,
+				starts[hand], forwards[hand]))
+				return 0;
+		return 2;
+	}
+	return VR_InputCrosshairAimRayForHand (VR_InputDominantPhysicalHand (),
+		false, starts[0], forwards[0]) ? 1 : 0;
 }
 
 void VR_InputMove (usercmd_t *pending)

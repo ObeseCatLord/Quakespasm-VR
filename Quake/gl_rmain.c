@@ -87,10 +87,11 @@ typedef struct
 {
 	qboolean valid;
 	int mode;
+	int ray_count;
 	float size_pixels;
 	float alpha;
-	vec3_t start;
-	vec3_t impact;
+	vec3_t start[2];
+	vec3_t impact[2];
 } vr_crosshair_frame_t;
 
 /* Prepared by SCR_UpdateScreen on the main owner, then read-only in the scene task. */
@@ -1144,7 +1145,7 @@ static void R_DrawVRCrosshair (cb_context_t *cbx);
 void R_PrepareVRCrosshair (void)
 {
 	vr_crosshair_frame_t prepared;
-	vec3_t forward, right, up, end, muzzle_cue;
+	vec3_t forwards[2], right, up, end, muzzle_cue;
 	float size, alpha, depth, vertical_offset;
 
 	memset (&vr_crosshair_frame, 0, sizeof (vr_crosshair_frame));
@@ -1156,11 +1157,12 @@ void R_PrepareVRCrosshair (void)
 		memset (&prepared, 0, sizeof (prepared));
 		prepared.mode = 1;
 		prepared.valid = true;
+		prepared.ray_count = 1;
 		prepared.size_pixels = q_max (12.0f * (float)glwidth /
 			(float)vid.width, 8.0f);
 		prepared.alpha = 1.0f;
-		VectorCopy (cl.viewent.origin, prepared.start);
-		VectorCopy (muzzle_cue, prepared.impact);
+		VectorCopy (cl.viewent.origin, prepared.start[0]);
+		VectorCopy (muzzle_cue, prepared.impact[0]);
 		vr_crosshair_frame = prepared;
 		return;
 	}
@@ -1183,41 +1185,47 @@ void R_PrepareVRCrosshair (void)
 
 	if (vr_aimmode.value == (float)VR_AIMMODE_CONTROLLER)
 	{
-		if (!VR_InputCrosshairAimRay (prepared.start, forward))
+		prepared.ray_count = VR_InputCrosshairAimRays (prepared.start, forwards);
+		if (prepared.ray_count < 1 || prepared.ray_count > 2)
 			return;
 	}
 	else
 	{
 		/* The target branch publishes gameplay aim through cl.viewangles. */
-		VectorCopy (cl.viewent.origin, prepared.start);
-		prepared.start[2] -= cl.stats[STAT_VIEWHEIGHT] - 10.0f;
-		AngleVectors (cl.viewangles, forward, right, up);
+		prepared.ray_count = 1;
+		VectorCopy (cl.viewent.origin, prepared.start[0]);
+		prepared.start[0][2] -= cl.stats[STAT_VIEWHEIGHT] - 10.0f;
+		AngleVectors (cl.viewangles, forwards[0], right, up);
 	}
-	for (int i = 0; i < 3; ++i)
-		if (!isfinite (prepared.start[i]) || !isfinite (forward[i]))
-			return;
 
 	vertical_offset = isfinite (vr_crosshairy.value) ? vr_crosshairy.value : 0.0f;
 	depth = isfinite (vr_crosshair_depth.value) ? vr_crosshair_depth.value : 0.0f;
-	if (prepared.mode == 1 && depth > 0)
+	for (int ray = 0; ray < prepared.ray_count; ++ray)
 	{
-		const float units_per_metre = V_VRUnitsPerMetre ();
-		if (!isfinite (units_per_metre) || units_per_metre <= 0)
-			return;
-		VectorMA (prepared.start, depth * units_per_metre, forward, prepared.impact);
+		for (int i = 0; i < 3; ++i)
+			if (!isfinite (prepared.start[ray][i]) || !isfinite (forwards[ray][i]))
+				return;
+		if (prepared.mode == 1 && depth > 0)
+		{
+			const float units_per_metre = V_VRUnitsPerMetre ();
+			if (!isfinite (units_per_metre) || units_per_metre <= 0)
+				return;
+			VectorMA (prepared.start[ray], depth * units_per_metre,
+				forwards[ray], prepared.impact[ray]);
+		}
+		else
+		{
+			VectorMA (prepared.start[ray], 4096.0f, forwards[ray], end);
+			if (prepared.mode == 1)
+				end[2] += vertical_offset;
+			TraceLine (prepared.start[ray], end, prepared.impact[ray]);
+			if (prepared.mode == 2)
+				prepared.impact[ray][2] += vertical_offset * 10.0f;
+		}
+		for (int i = 0; i < 3; ++i)
+			if (!isfinite (prepared.impact[ray][i]))
+				return;
 	}
-	else
-	{
-		VectorMA (prepared.start, 4096.0f, forward, end);
-		if (prepared.mode == 1)
-			end[2] += vertical_offset;
-		TraceLine (prepared.start, end, prepared.impact);
-		if (prepared.mode == 2)
-			prepared.impact[2] += vertical_offset * 10.0f;
-	}
-	for (int i = 0; i < 3; ++i)
-		if (!isfinite (prepared.impact[i]))
-			return;
 
 	prepared.valid = true;
 	vr_crosshair_frame = prepared;
@@ -1345,13 +1353,14 @@ static float R_VRCrosshairHalfExtent (float depth, float pixels, float fov, floa
 	return depth * tanf (DEG2RAD (fov) * 0.5f) * pixels / viewport;
 }
 
-static qboolean R_VRCrosshairWorldPathReady (void)
+static qboolean R_VRCrosshairWorldPathReady (int ray)
 {
 	vec3_t delta;
 	const float width = (float)r_scene_vrect.width;
 	const float height = (float)r_scene_vrect.height;
 
-	if (!vulkan_globals.stereo_active || !vr_crosshair_frame.valid || width <= 0 || height <= 0 ||
+	if (!vulkan_globals.stereo_active || !vr_crosshair_frame.valid ||
+		ray < 0 || ray >= vr_crosshair_frame.ray_count || width <= 0 || height <= 0 ||
 		!r_drawviewmodel.value || !r_drawentities.value || chase_active.value ||
 		(scr_viewsize.value >= 130 && !V_UseTrackedView ()) ||
 		(cl.items & IT_INVISIBILITY) || cl.stats[STAT_HEALTH] <= 0 ||
@@ -1360,36 +1369,36 @@ static qboolean R_VRCrosshairWorldPathReady (void)
 
 	if (vr_crosshair_frame.mode == 1)
 	{
-		VectorSubtract (vr_crosshair_frame.impact, r_origin, delta);
+		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, delta);
 		const float depth = DotProduct (delta, vpn);
 		return R_VRCrosshairHalfExtent (depth, vr_crosshair_frame.size_pixels, r_fovx, width) > 0 &&
 			R_VRCrosshairHalfExtent (depth, vr_crosshair_frame.size_pixels, r_fovy, height) > 0;
 	}
 	if (vr_crosshair_frame.mode == 2)
 	{
-		VectorSubtract (vr_crosshair_frame.impact, vr_crosshair_frame.start, delta);
+		VectorSubtract (vr_crosshair_frame.impact[ray], vr_crosshair_frame.start[ray], delta);
 		if (VectorLength (delta) <= 0)
 			return false;
-		VectorSubtract (vr_crosshair_frame.impact, r_origin, delta);
+		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, delta);
 		return R_VRCrosshairHalfExtent (DotProduct (delta, vpn),
 			vr_crosshair_frame.size_pixels * 2.0f, r_fovy, height) > 0;
 	}
 	return false;
 }
 
-static void R_DrawVRCrosshair (cb_context_t *cbx)
+static void R_DrawVRCrosshairRay (cb_context_t *cbx, int ray)
 {
 	vec3_t corners[4], direction, side, from_camera;
 	float half_width, half_height;
 	const float width = (float)r_scene_vrect.width;
 	const float height = (float)r_scene_vrect.height;
 
-	if (!R_VRCrosshairWorldPathReady ())
+	if (!R_VRCrosshairWorldPathReady (ray))
 		return;
 
 	if (vr_crosshair_frame.mode == 1)
 	{
-		VectorSubtract (vr_crosshair_frame.impact, r_origin, from_camera);
+		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, from_camera);
 		half_width = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
 			vr_crosshair_frame.size_pixels, r_fovx, width);
 		half_height = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
@@ -1398,38 +1407,44 @@ static void R_DrawVRCrosshair (cb_context_t *cbx)
 			return;
 		for (int i = 0; i < 3; ++i)
 		{
-			corners[0][i] = vr_crosshair_frame.impact[i] - vright[i] * half_width + vup[i] * half_height;
-			corners[1][i] = vr_crosshair_frame.impact[i] + vright[i] * half_width + vup[i] * half_height;
-			corners[2][i] = vr_crosshair_frame.impact[i] + vright[i] * half_width - vup[i] * half_height;
-			corners[3][i] = vr_crosshair_frame.impact[i] - vright[i] * half_width - vup[i] * half_height;
+			corners[0][i] = vr_crosshair_frame.impact[ray][i] - vright[i] * half_width + vup[i] * half_height;
+			corners[1][i] = vr_crosshair_frame.impact[ray][i] + vright[i] * half_width + vup[i] * half_height;
+			corners[2][i] = vr_crosshair_frame.impact[ray][i] + vright[i] * half_width - vup[i] * half_height;
+			corners[3][i] = vr_crosshair_frame.impact[ray][i] - vright[i] * half_width - vup[i] * half_height;
 		}
 	}
 	else if (vr_crosshair_frame.mode == 2)
 	{
-		VectorSubtract (vr_crosshair_frame.impact, vr_crosshair_frame.start, direction);
+		VectorSubtract (vr_crosshair_frame.impact[ray], vr_crosshair_frame.start[ray], direction);
 		if (VectorNormalize (direction) <= 0)
 			return;
 		CrossProduct (direction, vpn, side);
 		if (VectorNormalize (side) < 0.001f)
 			VectorCopy (vright, side);
-		VectorSubtract (vr_crosshair_frame.start, r_origin, from_camera);
+		VectorSubtract (vr_crosshair_frame.start[ray], r_origin, from_camera);
 		half_width = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
 			vr_crosshair_frame.size_pixels * 2.0f, r_fovy, height);
-		VectorSubtract (vr_crosshair_frame.impact, r_origin, from_camera);
+		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, from_camera);
 		half_height = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
 			vr_crosshair_frame.size_pixels * 2.0f, r_fovy, height);
 		for (int i = 0; i < 3; ++i)
 		{
-			corners[0][i] = vr_crosshair_frame.start[i] + side[i] * half_width;
-			corners[1][i] = vr_crosshair_frame.impact[i] + side[i] * half_height;
-			corners[2][i] = vr_crosshair_frame.impact[i] - side[i] * half_height;
-			corners[3][i] = vr_crosshair_frame.start[i] - side[i] * half_width;
+			corners[0][i] = vr_crosshair_frame.start[ray][i] + side[i] * half_width;
+			corners[1][i] = vr_crosshair_frame.impact[ray][i] + side[i] * half_height;
+			corners[2][i] = vr_crosshair_frame.impact[ray][i] - side[i] * half_height;
+			corners[3][i] = vr_crosshair_frame.start[ray][i] - side[i] * half_width;
 		}
 	}
 	else
 		return;
 
 	R_EmitVRCrosshairQuad (cbx, corners, vr_crosshair_frame.alpha);
+}
+
+static void R_DrawVRCrosshair (cb_context_t *cbx)
+{
+	for (int ray = 0; ray < vr_crosshair_frame.ray_count; ++ray)
+		R_DrawVRCrosshairRay (cbx, ray);
 }
 
 /*

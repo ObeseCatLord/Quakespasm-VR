@@ -84,6 +84,7 @@ qboolean VR_WeaponCollisionAuthorized (void);
 qboolean VR_InputStockAxePresentationEdgeOffsets (int physical_hand,
 	vec3_t base, vec3_t tip);
 qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward);
+int VR_InputCrosshairAimRays (vec3_t starts[2], vec3_t forwards[2]);
 void VR_InputTriggerHaptic (int logical_role, float duration_seconds, float amplitude);
 qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd);
 void VR_InputInvalidateMotion (void);
