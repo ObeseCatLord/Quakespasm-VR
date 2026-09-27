@@ -53,7 +53,6 @@ static cvar_t gl_max_size = {"gl_max_size", "0", CVAR_NONE};
 static cvar_t gl_picmip = {"gl_picmip", "0", CVAR_NONE};
 
 extern cvar_t vid_filter;
-extern cvar_t vid_anisotropic;
 
 #define MAX_MIPS 16
 static int			numgltextures;
@@ -253,7 +252,8 @@ static void TexMgr_SetFilterModes (gltexture_t *glt)
 	ZEROED_STRUCT (VkDescriptorImageInfo, image_info);
 	image_info.imageView = glt->image_view;
 	image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-	qboolean enable_anisotropy = vid_anisotropic.value && (!(glt->flags & TEXPREF_NOPICMIP) || (glt->flags & TEXPREF_WARPIMAGE));
+	qboolean enable_anisotropy = R_AnisotropyLevel () > 1.0f &&
+		(!(glt->flags & TEXPREF_NOPICMIP) || (glt->flags & TEXPREF_WARPIMAGE));
 
 	VkSampler point_sampler = enable_anisotropy ? vulkan_globals.point_aniso_sampler_lod_bias : vulkan_globals.point_sampler_lod_bias;
 	VkSampler linear_sampler = enable_anisotropy ? vulkan_globals.linear_aniso_sampler_lod_bias : vulkan_globals.linear_sampler_lod_bias;

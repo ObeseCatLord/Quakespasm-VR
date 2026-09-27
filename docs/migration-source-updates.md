@@ -67,3 +67,32 @@ The four deltas above now have implementation anchors on branch `2.0`:
 These anchors close the source-delta routing gap, not runtime parity. Linux
 builds cover the audio channel change; headset/gameplay qualification is left
 to the user after implementation.
+
+## Later product updates through `eb5e048d`
+
+Product `master` advanced by two more commits on 2026-09-25:
+`cefb937d0f552ef0c60f72f735916cc023b6676d` (stale world-model
+references on game switches) and
+`eb5e048d6a9d82b223b03bceb1872539efa3a040` (anisotropic filtering
+control). They change five existing ledger paths: `Quake/common.c`,
+`Quake/gl_rmisc.c`, `Quake/gl_texmgr.c`, `Quake/gl_vidsdl.c`, and
+`Quake/r_world.c`. Their exact `master` blobs are recorded in the preservation
+ledger; no new path or literal cvar/command declaration was added. The source
+history index contains both commits. The original `1327f795` feature anchors
+remain pinned, while these later changes are explicit follow-up evidence.
+
+The 2.0 adaptation in `538eae56` clears the old client model references before
+vkQuake's `Mod_ResetAll` and resets cached view leaves in `R_NewGame`. The
+source's `R_PrepareVRStereoVisibility` guard is not copied because vkQuake's
+stereo PVS runs through `R_MarkSurfacesPrepare` after its regular scene setup;
+that source function does not exist here. Both Linux builds pass. A live
+switch/reconnect check still needs to establish loading-screen and first-frame
+behavior.
+
+The Vulkan renderer already exposed `vid_anisotropic` as off/on at the device
+maximum. Its adaptation keeps `0` off and the saved value `1` at that maximum;
+values above `1` request a level capped to device support. The existing
+graphics-menu row cycles available levels, and the existing sampler/texture
+descriptor owner applies them. Both Linux builds pass. A local windowed probe
+stopped at SDL video initialization under the sandbox before sampler creation,
+so runtime filter changes and the unsupported-feature path are unqualified.

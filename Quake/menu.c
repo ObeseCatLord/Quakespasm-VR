@@ -2164,7 +2164,28 @@ static void M_GraphicsOptions_AdjustSliders (int dir, qboolean mouse)
 			Cvar_SetValueQuick (&vid_fsaamode, (float)(((int)vid_fsaamode.value + 2 + dir) % 2));
 		break;
 	case GRAPHICS_OPT_ANISOTROPY:
-		Cvar_SetValueQuick (&vid_anisotropic, (float)(((int)vid_anisotropic.value + 2 + dir) % 2));
+	{
+		const float maximum = vulkan_globals.device_properties.limits.maxSamplerAnisotropy;
+		float current, next;
+		if (!vulkan_globals.device_features.samplerAnisotropy || maximum <= 1.0f)
+			break;
+		current = !isfinite (vid_anisotropic.value) || vid_anisotropic.value <= 0.0f ?
+			0.0f : R_AnisotropyLevel ();
+		if (dir > 0)
+			next = current <= 0.0f ? q_min (2.0f, maximum) :
+				current >= maximum ? 0.0f : q_min (current * 2.0f, maximum);
+		else if (current <= 0.0f)
+			next = maximum;
+		else if (current <= 2.0f)
+			next = 0.0f;
+		else
+		{
+			next = 2.0f;
+			while (next * 2.0f < current)
+				next *= 2.0f;
+		}
+		Cvar_SetValueQuick (&vid_anisotropic, next);
+	}
 		break;
 	case GRAPHICS_OPT_UNDERWATER:
 		Cvar_SetValueQuick (&r_waterwarp, (float)(((int)r_waterwarp.value + 3 + dir) % 3));
@@ -2309,7 +2330,10 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANISOTROPY, "Anisotropic");
 	M_Print (
 		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANISOTROPY,
-		(vid_anisotropic.value == 0) ? "off" : va ("on (%gx)", vulkan_globals.device_properties.limits.maxSamplerAnisotropy));
+		!vulkan_globals.device_features.samplerAnisotropy ||
+		vulkan_globals.device_properties.limits.maxSamplerAnisotropy <= 1.0f ? "N/A" :
+		!isfinite (vid_anisotropic.value) || vid_anisotropic.value <= 0.0f ? "off" :
+		va ("on (%gx)", R_AnisotropyLevel ()));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_UNDERWATER, "Underwater FX");
 	M_Print (

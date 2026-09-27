@@ -60,6 +60,7 @@ extern cvar_t r_lerpmove;
 extern cvar_t r_lerpturn;
 extern cvar_t r_nolerp_list;
 extern cvar_t r_oit;
+extern cvar_t vid_anisotropic;
 // johnfitz
 extern cvar_t gl_zfix; // QuakeSpasm z-fighting fix
 extern cvar_t r_alphasort;
@@ -2336,12 +2337,27 @@ void R_CreatePipelineLayouts ()
 R_InitSamplers
 ===============
 */
+float R_AnisotropyLevel (void)
+{
+	const float maximum = vulkan_globals.device_features.samplerAnisotropy ?
+		vulkan_globals.device_properties.limits.maxSamplerAnisotropy : 1.0f;
+	if (!isfinite (maximum) || maximum <= 1.0f ||
+		!isfinite (vid_anisotropic.value) || vid_anisotropic.value <= 0.0f)
+		return 1.0f;
+	/* The existing value 1 means enabled at the device maximum. Larger
+	 * values request a specific level without changing saved donor defaults. */
+	return vid_anisotropic.value <= 1.0f ? maximum :
+		q_min (vid_anisotropic.value, maximum);
+}
+
 void R_InitSamplers ()
 {
 	GL_WaitForDeviceIdle ();
 	Sys_Printf ("Initializing samplers\n");
 
 	VkResult err;
+	const float anisotropy = R_AnisotropyLevel ();
+	Sys_Printf ("Anisotropic filtering: %gx\n", anisotropy);
 
 	if (vulkan_globals.point_sampler == VK_NULL_HANDLE)
 	{
@@ -2376,8 +2392,8 @@ void R_InitSamplers ()
 		sampler_create_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 		sampler_create_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 
-		sampler_create_info.anisotropyEnable = VK_TRUE;
-		sampler_create_info.maxAnisotropy = vulkan_globals.device_properties.limits.maxSamplerAnisotropy;
+		sampler_create_info.anisotropyEnable = anisotropy > 1.0f;
+		sampler_create_info.maxAnisotropy = anisotropy;
 		err = vkCreateSampler (vulkan_globals.device, &sampler_create_info, NULL, &vulkan_globals.point_aniso_sampler);
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateSampler failed with code %i", (int)err);
@@ -2407,8 +2423,8 @@ void R_InitSamplers ()
 		sampler_create_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 		sampler_create_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 
-		sampler_create_info.anisotropyEnable = VK_TRUE;
-		sampler_create_info.maxAnisotropy = vulkan_globals.device_properties.limits.maxSamplerAnisotropy;
+		sampler_create_info.anisotropyEnable = anisotropy > 1.0f;
+		sampler_create_info.maxAnisotropy = anisotropy;
 		err = vkCreateSampler (vulkan_globals.device, &sampler_create_info, NULL, &vulkan_globals.linear_aniso_sampler);
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateSampler failed with code %i", (int)err);
@@ -2473,8 +2489,8 @@ void R_InitSamplers ()
 
 		GL_SetObjectName ((uint64_t)vulkan_globals.point_sampler_lod_bias, VK_OBJECT_TYPE_SAMPLER, "point_lod_bias");
 
-		sampler_create_info.anisotropyEnable = VK_TRUE;
-		sampler_create_info.maxAnisotropy = vulkan_globals.device_properties.limits.maxSamplerAnisotropy;
+		sampler_create_info.anisotropyEnable = anisotropy > 1.0f;
+		sampler_create_info.maxAnisotropy = anisotropy;
 		err = vkCreateSampler (vulkan_globals.device, &sampler_create_info, NULL, &vulkan_globals.point_aniso_sampler_lod_bias);
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateSampler failed with code %i", (int)err);
@@ -2493,8 +2509,8 @@ void R_InitSamplers ()
 
 		GL_SetObjectName ((uint64_t)vulkan_globals.linear_sampler_lod_bias, VK_OBJECT_TYPE_SAMPLER, "linear_lod_bias");
 
-		sampler_create_info.anisotropyEnable = VK_TRUE;
-		sampler_create_info.maxAnisotropy = vulkan_globals.device_properties.limits.maxSamplerAnisotropy;
+		sampler_create_info.anisotropyEnable = anisotropy > 1.0f;
+		sampler_create_info.maxAnisotropy = anisotropy;
 		err = vkCreateSampler (vulkan_globals.device, &sampler_create_info, NULL, &vulkan_globals.linear_aniso_sampler_lod_bias);
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateSampler failed with code %i", (int)err);

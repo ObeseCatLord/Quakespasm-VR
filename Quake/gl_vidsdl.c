@@ -141,7 +141,7 @@ static cvar_t vid_desktopfullscreen = {"vid_desktopfullscreen", "1", CVAR_ARCHIV
 static cvar_t vid_borderless = {"vid_borderless", "0", CVAR_ARCHIVE};				// QuakeSpasm
 cvar_t		  vid_palettize = {"vid_palettize", "0", CVAR_ARCHIVE};
 cvar_t		  vid_filter = {"vid_filter", "1", CVAR_ARCHIVE};
-cvar_t		  vid_anisotropic = {"vid_anisotropic", "1", CVAR_ARCHIVE};
+cvar_t		  vid_anisotropic = {"vid_anisotropic", "1", CVAR_ARCHIVE}; // 0=off, 1=hardware max, >1=requested level
 cvar_t		  vid_fsaa = {"vid_fsaa", "4", CVAR_ARCHIVE};
 cvar_t		  vid_fsaamode = {"vid_fsaamode", "0", CVAR_ARCHIVE};
 cvar_t		  vid_gamma = {"gamma", "0.9", CVAR_ARCHIVE};		// johnfitz -- moved here from view.c

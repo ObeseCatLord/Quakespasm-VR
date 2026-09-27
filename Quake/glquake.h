@@ -946,6 +946,7 @@ int GL_MemoryTypeFromProperties (uint32_t type_bits, VkFlags requirements_mask, 
 void R_CreateDescriptorPool ();
 void R_CreateDescriptorSetLayouts ();
 void R_InitSamplers ();
+float R_AnisotropyLevel (void);
 void R_CreatePipelineLayouts ();
 void R_CreatePipelines ();
 void R_DestroyPipelines ();

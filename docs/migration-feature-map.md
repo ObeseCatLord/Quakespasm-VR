@@ -17,12 +17,22 @@ This records the scope inventory, **not migration or runtime parity certificatio
 | QSS | QSS-M | `03a498aabc411e2e739adc815c5536b161b9626e` |
 | IRON | ironwail | `08d578136ff43d7d1ef38e636dfbfd3e844be7cd` |
 
-MAIN is the current product authority. XR supplies later runtime/rendering work but predates four newer MAIN commits: `b110a81c` Steam Audio packaging, `91aacd47` GPLv3 distribution terms, `22a7fce0` teleport occupancy, and `1327f795` frozen remote room-scale handling. These must be reconciled, not overwritten by copying XR wholesale. BASE identifies inherited behavior, including unchanged VR and ordinary engine functionality. DONOR means the exact vkQuake baseline, not a moving upstream head. The network and renderer reports use their own short legends for these same pins.
+MAIN remains the pinned feature-anchor baseline; product `master` is the
+current behavioral authority. [Later source updates](migration-source-updates.md)
+through `eb5e048d` are tracked separately rather than silently changing the
+anchors. XR supplies later runtime/rendering work but predates four newer MAIN
+baseline commits: `b110a81c` Steam Audio packaging, `91aacd47` GPLv3
+distribution terms, `22a7fce0` teleport occupancy, and `1327f795` frozen
+remote room-scale handling. These must be reconciled, not overwritten by
+copying XR wholesale. BASE identifies inherited behavior, including unchanged
+VR and ordinary engine functionality. DONOR means the exact vkQuake baseline,
+not a moving upstream head. The network and renderer reports use their own
+short legends for these same pins.
 
 Official project documentation: [vkQuake](https://github.com/Novum/vkQuake), [Ironwail](https://github.com/andrei-drexler/ironwail), [QSS-M](https://github.com/timbergeron/QSS-M). Local pinned source is the implementation evidence; online README features can advance beyond these pins.
 
 - [Path preservation ledger](migration-preservation.csv): 905 paths, with inherited/XR/donor/current-MAIN blobs and preserved WIP hashes. Exact feature anchors are distinguished from module routing. Unanchored support paths still require seam review before import.
-- [History index](migration-history-index.csv): 535 branch-history rows (492 MAIN and 43 XR). Routes come from changed paths; this records scope, not a commit-by-commit proof or a cherry-pick queue. Final surviving behavior governs reverted/superseded work.
+- [History index](migration-history-index.csv): 539 branch-history rows (496 MAIN and 43 XR). Routes come from changed paths; this records scope, not a commit-by-commit proof or a cherry-pick queue. Final surviving behavior governs reverted/superseded work.
 - [Interface index](migration-interface-index.csv): 1303 literal cvar/command declarations across MAIN and XR, including `DEFINE_CVAR`. Repeated/conditional declarations remain separate. Generated weapon-offset families, computed registrations, bind assets, and QC numeric/name/permission registries require explicit MOD-001/WPN-008 closure; this appendix is deliberately not presented as exhaustive API equivalence.
 - [QC interface index](migration-qc-interface-index.csv): 512 literal registry declarations (256 per source pin; compile conditions and runtime assignment are not evaluated), with slot, name, VM permission, handler and same-name donor extension declarations where present. A blank donor-extension cell does **not** mean the donor lacks a builtin: its core table and runtime resolver must also be checked. Signatures, stubs, capability strings and call semantics still require MOD-001 integration checks.
 - Local WIP remains an immutable local-only reference; no private deployment files, captured sessions, external SDK binaries or fixture contents are reproduced here.
