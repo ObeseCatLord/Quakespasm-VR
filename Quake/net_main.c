@@ -195,7 +195,9 @@ qboolean NET_QSocketGetProQuakeAngleHack (const qsocket_t *s)
 }
 void NET_QSocketSetMSS (qsocket_t *s, int mss)
 {
-	s->pending_max_datagram = mss;
+	if (!s)
+		return;
+	s->pending_max_datagram = CLAMP (512, mss, NET_MAXMESSAGE);
 }
 
 static void NET_Listen_f (void)
