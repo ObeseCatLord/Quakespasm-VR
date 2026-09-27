@@ -47,6 +47,44 @@ head-motion shimmer, cross-eye leakage or unequal-eye edges. The existing
 lowest `r_ssao` quality already uses four samples, so fewer samples alone may
 trade too much stability for little gain.
 
+The opt-in `r_ssao_vr_half 1` candidate is now implemented for measurement;
+its default is `0`, which retains the existing full-resolution VR AO. It keeps
+world-depth preparation and the combined-depth mip pass at native scene
+resolution, then evaluates and filters AO at `floor(width/2)` by
+`floor(height/2)` per eye using mip 1 as its depth input (matching Vulkan's
+mip sizing). The existing multiview
+composite reconstructs each full-resolution receiver from four AO samples,
+weighted by position and world-depth agreement. A VR setting change recreates
+the AO resource views together; desktop SSAO keeps its original dimensions,
+algorithm and `r_ssao` quality options. No additional pass owner was added.
+
+For a comparison, keep the same map, route, eye resolution, MSAA, `r_ssao`
+quality, foveation and mirror setting, and compare `r_ssao_vr_half 0` with `1`
+after warmup. Include `r_ssao 0` to establish the non-AO frame cost. Record
+`scr_speeds 3` total GPU, SSAO compute GPU, CPU/wait times and frame misses;
+repeat across a contact-heavy scene and `mj4m1`. The half-resolution option is
+experimental until it wins total frame time without visible AO regressions.
+The Linux debug Meson and release Makefile builds and Vulkan 1.1 shader
+validation pass, but no GPU timing or headset
+image comparison has been captured. The local isolated Monado service failed
+during device discovery before the game could run, so this change has no new
+runtime evidence yet.
+
+Astra's implementation review accepted the existing pass/resource owner and
+the explicit composite push-constant flag, with three P2 corrections before
+commit:
+
+| Finding | Disposition |
+| --- | --- |
+| An unrelated low-resolution depth sample could still darken a full-resolution receiver when all bilateral weights were tiny. | Fade visibility toward neutral as total depth confidence falls; no matching sample leaves the receiver unoccluded. |
+| The debug composite fetched mip 1 past an odd-size image edge. | Clamp its coordinate to the mip view extent; the ordinary composite already clamps all four candidates. |
+| Odd-size mip 1 covers `2 * floor(full/2)` full-resolution pixels, while the evaluation projection used the whole frustum span. | Scale the per-eye evaluation span by that ratio and retain the original frustum origin. |
+
+These are localized corrections to the opt-in candidate. Astra's focused
+follow-up verified all three in the final source and recommended an
+experimental commit. Performance and headset appearance remain unmeasured;
+the default stays full-resolution.
+
 The existing `scr_speeds 3` whole-frame GPU timer now also shows an `ssao
 compute gpu` interval when AO work was recorded. The interval brackets
 `R_ComputeSSAO` in the donor frame graph and includes its depth transition,

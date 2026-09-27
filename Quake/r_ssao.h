@@ -14,6 +14,7 @@ typedef struct
 	vec4_t viewport;   // pixel origin and inverse size
 	vec4_t projection; // inverse projection X/Y, near plane, sample count
 	vec4_t settings;   // radius, strength
+	vec4_t composite_options; // x: VR half-resolution AO reconstruction
 } ssao_constants_t;
 
 void R_InitSSAO (void);

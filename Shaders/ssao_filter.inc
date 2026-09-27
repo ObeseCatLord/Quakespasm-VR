@@ -70,6 +70,8 @@ void main ()
 	for (int side = 0; side < 2; side++)
 	{
 		ivec2 pix_coord = ivec2 (pixel.x + side, pixel.y);
+		if (pix_coord.x >= c.viewport_size.x)
+			continue;
 
 		half4 edges_l_lrtb = unpack_edges ((side == 0) ? (edges_q0.x) : (edges_q0.y));
 		half4 edges_t_lrtb = unpack_edges ((side == 0) ? (edges_q0.z) : (edges_q1.w));

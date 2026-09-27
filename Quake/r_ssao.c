@@ -22,6 +22,7 @@ enum
 cvar_t					 r_ssao = {"r_ssao", "1", CVAR_ARCHIVE};
 static cvar_t			 r_ssao_radius = {"r_ssao_radius", "32", CVAR_ARCHIVE};
 static cvar_t			 r_ssao_strength = {"r_ssao_strength", "1.0", CVAR_ARCHIVE};
+static cvar_t			 r_ssao_vr_half = {"r_ssao_vr_half", "0", CVAR_ARCHIVE};
 vulkan_pipeline_layout_t ssao_layout;
 vulkan_pipeline_t		 ssao_pipelines[MAIN_RENDER_PASS_VARIANT_COUNT];
 vulkan_pipeline_layout_t ssao_compute_layout;
@@ -29,6 +30,8 @@ vulkan_pipeline_t		 ssao_prepare_pipeline, ssao_evaluate_pipeline, ssao_filter_p
 static VkImage			 scene_depth;
 #define SSAO_MAX_EYES 2
 static qboolean			 ssao_stereo;
+static qboolean			 ssao_vr_half;
+static uint32_t			 ssao_eval_width, ssao_eval_height;
 static VkImageView		 views[SSAO_DEPTH_COUNT][SSAO_MAX_EYES];
 static VkDescriptorSet	 descriptors[SSAO_DEPTH_COUNT][SSAO_MAX_EYES];
 static VkImageView		 depth_array_views[SSAO_DEPTH_COUNT];
@@ -49,11 +52,20 @@ static VkImageView	   mip_views[5][SSAO_MAX_EYES];
 static VkDescriptorSet prepared_read[SSAO_MAX_EYES], prepared_write[SSAO_MAX_EYES];
 static VkDescriptorSet mip_descriptors[SSAO_MAX_EYES];
 
+static void R_SSAOVRResolutionChanged (cvar_t *var)
+{
+	// The evaluation image extents and descriptor mip ranges change together.
+	if (vulkan_globals.stereo_active)
+		vid.restart_next_frame = true;
+}
+
 void R_InitSSAO (void)
 {
 	Cvar_RegisterVariable (&r_ssao);
 	Cvar_RegisterVariable (&r_ssao_radius);
 	Cvar_RegisterVariable (&r_ssao_strength);
+	Cvar_RegisterVariable (&r_ssao_vr_half);
+	Cvar_SetCallback (&r_ssao_vr_half, R_SSAOVRResolutionChanged);
 #ifdef _DEBUG
 	Cvar_RegisterVariable (&r_ssao_debug);
 #endif
@@ -150,6 +162,11 @@ void R_CreateSSAO (VkImage depth)
 		return;
 	scene_depth = depth;
 	ssao_stereo = vulkan_globals.stereo_active;
+	ssao_vr_half = ssao_stereo && isfinite (r_ssao_vr_half.value) && r_ssao_vr_half.value > 0;
+	// Vulkan mip 1 uses floor(base / 2). Match the sampled depth view exactly;
+	// the composite clamps an odd trailing full-resolution row or column.
+	ssao_eval_width = ssao_vr_half ? q_max (1u, (uint32_t)vid.render_width / 2) : (uint32_t)vid.render_width;
+	ssao_eval_height = ssao_vr_half ? q_max (1u, (uint32_t)vid.render_height / 2) : (uint32_t)vid.render_height;
 	const int eye_count = ssao_stereo ? 2 : 1;
 	const VkSamplerCreateInfo sampler_info = {
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -185,6 +202,9 @@ void R_CreateSSAO (VkImage depth)
 
 	for (int i = 0; i < SSAO_IMAGE_COUNT; ++i)
 	{
+		const qboolean reduced = ssao_vr_half && i != SSAO_DEPTH_PYRAMID && i != SSAO_HILBERT;
+		const uint32_t image_width = i == SSAO_HILBERT ? 64 : reduced ? ssao_eval_width : (uint32_t)vid.render_width;
+		const uint32_t image_height = i == SSAO_HILBERT ? 64 : reduced ? ssao_eval_height : (uint32_t)vid.render_height;
 		const VkFormat format = i == SSAO_DEPTH_PYRAMID ? VK_FORMAT_R16G16_SFLOAT
 			: i == SSAO_EDGES ? VK_FORMAT_R8_UNORM
 			: i == SSAO_HILBERT ? VK_FORMAT_R16_UINT
@@ -193,7 +213,7 @@ void R_CreateSSAO (VkImage depth)
 			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 			.imageType = VK_IMAGE_TYPE_2D,
 			.format = format,
-			.extent = {i == SSAO_HILBERT ? 64 : vid.render_width, i == SSAO_HILBERT ? 64 : vid.render_height, 1},
+			.extent = {image_width, image_height, 1},
 			.mipLevels = i == SSAO_DEPTH_PYRAMID ? 5 : 1,
 			.arrayLayers = ssao_stereo && i != SSAO_HILBERT ? 2 : 1,
 			.samples = VK_SAMPLE_COUNT_1_BIT,
@@ -219,8 +239,9 @@ void R_CreateSSAO (VkImage depth)
 		for (int eye = 0; eye < eye_count; ++eye)
 		{
 			const uint32_t layer = i == SSAO_HILBERT ? 0 : eye;
-			working_views[i][eye] = R_CreateSSAOImageView (working_images[i], format, VK_IMAGE_ASPECT_COLOR_BIT, 0,
-				image_info.mipLevels, layer, 1, VK_IMAGE_VIEW_TYPE_2D);
+			const uint32_t first_mip = i == SSAO_DEPTH_PYRAMID && ssao_vr_half ? 1 : 0;
+			working_views[i][eye] = R_CreateSSAOImageView (working_images[i], format, VK_IMAGE_ASPECT_COLOR_BIT, first_mip,
+				image_info.mipLevels - first_mip, layer, 1, VK_IMAGE_VIEW_TYPE_2D);
 			working_read[i][eye] = R_CreateSSAOImageDescriptor (&vulkan_globals.single_texture_set_layout,
 				VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, working_views[i][eye], VK_IMAGE_LAYOUT_GENERAL);
 			if (i != SSAO_DEPTH_PYRAMID && i != SSAO_HILBERT)
@@ -229,8 +250,9 @@ void R_CreateSSAO (VkImage depth)
 		}
 		if (ssao_stereo && (i == SSAO_AO || i == SSAO_DEPTH_PYRAMID))
 		{
+			const uint32_t first_mip = i == SSAO_DEPTH_PYRAMID && ssao_vr_half ? 1 : 0;
 			working_array_views[i] = R_CreateSSAOImageView (
-				working_images[i], format, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 2, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+				working_images[i], format, VK_IMAGE_ASPECT_COLOR_BIT, first_mip, 1, 0, 2, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
 			const int descriptor_index = i == SSAO_AO ? 2 : 3;
 			composite_descriptors[descriptor_index] = R_CreateSSAOImageDescriptor (&vulkan_globals.single_texture_set_layout,
 				VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, working_array_views[i], VK_IMAGE_LAYOUT_GENERAL);
@@ -327,6 +349,8 @@ void R_DestroySSAO (void)
 	}
 	scene_depth = VK_NULL_HANDLE;
 	ssao_stereo = false;
+	ssao_vr_half = false;
+	ssao_eval_width = ssao_eval_height = 0;
 	if (sampler)
 		vkDestroySampler (vulkan_globals.device, sampler, NULL);
 	sampler = VK_NULL_HANDLE;
@@ -356,10 +380,14 @@ static void R_SSAOSetEyeProjection (ssao_constants_t *constants, int eye)
 	if (!frame || eye < 0 || eye >= 2)
 		return;
 	const vrxr_view_t *view = &frame->views[eye];
-	constants->viewport[0] = vid.render_width;
-	constants->viewport[1] = vid.render_height;
-	constants->viewport[2] = view->right - view->left;
-	constants->viewport[3] = view->down - view->up;
+	constants->viewport[0] = ssao_eval_width;
+	constants->viewport[1] = ssao_eval_height;
+	// Mip 1 reduces fixed 2x2 blocks and floors odd extents. The low-resolution
+	// pixel centers therefore cover 2*eval/full of the original frustum span.
+	const float x_scale = ssao_vr_half ? 2.0f * ssao_eval_width / vid.render_width : 1.0f;
+	const float y_scale = ssao_vr_half ? 2.0f * ssao_eval_height / vid.render_height : 1.0f;
+	constants->viewport[2] = (view->right - view->left) * x_scale;
+	constants->viewport[3] = (view->down - view->up) * y_scale;
 	constants->projection[0] = view->left;
 	constants->projection[1] = view->up;
 }
@@ -456,7 +484,7 @@ void R_ComputeSSAO (cb_context_t *cbx)
 			0, NULL, 0, NULL, countof (barriers), barriers);
 
 		const uint32_t width = vid.render_width, height = vid.render_height;
-		const uint32_t groups_x = (width + 7) / 8, groups_y = (height + 7) / 8;
+		const uint32_t groups_x = (ssao_eval_width + 7) / 8, groups_y = (ssao_eval_height + 7) / 8;
 		const VkMemoryBarrier read_barrier = {
 			.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER, .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_SHADER_READ_BIT};
 
@@ -497,7 +525,7 @@ void R_ComputeSSAO (cb_context_t *cbx)
 		vulkan_globals.vk_cmd_pipeline_barrier (
 			cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &read_barrier, 0, NULL, 0, NULL);
 
-		const uint32_t filter_groups_x = (width + 15) / 16;
+		const uint32_t filter_groups_x = (ssao_eval_width + 15) / 16;
 		const VkDescriptorSet filter_sets[] = {
 			working_read[SSAO_AO][eye], working_read[SSAO_EDGES][eye], working_write[SSAO_FILTERED][eye]};
 		vulkan_globals.vk_cmd_bind_pipeline (cb, VK_PIPELINE_BIND_POINT_COMPUTE, ssao_filter_pipeline.handle);
@@ -547,7 +575,8 @@ void R_DrawSSAOTask (void *unused)
 		descriptors[SSAO_ENTITY_MASK][0], descriptors[SSAO_SCENE_DEPTH][0], working_read[SSAO_AO][0], prepared_read[0]};
 	const VkDescriptorSet *sets = ssao_stereo ? composite_descriptors : desktop_sets;
 	vulkan_globals.vk_cmd_bind_descriptor_sets (cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, ssao_layout.handle, 0, 4, sets, 0, NULL);
-	const ssao_constants_t constants = R_SSAOConstants ();
+	ssao_constants_t constants = R_SSAOConstants ();
+	constants.composite_options[0] = ssao_vr_half ? 1.0f : 0.0f;
 	R_PushConstants (cbx, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof (constants), &constants);
 	vulkan_globals.vk_cmd_draw (cbx->cb, 3, 1, 0, 0);
 }

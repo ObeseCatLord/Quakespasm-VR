@@ -3,7 +3,7 @@
 #endif
 layout (push_constant) uniform constants
 {
-	vec4 viewport, projection, settings;
+	vec4 viewport, projection, settings, composite_options;
 }
 pc;
 #ifdef STEREO
@@ -72,7 +72,12 @@ void main ()
 	}
 	if (pc.settings.w == 3.0)
 	{
-		vec2 depths = FETCH_PIXEL (prepared_depth, p, 0).xy;
+		ivec2 depth_pixel = p;
+#ifdef STEREO
+		if (pc.composite_options.x > 0.0)
+			depth_pixel = min (p / 2, textureSize (prepared_depth, 0).xy - 1);
+#endif
+		vec2 depths = FETCH_PIXEL (prepared_depth, depth_pixel, 0).xy;
 		out_color = vec4 (vec3 (depths.y < depths.x ? 128.0 / (128.0 + depths.y) : 0.0), 1.0);
 		return;
 	}
@@ -89,7 +94,40 @@ void main ()
 #endif
 #endif
 	float depth = world > 0.0 ? pc.projection.z / world : 1e9;
-	float visibility = FETCH_PIXEL (filtered_ao, p, 0).x;
+	float visibility;
+#ifdef STEREO
+	if (pc.composite_options.x > 0.0)
+	{
+		// The world-depth pyramid and AO share half-resolution texel centers.
+		// Compare each candidate with this full-resolution receiver so a nearby
+		// depth edge does not smear AO across thin geometry.
+		vec2 low_position = (vec2 (p) + 0.5) * 0.5 - 0.5;
+		ivec2 corner = ivec2 (floor (low_position));
+		vec2 fraction = fract (low_position);
+		ivec2 last = textureSize (filtered_ao, 0).xy - 1;
+		float weighted = 0.0, total = 0.0;
+		for (int y = 0; y < 2; ++y)
+			for (int x = 0; x < 2; ++x)
+			{
+				ivec2 low_pixel = clamp (corner + ivec2 (x, y), ivec2 (0), last);
+				float low_depth = FETCH_PIXEL (prepared_depth, low_pixel, 0).x;
+				float low_visibility = FETCH_PIXEL (filtered_ao, low_pixel, 0).x;
+				float delta = abs (low_depth - depth);
+				float relative_delta = delta / max (1.0, depth * 0.01);
+				float bilateral = 1.0 / (1.0 + relative_delta * relative_delta * relative_delta * relative_delta);
+				float spatial = (x == 0 ? 1.0 - fraction.x : fraction.x) *
+					(y == 0 ? 1.0 - fraction.y : fraction.y);
+				float weight = spatial * bilateral;
+				weighted += weight * low_visibility;
+				total += weight;
+			}
+		// If all candidates lie on unrelated geometry, do not inherit their AO.
+		// Fade back to unoccluded instead of making a dark silhouette halo.
+		visibility = total > 0.0001 ? mix (1.0, weighted / total, min (1.0, 4.0 * total)) : 1.0;
+	}
+	else
+#endif
+		visibility = FETCH_PIXEL (filtered_ao, p, 0).x;
 	float occlusion = 1.0 - visibility;
 	// Match world_common.inc: fog uses view-space depth (clip W), not radial distance.
 	float fog_distance = pc.settings.z * depth;
