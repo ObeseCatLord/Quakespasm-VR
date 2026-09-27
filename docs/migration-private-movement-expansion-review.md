@@ -78,6 +78,9 @@ adapter for this slice. The selected PMove command instead carries the active
 teleport deadline to the existing air/ground acceleration path, where only
 negative forward input is suppressed, matching `SV_AirMove`. Swimming,
 waterjump, lateral input, roomscale and hand movement retain their own paths.
+While QuakeC holds `fixangle`, selected PMove uses the entity's forced angles
+for movement as native `SV_AirMove` does. The original client command remains
+available to the QuakeC and weapon callbacks.
 The selected snapshot withholds dry replay permission until the deadline
 expires, since client replay does not receive that deadline. The review also
 confirmed that `SV_WriteDamageToMessage` already emits `svc_setangle` on the
@@ -89,7 +92,7 @@ replacement-delta snapshot path.
 | Do not infer a stock teleport from `pausetime` or import `teleport_time` into the waterjump countdown. | Adopted; no new persistent timer or freeze mode. |
 | Withhold selected replay permission while the deadline is active. | Adopted; replay remains authoritative-only for these snapshots. |
 | Preserve roomscale and Gorilla collision collection. | Adopted; no pause-based hand exclusion. |
-| Verify teleport orientation, exit trajectory and waterjump overlap against ordinary ownership. | Open; the focused PMove fixture checks only backward/sideways acceleration. |
+| Verify teleport orientation, exit trajectory and waterjump overlap against ordinary ownership. | Open; the focused PMove fixture checks only backward/sideways acceleration and the forced-angle handoff is source-verified. |
 
 A dry ACK alone cannot guarantee that every pending client command stays dry.
 The shared PMove solver now latches fluid contact across all substeps in one

@@ -7434,6 +7434,11 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		client->private_pmove_waterjump_secs == 0.0f &&
 		qcvm->time < ent->v.teleport_time;
 	pmove.cmd = client->cmd;
+	/* Native SV_AirMove accelerates using ent->angles. QuakeC teleporters
+	 * and respawn relocation hold that orientation with fixangle until the
+	 * setangle snapshot; this command may still face the old way. */
+	if (ent->v.fixangle)
+		VectorCopy (ent->v.angles, pmove.cmd.viewangles);
 	pmove.cmd.seconds = seconds;
 	pmove.cmd.msec = command.msec;
 	pmove.cmd.impulse = command.impulse;
@@ -7443,7 +7448,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	VectorClear (pmove.cmd.vr_roomscalemove);
 	VectorCopy (ent->v.origin, pmove.origin);
 	VectorCopy (ent->v.velocity, pmove.velocity);
-	VectorCopy (command.viewangles, pmove.angles);
+	VectorCopy (pmove.cmd.viewangles, pmove.angles);
 	VectorSet (pmove.gravitydir, 0, 0, -1);
 	VectorCopy (ent->v.mins, pmove.player_mins);
 	VectorCopy (ent->v.maxs, pmove.player_maxs);
