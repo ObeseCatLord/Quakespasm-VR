@@ -72,6 +72,8 @@ typedef struct
 	qboolean loadgame;	 // handle connections specially
 	qboolean loadgame_multiplayer; // inherited v6/v7 per-client restore state
 	qboolean nomonsters; // server started with 'nomonsters' cvar active
+	qboolean skyroom_pos_known;
+	vec4_t skyroom_pos; // worldspawn origin and parallax for snapshot PVS
 	qboolean loadgame_client_saved[MAX_SCOREBOARD];
 	qboolean loadgame_client_name_required[MAX_SCOREBOARD];
 	char	 loadgame_client_names[MAX_SCOREBOARD][MAX_SCOREBOARDNAME];
@@ -574,6 +576,7 @@ void SV_ConnectClient (int clientnum); // called from the netcode to add new cli
 void SV_CheckForNewClients (void);
 void SV_RunClients (void);
 void SV_SetClientExtraButtons (edict_t *ent, unsigned int buttons);
+void SV_SetupSkyRoom (const char *value);
 void SV_ResetPrivateCommandQueue (client_t *client);
 void SV_ResetGorillaClient (client_t *client);
 void SV_GorillaInvalidateAccepted (client_t *client);

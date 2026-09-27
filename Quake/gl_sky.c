@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // gl_sky.c
 
 #include "quakedef.h"
+#include "skyroom_metadata.h"
 
 float Fog_GetDensity (void);
 void  Fog_GetColor (float *c);
@@ -40,6 +41,9 @@ cvar_t		  r_sky_quality = {"r_sky_quality", "12", CVAR_NONE};
 cvar_t		  r_skyalpha = {"r_skyalpha", "1", CVAR_NONE};
 cvar_t		  r_skyfog = {"r_skyfog", "0.5", CVAR_NONE};
 cvar_t		  r_skywind = {"r_skywind", "1", CVAR_ARCHIVE};
+cvar_t		  r_skyroom = {"r_skyroom", "0", CVAR_ARCHIVE};
+qboolean skyroom_enabled;
+vec4_t skyroom_origin, skyroom_orientation;
 
 static const int skytexorder[6] = {0, 2, 1, 3, 4, 5}; // for skybox
 
@@ -562,6 +566,9 @@ Called on map unload/game change to avoid keeping pointers to freed data
 void Sky_ClearAll (void)
 {
 	skybox.name[0] = 0;
+	skyroom_enabled = false;
+	memset (skyroom_origin, 0, sizeof (skyroom_origin));
+	memset (skyroom_orientation, 0, sizeof (skyroom_orientation));
 
 	for (int i = 0; i < 6; i++)
 		skybox.textures[i] = NULL;
@@ -576,6 +583,23 @@ void Sky_ClearAll (void)
 	Cvar_SetQuick (&r_skyfog, r_skyfog.default_string);
 }
 
+static void Sky_SetSkyRoom (const char *value)
+{
+	float values[8];
+	int count;
+	skyroom_enabled = false;
+	memset (skyroom_origin, 0, sizeof (skyroom_origin));
+	memset (skyroom_orientation, 0, sizeof (skyroom_orientation));
+	if (!Skyroom_ParseMetadata (value, values, &count))
+		return;
+	VectorCopy (values, skyroom_origin);
+	skyroom_origin[3] = count >= 4 ? values[3] : 0.0f;
+	skyroom_orientation[3] = count >= 5 ? values[4] : 0.0f;
+	for (int i = 0; i < 3; ++i)
+		skyroom_orientation[i] = count >= i + 6 ? values[i + 5] : 0.0f;
+	skyroom_enabled = true;
+}
+
 /*
 =================
 Sky_NewMap
@@ -587,6 +611,9 @@ void Sky_NewMap (void)
 	const char *data;
 
 	skyfog = r_skyfog.value;
+	skyroom_enabled = false;
+	memset (skyroom_origin, 0, sizeof (skyroom_origin));
+	memset (skyroom_orientation, 0, sizeof (skyroom_orientation));
 
 	//
 	// read worldspawn (this is so ugly, and shouldn't it be done on the server?)
@@ -624,6 +651,8 @@ void Sky_NewMap (void)
 
 		if (!strcmp ("skyfog", key))
 			skyfog = atof (value);
+		else if (!strcmp ("skyroom", key))
+			Sky_SetSkyRoom (value);
 
 #if 1									   // also accept non-standard keys
 		else if (!strcmp ("skyname", key)) // half-life
@@ -695,6 +724,7 @@ void Sky_Init (void)
 	Cvar_RegisterVariable (&r_skyfog);
 	Cvar_SetCallback (&r_skyfog, R_SetSkyfog_f);
 	Cvar_RegisterVariable (&r_skywind);
+	Cvar_RegisterVariable (&r_skyroom);
 
 	Cmd_AddCommand ("sky", Sky_SkyCommand_f);
 	Cmd_AddCommand ("skywind", Skywind_f);

@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_main.c -- server main program
 
 #include "quakedef.h"
+#include "skyroom_metadata.h"
 #include "pmove.h"
 #include "vr_weapon_calibration.h"
 #include "vr_weapon_menu.h"
@@ -173,9 +174,12 @@ unsigned int sv_protocol_pext1 = PEXT1_SUPPORTED_SERVER; // spike
 unsigned int sv_protocol_pext2 = PEXT2_SUPPORTED_SERVER; // spike
 
 static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
+static cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "1", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
 static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};
+static void SV_AddSkyRoomPVS (const vec3_t org, qmodel_t *worldmodel);
+
 cvar_t sv_gorilla = {"sv_gorilla", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_gorilla_trustclient = {"sv_gorilla_trustclient", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 static cvar_t sv_weapon_collision = {"sv_weapon_collision", "-1", CVAR_NOTIFY | CVAR_SERVERINFO};
@@ -2163,6 +2167,7 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	// find the client's PVS
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
 	pvs = SV_FatPVS (org, qcvm->worldmodel);
+	SV_AddSkyRoomPVS (org, qcvm->worldmodel);
 
 	if (maxentities > (unsigned int)qcvm->num_edicts)
 		maxentities = (unsigned int)qcvm->num_edicts;
@@ -2480,6 +2485,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&pr_checkextension);
 	Cvar_RegisterVariable (&sv_altnoclip); // johnfitz
 	Cvar_RegisterVariable (&sv_netsort);
+	Cvar_RegisterVariable (&sv_skyroom_pvs);
 	Cvar_RegisterVariable (&sv_smoothplatformlerps);
 	Cvar_RegisterVariable (&sv_qsvr_private);
 	Cvar_RegisterVariable (&sv_private_pmove_walk);
@@ -3276,6 +3282,32 @@ void SV_AddToFatPVS (vec3_t org, mnode_t *node, qmodel_t *worldmodel) // johnfit
 	}
 }
 
+void SV_SetupSkyRoom (const char *value)
+{
+	float values[8];
+	int count;
+	sv.skyroom_pos_known = false;
+	memset (sv.skyroom_pos, 0, sizeof (sv.skyroom_pos));
+	if (!Skyroom_ParseMetadata (value, values, &count))
+		return;
+	VectorCopy (values, sv.skyroom_pos);
+	sv.skyroom_pos[3] = count >= 4 ? values[3] : 0.0f;
+	sv.skyroom_pos_known = true;
+}
+
+static void SV_AddSkyRoomPVS (const vec3_t org, qmodel_t *worldmodel)
+{
+	vec3_t skyorg;
+	if (!sv_skyroom_pvs.value || !sv.skyroom_pos_known || !worldmodel || !worldmodel->nodes)
+		return;
+	VectorMA (sv.skyroom_pos, sv.skyroom_pos[3], org, skyorg);
+	if (!isfinite (skyorg[0]) || !isfinite (skyorg[1]) || !isfinite (skyorg[2]))
+		return;
+	/* SV_FatPVS already cleared and populated the shared fatpvs buffer for
+	 * this viewer. Extend that buffer instead of replacing the main PVS. */
+	SV_AddToFatPVS (skyorg, worldmodel->nodes, worldmodel);
+}
+
 /*
 =============
 SV_FatPVS
@@ -3377,6 +3409,7 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 	// find the client's PVS
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
 	pvs = SV_FatPVS (org, qcvm->worldmodel);
+	SV_AddSkyRoomPVS (org, qcvm->worldmodel);
 
 	// find the client's orientation
 	AngleVectors (clent->v.v_angle, forward, right, up);

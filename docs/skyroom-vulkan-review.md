@@ -66,3 +66,24 @@ The natural implementation boundary is `gl_sky.c` for metadata/masking,
 plus `r_brush.c` for command and resource lifetimes, and `pr_edict.c` plus
 `sv_main.c` for server metadata/visibility. Do not transplant the inherited GL
 renderer or add a second scene state machine alongside the donor task graph.
+
+## Follow-up review and implementation boundary (2026-09-27)
+
+The follow-up Astra review kept the same view-ownership design. The smaller
+color-preserving prepass remains the first Vulkan experiment; an offscreen
+compositor needs a demonstrated attachment or ordering conflict. Server PVS
+may land as a separately reviewable preparation commit, but is not skyroom
+feature acceptance. Both snapshot writers must extend the already populated
+fat PVS: calling `SV_FatPVS` again would clear it.
+
+One extra stencil constraint is now explicit. The OpenXR hidden-area mask uses
+stencil bit `0x80`, while the sky pipeline writes `0xff`. A future skyroom
+prepass must prove correct depth/stencil reset or preservation, including SSAO,
+hidden-depth replay, MSAA, and OIT. It cannot infer safety from color output
+alone. AD contains an `info_skyroom` QC path and `_skyroom` field, but no
+actual worldspawn activation was verified in its maps. Use a separately
+verified map or label a synthetic fixture as such.
+
+The initial preparation on `2.0` parses client/server worldspawn metadata and
+adds the server-side skyroom PVS union. It does not render a skyroom view. The
+vertical proof and renderer work above remain open.

@@ -1542,6 +1542,9 @@ const char *ED_ParseEdict (const char *data, edict_t *ent)
 		// and are immediately discarded by quake, except for some specific keywords...
 		if (keyname[0] == '_')
 		{
+			if (qcvm == &sv.qcvm && ent == qcvm->edicts &&
+				!strcmp (keyname, "_skyroom"))
+				SV_SetupSkyRoom (com_token);
 			// spike -- hacks to support func_illusionary with all sorts of mdls, and various particle effects
 			if (qcvm == &sv.qcvm)
 			{
@@ -1558,6 +1561,9 @@ const char *ED_ParseEdict (const char *data, edict_t *ent)
 		if (!strcmp (keyname, "alpha"))
 			ent->alpha = ENTALPHA_ENCODE (atof (com_token));
 		// johnfitz
+		if (qcvm == &sv.qcvm && ent == qcvm->edicts &&
+			!strcmp (keyname, "skyroom"))
+			SV_SetupSkyRoom (com_token);
 
 		key = ED_FindField (keyname);
 		if (!key)
