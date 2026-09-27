@@ -1988,21 +1988,26 @@ static void GL_InitDevice (void)
 #endif
 
 #if defined(VK_EXT_fragment_density_map)
-	if (COM_CheckParm ("-vk-runtime-foveation") && fragment_density_map_candidate)
+	// VID initializes before saved configs execute, so the current mode cvar
+	// cannot safely select a fixed-only FB device. Keep the KHR eye path when
+	// META eye capability is absent; the runtime route is still development-only.
+	if (COM_CheckParm ("-vk-runtime-foveation") && fragment_density_map_candidate && VRXR_VulkanFoveationEyeSupported ())
 	{
 #if defined(VK_QCOM_fragment_density_map_offset)
-		fragment_density_map_feature_enabled = fragment_density_offset_candidate || !fragment_shading_rate_feature_enabled;
-		fragment_density_offset_feature_enabled = fragment_density_offset_candidate;
-		fragment_density_offset_use_ext = fragment_density_offset_feature_enabled && fragment_density_offset_ext_usable;
-#else
-		fragment_density_map_feature_enabled = !fragment_shading_rate_feature_enabled;
+		// XR_META_foveation_eye_tracked makes the runtime apply the gaze pattern
+		// to its map. Do not enable the separate Vulkan offset path until the
+		// borrowed map's offset creation flags and its semantics are verified.
+		fragment_density_offset_feature_enabled = false;
+		fragment_density_offset_use_ext = false;
+		if (fragment_density_offset_candidate)
+			Con_Printf ("OpenXR density-map offsets available but not qualified for borrowed runtime images.\n");
 #endif
-		if (fragment_density_map_feature_enabled)
-		{
-			fragment_shading_rate_feature_enabled = false;
-			Con_Printf ("OpenXR development density-map device selected; runtime image contract still requires validation.\n");
-		}
+		fragment_density_map_feature_enabled = true;
+		fragment_shading_rate_feature_enabled = false;
+		Con_Printf ("OpenXR development density-map device selected; runtime image contract still requires validation.\n");
 	}
+	else if (COM_CheckParm ("-vk-runtime-foveation") && fragment_density_map_candidate)
+		Con_Printf ("OpenXR runtime has no META eye-foveation capability; keeping KHR shading rate when available.\n");
 #endif
 
 #ifdef __APPLE__ // MoltenVK lies about this
@@ -3812,7 +3817,7 @@ static qboolean GL_DensityFoveationRequestedActive (int render_width, int render
 	if (mode == VRF_MODE_FIXED)
 		return VRXR_VulkanFoveationFixedAvailable ();
 	if (mode != VRF_MODE_EYE_TRACKED || !VRF_EyeTrackingEnabled (vr_eye_tracking.value) ||
-		!vulkan_globals.openxr_fragment_density_offset_enabled || !VRXR_VulkanFoveationEyeAvailable ())
+		!VRXR_VulkanFoveationEyeAvailable ())
 		return false;
 
 	return true;
@@ -4259,6 +4264,8 @@ static void GL_OpenXRAttach (void)
 		Con_Printf ("OpenXR session attachment failed; keeping desktop output.\n");
 		return;
 	}
+	if (vulkan_globals.openxr_fragment_density_map_enabled && !VRXR_VulkanFoveationEyeAvailable ())
+		Con_Printf ("OpenXR META eye profile unavailable after attachment; eye mode will render full rate. Restart without -vk-runtime-foveation for the KHR path.\n");
 	unsigned width, height;
 	if (!VRXR_GetViewSize (0, &width, &height) || !width || !height ||
 		width > vulkan_globals.device_properties.limits.maxFramebufferWidth ||
@@ -4318,12 +4325,12 @@ static qboolean GL_PrepareRuntimeFoveation (void)
 	int mode = !vulkan_globals.openxr_fragment_density_map_active || key_dest == key_menu ?
 		VRF_MODE_OFF : VRF_RequestedMode (vr_foveation.value);
 	const qboolean allow_eye = mode == VRF_MODE_EYE_TRACKED && VRF_EyeTrackingEnabled (vr_eye_tracking.value) &&
-		vulkan_globals.openxr_fragment_density_offset_enabled && VRXR_VulkanFoveationEyeAvailable ();
+		VRXR_VulkanFoveationEyeAvailable ();
 	if (mode == VRF_MODE_EYE_TRACKED && !allow_eye)
 		mode = VRF_MODE_OFF;
 	float centers[2][2];
 	int effective = VRXR_UpdateVulkanFoveation (mode, allow_eye, centers);
-	if (effective == VRF_MODE_EYE_TRACKED)
+	if (effective == VRF_MODE_EYE_TRACKED && vulkan_globals.openxr_fragment_density_offset_enabled)
 	{
 		const VkExtent2D granularity = vulkan_globals.openxr_fragment_density_offset_granularity;
 		qboolean offsets_valid = true;

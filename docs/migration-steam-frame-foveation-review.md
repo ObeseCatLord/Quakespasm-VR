@@ -260,7 +260,7 @@ gaps for this renderer. Thus the intended final preference remains FB/META on
 qualified runtime/device pairs, KHR elsewhere, and full-rate on failure; this
 review does not declare automatic FB/META activation complete.
 
-## Explicit runtime-density development path
+## Initial runtime-density development path (superseded)
 
 `-vk-runtime-foveation` now permits pre-device FDM selection when the runtime
 advertises XR_FB foveation and the Vulkan device has a two-layer RG8 density
@@ -304,3 +304,26 @@ contract or a hardware result.
 | A failed `vkCreateImageView` could leave an undefined value in a density-view array slot, which the cleanup loop might destroy. | **Fixed.** Create into a temporary handle and publish it only on success, matching the render-pass/framebuffer recovery pattern. |
 | The explicit switch kept KHR for fixed mode when KHR was available but eye offsets were not. | **Clarified.** This is deliberate while runtime qualification is incomplete: keep the working KHR eye path and allow explicit fixed KHR. Do not trade eye support for an unproven FB/META backend. |
 | Borrowed image metadata and offset flags, protected depth, gaze transitions, and performance remain runtime-dependent. | **Open.** These still require validation and target-runtime evidence before automatic selection. |
+
+## Runtime eye-profile capability review
+
+A later Astra xhigh review checked the development selector against the default
+eye mode and the [Khronos META profile contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrFoveationEyeTrackedProfileCreateInfoMETA.html).
+The profile asks the runtime to apply an eye-tracked pattern; it does not list
+`VK_QCOM_fragment_density_map_offset` as a prerequisite. However,
+[Meta's native ETFR description](https://developers.meta.com/horizon/blog/save-gpu-with-eye-tracked-foveated-rendering/)
+uses Tile Offset to move the pattern smoothly. Runtime gaze alignment without
+that offset remains unverified on Steam Frame, Monado, and other targets.
+
+| Review finding | Disposition |
+| --- | --- |
+| Base XR_FB support without META eye support could displace a working KHR gaze rate map. | **Fixed for the development selector.** `-vk-runtime-foveation` prefers FB only when META eye system capability is reported; otherwise KHR remains selected when available. Saved cvars execute after Vulkan device creation, so this gate does not infer a fixed-mode request from startup settings. |
+| Requiring the Vulkan offset feature for every META eye profile excludes runtimes where the XR-managed map can provide the pattern itself. | **Adapted as an experiment.** The explicit development path permits the META profile without QCOM/EXT offsets. It leaves the separate Vulkan offset path disabled pending borrowed-image flags and gaze-alignment evidence. Do not treat the build as proof of correctly positioned sharp regions. |
+| A profile failure after FDM device commitment cannot restore KHR without device recreation. | **Accepted limit.** Report the full-rate eye-mode outcome and recommend restarting without the development switch. No automatic fixed fallback. |
+| Probing offset formats while the offset feature is disabled has unnecessary work. | **Deferred cleanup.** Retain the small adapter while runtime positioning semantics are unresolved; it is inactive in the development selection. |
+
+This supersedes the earlier assertion that the development eye path requires a
+QCOM/EXT offset feature. Automatic FB/META preference still requires borrowed
+image format/layout/readiness qualification, both-eye visual proof, and a
+performance comparison. The explicit path remains opt-in, and fixed foveation
+is enabled only by the user selecting fixed mode.
