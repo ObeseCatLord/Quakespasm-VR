@@ -1,11 +1,10 @@
 # Calibrated humanoid avatars on the Vulkan branch
 
-The inherited `r_avatar_humanoid` control is not wired into 2.0. The donor
-applies it only to complete custom humanoids, with `0` retaining generic
-retargeting, `1` adding target-length limb IK, and `2` retaining calibrated
-retargeting without IK. `Quake/r_avatar.c` already contains the donor's
-calibration, retarget, height, and limb-solve functions. The Vulkan frame path
-in `Quake/r_vrik_render.c` still always calls the generic retargeter.
+The inherited `r_avatar_humanoid` control is wired into 2.0 for complete
+custom humanoids: `0` retains generic retargeting, `1` adds target-length
+limb IK, and `2` retains calibrated retargeting without IK. The Vulkan frame
+path in `Quake/r_vrik_render.c` uses the donor's calibration, retarget, height,
+and limb-solve functions from `Quake/r_avatar.c`.
 
 ## Architecture choice
 

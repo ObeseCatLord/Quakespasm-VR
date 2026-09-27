@@ -75,6 +75,17 @@ builds and passes its synthetic fixture, but asset-backed presentation and
 timing remain unverified. Manual clips or the Alicia VRM spike do not supply
 equivalent tracked behavior.
 
+An additional isolated `-O2` probe of that calibrated path used the same
+synthetic 19-joint fixture for 200,000 iterations. Building its presentation
+context and humanoid calibration took about 3.6 microseconds per avatar;
+`R_AvatarRetargetHumanoid` took about 1.6 microseconds. Together that is about
+5.2 microseconds per avatar, or about 0.08 ms for sixteen avatars if the cost
+scaled linearly. This excludes rig resolution, animation and tracking solves,
+target IK, equipment, upload, and rendering; it is not an in-game frame-time
+measurement. Calibration currently runs when each avatar is staged each frame,
+while the retargeted palette is prepared once per player and reused by both
+eyes. The profile's reference floor correction is already cached separately.
+
 For performance qualification, measure full frame preparation by active
 avatar count, rig size, desktop versus tracked pose, and stereo mode. If
 retargeting becomes a material frame cost on large custom rigs or many peers,
