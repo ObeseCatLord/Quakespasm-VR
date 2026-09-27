@@ -665,6 +665,11 @@ function: backward input is suppressed during the deadline while sideways
 input remains effective; ordinary air movement remains unrestricted.
 It also checks inherited VR ladder pitch independence against the ordinary QSS-M
 ladder path, and raised-jump-speed non-VR swimming against explicit VR swimming.
+The opt-in QuakeC jump-owner cases use the same donor floor hull to verify that
+120- and 300-unit upward impulses remain airborne with held input, across
+single-step and explicitly timed commands; they also check latch preservation,
+water classification, and eventual landing. The exact-mod server adapter is a
+separate integration gate.
 The optional instant-stop cases cover default-off and desktop friction, an idle
 VR stop, moving input, jump preservation, and the post-QuakeC PMove exemption.
 Both touch policies are checked through the production helper, including impact

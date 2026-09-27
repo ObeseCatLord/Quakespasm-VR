@@ -75,6 +75,8 @@ typedef struct
 	vec3_t		velocity;
 	vec3_t		gravitydir;
 	qboolean		jump_held;
+	/* QuakeC already authored this command's jump/takeoff state. */
+	qboolean		qc_jump_owner;
 	float			jump_secs;	// msec since last jump
 	float		waterjumptime;
 	/* Server-only QuakeC teleport deadline: native AirMove ignores back input. */

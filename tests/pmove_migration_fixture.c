@@ -300,6 +300,60 @@ static void check_teleport_backmove (void)
 	assert (unrestricted[0] < -1.0f);
 }
 
+static void check_qc_takeoff (int msec, float takeoff_velocity)
+{
+	float expected_velocity = takeoff_velocity - 80;
+	float expected_origin = msec ?
+		(24 + takeoff_velocity * .1f - 5) :
+		(24 + expected_velocity * .1f);
+
+	prepare ();
+	pmove.cmd.msec = msec;
+	pmove.cmd.buttons = BUTTON_JUMP;
+	pmove.qc_jump_owner = true;
+	pmove.velocity[2] = takeoff_velocity;
+	PM_PlayerMove (1);
+	/* A held button must not add the native jump speed or consume its latch. */
+	assert (!pmove.jump_held);
+	assert (!pmove.onground);
+	near_value (pmove.velocity[2], expected_velocity, .01f);
+	near_value (pmove.origin[2], expected_origin, .04f);
+
+	/* The external takeoff remains airborne while rising, then lands normally. */
+	for (int i = 0; i < 30; ++i)
+		PM_PlayerMove (1);
+	near_value (pmove.origin[2], 24, .04f);
+	assert (pmove.onground);
+	assert (!pmove.jump_held);
+}
+
+static void check_qc_takeoff_release (int msec)
+{
+	prepare ();
+	pmove.cmd.msec = msec;
+	pmove.qc_jump_owner = true;
+	pmove.jump_held = true;
+	pmove.velocity[2] = 120;
+	PM_PlayerMove (1);
+	/* PM_CheckJump must not clear a QC-owned held/release latch. */
+	assert (pmove.jump_held);
+}
+
+static void check_qc_takeoff_water (void)
+{
+	prepare ();
+	pmove.numphysent = 2;
+	pmove.physents[1].info = 1;
+	pmove.physents[1].forcecontentsmask = CONTENTBIT_WATER;
+	VectorSet (pmove.physents[1].mins, -64, -64, 0);
+	VectorSet (pmove.physents[1].maxs, 64, 64, 80);
+	pmove.qc_jump_owner = true;
+	pmove.velocity[2] = 120;
+	PM_CategorizePosition ();
+	assert (!pmove.onground);
+	assert (pmove.waterlevel == 3 && (pmove.watertype & CONTENTBIT_WATER));
+}
+
 int main (void)
 {
 	floor_model.type = mod_brush;
@@ -324,6 +378,13 @@ int main (void)
 		check_teleport_backmove ();
 		check_transient_fluid_crossing ();
 		check_vr_instant_stop ();
+		check_qc_takeoff (0, 120);
+		check_qc_takeoff (0, 300);
+		check_qc_takeoff (100, 120);
+		check_qc_takeoff (100, 300);
+		check_qc_takeoff_release (0);
+		check_qc_takeoff_release (100);
+		check_qc_takeoff_water ();
 		prepare ();
 		pmove.cmd.forwardmove = 320;
 		for (int i = 0; i < 10; ++i)

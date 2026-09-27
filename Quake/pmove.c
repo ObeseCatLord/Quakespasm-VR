@@ -1394,6 +1394,7 @@ void PM_CategorizePosition (void)
 	trace.startsolid = trace.allsolid = true;
 	VectorClear(trace.endpos);
 	if (-DotProduct(pmove.gravitydir, pmove.velocity) > 180 ||
+		(pmove.qc_jump_owner && -DotProduct(pmove.gravitydir, pmove.velocity) > 0) ||
 		(PM_GorillaGroundContact() && -DotProduct(pmove.gravitydir, pmove.velocity) > .01f))
 	{
 		pmove.onground = false;
@@ -1500,6 +1501,9 @@ PM_CheckJump
 */
 static void PM_CheckJump (void)
 {
+	if (pmove.qc_jump_owner)
+		return;
+
 	if (pmove.pm_type == PM_FLY)
 		return;
 
