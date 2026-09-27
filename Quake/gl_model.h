@@ -385,6 +385,14 @@ typedef struct aliashdr_s
 	int					numjoints;	 // spike -- for md5
 	poseverttype_t		poseverttype;
 	qboolean			avatar_static_prop; // private one-joint Ranger prop; static BLAS input
+	/* Only the root of a private Ranger prop chain owns this immutable BLAS.
+	 * Its geometry covers every surface in the chain. */
+	VkAccelerationStructureKHR avatar_prop_blas;
+	VkBuffer			avatar_prop_blas_buffer;
+	glheapallocation_t *avatar_prop_blas_allocation;
+	VkDeviceAddress		avatar_prop_blas_address;
+	qboolean			avatar_prop_blas_built;
+	qboolean			avatar_prop_blas_failed;
 	/* Valid only after GLMesh_UploadBuffers inspects the exact uploaded MD5 vertices. */
 	double				tracked_cull_qmax;
 	qboolean			tracked_cull_qmax_valid;

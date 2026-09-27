@@ -24,4 +24,18 @@ Astra's implementation review (2026-09-26) confirmed that each private Gun/Axe r
 
 Source admission uploads the static prop buffers. The existing AS task must build pending source-owned BLASes before animated-body updates and TLAS emission, with transfer-to-AS-read and AS-build-to-AS-read barriers. Since the source model is not necessarily a server-precached entity, discover pending private roots in `mod_known`. With ray shadows enabled, keep the requested selection pending and publish complete Ranger until selected raster and ray inputs are ready on a later synchronized frame. The TLAS then adds one prop instance per eligible player with `entity * attached_prop_to_canonical`, including offscreen tracked players. Count and emission predicates must match. Reset must clear AS handles and device addresses idempotently before retiring mesh buffers.
 
-Staging and render command buffers use the same Vulkan queue, but the AS task's exact dependency and reset-fence ordering still need code-level verification before implementation. A first regression proof uses two Knights with different poses sharing the same Gun/Axe BLAS, one offscreen caster, switching, and reset/reload. Raster attachment is committed; ray shadow integration and the optional desktop waist grip remain open.
+Staging and render command buffers use the same Vulkan queue. A first regression proof uses two Knights with different poses sharing the same Gun/Axe BLAS, one offscreen caster, switching, and reset/reload. Raster attachment is committed; the optional desktop waist grip remains open.
+
+## Integrated shadow-path review, 2026-09-27
+
+The static prop BLAS builder and per-player TLAS instance are now integrated on `2.0`. Astra reviewed the code read-only after integration. The model-owned BLAS, existing AS task, and complete Ranger fallback during warmup remain the chosen design. The review found one shared-scratch synchronization gap at the existing brush BLAS build boundary; the brush build's final barrier now covers later AS scratch writes and compute accesses, in addition to reads. The prop builder also bars subsequent prop/body builds and TLAS reads. `R_RecordFrame` submits the AS context before scene work, and the next frame's begin task depends on the prior end task when task recording is enabled.
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Shared model-owned BLAS, with one TLAS transform per equipped player. | Adopted. No per-player rigid BLAS or parallel AS registry. |
+| Build through the existing AS task. | Adopted. Scratch reuse and the brush-build completion barrier were tightened. |
+| Complete Ranger fallback until the selected prop BLAS is ready. | Adopted. The staged selection is retried on a later frame. |
+| Treat `avatar_prop_blas_built` as GPU completion. | Rejected. It means build *recorded*; the next frame sees it only after the prior frame submission dependency. GPU execution stays ordered on the same queue. |
+| Check readiness, then request the address separately. | Adapted. The checked address accessor alone is sufficient. |
+
+Local `build-nocurl` compilation passes. GPU validation and raster/shadow visual agreement are still unverified; a successful build does not close the equipment parity gate. Cold-start, RT off/on, offscreen players, unload/reload, and the earlier Knight scene remain the relevant checks. The user will handle live headset acceptance.

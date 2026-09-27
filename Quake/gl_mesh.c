@@ -285,6 +285,38 @@ static void AddBLASGarbage (VkAccelerationStructureKHR blas, VkBuffer buffer, gl
 	SDL_UnlockMutex (mesh_mutex);
 }
 
+/* Retire a private prop's one shared BLAS before any surface input buffer.
+ * The model loader also calls mesh deletion after reset, so this is idempotent. */
+static void GLMesh_FreeAvatarPropBLAS (aliashdr_t *root)
+{
+	if (!root || !root->avatar_static_prop)
+		return;
+
+	VkAccelerationStructureKHR blas = root->avatar_prop_blas;
+	VkBuffer buffer = root->avatar_prop_blas_buffer;
+	glheapallocation_t *allocation = root->avatar_prop_blas_allocation;
+	root->avatar_prop_blas = VK_NULL_HANDLE;
+	root->avatar_prop_blas_buffer = VK_NULL_HANDLE;
+	root->avatar_prop_blas_allocation = NULL;
+	root->avatar_prop_blas_address = 0;
+	root->avatar_prop_blas_built = false;
+	root->avatar_prop_blas_failed = false;
+	if (blas == VK_NULL_HANDLE)
+		return;
+
+	if (in_update_screen)
+		AddBLASGarbage (blas, buffer, allocation);
+	else
+	{
+		GL_WaitForDeviceIdle ();
+		SDL_LockMutex (mesh_mutex);
+		vulkan_globals.vk_destroy_acceleration_structure (vulkan_globals.device, blas, NULL);
+		vkDestroyBuffer (vulkan_globals.device, buffer, NULL);
+		GL_HeapFree (mesh_buffer_heap, allocation, &num_vulkan_mesh_allocations);
+		SDL_UnlockMutex (mesh_mutex);
+	}
+}
+
 /*
 ================
 R_InitMeshHeap
@@ -499,36 +531,38 @@ GLMesh_DeleteMeshBuffers
 */
 void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
 {
+	GLMesh_FreeAvatarPropBLAS (mainhdr);
 	// Delete all surfaces:
 	for (aliashdr_t *hdr = mainhdr; hdr != NULL; hdr = hdr->nextsurface)
 	{
-		if (hdr->vertex_buffer == VK_NULL_HANDLE)
-		{
-			/* A failed multi-surface load can leave later surfaces uploaded. */
-			for (int i = 0; i < MAX_SKINS; ++i)
-				SAFE_FREE (hdr->texels[i]);
-			continue;
-		}
-
 		if (in_update_screen)
 		{
-			AddBufferGarbage (hdr->vertex_buffer, VK_NULL_HANDLE, hdr->vertex_allocation, VK_NULL_HANDLE, NULL);
-			AddBufferGarbage (hdr->index_buffer, VK_NULL_HANDLE, hdr->index_allocation, VK_NULL_HANDLE, NULL);
+			if (hdr->vertex_buffer != VK_NULL_HANDLE)
+				AddBufferGarbage (hdr->vertex_buffer, VK_NULL_HANDLE, hdr->vertex_allocation, VK_NULL_HANDLE, NULL);
+			if (hdr->index_buffer != VK_NULL_HANDLE)
+				AddBufferGarbage (hdr->index_buffer, VK_NULL_HANDLE, hdr->index_allocation, VK_NULL_HANDLE, NULL);
 			if (hdr->skeleton_index_buffer != VK_NULL_HANDLE)
 				AddBufferGarbage (hdr->skeleton_index_buffer, VK_NULL_HANDLE, hdr->skeleton_index_allocation, VK_NULL_HANDLE, NULL);
 			if (hdr->joints_buffer != VK_NULL_HANDLE)
 				AddBufferGarbage (hdr->joints_buffer, VK_NULL_HANDLE, hdr->joints_allocation, hdr->joints_set, &vulkan_globals.joints_buffer_set_layout);
 		}
-		else
+		else if (hdr->vertex_buffer != VK_NULL_HANDLE || hdr->index_buffer != VK_NULL_HANDLE ||
+			hdr->skeleton_index_buffer != VK_NULL_HANDLE || hdr->joints_buffer != VK_NULL_HANDLE)
 		{
 			GL_WaitForDeviceIdle ();
 			SDL_LockMutex (mesh_mutex);
 
-			vkDestroyBuffer (vulkan_globals.device, hdr->vertex_buffer, NULL);
-			GL_HeapFree (mesh_buffer_heap, hdr->vertex_allocation, &num_vulkan_mesh_allocations);
+			if (hdr->vertex_buffer != VK_NULL_HANDLE)
+			{
+				vkDestroyBuffer (vulkan_globals.device, hdr->vertex_buffer, NULL);
+				GL_HeapFree (mesh_buffer_heap, hdr->vertex_allocation, &num_vulkan_mesh_allocations);
+			}
 
-			vkDestroyBuffer (vulkan_globals.device, hdr->index_buffer, NULL);
-			GL_HeapFree (mesh_buffer_heap, hdr->index_allocation, &num_vulkan_mesh_allocations);
+			if (hdr->index_buffer != VK_NULL_HANDLE)
+			{
+				vkDestroyBuffer (vulkan_globals.device, hdr->index_buffer, NULL);
+				GL_HeapFree (mesh_buffer_heap, hdr->index_allocation, &num_vulkan_mesh_allocations);
+			}
 
 			if (hdr->skeleton_index_buffer != VK_NULL_HANDLE)
 			{
@@ -547,12 +581,15 @@ void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
 
 		hdr->vertex_buffer = VK_NULL_HANDLE;
 		hdr->vertex_allocation = NULL;
+		hdr->vertex_buffer_address = 0;
 		hdr->index_buffer = VK_NULL_HANDLE;
 		hdr->index_allocation = NULL;
+		hdr->index_buffer_address = 0;
 		hdr->skeleton_index_buffer = VK_NULL_HANDLE;
 		hdr->skeleton_index_allocation = NULL;
 		hdr->joints_buffer = VK_NULL_HANDLE;
 		hdr->joints_allocation = NULL;
+		hdr->joints_buffer_address = 0;
 		hdr->joints_set = VK_NULL_HANDLE;
 		for (int i = 0; i < MAX_SKINS; ++i)
 			SAFE_FREE (hdr->texels[i]);
@@ -1168,14 +1205,243 @@ Free all entity BLASes. Called when RT shadows are disabled.
 */
 void R_FreeAllEntityBLASes (void)
 {
-	if (!cl.entities)
+	if (cl.entities)
+	{
+		for (int i = 0; i < cl.num_entities; i++)
+			R_FreeEntityBLAS (&cl.entities[i]);
+
+		for (int i = 0; i < cl.num_statics; i++)
+			R_FreeEntityBLAS (cl.static_entities[i]);
+	}
+
+	for (int model = 0; model < mod_numknown; ++model)
+		for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+			GLMesh_FreeAvatarPropBLAS (mod_known[model].avatar_prop_gpu[prop]);
+}
+
+/* The prop's uploaded MD5 vertices already contain their rigid, bone-local
+ * xyz. Unlike animated entities, no compute skinning or per-player BLAS is
+ * needed: the TLAS instance supplies each player's attachment transform. */
+static qboolean GLMesh_AvatarPropGeometries (
+	const aliashdr_t *root, VkAccelerationStructureGeometryKHR geometries[MAX_SURFACES],
+	VkAccelerationStructureBuildRangeInfoKHR ranges[MAX_SURFACES], uint32_t primitives[MAX_SURFACES], uint32_t *count_out)
+{
+	if (!root || !root->avatar_static_prop || !geometries || !ranges || !primitives || !count_out)
+		return false;
+
+	const VkPhysicalDeviceAccelerationStructurePropertiesKHR *limits = &vulkan_globals.physical_device_acceleration_structure_properties;
+	uint32_t count = 0;
+	uint64_t total_primitives = 0;
+	for (const aliashdr_t *surface = root; surface; surface = surface->nextsurface)
+	{
+		if (count >= MAX_SURFACES || count >= limits->maxGeometryCount || !surface->avatar_static_prop || surface->poseverttype != PV_MD5 ||
+			surface->numjoints != 1 || surface->numframes != 1 || surface->numposes != 1 || surface->numverts_vbo <= 0 ||
+			surface->numverts_vbo > (int)UINT16_MAX + 1 || surface->numtris <= 0 || surface->numindexes != (int64_t)surface->numtris * 3 ||
+			(uint64_t)surface->numtris > limits->maxPrimitiveCount - total_primitives ||
+			surface->vertex_buffer == VK_NULL_HANDLE || surface->index_buffer == VK_NULL_HANDLE ||
+			!surface->vertex_buffer_address || !surface->index_buffer_address ||
+			(surface->vertex_buffer_address % sizeof (float)) || (surface->index_buffer_address % sizeof (uint16_t)))
+			return false;
+		total_primitives += (uint64_t)surface->numtris;
+
+		VkAccelerationStructureGeometryKHR *geometry = &geometries[count];
+		memset (geometry, 0, sizeof (*geometry));
+		geometry->sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+		geometry->geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+		geometry->geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+		geometry->geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+		geometry->geometry.triangles.vertexData.deviceAddress = surface->vertex_buffer_address + offsetof (md5vert_t, xyz);
+		geometry->geometry.triangles.vertexStride = sizeof (md5vert_t);
+		geometry->geometry.triangles.maxVertex = (uint32_t)surface->numverts_vbo - 1;
+		geometry->geometry.triangles.indexType = VK_INDEX_TYPE_UINT16;
+		geometry->geometry.triangles.indexData.deviceAddress = surface->index_buffer_address;
+		geometry->flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+
+		memset (&ranges[count], 0, sizeof (ranges[count]));
+		ranges[count].primitiveCount = primitives[count] = (uint32_t)surface->numtris;
+		++count;
+	}
+	*count_out = count;
+	return count != 0;
+}
+
+qboolean GLMesh_AvatarPropBLASReady (const aliashdr_t *root)
+{
+	if (!vulkan_globals.ray_query || r_rtshadows.value <= 0 || !root || !root->avatar_static_prop ||
+		!root->avatar_prop_blas_built || root->avatar_prop_blas == VK_NULL_HANDLE ||
+		root->avatar_prop_blas_buffer == VK_NULL_HANDLE || !root->avatar_prop_blas_allocation || !root->avatar_prop_blas_address)
+		return false;
+	for (const aliashdr_t *surface = root; surface; surface = surface->nextsurface)
+		if (surface->vertex_buffer == VK_NULL_HANDLE || surface->index_buffer == VK_NULL_HANDLE ||
+			!surface->vertex_buffer_address || !surface->index_buffer_address)
+			return false;
+	return true;
+}
+
+VkDeviceAddress GLMesh_AvatarPropBLASAddress (const aliashdr_t *root)
+{
+	return GLMesh_AvatarPropBLASReady (root) ? root->avatar_prop_blas_address : 0;
+}
+
+static void GLMesh_DiscardUnbuiltAvatarPropBLAS (
+	VkAccelerationStructureKHR blas, VkBuffer buffer, glheapallocation_t *allocation)
+{
+	if (blas != VK_NULL_HANDLE)
+		vulkan_globals.vk_destroy_acceleration_structure (vulkan_globals.device, blas, NULL);
+	if (buffer != VK_NULL_HANDLE)
+		vkDestroyBuffer (vulkan_globals.device, buffer, NULL);
+	if (allocation)
+	{
+		SDL_LockMutex (mesh_mutex);
+		GL_HeapFree (mesh_buffer_heap, allocation, &num_vulkan_mesh_allocations);
+		SDL_UnlockMutex (mesh_mutex);
+	}
+}
+
+static void GLMesh_BuildAvatarPropBLAS (cb_context_t *cbx, aliashdr_t *root)
+{
+	VkAccelerationStructureGeometryKHR geometries[MAX_SURFACES];
+	VkAccelerationStructureBuildRangeInfoKHR ranges[MAX_SURFACES];
+	uint32_t primitives[MAX_SURFACES];
+	uint32_t count = 0;
+	if (!GLMesh_AvatarPropGeometries (root, geometries, ranges, primitives, &count))
+	{
+		root->avatar_prop_blas_failed = true;
 		return;
+	}
 
-	for (int i = 0; i < cl.num_entities; i++)
-		R_FreeEntityBLAS (&cl.entities[i]);
+	ZEROED_STRUCT (VkAccelerationStructureBuildGeometryInfoKHR, build);
+	build.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+	build.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+	build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+	build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+	build.geometryCount = count;
+	build.pGeometries = geometries;
+	ZEROED_STRUCT (VkAccelerationStructureBuildSizesInfoKHR, sizes);
+	sizes.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+	vulkan_globals.vk_get_acceleration_structure_build_sizes (
+		vulkan_globals.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build, primitives, &sizes);
 
-	for (int i = 0; i < cl.num_statics; i++)
-		R_FreeEntityBLAS (cl.static_entities[i]);
+	const VkDeviceSize alignment = q_max (
+		(VkDeviceSize)vulkan_globals.physical_device_acceleration_structure_properties.minAccelerationStructureScratchOffsetAlignment,
+		(VkDeviceSize)1);
+	/* R_EnsureASScratchBufferSize rounds up in uint32_t. Leave room for an
+	 * address-alignment adjustment even if the buffer base is not aligned. */
+	const VkDeviceSize scratch_limit = ((VkDeviceSize)UINT32_MAX + 1) / 2;
+	if (!sizes.accelerationStructureSize || !sizes.buildScratchSize ||
+		alignment > scratch_limit || sizes.buildScratchSize > scratch_limit - (alignment - 1))
+	{
+		root->avatar_prop_blas_failed = true;
+		return;
+	}
+	R_EnsureASScratchBufferSize ((uint32_t)(sizes.buildScratchSize + alignment - 1));
+	const VkDeviceAddress base = as_scratch_buffer.device_address;
+	const VkDeviceSize adjust = (alignment - (base % alignment)) % alignment;
+	if (as_scratch_buffer.buffer == VK_NULL_HANDLE || !base || base > UINT64_MAX - adjust ||
+		adjust > as_scratch_buffer_size || sizes.buildScratchSize > as_scratch_buffer_size - adjust)
+	{
+		root->avatar_prop_blas_failed = true;
+		return;
+	}
+
+	VkBuffer buffer = VK_NULL_HANDLE;
+	glheapallocation_t *allocation = NULL;
+	VkAccelerationStructureKHR blas = VK_NULL_HANDLE;
+	ZEROED_STRUCT (VkBufferCreateInfo, buffer_info);
+	buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	buffer_info.size = sizes.accelerationStructureSize;
+	buffer_info.usage = VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+	VkResult err = vkCreateBuffer (vulkan_globals.device, &buffer_info, NULL, &buffer);
+	if (err != VK_SUCCESS)
+	{
+		buffer = VK_NULL_HANDLE;
+		goto failed;
+	}
+	GL_SetObjectName ((uint64_t)buffer, VK_OBJECT_TYPE_BUFFER, "Avatar prop BLAS");
+	VkMemoryRequirements requirements;
+	vkGetBufferMemoryRequirements (vulkan_globals.device, buffer, &requirements);
+	SDL_LockMutex (mesh_mutex);
+	allocation = GL_HeapAllocate (mesh_buffer_heap, requirements.size, requirements.alignment, &num_vulkan_mesh_allocations);
+	SDL_UnlockMutex (mesh_mutex);
+	err = vkBindBufferMemory (
+		vulkan_globals.device, buffer, GL_HeapGetAllocationMemory (allocation), GL_HeapGetAllocationOffset (allocation));
+	if (err != VK_SUCCESS)
+		goto failed;
+	ZEROED_STRUCT (VkAccelerationStructureCreateInfoKHR, create_info);
+	create_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+	create_info.buffer = buffer;
+	create_info.size = sizes.accelerationStructureSize;
+	create_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+	err = vulkan_globals.vk_create_acceleration_structure (vulkan_globals.device, &create_info, NULL, &blas);
+	if (err != VK_SUCCESS)
+	{
+		blas = VK_NULL_HANDLE;
+		goto failed;
+	}
+	ZEROED_STRUCT (VkAccelerationStructureDeviceAddressInfoKHR, address_info);
+	address_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+	address_info.accelerationStructure = blas;
+	const VkDeviceAddress address = vulkan_globals.vk_get_acceleration_structure_device_address (vulkan_globals.device, &address_info);
+	if (!address)
+	{
+		err = VK_ERROR_INITIALIZATION_FAILED;
+		goto failed;
+	}
+
+	build.dstAccelerationStructure = blas;
+	build.scratchData.deviceAddress = base + adjust;
+	/* Staging copies are submitted before the frame AS command buffer on the
+	 * same queue. The geometry reads use SHADER_READ at AS-build stage. */
+	ZEROED_STRUCT (VkMemoryBarrier, input_barrier);
+	input_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+	input_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	input_barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	vulkan_globals.vk_cmd_pipeline_barrier (
+		cbx->cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0,
+		1, &input_barrier, 0, NULL, 0, NULL);
+	const VkAccelerationStructureBuildRangeInfoKHR *ranges_ptr = ranges;
+	vulkan_globals.vk_cmd_build_acceleration_structures (cbx->cb, 1, &build, &ranges_ptr);
+	/* The next prop or animated body can reuse scratch; TLAS can read this BLAS.
+	 * Scratch uses AS_READ|AS_WRITE, while compute may overwrite it next. */
+	ZEROED_STRUCT (VkMemoryBarrier, build_barrier);
+	build_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+	build_barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+	build_barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR |
+		VK_ACCESS_SHADER_WRITE_BIT;
+	vulkan_globals.vk_cmd_pipeline_barrier (
+		cbx->cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+		VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
+		1, &build_barrier, 0, NULL, 0, NULL);
+
+	root->avatar_prop_blas = blas;
+	root->avatar_prop_blas_buffer = buffer;
+	root->avatar_prop_blas_allocation = allocation;
+	root->avatar_prop_blas_address = address;
+	root->avatar_prop_blas_built = true;
+	return;
+
+failed:
+	Con_Warning ("Avatar prop BLAS allocation failed (%d); keeping Ranger fallback\n", (int)err);
+	GLMesh_DiscardUnbuiltAvatarPropBLAS (blas, buffer, allocation);
+	root->avatar_prop_blas_failed = true;
+}
+
+void GLMesh_BuildPendingAvatarPropBLASes (cb_context_t *cbx)
+{
+	if (!cbx || cbx->cb == VK_NULL_HANDLE || !vulkan_globals.ray_query || r_rtshadows.value <= 0 || !mesh_buffer_heap)
+		return;
+	for (int model = 0; model < mod_numknown; ++model)
+	{
+		qmodel_t *mod = &mod_known[model];
+		if (mod->needload || mod->type != mod_alias)
+			continue;
+		for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+		{
+			aliashdr_t *root = mod->avatar_prop_gpu[prop];
+			if (root && root->avatar_static_prop && !root->avatar_prop_blas_built && !root->avatar_prop_blas_failed)
+				GLMesh_BuildAvatarPropBLAS (cbx, root);
+		}
+	}
 }
 
 /*

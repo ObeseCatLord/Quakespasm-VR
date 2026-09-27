@@ -71,6 +71,57 @@ static qboolean R_TLASAppendAvatarPresentation (float model_matrix[16], const fl
 	return true;
 }
 
+/* The detached Ranger mesh is bone-local. Its frame transform is the same
+ * entity transform and rigid attachment used by raster, never the alternate
+ * body's scaled presentation matrix. Keep this predicate shared by the TLAS
+ * count and emission passes. */
+static qboolean R_TLASPreparedAvatarProp (entity_t *e,
+	VkDeviceAddress *address, float model_matrix[16])
+{
+	const r_vrik_prepared_palette_t *prepared = R_TLASVRIKPalette (e);
+	aliashdr_t *body;
+	lerpdata_t lerpdata;
+
+	if (!address || !model_matrix || !prepared || !prepared->alternate_avatar ||
+		!prepared->attached_prop_valid || !prepared->attached_prop_geometry ||
+		!e->blas_data || e->blas_data->needs_initial_build ||
+		e->blas_data->blas == VK_NULL_HANDLE)
+		return false;
+	*address = GLMesh_AvatarPropBLASAddress (prepared->attached_prop_geometry);
+	if (!*address)
+		return false;
+	body = (aliashdr_t *)e->blas_data->geometry;
+	R_SetupAliasFrame (e, body, &lerpdata);
+	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
+	if (R_AliasModelMatrix (e, prepared->attached_prop_geometry, &lerpdata,
+		model_matrix) < 0)
+		return false;
+	return R_TLASAppendAvatarPresentation (model_matrix,
+		prepared->attached_prop_to_canonical);
+}
+
+static void R_TLASWriteInstance (VkAccelerationStructureInstanceKHR *instance,
+	const float model_matrix[16], VkDeviceAddress address)
+{
+	instance->transform.matrix[0][0] = model_matrix[0];
+	instance->transform.matrix[0][1] = model_matrix[4];
+	instance->transform.matrix[0][2] = model_matrix[8];
+	instance->transform.matrix[0][3] = model_matrix[12];
+	instance->transform.matrix[1][0] = model_matrix[1];
+	instance->transform.matrix[1][1] = model_matrix[5];
+	instance->transform.matrix[1][2] = model_matrix[9];
+	instance->transform.matrix[1][3] = model_matrix[13];
+	instance->transform.matrix[2][0] = model_matrix[2];
+	instance->transform.matrix[2][1] = model_matrix[6];
+	instance->transform.matrix[2][2] = model_matrix[10];
+	instance->transform.matrix[2][3] = model_matrix[14];
+	instance->instanceCustomIndex = 0;
+	instance->mask = 0xFF;
+	instance->instanceShaderBindingTableRecordOffset = 0;
+	instance->flags = VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR | VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+	instance->accelerationStructureReference = address;
+}
+
 int gl_lightmap_format;
 
 #define SHELF_HEIGHT 256
@@ -2901,9 +2952,13 @@ void GL_BuildBModelAccelerationStructures (void)
 		ZEROED_STRUCT (VkMemoryBarrier, memory_barrier);
 		memory_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
 		memory_barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-		memory_barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+		/* The next frame or a newly admitted rigid avatar prop can reuse this
+		 * scratch allocation for another build or compute-generated inputs. */
+		memory_barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR |
+			VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 		vulkan_globals.vk_cmd_pipeline_barrier (
-			command_buffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1,
+			command_buffer, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+			VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
 			&memory_barrier, 0, NULL, 0, NULL);
 	}
 
@@ -2954,6 +3009,7 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 		return;
 
 	cb_context_t *cbx = &vulkan_globals.primary_cb_contexts[PCBX_BUILD_ACCELERATION_STRUCTURES];
+	GLMesh_BuildPendingAvatarPropBLASes (cbx);
 
 	// Tracked players need ray-query geometry even when their efrags are offscreen.
 	if (cl.entities)
@@ -2984,7 +3040,13 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 		else if (
 			e->model->type == mod_alias && e->blas_data && e->blas_data->blas != VK_NULL_HANDLE && !e->blas_data->needs_initial_build &&
 			e->blas_data->model && e->blas_data->model == R_TLASAliasModel (e))
+		{
+			VkDeviceAddress prop_address;
+			float prop_matrix[16];
 			++num_instances;
+			if (R_TLASPreparedAvatarProp (e, &prop_address, prop_matrix))
+				++num_instances;
+		}
 	}
 
 	VkDeviceAddress						instances_device_address;
@@ -3066,26 +3128,15 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 			}
 		}
 
-		VkAccelerationStructureInstanceKHR *instance = &instances[num_instances];
-		instance->transform.matrix[0][0] = model_matrix[0];
-		instance->transform.matrix[0][1] = model_matrix[4];
-		instance->transform.matrix[0][2] = model_matrix[8];
-		instance->transform.matrix[0][3] = model_matrix[12];
-		instance->transform.matrix[1][0] = model_matrix[1];
-		instance->transform.matrix[1][1] = model_matrix[5];
-		instance->transform.matrix[1][2] = model_matrix[9];
-		instance->transform.matrix[1][3] = model_matrix[13];
-		instance->transform.matrix[2][0] = model_matrix[2];
-		instance->transform.matrix[2][1] = model_matrix[6];
-		instance->transform.matrix[2][2] = model_matrix[10];
-		instance->transform.matrix[2][3] = model_matrix[14];
-		instance->instanceCustomIndex = 0;
-		instance->mask = 0xFF;
-		instance->instanceShaderBindingTableRecordOffset = 0;
-		instance->flags = VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR | VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-		instance->accelerationStructureReference = address;
-
-		++num_instances;
+		R_TLASWriteInstance (&instances[num_instances++], model_matrix, address);
+		if (is_alias)
+		{
+			VkDeviceAddress prop_address;
+			float prop_matrix[16];
+			if (R_TLASPreparedAvatarProp (e, &prop_address, prop_matrix))
+				R_TLASWriteInstance (&instances[num_instances++], prop_matrix,
+					prop_address);
+		}
 	}
 
 	ZEROED_STRUCT (VkAccelerationStructureGeometryKHR, tlas_geometry);

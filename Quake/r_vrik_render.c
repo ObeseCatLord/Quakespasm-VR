@@ -10,6 +10,8 @@
 #include <math.h>
 
 extern cvar_t r_lerpmodels;
+extern cvar_t r_gpulightmapupdate, r_rtshadows;
+extern VkAccelerationStructureKHR bmodel_tlas;
 
 #define R_VRIK_RENDER_MAX_JOINTS 256
 #define R_VRIK_RENDER_MAX_AVATARS (PLAYER_AVATAR_COUNT + CUSTOM_AVATAR_MAX_PACKAGES)
@@ -494,6 +496,14 @@ static qboolean R_VRIKRenderAttachProp (
 	if (selected_prop < 0 || closest > 64.0 * 64.0 ||
 		!R_VRIKRenderValidatePropView(selection->source_model,
 			selected_prop, selection->entity->skinnum, &qmax) ||
+		/* The AS task builds the shared prop BLAS after palette preparation.
+		 * Until a prior submitted frame has built it, keep the complete Ranger
+		 * presentation rather than publishing a body without its ray caster. */
+		(vulkan_globals.ray_query && bmodel_tlas != VK_NULL_HANDLE &&
+		 r_gpulightmapupdate.value &&
+		 r_rtshadows.value > 0 &&
+		 !GLMesh_AvatarPropBLASReady (
+			selection->source_model->avatar_prop_gpu[selected_prop])) ||
 		!R_AvatarBuildAttachedPropTransform(&context,
 			source_palette[source_hand],
 			source_rig->live->joints[source_hand].bind,
