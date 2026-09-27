@@ -7773,7 +7773,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	gorilla_reset_generation = client->vr_gorilla_reset_generation;
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
-	if (run_command && (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
+	if (run_command && (!SV_PrivateWalkTrialBuildMoveVars (&trial_movevars, ent) ||
 		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
 			client->vr_gorilla_capable && sv_gorilla.value ?
 				&command : NULL, bounds)))
@@ -8012,7 +8012,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	SV_CheckVelocity (ent);
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
-	if (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
+	if (!SV_PrivateWalkTrialBuildMoveVars (&trial_movevars, ent) ||
 		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
 			client->vr_gorilla_capable && sv_gorilla.value ?
 				&command : NULL, bounds))

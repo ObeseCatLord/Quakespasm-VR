@@ -178,3 +178,14 @@ landing, effects, callback counts and timing, completed ACK, paired commands,
 an intervening zero-time maintenance pass, and a due player Think. Passing
 that proof qualifies only dry jump; boots, grapple, ladder, water, changing
 movetype/custom physics, and general q30 admission remain separate work.
+
+The selected server movevar builder now uses the loader-cached SHA-256 to
+recognize this exact installed q30 image and resolves the named float
+`map_jumpheight` on each build. It accepts a finite positive value no greater
+than the server's velocity cap, then supplies the same live jump speed to
+PMove preflight, post-QuakeC movement and the private snapshot. Stock and
+other progs keep vkQuake's existing movevar defaults. The stock-only admission
+gate remains unchanged, so this boundary alone does not activate q30 selected
+movement or prediction. A q30 map must establish a valid jump height before
+any future selected admission; a zero startup value is not silently replaced
+with vanilla speed.

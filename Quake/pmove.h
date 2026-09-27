@@ -223,6 +223,7 @@ qboolean PMCL_SetMoveVars(void);
 
 /* Build and export server movement settings without selecting them globally. */
 qboolean PMSV_BuildMoveVars(movevars_t *out, edict_t *player, unsigned int protocolflags);
+qboolean SV_PrivateWalkTrialBuildMoveVars(movevars_t *out, edict_t *player);
 /* fstat and istat must each hold at least MAX_CL_STATS entries. */
 qboolean PMSV_ExportMoveStats(const movevars_t *vars, float *fstat, int *istat);
 #define VectorClear(v) ((v)[0] = (v)[1] = (v)[2] = 0)
