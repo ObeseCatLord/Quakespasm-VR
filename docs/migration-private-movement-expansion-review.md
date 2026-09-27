@@ -26,7 +26,12 @@ At review time the server seeded `pmove.waterjumptime = 0` and exported only
 jump debounce (`STAT_PRIVATE_JUMP_SECS`). The current adapter now retains and
 exports the authoritative waterjump timer as `STAT_PRIVATE_WATERJUMP_SECS`,
 requires its receipt in selected snapshots, and seeds client replay from it
-before command-journal propagation. A follow-up adapter now admits water
+without command-journal timer propagation. That propagation remains for public
+PREDINFO, which does not carry a waterjump timer. A selected snapshot's
+completed ACK and timer are one authoritative baseline; an older local replay
+value must not override it, including on an equal-ACK update. The focused
+client replay fixture checks changed-ACK and equal-ACK private timers, a stale
+matching journal cache entry, and unchanged public propagation. A follow-up adapter now admits water
 through the selected PMove owner and filters stock QuakeC water drag and ledge
 impulse from its PreThink velocity delta. It publishes PMove's waterjump flag
 and expiry back to QuakeC while keeping the existing completed-command ACK.

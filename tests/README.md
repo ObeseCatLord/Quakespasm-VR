@@ -1107,7 +1107,9 @@ the production input builders.
 `client_replay_fixture.c` exercises the production replay/presentation helpers
 with PM probes: partial timing, empty history, prediction opt-out, protocol and
 owner/ACK gates, history loss, epochs, Gorilla provenance, and attachment parent
-order. The raw-Gorilla replay check includes a first RESET and the disposable
+order. It verifies that private replay starts from the accepted server
+waterjump timer despite a stale matching local cache entry, while public
+PREDINFO retains timer propagation. The raw-Gorilla replay check includes a first RESET and the disposable
 preview when all sent commands are acknowledged. It also checks that an OFF
 journal command clears the old planted-hand snapshot before preview and that a
 raw command with no reconstructible baseline suppresses prediction.

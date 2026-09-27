@@ -1706,7 +1706,12 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		return false;
 	PMCL_AddEntities (bounds);
 
-	if (!shadow && cl.move_replay_propagate_sequence[startseq & MOVECMDS_MASK] == startseq)
+	/* Selected-private snapshots include the authoritative waterjump timer for
+	 * their completed ACK. Never replace that seed with an earlier local
+	 * replay result, even if the journal sequence happens to match. Public
+	 * PREDINFO has no timer stat and still needs the local propagation. */
+	if (!shadow && !private_replay &&
+		cl.move_replay_propagate_sequence[startseq & MOVECMDS_MASK] == startseq)
 		pmove.waterjumptime =
 			cl.move_replay_propagate_waterjumptime[startseq & MOVECMDS_MASK];
 
@@ -1737,7 +1742,7 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			CL_ResetReplayPropagation ();
 			return false;
 		}
-		if (!shadow)
+		if (!shadow && !private_replay)
 		{
 			cl.move_replay_propagate_sequence[(seq + 1) & MOVECMDS_MASK] = seq + 1;
 			cl.move_replay_propagate_waterjumptime[(seq + 1) & MOVECMDS_MASK] =

@@ -428,7 +428,7 @@ static void check_pause_death_and_move_modes (void)
 	assert (observed_pm_types[0] == PM_DEAD);
 }
 
-static void check_private_epoch_resets_propagation (void)
+static void check_private_authoritative_waterjump_seed (void)
 {
 	vec3_t origin;
 
@@ -437,8 +437,7 @@ static void check_private_epoch_resets_propagation (void)
 	cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] = 1.25f;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
 	assert (observed_waterjump_before[0] == 1.25f);
-	assert (cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] == 4);
-	assert (cl.move_replay_propagate_waterjumptime[4 & MOVECMDS_MASK] == 53);
+	assert (cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] == 0);
 
 	reset_probes ();
 	cl.ackedmovemessages = 3;
@@ -446,9 +445,20 @@ static void check_private_epoch_resets_propagation (void)
 	cl.movemessages = 5;
 	cl.movecmds[4 & MOVECMDS_MASK] = cl.movecmds[3 & MOVECMDS_MASK];
 	cl.movecmds[4 & MOVECMDS_MASK].sequence = 4;
+	cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] = .75f;
+	/* This matching journal entry represents a stale prediction from before
+	 * the accepted ACK; it must not override the new server timer. */
+	cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] = 4;
+	cl.move_replay_propagate_waterjumptime[4 & MOVECMDS_MASK] = 53;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
-	assert (observed_waterjump_before[0] == 53);
-	assert (cl.move_replay_propagate_sequence[5 & MOVECMDS_MASK] == 5);
+	assert (observed_waterjump_before[0] == .75f);
+	assert (cl.move_replay_propagate_sequence[5 & MOVECMDS_MASK] == 0);
+
+	/* An equal-ACK snapshot can also change the authoritative timer. */
+	reset_probes ();
+	cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] = .5f;
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (observed_waterjump_before[0] == .5f);
 
 	reset_probes ();
 	cl.ackedmovemessages = 4;
@@ -458,7 +468,26 @@ static void check_private_epoch_resets_propagation (void)
 	cl.movecmds[5 & MOVECMDS_MASK].sequence = 5;
 	cl.move_ack_mode_epoch++;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
-	assert (observed_waterjump_before[0] == 1.25f);
+	assert (observed_waterjump_before[0] == .5f);
+}
+
+static void check_public_waterjump_propagation (void)
+{
+	vec3_t origin;
+
+	reset_client ();
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (observed_waterjump_before[0] == 0);
+	assert (cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] == 4);
+	assert (cl.move_replay_propagate_waterjumptime[4 & MOVECMDS_MASK] == 53);
+
+	reset_probes ();
+	cl.ackedmovemessages = 3;
+	cl.movemessages = 5;
+	cl.movecmds[4 & MOVECMDS_MASK] = cl.movecmds[3 & MOVECMDS_MASK];
+	cl.movecmds[4 & MOVECMDS_MASK].sequence = 4;
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (observed_waterjump_before[0] == 53);
 }
 
 static void check_private_replay_stops_at_fluid_crossing (void)
@@ -672,7 +701,8 @@ int main (void)
 	check_partial_preview_timing_and_empty_history ();
 	check_history_loss_and_selector_failure ();
 	check_pause_death_and_move_modes ();
-	check_private_epoch_resets_propagation ();
+	check_private_authoritative_waterjump_seed ();
+	check_public_waterjump_propagation ();
 	check_private_replay_stops_at_fluid_crossing ();
 	check_trusted_gorilla_generation ();
 	check_raw_gorilla_state_provenance ();
