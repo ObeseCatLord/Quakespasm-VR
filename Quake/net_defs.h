@@ -170,6 +170,8 @@ typedef struct qsocket_s
 	byte		 receiveMessage[NET_MAXMESSAGE * NET_LOOPBACKBUFFERS + NET_LOOPBACKHEADERSIZE];
 
 	struct qsockaddr addr;
+	struct qsockaddr previous_addr; // recent endpoint before a virtual socket's NAT port changed
+	double previous_addr_time;
 	char             connectaddress[NET_NAMELEN]; // numeric control endpoint, including its port
 	char			 trueaddress[NET_NAMELEN];	 // lazy address string
 	char			 maskedaddress[NET_NAMELEN]; // addresses for this player that may be displayed publically

@@ -818,6 +818,24 @@ omit unrelated engine owners; the codecs and wire primitives are not mocked.
 These checks do not qualify private admission, clock sampling, redundant command
 history, completed-simulation ACKs, replay or networked gameplay.
 
+## Shared UDP socket and NAT rebinding
+
+`datagram_rebind_fixture.c` drives the real virtual-client `Datagram_GetMessage`
+path with a scripted UDP boundary. It covers two clients behind one IP,
+cross-client packet deferral, a uniquely identified source-port change, outgoing
+destination, old-port stragglers, reliable retransmit ACK routing, ambiguous
+new ports, oversized packets, bounded inbox eviction, socket-owner cleanup, and
+IPv6 scope separation. It does not replace a live multiplayer check or measure
+performance.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections -fsanitize=undefined \
+  tests/datagram_rebind_fixture.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/quakespasm-datagram-rebind
+/tmp/quakespasm-datagram-rebind
+```
+
 ## Private command history and packet delivery
 
 `private_send_fixture.c` executes the real sender, command writer/reader and

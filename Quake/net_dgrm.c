@@ -106,6 +106,93 @@ static char *StrAddr (struct qsockaddr *addr)
 	return buf;
 }
 
+// Both receive APIs share this selector. A changed source port is useful evidence
+// only when its packet fits exactly one established virtual connection.
+static qboolean Datagram_SameHost (int landriver, struct qsockaddr *a, struct qsockaddr *b)
+{
+	if (net_landrivers[landriver].AddrCompare (a, b) < 0)
+		return false;
+#ifdef IPPROTO_IPV6
+	if (a->qsa_family == AF_INET6 &&
+		((struct sockaddr_in6 *)a)->sin6_scope_id != ((struct sockaddr_in6 *)b)->sin6_scope_id)
+		return false;
+#endif
+	return true;
+}
+
+static qboolean Datagram_RebindPacketPlausible (qsocket_t *sock, unsigned int wire_length)
+{
+	unsigned int header, flags, sequence, payload;
+
+	if (wire_length < NET_HEADERSIZE)
+		return false;
+	header = BigLong (packetBuffer.length);
+	flags = header & ~NETFLAG_LENGTH_MASK;
+	header &= NETFLAG_LENGTH_MASK;
+	if (header < NET_HEADERSIZE || header > wire_length)
+		return false;
+	sequence = BigLong (packetBuffer.sequence);
+	payload = header - NET_HEADERSIZE;
+	if (flags == NETFLAG_UNRELIABLE)
+		return payload <= (unsigned int)net_message.maxsize && sequence >= sock->unreliableReceiveSequence &&
+			sequence - sock->unreliableReceiveSequence <= 64;
+	if (flags == NETFLAG_ACK)
+		return header == NET_HEADERSIZE && sock->sendMessageLength > 0 &&
+			sequence == sock->ackSequence && sequence == sock->sendSequence - 1;
+	if (flags == NETFLAG_DATA || flags == (NETFLAG_DATA | NETFLAG_EOM))
+	{
+		if (sequence == sock->receiveSequence - 1)
+			return sock->receiveSequence != 0; // retransmission after an ACK went to the old port
+		if (sequence != sock->receiveSequence)
+			return false;
+		if (flags & NETFLAG_EOM)
+			return sock->receiveMessageLength + payload <= (unsigned int)net_message.maxsize;
+		return sock->receiveMessageLength + payload <= sizeof (sock->receiveMessage);
+	}
+	return false;
+}
+
+static qsocket_t *Datagram_FindVirtualSocketForPacket (int driver, int landriver, sys_socket_t socket,
+	struct qsockaddr *addr, unsigned int wire_length, qboolean *rebind)
+{
+	qsocket_t *sock, *match = NULL;
+	int priority = 0;
+	qboolean old_endpoint = false;
+
+	*rebind = false;
+	for (sock = net_activeSockets; sock; sock = sock->next)
+	{
+		int candidate = 0;
+		if (sock->disconnected || !sock->isvirtual || sock->driver != driver ||
+			sock->landriver != landriver || sock->socket != socket)
+			continue;
+		if (net_landrivers[landriver].AddrCompare (addr, &sock->addr) == 0)
+			candidate = 3;
+		else if (sock->previous_addr_time >= 0 &&
+			net_landrivers[landriver].AddrCompare (addr, &sock->previous_addr) == 0)
+		{
+			old_endpoint = true;
+			candidate = net_time - sock->previous_addr_time <= 3.0 ? 2 : 0;
+		}
+		else if (Datagram_SameHost (landriver, addr, &sock->addr) &&
+			Datagram_RebindPacketPlausible (sock, wire_length))
+			candidate = 1;
+		if (!candidate || candidate < priority)
+			continue;
+		if (candidate > priority)
+		{
+			priority = candidate;
+			match = sock;
+		}
+		else
+			match = NULL; // two equally plausible sockets: do not guess
+	}
+	if (priority == 1 && old_endpoint)
+		match = NULL; // never repurpose a known old port for a different session
+	*rebind = priority == 1 && match != NULL;
+	return match;
+}
+
 static qboolean Datagram_QueuedPacketOwnerIsActive (pending_datagram_t *packet)
 {
 	qsocket_t *sock;
@@ -121,7 +208,7 @@ static qboolean Datagram_QueuedPacketOwnerIsActive (pending_datagram_t *packet)
 			return false;
 		if (sock->driver != packet->driver || sock->landriver != packet->landriver || sock->socket != packet->socket)
 			return false;
-		return net_landrivers[packet->landriver].AddrCompare (&packet->addr, &sock->addr) == 0;
+		return true; // queued source is reselected after its raw bytes are restored
 	}
 
 	return false;
@@ -254,24 +341,15 @@ static qboolean Datagram_DequeueAnyPacket (qsocket_t **owner, sys_socket_t *sock
 static qboolean Datagram_QueueIfForAnotherSocket (qsocket_t *sock, struct qsockaddr *addr, unsigned int wire_length)
 {
 	qsocket_t *other;
+	qboolean rebind;
 
 	if (!sock->isvirtual)
 		return false;
 
-	for (other = net_activeSockets; other; other = other->next)
-	{
-		if (other == sock || other->disconnected || !other->isvirtual)
-			continue;
-		if (other->driver != sock->driver || other->landriver != sock->landriver || other->socket != sock->socket)
-			continue;
-		if (net_landrivers[sock->landriver].AddrCompare (addr, &other->addr) == 0)
-		{
-			Datagram_QueuePacket (other, other->driver, other->landriver, other->socket, addr, wire_length);
-			return true;
-		}
-	}
-
-	return false;
+	other = Datagram_FindVirtualSocketForPacket (sock->driver, sock->landriver, sock->socket, addr, wire_length, &rebind);
+	if (other && other != sock)
+		Datagram_QueuePacket (other, other->driver, other->landriver, other->socket, addr, wire_length);
+	return other != sock; // unmatched or ambiguous packets are discarded by this reader
 }
 
 #ifdef BAN_TEST
@@ -484,7 +562,19 @@ int Datagram_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 
 static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsockaddr *clientaddr, byte *data, unsigned int length);
 
-qboolean Datagram_ProcessPacket (unsigned int length, qsocket_t *sock)
+static void Datagram_CommitRebind (qsocket_t *sock, struct qsockaddr *source, qboolean rebind)
+{
+	if (!rebind)
+		return;
+	sock->previous_addr = sock->addr;
+	sock->previous_addr_time = net_time;
+	sock->addr = *source;
+	q_strlcpy (sock->trueaddress, sfunc.AddrToString (source, false), sizeof (sock->trueaddress));
+	q_strlcpy (sock->maskedaddress, sfunc.AddrToString (source, true), sizeof (sock->maskedaddress));
+}
+
+static int Datagram_ProcessPacket (unsigned int length, qsocket_t *sock, struct qsockaddr *source, qboolean rebind,
+	qboolean count_stats)
 {
 	const unsigned int wire_length = length;
 	unsigned int flags;
@@ -494,7 +584,7 @@ qboolean Datagram_ProcessPacket (unsigned int length, qsocket_t *sock)
 	if (length < NET_HEADERSIZE)
 	{
 		shortPacketCount++;
-		return false;
+		return 0;
 	}
 
 	length = BigLong (packetBuffer.length);
@@ -503,21 +593,27 @@ qboolean Datagram_ProcessPacket (unsigned int length, qsocket_t *sock)
 	if (length < NET_HEADERSIZE || length > wire_length)
 	{
 		shortPacketCount++;
-		return false;
+		return 0;
 	}
 
 	if (flags & NETFLAG_CTL)
-		return false; // should only be for OOB packets.
+		return 0; // should only be for OOB packets.
 
 	sequence = BigLong (packetBuffer.sequence);
 	packetsReceived++;
 
-	if (flags & NETFLAG_UNRELIABLE)
+	if (flags == NETFLAG_UNRELIABLE)
 	{
+		length -= NET_HEADERSIZE;
+		if (length > (unsigned int)net_message.maxsize)
+		{
+			Con_Printf ("Over-sized unreliable\n");
+			return 0;
+		}
 		if (sequence < sock->unreliableReceiveSequence)
 		{
 			Con_DPrintf ("Got a stale datagram\n");
-			return false;
+			return 0;
 		}
 		if (sequence != sock->unreliableReceiveSequence)
 		{
@@ -526,27 +622,21 @@ qboolean Datagram_ProcessPacket (unsigned int length, qsocket_t *sock)
 			Con_DPrintf ("Dropped %u datagram(s)\n", count);
 		}
 		sock->unreliableReceiveSequence = sequence + 1;
-
-		length -= NET_HEADERSIZE;
-
-		if (length > (unsigned int)net_message.maxsize)
-		{ // is this even possible? maybe it will be in the future! either way, no sys_errors please.
-			Con_Printf ("Over-sized unreliable\n");
-			return true;
-		}
+		Datagram_CommitRebind (sock, source, rebind);
 		SZ_Clear (&net_message);
 		SZ_Write (&net_message, packetBuffer.data, length);
 
-		unreliableMessagesReceived++;
-		return true; // parse the unreliable
+		if (count_stats)
+			unreliableMessagesReceived++;
+		return 2; // parse the unreliable
 	}
 
-	if (flags & NETFLAG_ACK)
+	if (flags == NETFLAG_ACK)
 	{
 		if (sequence != (sock->sendSequence - 1))
 		{
 			Con_DPrintf ("Stale ACK received\n");
-			return false;
+			return 0;
 		}
 		if (sequence == sock->ackSequence)
 		{
@@ -557,8 +647,9 @@ qboolean Datagram_ProcessPacket (unsigned int length, qsocket_t *sock)
 		else
 		{
 			Con_DPrintf ("Duplicate ACK received\n");
-			return false;
+			return 0;
 		}
+		Datagram_CommitRebind (sock, source, rebind);
 		sock->sendMessageLength -= sock->max_datagram;
 		if (sock->sendMessageLength > 0)
 		{
@@ -570,52 +661,53 @@ qboolean Datagram_ProcessPacket (unsigned int length, qsocket_t *sock)
 			sock->sendMessageLength = 0;
 			sock->canSend = true;
 		}
-		return false;
+		return 0;
 	}
 
-	if (flags & NETFLAG_DATA)
+	if (flags == NETFLAG_DATA || flags == (NETFLAG_DATA | NETFLAG_EOM))
 	{
+		length -= NET_HEADERSIZE;
+		if (sequence != sock->receiveSequence &&
+			!(sock->receiveSequence != 0 && sequence == sock->receiveSequence - 1))
+			return 0;
+		if (sequence == sock->receiveSequence &&
+			((flags & NETFLAG_EOM) ? sock->receiveMessageLength + length > (unsigned int)net_message.maxsize :
+				sock->receiveMessageLength + length > sizeof (sock->receiveMessage)))
+		{
+			Con_Printf ("Over-sized reliable\n");
+			return -1;
+		}
+		Datagram_CommitRebind (sock, source, rebind);
 		packetBuffer.length = BigLong (NET_HEADERSIZE | NETFLAG_ACK);
 		packetBuffer.sequence = BigLong (sequence);
-		sfunc.Write (sock->socket, (byte *)&packetBuffer, NET_HEADERSIZE, &sock->addr);
+		sfunc.Write (sock->socket, (byte *)&packetBuffer, NET_HEADERSIZE, source);
 
 		if (sequence != sock->receiveSequence)
 		{
 			receivedDuplicateCount++;
-			return false;
+			return 0;
 		}
 		sock->receiveSequence++;
 
-		length -= NET_HEADERSIZE;
-
 		if (flags & NETFLAG_EOM)
 		{
-			if (sock->receiveMessageLength + length > (unsigned int)net_message.maxsize)
-			{
-				Con_Printf ("Over-sized reliable\n");
-				return true;
-			}
 			SZ_Clear (&net_message);
 			SZ_Write (&net_message, sock->receiveMessage, sock->receiveMessageLength);
 			SZ_Write (&net_message, packetBuffer.data, length);
 			sock->receiveMessageLength = 0;
 
-			messagesReceived++;
-			return true; // parse this reliable!
+			if (count_stats)
+				messagesReceived++;
+			return 1; // parse this reliable!
 		}
 
-		if (sock->receiveMessageLength + length > sizeof (sock->receiveMessage))
-		{
-			Con_Printf ("Over-sized reliable\n");
-			return true;
-		}
 		memcpy (sock->receiveMessage + sock->receiveMessageLength, packetBuffer.data, length);
 		sock->receiveMessageLength += length;
-		return false; // still watiting for the eom
+		return 0; // still waiting for the eom
 	}
 	// unknown flags
 	Con_DPrintf ("Unknown packet flags\n");
-	return false;
+	return 0;
 }
 
 qsocket_t *Datagram_GetAnyMessage (void)
@@ -624,6 +716,7 @@ qsocket_t *Datagram_GetAnyMessage (void)
 	struct qsockaddr addr;
 	int				 length;
 	unsigned int	 queued_length;
+	qboolean		 rebind;
 	for (net_landriverlevel = 0; net_landriverlevel < net_numlandrivers; net_landriverlevel++)
 	{
 		sys_socket_t acceptsock;
@@ -642,7 +735,10 @@ qsocket_t *Datagram_GetAnyMessage (void)
 				continue;
 			}
 
-			if (Datagram_ProcessPacket (queued_length, s))
+			if (Datagram_FindVirtualSocketForPacket (net_driverlevel, net_landriverlevel, queued_socket,
+				&addr, queued_length, &rebind) != s)
+				continue;
+			if (Datagram_ProcessPacket (queued_length, s, &addr, rebind, true) > 0)
 			{
 				s->lastMessageTime = net_time;
 				return s;
@@ -666,26 +762,14 @@ qsocket_t *Datagram_GetAnyMessage (void)
 				continue;
 			}
 
-			// figure out which qsocket it was for
-			for (s = net_activeSockets; s; s = s->next)
+			// Figure out which virtual connection owns this packet, including a
+			// uniquely identifiable source-port change.
+			s = Datagram_FindVirtualSocketForPacket (net_driverlevel, net_landriverlevel, acceptsock,
+				&addr, length, &rebind);
+			if (s && Datagram_ProcessPacket (length, s, &addr, rebind, true) > 0)
 			{
-				if (s->driver != net_driverlevel)
-					continue;
-				if (s->disconnected)
-					continue;
-				if (!s->isvirtual)
-					continue;
-				if (s->landriver != net_landriverlevel || s->socket != acceptsock)
-					continue;
-				if (dfunc.AddrCompare (&addr, &s->addr) == 0)
-				{
-					// okay, looks like this is us. try to process it, and if there's new data
-					if (Datagram_ProcessPacket (length, s))
-					{
-						s->lastMessageTime = net_time;
-						return s; // the server needs to parse that packet.
-					}
-				}
+				s->lastMessageTime = net_time;
+				return s;
 			}
 			// stray packet... ignore it and just try the next
 		}
@@ -732,6 +816,7 @@ int Datagram_GetMessage (qsocket_t *sock)
 	unsigned int	 sequence;
 	unsigned int	 count;
 	qboolean		 from_queue;
+	qboolean		 rebind;
 
 	if (!sock->canSend)
 		if ((net_time - sock->lastSendTime) > 1.0)
@@ -765,13 +850,23 @@ int Datagram_GetMessage (qsocket_t *sock)
 			if (Datagram_QueueIfForAnotherSocket (sock, &readaddr, length))
 				continue;
 
-			if (sfunc.AddrCompare (&readaddr, &sock->addr) != 0)
+			if (!sock->isvirtual && sfunc.AddrCompare (&readaddr, &sock->addr) != 0)
 			{
 				Con_Printf ("Stray/Forged packet received\n");
 				Con_Printf ("Expected: %s\n", sfunc.AddrToString (&sock->addr, false));
 				Con_Printf ("Received: %s\n", sfunc.AddrToString (&readaddr, false));
 				continue;
 			}
+		}
+		if (sock->isvirtual)
+		{
+			if (Datagram_FindVirtualSocketForPacket (sock->driver, sock->landriver, sock->socket,
+				&readaddr, length, &rebind) != sock)
+				continue;
+			ret = Datagram_ProcessPacket (length, sock, &readaddr, rebind, false);
+			if (ret)
+				break;
+			continue;
 		}
 
 		if (length < NET_HEADERSIZE)
