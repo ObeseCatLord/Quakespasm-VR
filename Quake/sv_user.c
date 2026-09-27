@@ -1077,6 +1077,10 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_discarded_move = 0;
 	client->private_move_discontinuity_epoch = 0;
 	client->private_move_discontinuity_reason = MOVEACK_DISCONTINUITY_NONE;
+	client->private_move_mode_epoch = 0;
+	client->private_move_published_authority = MOVE_AUTHORITY_UNKNOWN;
+	client->private_move_published_authority_valid = false;
+	client->private_move_native_frame = false;
 	client->private_pmove_walk_selected = false;
 	client->private_pmove_credit_msec = 0.0;
 	client->private_pmove_jump_secs = 0.0f;
@@ -1227,9 +1231,12 @@ static qboolean SV_ReadPrivateClientMove (void)
 		return true;
 	if (SV_PrivateWalkTrialSelected (host_client))
 	{
-		if (!SV_PrivateWalkTrialStateValid (host_client))
+		if (!SV_PrivateWalkTrialTerminalState (host_client) &&
+			!SV_PrivateWalkTrialStateValid (host_client))
 			return false;
-		if (host_client->lastmovetime > 0 && realtime - host_client->lastmovetime > 1.0)
+		if (!SV_PrivateWalkTrialTerminalState (host_client) &&
+			host_client->lastmovetime > 0 &&
+			realtime - host_client->lastmovetime > 1.0)
 			return SV_PrivateWalkTrialFail (host_client, "more than one second between accepted commands");
 		if (readcmd.vr_gorilla_motion.flags)
 			return SV_PrivateWalkTrialFail (host_client,
@@ -1843,7 +1850,9 @@ void SV_RunClients (void)
 		}
 		if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 			(sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
-			 (host_client->lastmovetime > 0 && realtime - host_client->lastmovetime > 1.0)))
+			 (host_client->lastmovetime > 0 &&
+			  realtime - host_client->lastmovetime > 1.0 &&
+			  !SV_PrivateWalkTrialTerminalState (host_client))))
 		{
 			if (!SV_ClearPrivateInput (host_client))
 			{

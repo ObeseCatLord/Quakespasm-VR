@@ -323,6 +323,10 @@ typedef struct client_s
 	int		 private_discarded_move; // explicit cutoff for commands dropped without queue consumption
 	unsigned short private_move_discontinuity_epoch;
 	unsigned char private_move_discontinuity_reason;
+	unsigned short private_move_mode_epoch; // changes when snapshot simulation authority changes
+	unsigned char private_move_published_authority;
+	qboolean private_move_published_authority_valid;
+	qboolean private_move_native_frame; // native terminal/respawn frame has not yielded to selected PMove
 	qboolean	 private_pmove_walk_selected; // latched until command-queue/serverinfo reset
 	double	 private_pmove_credit_msec; // fractional milliseconds; physics accrual/cap lives in sv_phys.c
 	float	 private_pmove_jump_secs; // short PMove jump debounce across accepted commands
@@ -595,6 +599,7 @@ extern cvar_t sv_gorilla_trustclient;
 extern cvar_t sv_voice;
 void SV_FinishPrivateUsercmds (void);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
+qboolean SV_PrivateWalkTrialTerminalState (client_t *client);
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client);
 const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client, const usercmd_t *cmd);
 void SV_ClientUpdateAnglesForClient (client_t *client);

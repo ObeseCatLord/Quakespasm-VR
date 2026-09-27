@@ -6975,6 +6975,33 @@ static qboolean SV_PrivateWalkTrialStockHull (edict_t *ent)
 		VectorCompare (ent->v.mins, mins) && VectorCompare (ent->v.maxs, maxs);
 }
 
+/* Death is a normal client-physics transition, not a malformed private
+ * command. Keep queue ownership until a native frame consumes the input. */
+qboolean SV_PrivateWalkTrialTerminalState (client_t *client)
+{
+	edict_t *ent;
+	if (!client || !client->active || !client->spawned ||
+		!client->edict || client->edict->free)
+		return false;
+	ent = client->edict;
+	if (!isfinite (ent->v.health) ||
+		(ent->v.health > 0 && ent->v.deadflag == DEAD_NO))
+		return false;
+	switch ((int)ent->v.movetype)
+	{
+	case MOVETYPE_NONE:
+	case MOVETYPE_WALK:
+	case MOVETYPE_FLY:
+	case MOVETYPE_NOCLIP:
+	case MOVETYPE_TOSS:
+	case MOVETYPE_BOUNCE:
+	case MOVETYPE_GIB:
+		return true;
+	default:
+		return false;
+	}
+}
+
 const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 	const usercmd_t *cmd)
 {
@@ -6990,6 +7017,8 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		!SV_PrivateWalkTrialSelected (client))
 		return "private profile selection changed";
+	if (SV_PrivateWalkTrialTerminalState (client))
+		return "owner entered terminal state";
 	if ((int)ent->v.movetype != MOVETYPE_WALK ||
 		!SV_PrivateWalkTrialStockHull (ent))
 		return "owner left stock WALK hull";
@@ -7168,6 +7197,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	qboolean run_command = false, was_grounded = false, weapon_alive;
 	qboolean friendly_fire_scope;
 	qboolean command_completed = false, suppress_trigger = false;
+	qboolean terminal_completed = false;
 	const char *failure = NULL;
 	float result_jump_secs = 0, result_waterjump_secs = 0;
 	vr_gorilla_state_t result_gorilla;
@@ -7179,6 +7209,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	ED_Retain (ent);
 	host_client = client;
 	sv_player = ent;
+	client->private_move_native_frame = false;
 	if (!client->private_pmove_last_cmd_valid)
 	{
 		client->private_pmove_jump_secs = 0.0f;
@@ -7645,7 +7676,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		goto cleanup;
 	}
 	SV_CoopSharedObserveClientDeath (ent, NUM_FOR_EDICT (ent));
-	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
+	terminal_completed = SV_PrivateWalkTrialTerminalState (client);
+	if (!terminal_completed &&
+		(failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	if (client->private_pmove_credit_msec < command.msec)
 	{
@@ -7673,8 +7706,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	client->private_completed_move = (int)command.sequence;
 	client->private_pmove_last_cmd = command;
 	client->private_pmove_last_cmd_valid = true;
-	client->private_pmove_jump_secs = result_jump_secs;
-	client->private_pmove_waterjump_secs = result_waterjump_secs;
+	client->private_pmove_jump_secs = terminal_completed ? 0.0f : result_jump_secs;
+	client->private_pmove_waterjump_secs = terminal_completed ? 0.0f : result_waterjump_secs;
+	if (terminal_completed)
+		SV_ResetGorillaClient (client);
 	client->private_pmove_credit_msec -= command.msec;
 	if (client->private_pmove_credit_msec < 0.000001)
 		client->private_pmove_credit_msec = 0;
@@ -7961,8 +7996,8 @@ static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
 }
 
 /* The existing world-frame QuakeC and native movement owner. Pass the exact
- * sequence whose input this frame consumed; a future selected-state adapter
- * must never substitute the latest accepted (possibly still queued) tail.
+ * sequence whose input this frame consumed; the selected terminal adapter
+ * must never substitute an accepted but unconsumed tail.
  * Return success only if PostThink and the owner lifetime completed. */
 static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num, int completed_move)
 {
@@ -8138,6 +8173,96 @@ done:
 	return owner_completed;
 }
 
+/* A dead selected owner uses the ordinary world-frame dispatcher from its
+ * beginning. Coalesce only the command levels/latches that the ordinary
+ * private parser would have staged; physical contacts retain their ordered
+ * queue cursor and are invalidated while the owner is still dead. */
+static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
+	client_t *client)
+{
+	client_t *saved_host_client = host_client;
+	edict_t *saved_sv_player = sv_player;
+	usercmd_t staged, last = {0};
+	int completed_move = client->private_completed_move;
+	unsigned int offset, latched_buttons = 0;
+	int latched_impulse = 0;
+	qboolean consumed = false;
+
+	if (client->private_cmd_queue_count > SV_PRIVATE_CMD_QUEUE_SIZE ||
+		client->private_cmd_queue_head >= SV_PRIVATE_CMD_QUEUE_SIZE ||
+		client->private_cmd_queue_msec > SV_PRIVATE_CMD_QUEUE_MAX_MSEC)
+	{
+		SV_PrivateWalkTrialDrop (client, "invalid terminal command queue");
+		return;
+	}
+	if (client->private_pmove_last_cmd_valid)
+		last = client->private_pmove_last_cmd;
+	else
+		VectorCopy (ent->v.v_angle, last.viewangles);
+	for (offset = 0; offset < client->private_cmd_queue_count; ++offset)
+	{
+		const usercmd_t *queued = &client->private_cmd_queue[
+			(client->private_cmd_queue_head + offset) % SV_PRIVATE_CMD_QUEUE_SIZE];
+		if (queued->msec < 1 || queued->msec > 125 ||
+			(int)queued->sequence <= completed_move ||
+			(int)queued->sequence > client->lastmovemessage)
+		{
+			SV_PrivateWalkTrialDrop (client, "invalid terminal command order");
+			return;
+		}
+		completed_move = (int)queued->sequence;
+		latched_buttons |= queued->buttons & 3;
+		if (queued->impulse)
+			latched_impulse = queued->impulse;
+		last = *queued;
+		consumed = true;
+	}
+	staged = last;
+	staged.buttons |= latched_buttons;
+	staged.impulse = latched_impulse;
+	staged.seconds = 0; // the native dispatcher owns the world-frame clock
+	staged.msec = 0;
+	VectorClear (staged.vr_roomscalemove);
+	client->cmd = staged;
+	VectorCopy (staged.viewangles, ent->v.v_angle);
+	ent->v.button0 = (staged.buttons & BUTTON_ATTACK) != 0;
+	ent->v.button2 = (staged.buttons & 2) != 0;
+	ent->v.impulse = staged.impulse;
+	host_client = client;
+	sv_player = ent;
+	SV_ClientUpdateAnglesForClient (client);
+	/* Drain while dead, before a queued respawn input can revive the owner. */
+	if (!SV_VRContactDrainQueued (ent, client, completed_move))
+	{
+		SV_PrivateWalkTrialDrop (client, "terminal contact cursor invalidated");
+		host_client = saved_host_client;
+		sv_player = saved_sv_player;
+		return;
+	}
+	client->private_move_native_frame = true;
+	client->private_pmove_credit_msec = 0.0;
+	client->private_pmove_jump_secs = 0.0f;
+	client->private_pmove_waterjump_secs = 0.0f;
+	SV_ResetGorillaClient (client);
+	/* A respawn in PreThink must not replay dead-frame hand samples. */
+	client->vr_gorilla_last_sequence = completed_move;
+	client->vr_gorilla_cursor_valid = true;
+	if (SV_Physics_ClientNativeFrame (ent, num, completed_move) && consumed)
+	{
+		last.impulse = 0;
+		VectorClear (last.vr_roomscalemove);
+		client->private_pmove_last_cmd = last;
+		client->private_pmove_last_cmd_valid = true;
+	}
+	/* Selected frame-end cleanup restores levels but does not clear the edict's
+	 * impulse as the ordinary private path does. Keep it one-shot here. */
+	if (!ent->free)
+		ent->v.impulse = 0;
+	client->cmd.impulse = 0;
+	host_client = saved_host_client;
+	sv_player = saved_sv_player;
+}
+
 static void SV_Physics_Client (edict_t *ent, int num)
 {
 	client_t *client = &svs.clients[num - 1];
@@ -8151,6 +8276,12 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	if (!client->knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
 		return; // don't spam prethinks before we called putclientinserver.
+	if (SV_PrivateWalkTrialSelected (client) &&
+		SV_PrivateWalkTrialTerminalState (client))
+	{
+		SV_Physics_ClientTerminalFrame (ent, num, client);
+		return;
+	}
 
 	if (SV_PrivateWalkTrialSelected (client))
 	{
@@ -8160,6 +8291,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 			if (!client->active || !SV_PrivateWalkTrialSelected (client) ||
 				!SV_Physics_ClientPrivateWalkTrial (ent, client,
 					queue_offset, queue_offset == 0))
+				break;
+			if (SV_PrivateWalkTrialTerminalState (client))
 				break;
 		}
 		return;

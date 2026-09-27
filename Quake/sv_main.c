@@ -849,6 +849,7 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 	edict_t *ground;
 	eval_t *customphysics;
 	int groundentity;
+	qboolean terminal;
 
 	if (!client || !client->active || !client->knowntoqc || !client->edict || client->edict->free)
 		return "client is not a live spawned owner";
@@ -863,17 +864,22 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 		return "requires the pinned stock progs identity";
 	if (sv.numcustomstats)
 		return "custom stats are outside the stock movement-stat trial";
-	if (client->edict->v.movetype != MOVETYPE_WALK ||
+	terminal = SV_PrivateWalkTrialSelected (client) &&
+		SV_PrivateWalkTrialTerminalState (client);
+	if (!terminal && (client->edict->v.movetype != MOVETYPE_WALK ||
 		client->edict->v.solid != SOLID_SLIDEBOX ||
-		(!client->private_pmove_walk_selected && client->edict->v.waterlevel != 0))
+		(!client->private_pmove_walk_selected && client->edict->v.waterlevel != 0)))
 		return "requires a stock WALK/SOLID_SLIDEBOX owner, dry at selection";
 	if (client->cmd.vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
-	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
-	if (customphysics && customphysics->function)
-		return "customphysics is active";
+	if (!terminal)
+	{
+		customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
+		if (customphysics && customphysics->function)
+			return "customphysics is active";
+	}
 	groundentity = client->edict->v.groundentity;
-	if (groundentity)
+	if (groundentity && !terminal)
 	{
 		if (groundentity < 0 || qcvm->edict_size <= 0 ||
 			groundentity > (qcvm->num_edicts - 1) * qcvm->edict_size ||
@@ -1863,6 +1869,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	unsigned int			   entbits, logbits, netbits;
 	size_t					   entnum, ownernum = 0, i;
 	qboolean				   selected = client->protocol_qsvr == QSVR_PROTOCOL_PINNED && SV_PrivateWalkTrialSelected (client);
+	qboolean				   selected_engine = selected &&
+		!SV_PrivateWalkTrialTerminalState (client) && !client->private_move_native_frame;
 	qboolean				   worldreset = false, wrote_optional = false;
 	qboolean				   gorilla_ack = false;
 	int					   ack_flags = 0;
@@ -1883,12 +1891,24 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	frame->numents = 0;
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
-		gorilla_ack = selected && sv_gorilla.value && client->vr_gorilla_capable &&
+		move_authority_t authority = selected_engine ?
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT : MOVE_AUTHORITY_LEGACY_FRAME;
+		if (!client->private_move_published_authority_valid)
+		{
+			client->private_move_published_authority = authority;
+			client->private_move_published_authority_valid = true;
+		}
+		else if (client->private_move_published_authority != authority)
+		{
+			client->private_move_mode_epoch++;
+			client->private_move_published_authority = authority;
+		}
+		gorilla_ack = selected_engine && sv_gorilla.value && client->vr_gorilla_capable &&
 			client->vr_gorilla_state.initialized &&
 			client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence >= 0 &&
 			client->vr_gorilla_last_sequence == client->private_completed_move &&
 			SV_GorillaAckStateIsFinite (client);
-		if (selected && !sv.paused)
+		if (selected_engine && !sv.paused)
 		{
 			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE;
 			/* Wet movement and an active ledge jump keep the selected command
@@ -1910,9 +1930,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			ack_flags |= MOVEACK_FLAG_VR_GORILLA;
 		MSG_WriteShort (msg, (client->private_completed_move & 0xffff));
 		MSG_WriteByte (msg, ack_flags);
-		MSG_WriteByte (msg, SV_PrivateWalkTrialSelected (client) ?
-			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT : MOVE_AUTHORITY_LEGACY_FRAME);
-		MSG_WriteShort (msg, 0); // mode epoch
+		MSG_WriteByte (msg, authority);
+		MSG_WriteShort (msg, client->private_move_mode_epoch);
 		MSG_WriteShort (msg, client->private_move_discontinuity_epoch);
 		MSG_WriteByte (msg, client->private_move_discontinuity_reason);
 		if (gorilla_ack)
@@ -3967,7 +3986,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 			 * selected data is serialized. Paused frames send without physics;
 			 * their ACK permission stays off until an active-frame state check. */
 			trial_failure = SV_PrivateWalkTrialAdmissionFailure (client);
-			if (!trial_failure && !sv.paused)
+			if (!trial_failure && !sv.paused &&
+				!SV_PrivateWalkTrialTerminalState (client))
 				trial_failure = SV_PrivateWalkTrialStateError (client->edict, client,
 					&client->cmd);
 			if (trial_failure)

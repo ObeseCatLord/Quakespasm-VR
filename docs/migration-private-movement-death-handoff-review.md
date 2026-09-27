@@ -79,7 +79,7 @@ alive, WALK/SLIDEBOX, dry and outside waterjump/teleport.
 | --- | --- |
 | A fresh-frame terminal owner can reuse `SV_Physics_ClientNativeFrame` with an explicitly staged queue head and its sequence. Invoking the entire native body after selected PreThink, weapon Think, impact or PostThink would repeat callbacks. | **Adopt narrowly.** Reuse only on entry before any selected callback; earlier-phase transitions need continuation at their exact boundary. |
 | PostThink death currently fails eligibility before `private_completed_move` advances. | **Adopt.** Give a recognized terminal state a distinct successful command-end outcome, then stop batching; do not silently treat it as invalid input. |
-| One terminal queue head per world frame preserves order but can fall behind sustained client arrivals and overflow the eight-command queue. | **Adopt as a blocker for general support.** A one-head path can prove lifecycle correctness, but release behavior needs an explicit bounded-arrival or native-style coalescing contract without lost one-shot actions. |
+| One terminal queue head per world frame preserves order but can fall behind sustained client arrivals and overflow the 32-record/500 ms queue. | **Adopt as a blocker for general support.** A one-head path can prove lifecycle correctness, but release behavior needs an explicit bounded-arrival or native-style coalescing contract without lost one-shot actions. |
 | A commandless corpse still needs one world-time native frame with held levels and no impulse or room-scale debt. | **Adopt.** Keep the completed ACK unchanged when no head was consumed. |
 | Parser and snapshot also reject non-WALK state; authority is currently derived only from selection and the mode epoch is zero. | **Adopt.** Separate queue ownership from published simulation mode, permit only recognized terminal states at each boundary, and publish a mode-epoch transition with replay off; keep respawn native through its current frame. |
 | Add another command retirement owner. | **Reject.** Stage the exact head and use `SV_FinishPrivateUsercmds` after a successful frame. |
@@ -89,3 +89,26 @@ entry, commandless corpse motion, and a queued respawn input without an ACK
 jump. It must then handle death inside selected callbacks and after later
 world entities run. Live stock-QC parity and sustainable queue throughput are
 not established by this review or by the current Linux build.
+
+## Terminal handoff implementation checkpoint
+
+The selected PostThink command now completes its own ACK when the owner enters
+a recognized dead state, then stops batching. At the next fresh physics frame,
+the existing native dispatcher handles corpse motion and possible respawn.
+Accepted dead-state samples are staged with the native private parser's latest
+levels, latched attack/jump, and last nonzero impulse; ordered physical-contact
+and Gorilla samples are invalidated while the owner is still dead. The native
+dispatcher advances `private_completed_move` only after its owner lifetime and
+PostThink complete. A commandless corpse frame keeps the ACK unchanged. Parser
+and snapshot admission recognize this terminal state, and snapshots publish
+legacy authority with a mode-epoch change and prediction off until the next
+selected frame. The Linux debug build passes; a live death/respawn proof has not
+run.
+
+This is a partial handoff. Death during selected PreThink, scheduled weapon
+Think, movement impact, physical contact, or trigger callbacks still reaches a
+state-error disconnect. Those phases need exact continuation after the callback
+already run, without restarting the native body. Respawn after a long command
+silence, paused selected sessions, and command coalescing behavior still need
+qualification. The default-off trial must not be described as full death
+parity on the strength of this checkpoint.
