@@ -38,6 +38,16 @@ assert mode() == 1 and profile() == 0
 assert not authorized(), 'public peer enabled collision without private admission'
 gdb.execute('set cl.protocol_qsvr = 1')  # QSVR_PROTOCOL_PINNED
 assert authorized()
+gdb.execute('set vr_weapon_menu_open = 1')
+gdb.execute('set vr_weapon_menu_open_vr = 1')
+assert not authorized(), 'VR weapon wheel allowed collision'
+gdb.execute('set vr_weapon_menu_open_vr = 0')
+gdb.execute('set vr_weapon_menu_open = 0')
+assert authorized()
+gdb.execute('set vr_weapon_calibration_adjustment.active = 1')
+assert not authorized(), 'weapon adjustment allowed collision'
+gdb.execute('set vr_weapon_calibration_adjustment.active = 0')
+assert authorized()
 
 assert offer('1 2 1')
 assert mode() == 2 and profile() == 1 and not authorized(), 'melee-only bit enabled collision'

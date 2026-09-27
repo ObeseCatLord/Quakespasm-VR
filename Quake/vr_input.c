@@ -43,6 +43,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_input.h"
 #include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
+#include "vr_weapon_menu.h"
 #include "view.h"
 #include "world.h"
 
@@ -85,13 +86,15 @@ static cvar_t vr_joystick_yaw_multi = {"vr_joystick_yaw_multi", "1", CVAR_ARCHIV
 static cvar_t vr_vrik = {"vr_vrik", "1", CVAR_ARCHIVE};
 static cvar_t vr_immersive_melee = {"vr_immersive_melee", "1", CVAR_ARCHIVE};
 cvar_t vr_fbt_enabled = {"vr_fbt_enabled", "0", CVAR_ARCHIVE};
-cvar_t vr_weapon_collision = {"vr_weapon_collision", "0", CVAR_ARCHIVE};
+cvar_t vr_weapon_collision = {"vr_weapon_collision", "1", CVAR_ARCHIVE};
 
 qboolean VR_WeaponCollisionAuthorized (void)
 {
 	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_COLLISION) != 0 &&
-		vr_weapon_collision.value != 0.0f;
+		vr_weapon_collision.value != 0.0f &&
+		!VR_WeaponMenu_IsOpenVR () &&
+		!VR_WeaponCalibrationAdjustActive ();
 }
 
 static qboolean VR_InputMeleeAuthorized (void)
@@ -1440,6 +1443,7 @@ static void VR_InputPrepareGorillaSample (usercmd_t *pending,
 	if (!pending || !frame || !vr_gorilla.value ||
 		!cl.vr_gorilla_supported || !cl.vr_gorilla_allowed ||
 		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		VR_WeaponMenu_IsOpenVR () || VR_WeaponCalibrationAdjustActive () ||
 		!VR_InputControllerAim () || !VR_InputMotionContextAccepted (frame) ||
 		CL_AngleLocked () || cl.stats[STAT_HEALTH] <= 0 ||
 		!V_TrackedPlayerBase (&viewheight) ||
@@ -1901,7 +1905,7 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 		(!held_mesh && (!edge || !edge->valid)) || !body_base || !body_tip ||
 		!VR_InputWireVec (body_base) || !VR_InputWireVec (body_tip) ||
 		!frame->sample_id ||
-		VR_WeaponCalibrationAdjustActive () ||
+		VR_WeaponMenu_IsOpenVR () || VR_WeaponCalibrationAdjustActive () ||
 		!(held_mesh ? VR_InputHeldMeleeAuthorized () :
 			VR_InputMeleeAuthorized ()) ||
 		!VR_InputMotionContextAccepted (frame) || CL_AngleLocked () ||
@@ -2000,7 +2004,7 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 	int selected_axe_index, selected_skin;
 
 	if (!pending || !frame || !frame->sample_id ||
-		VR_WeaponCalibrationAdjustActive () ||
+		VR_WeaponMenu_IsOpenVR () || VR_WeaponCalibrationAdjustActive () ||
 		vr_input_pending_contact_identity.sample_id != frame->sample_id ||
 		vr_input_pending_contact_identity.reset_generation !=
 			vr_input_reset_generation ||
@@ -3892,7 +3896,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 		for (int axis = 0; axis < 3; ++axis)
 			muzzle[hand][axis] = grip[axis] + local_anchor[axis] -
 				(roomscale_accepted ? pending->vr_roomscalemove[axis] : 0.0f);
-		if (shared_pair_collision)
+		if (shared_pair_collision && collision_context)
 		{
 			vec3_t render_delta, body_delta;
 			V_AkimboPairCollisionOffset (hand, render_delta);
@@ -4016,6 +4020,7 @@ static qboolean VR_InputPrepareBerserkAkimboContact (usercmd_t *pending,
 
 	if (!pending || !frame || !frame->sample_id || dominant < 0 || dominant > 1 ||
 		vr_input_contact_discontinuity ||
+		VR_WeaponMenu_IsOpenVR () || VR_WeaponCalibrationAdjustActive () ||
 		!VR_InputControllerAim () || cl.stats[STAT_HEALTH] <= 0 ||
 		!VR_InputSelectedAkimboModel (&model, NULL, &recipe) ||
 		!VR_InputAkimboMeleeAuthorized (recipe, model) ||

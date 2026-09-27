@@ -199,7 +199,8 @@ version: compensated QBJ3 fist presentation moved its entity origin but not
 the command muzzle. The crosshair now starts from the tracked hand plus its
 fixed anchor and render collision delta, leaving palm animation compensation
 out of aim. Linux build and diff checks pass; real near-wall impacts remain
-unverified. Collision still defaults off pending the full contact/outcome gate.
+unverified. At that checkpoint collision still defaulted off pending the full
+contact/outcome gate.
 
 ## Uncalibrated alias fallback
 
@@ -212,3 +213,31 @@ zero. Missing models, unsupported geometry, and invalid tracking remain
 rejected, so the attack gate cannot turn them into body-origin shots. The
 production model-selector fixture covers missing versus malformed calibration;
 it and the Linux build pass. Runtime shot alignment remains unverified.
+
+## Restored local default and modal gates
+
+`vr_weapon_collision` now defaults to `1`, matching the inherited client.
+An archived explicit `0` still disables it. The effective authorization still
+requires a pinned private peer and the server's COLLISION capability; the
+server's automatic policy offers it only for a non-dedicated single-player
+game unless explicitly configured otherwise. The VR weapon wheel and active
+weapon adjustment now suspend wall retraction and collision contact. Wheel
+and adjustment also suppress physical melee contact and Gorilla samples while
+leaving ordinary movement ownership intact. The next inactive contact command
+breaks server sweep continuity. Fixed foveation remains independently
+opt-in; this default change does not affect foveation.
+
+The Linux builds establish compilation, not complete outcome parity. The
+debugger policy smoke could not run in this sandbox because ptrace is denied.
+Near-wall firing and button activation still need the production loopback
+proof described above before release qualification.
+
+## Astra review disposition
+
+Astra's focused review found no P0/P1 issue with restoring the inherited
+default and modal gates. Its P2 finding was that the paired-weapon command
+muzzle could consume a cached render retraction after the wheel or adjustment
+disabled collision. The paired offset now also requires the current collision
+context. The reviewer confirmed the private server admission rule and the
+server's inactive-contact sweep reset; the debugger assertions check real
+production state but do not prove full contact or firing outcomes.
