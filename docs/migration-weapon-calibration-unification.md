@@ -1,9 +1,10 @@
 # One weapon calibration in solo and multiplayer
 
-The target is one held offset and one muzzle offset **per weapon**, shared by
-single-player and multiplayer. A weapon's mesh and QuakeC firing expression can
-still need individual calibration. Network mode should not itself select a
-second physical muzzle. This is a migration target, not current `2.0` behavior.
+Branch `2.0` uses one held offset and one muzzle offset **per weapon** in solo
+and multiplayer (`71eec741`). A weapon's mesh and QuakeC firing expression can
+still need individual calibration; network mode does not select a second
+physical muzzle. QBJ3 and Enyo shot/barrel alignment remain to be checked in
+the user's later device testing.
 
 ## Evidence and current boundary
 
@@ -27,12 +28,12 @@ per-weapon MP corrections replaced a shared offset because QBJ3's weapon meshes
 have different origins. That establishes the value of **per-weapon** calibration,
 not a permanent need for **per-mode** calibration.
 
-The `2.0` calibration owner currently parses the legacy fields and applies
-their effective overlay when `cl.maxclients > 1`. That condition measures server
-capacity: a listen host takes the local muzzle sampling path while receiving
-the MP overlay. The stock `id1` shotgun has
-no MP overlay. A live private OpenXR command reached an unchanged pinned donor
-dedicated server, and 60 observed firing samples reconstructed its pre-clamp
+The earlier `2.0` adapter applied legacy MP overlays when `cl.maxclients > 1`.
+Commit `71eec741` removed that runtime branch. The calibration lookup functions
+read only shared base offsets; both the rendered viewmodel and command muzzle
+use those lookups. The stock `id1` shotgun has no MP overlay. A live private
+OpenXR command reached an unchanged pinned donor dedicated server, and 60
+observed firing samples reconstructed its pre-clamp
 muzzle from the authoritative body and command-relative pose within about
 `0.00003` Quake units. This covers one stock multiplayer path, not QBJ3/Enyo
 shots, a visible barrel, final projectile origin, or damage.
@@ -42,7 +43,8 @@ The `2.0` client has `vrweaponsave` and controller-driven `vradjustweapon` and
 The adjustment session freezes the viewmodel, uses the controller trigger to
 commit a grip or muzzle position, and writes the matching fields in the active
 game's `vr_weapons.txt`. The writer preserves unrelated blocks and the other
-format's fields. Existing and resulting schema text are checked by the same
+format's fields; an explicit save removes obsolete per-weapon MP keys from the
+selected block. Existing and resulting schema text are checked by the same
 parser used on reload; the exact active-game file is checked after writing.
 The commands build and the schema writer/reload fixtures pass, but live headset
 calibration and installed-mod gameplay remain unqualified.
@@ -53,51 +55,44 @@ donor initializes ten Enyo models with built-in held XYZ/scale and seeds each
 muzzle Z from the held Z (`vr.c:8185–8215,3280–3294`). The `2.0` reload path
 now installs those ten classic defaults before applying the Enyo schema. The
 focused reload fixture checks all ten held/muzzle defaults, an identity-only
-schema block, a global MP overlay, and an authored override. This restores the
-calibration baseline needed for later shot-origin comparisons; it does not
-prove Enyo gameplay parity by itself.
+schema block, an inert legacy global MP value, and an authored override. This
+restores the calibration baseline needed for later shot-origin comparisons;
+it does not prove Enyo gameplay parity by itself.
 
-## Migration rule
+## Current rule and remaining acceptance
 
-Keep the existing legacy parser and effective lookup while the viewmodel,
-server weapon-use, and roomscale paths are being integrated. Do not expose new
-MP adjustment controls as a preferred `2.0` workflow. Use the existing
-calibration owner as the sole source for both viewmodel placement and command
-muzzle, rather than introducing another per-mode transform or a parallel schema
-registry. A per-weapon `muzzle_source_offset` corrects the mod's QuakeC firing
-expression; it is not an MP muzzle knob.
+Keep the legacy parser so installed QBJ3 and Enyo profiles still load, but
+`mp_*` values are inert in runtime lookups. `VR_WeaponCalibrationLookupHeld`
+and `VR_WeaponCalibrationLookupMuzzle` provide the same per-weapon values in
+solo, listen-server co-op, and dedicated-server co-op. `r_alias.c` uses the held
+lookup for viewmodel placement, while `VR_WeaponCalibrationCurrentMuzzle` and
+`vr_input.c` use the muzzle lookup for the transmitted command. The server
+reconstructs and clamps that physical muzzle at its existing weapon-use
+boundary. The separate `muzzle_source_offset` corrects a mod's QuakeC firing
+expression and is independent of player count.
 
-Before removing the runtime MP overlay, compare the same QBJ3 pistol and an
-Enyo projectile weapon in solo, listen-server co-op, and dedicated-server
-co-op. Keep the weapon, hand pose, pitch, handedness, model format, and relevant
-configuration constant. Include clear space, a nearby wall, wrist rotation and
-body translation. Observe the effective base/MP settings, rendered barrel,
-pre/post-clamp muzzle, QuakeC trace or projectile origin and direction,
-impact/damage, and world collision. Compare the pinned donor with the `2.0`
-client and server. The QBJ3 pistol tracer alone is not proof of its damage
-trace: the donor explicitly separates the two source expressions
-(`vr.c:3777–3785`). Extend the check to flak and every distinct firing path
-before retiring the overlay for all weapons. A packet or stock shotgun shot
-does not establish mod parity.
+The editor exposes only shared held and muzzle adjustment commands. On an
+explicit save, it removes legacy per-weapon MP keys from the selected block;
+it does not rewrite unrelated weapon blocks or a global legacy MP key. Loading
+an existing file does not change that file. Focused calibration and reload
+fixtures verify that MP fields do not alter the shared lookups.
 
-If those observations show the MP vectors compensate for an old origin
-mismatch, fix that mismatch at the narrow client/server or QuakeC source
-boundary, then collapse each proven weapon to one calibrated held and muzzle
-vector. With unchanged geometry, solo uses base `B` and co-op uses `B + Δ`;
-simply dropping `Δ` or folding it into `B` changes one mode. Keep the base,
-authored per-weapon delta and global delta distinguishable during conversion
-so a global value is not added twice.
-Legacy `mp_*` files should remain readable during migration, with a clear
-diagnostic or explicit one-time conversion; avoid silently changing existing
-profiles. If a mod genuinely uses different firing geometry between modes,
-document the exact mod-specific behavior and keep only the minimal correction
-needed at the QuakeC source boundary. Never add a global MP muzzle adjustment
-to compensate for weapon-specific geometry.
+For release acceptance, compare the same QBJ3 pistol and an Enyo projectile
+weapon in solo, listen-server co-op, and dedicated-server co-op. Hold weapon,
+hand pose, pitch, handedness, model format, and configuration constant. Include
+clear space, a nearby wall, wrist rotation, and body translation. Observe the
+rendered barrel, pre/post-clamp muzzle, QuakeC trace or projectile origin and
+direction, impact/damage, and world collision. The QBJ3 pistol tracer alone is
+not proof of its damage trace; the donor uses separate firing expressions.
+Extend the check to flak and each distinct firing path. A stock shotgun packet
+does not establish mod alignment.
 
-Release acceptance is a mode switch between solo and multiplayer that leaves
-the visible barrel and physical shot origin aligned without requiring a second
-user adjustment. User-authored schema compatibility and save/reload behavior
-must be checked when the legacy overlay is retired.
+The donor's MP deltas can be large, so removing them changes its multiplayer
+shot origin. That is an intentional move to the requested single calibration,
+not proof that every mod's new alignment is correct. If a mod needs a different
+QuakeC firing correction, fix that at the narrow source boundary instead of
+reintroducing a network-mode held or muzzle offset. The user will perform
+physical headset and multiplayer shot checks later.
 
 ## Astra senior-review disposition
 
@@ -107,10 +102,10 @@ findings were the missing Enyo baseline and the listen-host transport split.
 
 | Recommendation | Disposition |
 | --- | --- |
-| Keep effective MP overlays until affected mods have shot and visual parity proof | Adopted. Removing a nonzero delta now changes behavior mathematically; legacy parsing stays. |
+| Keep effective MP overlays until affected mods have shot and visual parity proof | Superseded by the user's single-calibration target and `71eec741`. Legacy parsing stays, but the MP overlays are inert. |
 | Compare one shared calibration through the existing renderer and weapon-use path | Adapted. Donor Enyo defaults are now installed and checked by a focused fixture; include solo, listen-host and dedicated modes so network transport and `cl.maxclients` are not conflated. |
-| Convert proven entries individually while preserving provenance | Adopted. Record base, per-weapon and global contributions, preserve distinct model-format profiles, and remove only the proven redundant runtime overlay. |
+| Convert proven entries individually while preserving provenance | Superseded for runtime selection. Classic and enhanced base profiles remain distinct by geometry format; explicit editor saves omit obsolete per-weapon MP keys. |
 
-No user decision is needed now. If a particular mod cannot preserve both
-behaviors under one calibration after source-path correction, present that
-specific tradeoff for a decision rather than silently changing its shots.
+If a mod cannot align its barrel and shot under one calibration, correct its
+QuakeC source expression at the narrow firing boundary rather than adding a
+mode-dependent muzzle again.

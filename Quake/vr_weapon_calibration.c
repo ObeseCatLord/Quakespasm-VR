@@ -34,22 +34,10 @@ typedef struct
 {
 	qboolean has_muzzle_offset;
 	qboolean muzzle_seeded_from_held;
-	qboolean has_mp_muzzle_offset;
-	vec3_t mp_muzzle_offset; /* Effective authored + global overlay. */
-	qboolean has_schema_mp_muzzle_offset;
-	vec3_t schema_mp_muzzle_offset; /* Per-weapon authored portion. */
 	qboolean has_enhanced_muzzle_offset;
 	vec3_t enhanced_muzzle_offset;
-	qboolean has_enhanced_mp_muzzle_offset;
-	vec3_t enhanced_mp_muzzle_offset;
-	qboolean has_mp_held_offset;
-	vec3_t mp_held_offset;
-	qboolean has_schema_mp_held_offset;
-	vec3_t schema_mp_held_offset;
 	qboolean has_enhanced_held_offset;
 	vec3_t enhanced_held_offset;
-	qboolean has_enhanced_mp_held_offset;
-	vec3_t enhanced_mp_held_offset;
 	qboolean has_muzzle_source_offset;
 	vec3_t muzzle_source_offset;
 	qboolean has_muzzle_source_viewofs;
@@ -955,15 +943,9 @@ static qboolean VR_WeaponCalibrationSave(void)
 		invalid_values =
 			(calibration->has_enhanced_held_offset &&
 			 !VR_CalibrationVectorIsFinite(calibration->enhanced_held_offset)) ||
-			(calibration->has_enhanced_mp_held_offset &&
-			 !VR_CalibrationVectorIsFinite(
-				 calibration->enhanced_mp_held_offset)) ||
 			(calibration->has_enhanced_muzzle_offset &&
 			 !VR_CalibrationVectorIsFinite(
-				 calibration->enhanced_muzzle_offset)) ||
-			(calibration->has_enhanced_mp_muzzle_offset &&
-			 !VR_CalibrationVectorIsFinite(
-				 calibration->enhanced_mp_muzzle_offset));
+				 calibration->enhanced_muzzle_offset));
 	}
 	else
 	{
@@ -975,13 +957,7 @@ static qboolean VR_WeaponCalibrationSave(void)
 			VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value <= 0.0f ||
 			!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value) ||
 			!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y).value) ||
-			!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value) ||
-			(vr_weapon_calibration_slots[slot].has_schema_mp_held_offset &&
-			 !VR_CalibrationVectorIsFinite(
-				 vr_weapon_calibration_slots[slot].schema_mp_held_offset)) ||
-			(vr_weapon_calibration_slots[slot].has_schema_mp_muzzle_offset &&
-			 !VR_CalibrationVectorIsFinite(
-				 vr_weapon_calibration_slots[slot].schema_mp_muzzle_offset));
+			!isfinite(VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value);
 	}
 	if (invalid_values)
 	{
@@ -1888,56 +1864,17 @@ qboolean VR_WeaponCalibrationApplySchema(
 			calibration->has_muzzle_offset = true;
 			calibration->muzzle_seeded_from_held = false;
 		}
-		if (entry->has_mp_held_offset)
-		{
-			memcpy(calibration->mp_held_offset, entry->mp_held_offset,
-				   sizeof(vec3_t));
-			calibration->has_mp_held_offset = true;
-			calibration->has_schema_mp_held_offset =
-				entry->has_schema_mp_held_offset;
-			if (entry->has_schema_mp_held_offset)
-				memcpy(calibration->schema_mp_held_offset,
-					   entry->schema_mp_held_offset, sizeof(vec3_t));
-			else
-				memset(calibration->schema_mp_held_offset, 0, sizeof(vec3_t));
-		}
-		if (entry->has_mp_muzzle_offset)
-		{
-			memcpy(calibration->mp_muzzle_offset, entry->mp_muzzle_offset,
-				   sizeof(vec3_t));
-			calibration->has_mp_muzzle_offset = true;
-			calibration->has_schema_mp_muzzle_offset =
-				entry->has_schema_mp_muzzle_offset;
-			if (entry->has_schema_mp_muzzle_offset)
-				memcpy(calibration->schema_mp_muzzle_offset,
-					   entry->schema_mp_muzzle_offset, sizeof(vec3_t));
-			else
-				memset(calibration->schema_mp_muzzle_offset, 0,
-					   sizeof(vec3_t));
-		}
 		if (entry->has_enhanced_held_offset)
 		{
 			memcpy(calibration->enhanced_held_offset,
 				   entry->enhanced_held_offset, sizeof(vec3_t));
 			calibration->has_enhanced_held_offset = true;
 		}
-		if (entry->has_enhanced_mp_held_offset)
-		{
-			memcpy(calibration->enhanced_mp_held_offset,
-				   entry->enhanced_mp_held_offset, sizeof(vec3_t));
-			calibration->has_enhanced_mp_held_offset = true;
-		}
 		if (entry->has_enhanced_muzzle_offset)
 		{
 			memcpy(calibration->enhanced_muzzle_offset,
 				   entry->enhanced_muzzle_offset, sizeof(vec3_t));
 			calibration->has_enhanced_muzzle_offset = true;
-		}
-		if (entry->has_enhanced_mp_muzzle_offset)
-		{
-			memcpy(calibration->enhanced_mp_muzzle_offset,
-				   entry->enhanced_mp_muzzle_offset, sizeof(vec3_t));
-			calibration->has_enhanced_mp_muzzle_offset = true;
 		}
 		if (entry->has_muzzle_source_offset)
 		{
