@@ -1083,9 +1083,10 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 			tracked_lower_mask |= R_AVATAR_TRACKED_HIP;
 	}
 	if (!selection->humanoid)
-		R_AvatarRefineBuiltinPalette (source_rig, target_rig, tracked,
+		R_AvatarRefineBuiltinPaletteWithContext (source_rig, target_rig, tracked,
 			(const float (*)[12])source_palette, selection->floor_correction_z,
-			tracked_lower_mask, palette, R_VRIK_RENDER_MAX_JOINTS);
+			tracked_lower_mask, palette, R_VRIK_RENDER_MAX_JOINTS,
+			&selection->presentation);
 	else if (selection->humanoid_ik && tracked &&
 		!R_VRIKRenderRefineHumanoidTracked (selection, &pose, lower_input,
 			&ranger, palette))

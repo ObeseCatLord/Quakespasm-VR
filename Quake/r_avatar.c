@@ -1257,15 +1257,21 @@ static qboolean R_AvatarApplyTrackedAnimalHip(const r_avatar_rig_t *source,
 
 static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target,const float *sourcepalette,
+	const r_avatar_presentation_context_t *prepared_context,
 	float floor_correction_z,unsigned char tracked_lower_mask,float *palette)
 {
-	r_avatar_presentation_context_t context;
+	r_avatar_presentation_context_t built_context;
+	const r_avatar_presentation_context_t *context=prepared_context;
 	float saved[R_AVATAR_MAX_JOINTS*12],footbasis[2][12],targetpoint[3];
 	size_t bytes=(size_t)R_AvatarJointCount(target->live)*12*sizeof(float);
 	qboolean complete=true,uppervalid;
 	int side,head=target->joint[MD5_VRIK_HEAD];
-	if(!isfinite(floor_correction_z)||
-		!R_AvatarBuildPresentationContext(source,target,&context))return false;
+	if(!isfinite(floor_correction_z))return false;
+	if(!context){
+		if(!R_AvatarBuildPresentationContext(source,target,&built_context))return false;
+		R_AvatarPresentationAddCanonicalZ(&built_context,floor_correction_z);
+		context=&built_context;
+	}
 	for(side=0;side<2;++side){
 		int foot=target->joint[side?MD5_VRIK_FOOT_R:MD5_VRIK_FOOT_L];
 		if(foot<0)return false;
@@ -1273,29 +1279,28 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 	}
 	memcpy(saved,palette,bytes);
 	if((tracked_lower_mask&R_AVATAR_TRACKED_HIP)&&target->profile->preserve_hip_rotation){
-		if(!R_AvatarApplyTrackedAnimalHip(source,target,&context,sourcepalette,palette,saved)||
+		if(!R_AvatarApplyTrackedAnimalHip(source,target,context,sourcepalette,palette,saved)||
 			!R_AvatarPaletteValid(target,palette)){
 			memcpy(palette,saved,bytes);
 			complete=false;
 		}
 	}
-	R_AvatarPresentationAddCanonicalZ(&context,floor_correction_z);
 	memcpy(saved,palette,bytes);
-	uppervalid=R_AvatarRepairTrackedAnimalUpperBody(source,target,&context,sourcepalette,palette);
+	uppervalid=R_AvatarRepairTrackedAnimalUpperBody(source,target,context,sourcepalette,palette);
 	for(side=0;uppervalid&&side<2;++side){
 		int arm=side?MD5_VRIK_HAND_R:MD5_VRIK_HAND_L;
 		int root=target->joint[side?MD5_VRIK_UPPERARM_R:MD5_VRIK_UPPERARM_L];
 		if(target->profile->id==PLAYER_AVATAR_FIEND)
 			root=target->joint[side?MD5_VRIK_SHOULDER_R:MD5_VRIK_SHOULDER_L];
 		R_AvatarOrigin(sourcepalette+source->joint[arm]*12,targetpoint);
-		R_AvatarPresentationInversePoint(&context,targetpoint,targetpoint);
+		R_AvatarPresentationInversePoint(context,targetpoint,targetpoint);
 		uppervalid=R_AvatarSolvePhysicalPath(target,palette,root,target->joint[arm],
 			targetpoint,palette+target->joint[arm]*12);
 	}
 	if(uppervalid){
 		float desired[12];
 		R_AvatarOrigin(sourcepalette+source->joint[MD5_VRIK_HEAD]*12,targetpoint);
-		R_AvatarPresentationInversePoint(&context,targetpoint,targetpoint);
+		R_AvatarPresentationInversePoint(context,targetpoint,targetpoint);
 		memcpy(desired,palette+head*12,sizeof(desired));
 		for(int axis=0;axis<3;++axis)desired[axis*4+3]=targetpoint[axis];
 		uppervalid=R_AvatarSetSubtreeTransform(target,palette,head,desired)&&
@@ -1308,7 +1313,7 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 		if(!(tracked_lower_mask&(1u<<side)))continue;
 		memcpy(saved,palette,bytes);
 		R_AvatarOrigin(sourcepalette+source->joint[leg]*12,targetpoint);
-		R_AvatarPresentationInversePoint(&context,targetpoint,targetpoint);
+		R_AvatarPresentationInversePoint(context,targetpoint,targetpoint);
 		if(!R_AvatarSolvePhysicalPath(target,palette,target->joint[upperleg],
 			target->joint[leg],targetpoint,footbasis[side])||
 			!R_AvatarPaletteValid(target,palette)){
@@ -1319,11 +1324,12 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 	return complete;
 }
 
-qboolean R_AvatarRefineBuiltinPalette(const r_avatar_rig_t *source,
+qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target,qboolean tracked,
 	const float (*source_palette)[12],float floor_correction_z,
 	unsigned char tracked_lower_mask,
-	float (*target_palette)[12],size_t target_capacity)
+	float (*target_palette)[12],size_t target_capacity,
+	const r_avatar_presentation_context_t *prepared_context)
 {
 	r_avatar_presentation_context_t context;
 	float saved[R_AVATAR_MAX_JOINTS*12];
@@ -1339,7 +1345,7 @@ qboolean R_AvatarRefineBuiltinPalette(const r_avatar_rig_t *source,
 	profile=target->profile;
 	if(tracked&&(profile->id==PLAYER_AVATAR_DOG||profile->id==PLAYER_AVATAR_FIEND))
 		return R_AvatarRefineTrackedAnimalPalette(source,target,(const float *)source_palette,
-			floor_correction_z,tracked_lower_mask,(float *)target_palette);
+			prepared_context,floor_correction_z,tracked_lower_mask,(float *)target_palette);
 	if(!tracked && (profile->id!=PLAYER_AVATAR_DOG &&
 		profile->id!=PLAYER_AVATAR_FIEND && !profile->mirror_outer_leg_poles))
 		return true;
@@ -1359,6 +1365,17 @@ qboolean R_AvatarRefineBuiltinPalette(const r_avatar_rig_t *source,
 rollback:
 	memcpy(target_palette,saved,bytes);
 	return false;
+}
+
+qboolean R_AvatarRefineBuiltinPalette(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target,qboolean tracked,
+	const float (*source_palette)[12],float floor_correction_z,
+	unsigned char tracked_lower_mask,
+	float (*target_palette)[12],size_t target_capacity)
+{
+	return R_AvatarRefineBuiltinPaletteWithContext(source,target,tracked,
+		source_palette,floor_correction_z,tracked_lower_mask,target_palette,
+		target_capacity,NULL);
 }
 
 qboolean R_AvatarCanonicalToTargetBasis (const r_avatar_rig_t *rig, float out[12])

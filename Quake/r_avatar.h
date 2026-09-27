@@ -236,6 +236,15 @@ qboolean R_AvatarRefineBuiltinPalette (const r_avatar_rig_t *source,
 	const float (*source_palette)[12], float floor_correction_z,
 	unsigned char tracked_lower_mask,
 	float (*target_palette)[12], size_t target_capacity);
+/* The Vulkan frame owner already has a presentation context with its cached
+ * floor correction applied. Passing it avoids rebuilding the same bind basis
+ * during tracked Dog/Fiend repairs; other built-in paths keep their policy. */
+qboolean R_AvatarRefineBuiltinPaletteWithContext (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, qboolean tracked,
+	const float (*source_palette)[12], float floor_correction_z,
+	unsigned char tracked_lower_mask,
+	float (*target_palette)[12], size_t target_capacity,
+	const r_avatar_presentation_context_t *prepared_context);
 
 /* Single-rig semantic body bases: canonical body forward/left/up to this
  * rig's model space and its inverse.  Cross-rig presentation should use the

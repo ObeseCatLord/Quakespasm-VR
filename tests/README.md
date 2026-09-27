@@ -21,6 +21,21 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 /tmp/avatar-retarget-fixture
 ```
 
+`avatar_lower_fallback_fixture.c` checks tracked Dog upper/lower rollback,
+hip handling, and equality between a rebuilt and frame-staged presentation
+context. Run it with the same compiler flags and `r_avatar.c` source as above,
+replacing the fixture source and output name:
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare \
+  -Wno-missing-field-initializers -IQuake \
+  tests/avatar_lower_fallback_fixture.c Quake/r_avatar.c \
+  $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/avatar-lower-fallback-fixture
+/tmp/avatar-lower-fallback-fixture
+```
+
 `avatar_protocol_fixture.c` links the source master pure parser. It checks
 builtin identities, canonical protocol commands, capability latching, custom
 key and digest validation, and custom slot updates and clears. The client and

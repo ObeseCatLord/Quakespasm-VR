@@ -23,6 +23,7 @@ int main(void)
 	r_avatar_presentation_context_t context;
 	float source_palette[R_AVATAR_MAX_JOINTS][12];
 	float target_palette[R_AVATAR_MAX_JOINTS][12],before[R_AVATAR_MAX_JOINTS][12];
+	float prepared_palette[R_AVATAR_MAX_JOINTS][12];
 	float without_hip[R_AVATAR_MAX_JOINTS][12],turn[12];
 	float goal[3];
 	int left,right,head,tail,mapped_child;
@@ -81,6 +82,27 @@ int main(void)
 	assert(!memcmp(target_palette[left],before[left],sizeof(before[left])));
 	assert(fabsf(target_palette[right][3]-before[right][3])>.05f);
 	assert(fabsf(target_palette[head][11]-before[head][11])>.05f);
+	/* Frame staging supplies this floor-corrected context. The direct
+	 * caller rebuilds it; both routes must preserve the same partial
+	 * upper/lower rollback and final joint transforms. */
+	{
+		r_avatar_presentation_context_t staged=context;
+		qboolean rebuilt,reused;
+		R_AvatarPresentationAddCanonicalZ(&staged,1.25f);
+		memcpy(target_palette,before,target.live.joint_count*sizeof(before[0]));
+		memcpy(prepared_palette,before,target.live.joint_count*sizeof(before[0]));
+		rebuilt=R_AvatarRefineBuiltinPalette(&sr,&tr,true,
+			(const float (*)[12])source_palette,1.25f,
+			R_AVATAR_TRACKED_FOOT_L|R_AVATAR_TRACKED_FOOT_R,
+			target_palette,R_AVATAR_MAX_JOINTS);
+		reused=R_AvatarRefineBuiltinPaletteWithContext(&sr,&tr,true,
+			(const float (*)[12])source_palette,1.25f,
+			R_AVATAR_TRACKED_FOOT_L|R_AVATAR_TRACKED_FOOT_R,
+			prepared_palette,R_AVATAR_MAX_JOINTS,&staged);
+		assert(rebuilt==reused);
+		assert(!memcmp(target_palette,prepared_palette,
+			target.live.joint_count*sizeof(target_palette[0])));
+	}
 
 	/* The Hip tracker turns an unmapped child; semantic rear legs retain
 	 * their already retargeted global transforms. */
@@ -92,10 +114,16 @@ int main(void)
 			source_palette[sr.joint[MD5_VRIK_HIP]][axis*4+column]=turn[axis*4+column];
 	assert(R_AvatarRetargetPalette(&sr,&tr,(float *)source_palette,(float *)target_palette));
 	memcpy(without_hip,target_palette,target.live.joint_count*sizeof(without_hip[0]));
+	memcpy(prepared_palette,target_palette,target.live.joint_count*sizeof(prepared_palette[0]));
 	R_AvatarRefineBuiltinPalette(&sr,&tr,true,(const float (*)[12])source_palette,
 		0,0,without_hip,R_AVATAR_MAX_JOINTS);
 	R_AvatarRefineBuiltinPalette(&sr,&tr,true,(const float (*)[12])source_palette,
 		0,R_AVATAR_TRACKED_HIP,target_palette,R_AVATAR_MAX_JOINTS);
+	R_AvatarRefineBuiltinPaletteWithContext(&sr,&tr,true,
+		(const float (*)[12])source_palette,0,R_AVATAR_TRACKED_HIP,
+		prepared_palette,R_AVATAR_MAX_JOINTS,&context);
+	assert(!memcmp(target_palette,prepared_palette,
+		target.live.joint_count*sizeof(target_palette[0])));
 	assert(fabsf(target_palette[tail][3]-without_hip[tail][3])+
 		fabsf(target_palette[tail][7]-without_hip[tail][7])>.1f);
 	assert(!memcmp(target_palette[tr.joint[MD5_VRIK_UPPERLEG_R]],

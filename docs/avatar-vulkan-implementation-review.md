@@ -137,3 +137,12 @@ all active player candidates, canonical animation or tracking, retargeting,
 culling bounds, and palette publication, so it is a useful in-game budget but
 does not isolate the retargeter alone. Compare it with the total CPU frame time
 on the same scene before considering per-avatar animation replacements.
+
+The tracked Dog/Fiend refinement now accepts the floor-corrected presentation
+context already staged by `R_VRIKRenderStageFloor`. The legacy entry point still
+builds its own context for callers without a staged frame. This removes one
+bind-basis rebuild per tracked animal without changing the solver or Vulkan
+palette ownership. The Dog lower-body fixture compares the two routes after a
+nonzero floor correction, a failed-limb rollback, and a tracked-hip turn; their
+resulting palettes match. The Linux debug build passes. This is source-level
+redundancy removal, not a measured frame-time or headset performance gain.
