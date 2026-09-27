@@ -208,7 +208,9 @@ validation.
 
 `vr_openxr_math_fixture.c` compares the production relative clip correction with
 an independently calculated direct eye projection across asymmetric/canted eyes,
-head rotation, translation, IPD, reversed depth and invalid inputs.
+head rotation, translation, IPD, reversed depth and invalid inputs. It also
+checks hidden-area vertices at view-space Z=-1 against each eye's asymmetric
+Vulkan projection, including inverted Y and invalid inputs.
 
 ```sh
 cc -std=c11 -Wall -Wextra -Werror tests/vr_openxr_math_fixture.c -lm \

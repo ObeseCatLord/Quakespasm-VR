@@ -83,3 +83,9 @@ shaders. The reviewer made no edits or builds.
 The precise implementation schedule and measured GPU savings are not yet
 established. The current backend mesh export is source readiness, not a working
 Vulkan hidden-area mask.
+
+The per-eye `VRXR_ProjectHiddenAreaVertex` math helper now maps backend
+view-space vertices through the current asymmetric FOV with Vulkan Y inversion.
+Its focused fixture checks unequal eye frusta, corner placement, and invalid
+input handling. No Vulkan mask draw consumes it yet; the scene and final-black
+passes above remain implementation work.

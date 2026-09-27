@@ -46,8 +46,60 @@ static void check (vrxr_frame_t *f)
 		}
 	}
 }
+
+static void check_hidden_area_projection (void)
+{
+	vrxr_view_t eyes[2] = {
+		{.left = -1.2f, .right = .8f, .down = -.7f, .up = 1.1f},
+		{.left = -.9f, .right = 1.3f, .down = -1.0f, .up = .8f}
+	};
+	const float source[2] = {0, 0};
+	float result[2], other[2], sentinel[2] = {23, 24};
+	for (int eye = 0; eye < 2; ++eye)
+	{
+		vrxr_view_t *view = &eyes[eye];
+		const float corners[4][2] = {
+			{view->left, view->up}, {view->right, view->up},
+			{view->left, view->down}, {view->right, view->down}
+		};
+		const float expected[4][2] = {{-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
+		for (int corner = 0; corner < 4; ++corner)
+		{
+			assert (VRXR_ProjectHiddenAreaVertex (view, corners[corner], result));
+			assert (fabsf (result[0] - expected[corner][0]) < .000001f);
+			assert (fabsf (result[1] - expected[corner][1]) < .000001f);
+		}
+		assert (VRXR_ProjectHiddenAreaVertex (view, source, result));
+		const double direct_x = -((double)view->right + view->left) /
+			((double)view->right - view->left);
+		const double direct_y = ((double)view->up + view->down) /
+			((double)view->up - view->down);
+		assert (fabs (result[0] - direct_x) < .000001);
+		assert (fabs (result[1] - direct_y) < .000001);
+		if (!eye)
+			memcpy (other, result, sizeof other);
+		else
+			assert (fabsf (result[0] - other[0]) > .1f);
+	}
+	memcpy (result, sentinel, sizeof result);
+	eyes[0].up = NAN;
+	assert (!VRXR_ProjectHiddenAreaVertex (&eyes[0], source, result));
+	assert (!memcmp (result, sentinel, sizeof result));
+	eyes[0].up = 1.1f;
+	eyes[0].right = eyes[0].left;
+	assert (!VRXR_ProjectHiddenAreaVertex (&eyes[0], source, result));
+	assert (!memcmp (result, sentinel, sizeof result));
+	eyes[0].right = .8f;
+	const float invalid[2] = {INFINITY, 0};
+	assert (!VRXR_ProjectHiddenAreaVertex (&eyes[0], invalid, result));
+	assert (!VRXR_ProjectHiddenAreaVertex (NULL, source, result));
+	assert (!VRXR_ProjectHiddenAreaVertex (&eyes[0], NULL, result));
+	assert (!VRXR_ProjectHiddenAreaVertex (&eyes[0], source, NULL));
+	assert (!memcmp (result, sentinel, sizeof result));
+}
 int main (void)
 {
+	check_hidden_area_projection ();
 	vrxr_frame_t f = {0};
 	f.devices[0].valid = 1;
 	for (int config = 0; config < 4; ++config)

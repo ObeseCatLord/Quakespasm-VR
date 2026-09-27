@@ -1,8 +1,31 @@
 #ifndef QUAKE_VR_OPENXR_MATH_H
 #define QUAKE_VR_OPENXR_MATH_H
+#include <float.h>
 #include <math.h>
 #include <string.h>
 #include "vr_openxr.h"
+
+/* XR_KHR_visibility_mask supplies XY on the view-space Z=-1 plane. Project
+ * with this frame's asymmetric eye FOV and vkQuake's Vulkan-inverted Y. The
+ * result is clip XY at W=1, suitable for a later per-eye mask draw. Do not
+ * clamp it: masks may legitimately extend beyond the visible frustum. */
+static inline int VRXR_ProjectHiddenAreaVertex(const vrxr_view_t *view,
+    const float view_xy[2], float clip_xy[2]) {
+  if (!view || !view_xy || !clip_xy ||
+      !isfinite(view->left) || !isfinite(view->right) ||
+      !isfinite(view->down) || !isfinite(view->up) ||
+      !isfinite(view_xy[0]) || !isfinite(view_xy[1]) ||
+      view->left>=view->right || view->down>=view->up) return 0;
+  const double x=(2.0*view_xy[0]-view->right-view->left)/
+      ((double)view->right-view->left);
+  const double y=(-2.0*view_xy[1]+view->up+view->down)/
+      ((double)view->up-view->down);
+  if (!isfinite(x) || !isfinite(y) || fabs(x)>FLT_MAX || fabs(y)>FLT_MAX)
+    return 0;
+  clip_xy[0]=(float)x;
+  clip_xy[1]=(float)y;
+  return 1;
+}
 
 /* Retain donor per-model MVPs. Convert their symmetric 90-degree reversed-Z
  * center clip coordinates to each asymmetric eye, without subtracting large
