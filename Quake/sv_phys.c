@@ -7694,7 +7694,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	int prethink_flags, prethink_groundentity, prethink_waterlevel;
 	qboolean qc_waterjump_started;
 	qboolean run_command = false, was_grounded = false, weapon_alive;
-	qboolean q30_program = false, qc_jump_owner = false;
+	qboolean q30_program = false;
 	qboolean instant_stop_enabled = false;
 	qboolean friendly_fire_scope;
 	qboolean command_completed = false, suppress_trigger = false;
@@ -7774,7 +7774,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	gorilla_reset_generation = client->vr_gorilla_reset_generation;
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
-	if (run_command && (!SV_PrivateWalkTrialBuildMoveVars (&trial_movevars, ent) ||
+	if (run_command && (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
 		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
 			client->vr_gorilla_capable && sv_gorilla.value ?
 				&command : NULL, bounds)))
@@ -7923,8 +7923,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	prethink_teleport_time = ent->v.teleport_time;
 	was_grounded = (prethink_flags & FL_ONGROUND) != 0;
 	q30_program = SV_PrivateWalkTrialQ30Program ();
-	qc_jump_owner = q30_program &&
-		(command.buttons & BUTTON_JUMP) != 0;
+	/* Exact q30 QuakeC owns both press and release. A short, low takeoff can
+	 * still be inside the floor probe after the button is released. */
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->frametime = seconds;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
@@ -8007,7 +8007,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		/* Stock QC owns jump sounds and flags; PMove owns its dry impulse.
 		 * Exact q30 QuakeC owns its own impulse. Preserve a teleporter's
 		 * deliberate pause at zero velocity. */
-		if (!qc_jump_owner && was_grounded && (command.buttons & 2) &&
+		if (!q30_program && was_grounded && (command.buttons & 2) &&
 			ent->v.teleport_time <= qcvm->time &&
 			(prethink_teleport_time <= qcvm->time ||
 			 ent->v.teleport_time == prethink_teleport_time) &&
@@ -8018,7 +8018,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	SV_CheckVelocity (ent);
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
-	if (!SV_PrivateWalkTrialBuildMoveVars (&trial_movevars, ent) ||
+	if (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
 		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
 			client->vr_gorilla_capable && sv_gorilla.value ?
 				&command : NULL, bounds))
@@ -8059,9 +8059,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	VectorCopy (ent->v.maxs, pmove.player_maxs);
 	/* Stock QC may clear FL_JUMPRELEASED for a sound; PMove uses the prior
 	 * state. Exact q30 QC owns both the impulse and its updated release latch. */
-	pmove.jump_held = (((int)(qc_jump_owner ? ent->v.flags : prethink_flags) &
+	pmove.jump_held = (((int)(q30_program ? ent->v.flags : prethink_flags) &
 		FL_JUMPRELEASED) == 0);
-	pmove.qc_jump_owner = qc_jump_owner;
+	pmove.qc_jump_owner = q30_program;
 	pmove.jump_secs = client->private_pmove_jump_secs;
 	pmove.waterjumptime = client->private_pmove_waterjump_secs;
 	pmove.waterlevel = 0;

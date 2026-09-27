@@ -1640,31 +1640,6 @@ qboolean SV_PrivateWalkTrialQ30Program (void)
 		!memcmp (qcvm->progssha256, q30_sha256, sizeof (q30_sha256));
 }
 
-/* Keep the generic PMove defaults in one owner. This exact q30 image has a
- * map-controlled jump impulse; resolve its named global on every use so map
- * settings and progs reload cannot leave a cached slot or value behind. */
-qboolean SV_PrivateWalkTrialBuildMoveVars (movevars_t *out, edict_t *player)
-{
-	ddef_t *jumpheight;
-	float speed;
-	extern cvar_t sv_maxvelocity;
-
-	if (!PMSV_BuildMoveVars (out, player, sv.protocolflags))
-		return false;
-	if (!SV_PrivateWalkTrialQ30Program ())
-		return true;
-	jumpheight = ED_FindGlobal ("map_jumpheight");
-	if (!jumpheight || (jumpheight->type & ~DEF_SAVEGLOBAL) != ev_float ||
-		jumpheight->ofs >= qcvm->progs->numglobals)
-		return false;
-	speed = qcvm->globals[jumpheight->ofs];
-	if (!isfinite (speed) || speed <= 0.0f ||
-		!isfinite (sv_maxvelocity.value) || speed > sv_maxvelocity.value)
-		return false;
-	out->jumpspeed = speed;
-	return true;
-}
-
 static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 {
 	movevars_t movevars;
@@ -1681,7 +1656,7 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 		return false;
 	if (!SV_PrivateWalkStatsDisjoint ())
 		return false;
-	if (!SV_PrivateWalkTrialBuildMoveVars (&movevars, client->edict))
+	if (!PMSV_BuildMoveVars (&movevars, client->edict, sv.protocolflags))
 		return false;
 	if (SV_ClientInstantStopEnabled (client))
 		movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;

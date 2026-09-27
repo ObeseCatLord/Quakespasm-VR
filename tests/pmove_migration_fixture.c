@@ -339,6 +339,28 @@ static void check_qc_takeoff_release (int msec)
 	assert (pmove.jump_held);
 }
 
+static void check_qc_short_takeoff_then_release (void)
+{
+	prepare ();
+	pmove.cmd.msec = 5;
+	pmove.cmd.seconds = .005f;
+	pmove.cmd.buttons = BUTTON_JUMP;
+	pmove.qc_jump_owner = true;
+	pmove.jump_held = true;
+	pmove.velocity[2] = 120;
+	PM_PlayerMove (1);
+	assert (!pmove.onground && pmove.origin[2] > 24.0f &&
+		pmove.origin[2] < 25.0f);
+
+	/* The next QC PreThink releases its latch, but QC remains the jump owner.
+	 * The rising player is still inside the one-unit floor probe. */
+	pmove.cmd.buttons = 0;
+	pmove.jump_held = false;
+	PM_PlayerMove (1);
+	assert (!pmove.onground && !pmove.jump_held);
+	assert (pmove.velocity[2] > 0.0f && pmove.origin[2] > 24.5f);
+}
+
 static void check_qc_takeoff_water (void)
 {
 	prepare ();
@@ -384,6 +406,7 @@ int main (void)
 		check_qc_takeoff (100, 300);
 		check_qc_takeoff_release (0);
 		check_qc_takeoff_release (100);
+		check_qc_short_takeoff_then_release ();
 		check_qc_takeoff_water ();
 		prepare ();
 		pmove.cmd.forwardmove = 320;

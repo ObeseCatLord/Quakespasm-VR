@@ -179,22 +179,44 @@ an intervening zero-time maintenance pass, and a due player Think. Passing
 that proof qualifies only dry jump; boots, grapple, ladder, water, changing
 movetype/custom physics, and general q30 admission remain separate work.
 
-The selected server movevar builder now uses the loader-cached SHA-256 to
-recognize this exact installed q30 image and resolves the named float
-`map_jumpheight` on each build. It accepts a finite positive value no greater
-than the server's velocity cap, then supplies the same live jump speed to
-PMove preflight, post-QuakeC movement and the private snapshot. Stock and
-other progs keep vkQuake's existing movevar defaults. The stock-only admission
-gate remains unchanged, so this boundary alone does not activate q30 selected
-movement or prediction. A q30 map must establish a valid jump height before
-any future selected admission; a zero startup value is not silently replaced
-with vanilla speed.
+The selected owner identifies only the exact installed q30 image using the
+loader-cached SHA-256. Its QuakeC callback supplies the live `map_jumpheight`
+impulse. PMove keeps vkQuake's generic movevar builder: client replay is off
+for q30, and its jump check is bypassed, so exporting `map_jumpheight` as a
+PMove value had no dry-jump consumer. That extra builder also made a map jump
+above `sv_maxvelocity` or a zero startup global invalidate an unrelated
+command or snapshot, unlike native post-QuakeC velocity clamping. The
+stock-only admission gate remains unchanged.
 
-The same exact-profile handoff now lets q30 QuakeC retain a pressed command's
-jump impulse and post-PreThink release latch if the selected owner is ever
-entered. It bypasses stock whole-velocity restoration and hands the authored
-velocity to `PM_PlayerMove` with `qc_jump_owner`; stock selected movement still
-uses PMove's jump. Selected q30 snapshots withhold client replay permission,
-because a matching client-side QuakeC jump is not implemented. This remains
-inactive while q30 is excluded from admission. It does not qualify boots,
-ladder, grapple, wet movement, or live mod behavior by itself.
+The exact-profile handoff lets q30 QuakeC retain its jump impulse and
+post-PreThink release latch if the selected owner is ever entered. It bypasses
+stock whole-velocity restoration and hands the authored velocity to
+`PM_PlayerMove` with `qc_jump_owner` throughout press **and release** commands.
+The floor probe must not re-ground a low, still-rising takeoff just because the
+next command releases the button. Stock selected movement still uses PMove's
+jump. Selected q30 snapshots withhold client replay permission. This remains
+inactive while q30 is excluded from admission; boots, ladder, grapple, wet
+movement, native trajectory and callback parity are not qualified.
+
+## q30 handoff senior review after implementation
+
+Astra `gpt-6-astra`/`max` verified the narrow handoff and found a real
+cross-command takeoff defect plus an unnecessary movevar failure condition.
+The main thread checked the relevant floor probe, release flag, velocity clamp,
+and movevar consumers. The floor-hull fixture now runs a 5 ms low takeoff
+followed by button release, and the Linux SDL3 build passes.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Preserve QC jump ownership across button release. | **Adopt.** The exact-profile owner now sets `qc_jump_owner` for every q30 selected command and reads the post-QuakeC release latch. The fixture exercises two consecutive commands on the real donor floor hull. |
+| Separate `map_jumpheight` validity from native velocity limiting. | **Adapt by deletion.** The selected dry path has no PMove jump consumer or client replay for q30, so the q30-specific movevar builder was removed. QuakeC still reads its live global, and native velocity clamping retains its existing timing. |
+| Keep q30 on native movement while wet/ability transitions remain unqualified. | **Adopt.** Stock-only admission remains. Dryness at selection cannot guarantee a permanently dry session. |
+| Compare trajectory and callback timing, not merely initial impulse. | **Adopt as the next proof gate.** Native analytic gravity, PMove substeps, maintenance passes and weapon Think timing may differ. |
+| Replace the selected command owner or add a living native fallback. | **Reject.** Neither is required by the narrow handoff, and the prior review found unsafe state/timing boundaries. |
+
+The fixture proves only the shared solver's floor behavior; no q30 QuakeC or
+client-server session was executed. The next exact-binary comparison must cover
+low immediate-release takeoff, held/rejump, forward motion, paired commands,
+maintenance and due Think, with origin/velocity/flags, effects, callbacks and
+completed ACK observed together. Passing that still would not admit ordinary
+q30 play until wet and ability transitions have an owner.
