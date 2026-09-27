@@ -15,7 +15,7 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 | PERF-005 | Parallel BSP calculations | V `gl_model.c:1816` `Mod_CalcSurfaceExtentsTask`, submission `:1989`; lump sequence `:3150` remains ordered | P | Reuse jobs; preserve BSP load ordering. | Same extents/lightmaps across worker counts, including mfxsp17. |
 | PERF-006 | Avoid fixed-hunk dependence | I `zone.c:562` grows hunk segments; F `zone.c:529` already segmented; V `mem.c:88` dynamically allocates, `gl_model.c:424` frees models | P | Keep V `Mem_*` and model lifetimes; do not import another allocator. | Repeated large-map transitions release model allocations. |
 | PERF-007 | Compact marksurfaces | I `gl_model.h:192`, V `gl_model.h:226`: integer indices; F `gl_model.h:216`: pointers | P | Preserve V indexed representation at source integration boundaries. | Identical visible surfaces; measure allocation bytes. |
-| PERF-008 | Avoid retained CPU polygon copies | I `gl_model.h:137` surface layout lacks `polys`; `r_brush.c:578` builds vertices from edges. V `gl_model.h:181` retains polys | P, I only | Audit V consumers before removing any demonstrated redundant copy; retain layout initially. | Lower measured resident/peak memory with unchanged rendering. |
+| PERF-008 | Avoid retained CPU polygon copies | I `gl_model.h:137` surface layout lacks `polys`; `r_brush.c:578` builds vertices from edges. V `gl_model.h:181` retains polys | A, adapter built; runtime proof pending | Current branch releases ordinary polys after Vulkan upload, retaining tiled polys and recovering positions from BSP edges for decals/showtris. | Lower measured resident/peak memory with unchanged rendering, decals, and debug outlines across a map reload. |
 | PERF-009 | Jumbo lightmap packing | I `r_brush.c:324` `GL_PackLitSurfaces`: size-based radix ordering; V `:1799` `GL_SortSurfaces`: styles/submodel/spatial ordering | P, different algorithms | Retain V packing, which serves its update layout. | Compare atlas count, packing time, and lighting correctness. |
 | PERF-010 | Jumbo BSP formats | I `gl_model.c:2412`, V `:3106` `Mod_LoadBrushModel`: BSP29, 2PSB, BSP2 paths | P | Preserve V widened formats and loader. | Large BSP2 loads with correct surfaces, leaves, and submodels. |
 | PERF-011 | Named maps without `-heapsize` | Allocator evidence PERF-006; I README names `tershib/shib1_drake`, `peril/tavistock` | U | First validate existing V allocation behavior. | Both maps reach playable state without `-heapsize`; record peak RSS. |
@@ -123,6 +123,34 @@ Two additional Ironwail candidates qualify as **proposed optional scope**:
 Absence searches covered **103 V renderer/shader files and 34 files at each F/X pin**: `Quake/gl_*`, `r_*`, renderer/model/image families, and V `Shaders/`. **A:** `TextureDither|ScreenDither|DITHER_NOISE|lmsize|whitenoise01`; **B:** `LightClusters|lightcluster|cluster_lights|LIGHT_TILES_[XYZ]`; zero matches. These are bounded absence findings, supported by inspecting the alternative lighting/dithering paths.
 
 Generic alias instancing was excluded from optional extras because F and X already implement it. No performance benefit is claimed for either optional candidate.
+
+## Current-branch CPU polygon lifetime adapter
+
+`GL_BuildLightmaps` builds one ordinary `glpoly_t` per face for workgroup bounds
+and Vulkan vertex upload. `GL_BuildBModelVertexBuffer` now frees those ordinary
+copies after staging the vertex data. Tiled sky, unlit liquids, and missing
+textures keep their polys because their runtime paths and a repeated `R_NewMap`
+still need them. Decals and `r_showtris` recover ordinary face positions from
+the retained BSP surfedge/edge/vertex arrays. `R_NewMap` is the only VBO rebuild
+caller and always invokes `GL_BuildLightmaps` first; inline `*` models share
+their owning world's surface and edge arrays. The `mj4m1` BSP has about
+428,000 faces and an estimated 61 MiB of total `glpoly_t` payload before
+allocator overhead, so the release could materially reduce resident memory,
+but actual released bytes and RSS are not measured yet.
+
+The Linux build passed. One local `mj4m1` load attempt stopped before map
+loading because SDL could not open a video device in the sandbox. The Astra
+senior review found no confirmed high-severity regression and recommended the
+incremental adapter over a brush-loader rewrite. A running-renderer check of
+world and moving-brush decals/showtris before and after a map reload remains
+necessary; no frame-time or memory improvement is claimed yet.
+
+| Senior-review concern | Disposition |
+|---|---|
+| Reupload after releasing polygons | Resolved structurally: the only `GL_BuildBModelVertexBuffer` caller is `R_NewMap`, immediately after `GL_BuildLightmaps`; tiled polys are retained. Runtime reload proof remains open. |
+| Linked allocation ownership | Resolved: each `BuildSurfaceDisplayList`/`Mod_PolyForUnlitSurface` node is allocated independently; inline models share the owner's arrays and are skipped during release. |
+| Large-face decal coverage | Resolved structurally: ordinary surfaces get one polygon with `numverts == numedges`, so the clipper's existing per-polygon vertex limit is unchanged. |
+| Debug geometry equivalence | The BSP endpoint selection matches polygon construction and `showtris.vert` reads position only. Image-level proof remains open. |
 
 ## Initial `mj4m1` desktop load observation
 

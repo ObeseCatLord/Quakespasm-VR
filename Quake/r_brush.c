@@ -578,6 +578,34 @@ void DrawGLPoly (cb_context_t *cbx, glpoly_t *p, float color[3], float alpha)
 	vulkan_globals.vk_cmd_draw_indexed (cbx->cb, numindices, 1, 0, 0, 0);
 }
 
+/* The uploaded brush vertex buffer owns ordinary face geometry. Debug outlines
+ * are rare, so recover their positions from the retained BSP edge graph. */
+void R_DrawSurfaceShowTris (cb_context_t *cbx, const qmodel_t *model, const msurface_t *surf, float color[3], float alpha)
+{
+	if (surf->polys)
+	{
+		DrawGLPoly (cbx, surf->polys, color, alpha);
+		return;
+	}
+	if (surf->numedges < 3)
+		return;
+
+	const size_t bytes = sizeof (glpoly_t) + (size_t)q_max (surf->numedges - 4, 0) * VERTEXSIZE * sizeof (float);
+	TEMP_ALLOC_ZEROED (byte, storage, bytes);
+	glpoly_t *poly = (glpoly_t *)storage;
+	poly->numverts = surf->numedges;
+	qboolean valid = true;
+	for (int i = 0; i < surf->numedges; ++i)
+		if (!Mod_SurfaceVertexPosition (model, surf, i, poly->verts[i]))
+		{
+			valid = false;
+			break;
+		}
+	if (valid)
+		DrawGLPoly (cbx, poly, color, alpha);
+	TEMP_FREE (storage);
+}
+
 /*
 =============================================================
 
@@ -925,7 +953,7 @@ void R_DrawBrushModel_ShowTris (cb_context_t *cbx, entity_t *e)
 		const float margin = R_BrushPlaneMargin (pplane, eye_radius);
 		if (((psurf->flags & SURF_PLANEBACK) && (dot < -BACKFACE_EPSILON + margin)) || (!(psurf->flags & SURF_PLANEBACK) && (dot > BACKFACE_EPSILON - margin)))
 		{
-			DrawGLPoly (cbx, psurf->polys, color, alpha);
+			R_DrawSurfaceShowTris (cbx, clmodel, psurf, color, alpha);
 		}
 	}
 
@@ -2577,6 +2605,35 @@ void GL_BuildBModelVertexBuffer (void)
 	R_StagingUploadBuffer (vertex_submodels_buffer, bmodel_numverts * sizeof (uint32_t), (byte *)vertex_submodels);
 	TEMP_FREE (vertex_submodels);
 	TEMP_FREE (varray);
+
+	/* Ordinary surface polygons served lightmap setup and this upload. Their
+	 * positions remain in the BSP edge graph for decals and showtris. Tiled
+	 * sky/unlit-water/missing-texture polys remain for their runtime users and for
+	 * subsequent R_NewMap calls, which do not recreate tiled polys. */
+	size_t released_poly_bytes = 0;
+	for (j = 1; j < MAX_MODELS; ++j)
+	{
+		m = cl.model_precache[j];
+		if (!m || m->name[0] == '*' || m->type != mod_brush)
+			continue;
+		for (i = 0; i < m->numsurfaces; ++i)
+		{
+			msurface_t *s = &m->surfaces[i];
+			if (s->flags & SURF_DRAWTILED)
+				continue;
+			glpoly_t *poly = s->polys;
+			s->polys = NULL;
+			while (poly)
+			{
+				glpoly_t *next = poly->next;
+				released_poly_bytes += sizeof (*poly) + (size_t)q_max (poly->numverts - 4, 0) * VERTEXSIZE * sizeof (float);
+				Mem_Free (poly);
+				poly = next;
+			}
+		}
+	}
+	if (released_poly_bytes)
+		Con_DPrintf ("Released %.1f MiB of uploaded brush polygons\n", (double)released_poly_bytes / (1024.0 * 1024.0));
 
 	if (vulkan_globals.bmodel_instances_desc_set != VK_NULL_HANDLE)
 		R_FreeDescriptorSet (vulkan_globals.bmodel_instances_desc_set, &vulkan_globals.bmodel_instances_set_layout);

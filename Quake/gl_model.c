@@ -544,6 +544,28 @@ static void Mod_FreeSpriteMemory (msprite_t *psprite)
 	psprite->numframes = 0;
 }
 
+/* Ordinary brush polys may be released after Vulkan upload. Keep their
+ * inexpensive source coordinates available to decal and debug paths. */
+qboolean Mod_SurfaceVertexPosition (const qmodel_t *mod, const msurface_t *surf, int index, vec3_t out)
+{
+	if (!mod || !surf || !out || index < 0 || index >= surf->numedges ||
+		surf->firstedge < 0 || surf->numedges > mod->numsurfedges ||
+		surf->firstedge > mod->numsurfedges - surf->numedges)
+		return false;
+
+	const int signed_edge = mod->surfedges[surf->firstedge + index];
+	if (signed_edge == INT_MIN)
+		return false;
+	const int edge_index = signed_edge < 0 ? -signed_edge : signed_edge;
+	if (edge_index >= mod->numedges)
+		return false;
+	const unsigned int vertex_index = mod->edges[edge_index].v[signed_edge > 0 ? 0 : 1];
+	if (vertex_index >= (unsigned int)mod->numvertexes)
+		return false;
+	VectorCopy (mod->vertexes[vertex_index].position, out);
+	return true;
+}
+
 /*
 ===================
 Mod_FreeModelMemory

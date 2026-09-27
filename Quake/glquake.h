@@ -913,6 +913,7 @@ void R_DrawParticles_ShowTris (cb_context_t *cbx);
 void R_DrawSpriteModel_ShowTris (cb_context_t *cbx, entity_t *e);
 
 void DrawGLPoly (cb_context_t *cbx, glpoly_t *p, float color[3], float alpha);
+void R_DrawSurfaceShowTris (cb_context_t *cbx, const qmodel_t *model, const msurface_t *surf, float color[3], float alpha);
 void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr);
 void GL_MakeAliasModelDisplayLists (qmodel_t *m, aliashdr_t *hdr);
 

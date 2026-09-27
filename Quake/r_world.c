@@ -1295,7 +1295,7 @@ void R_DrawTextureChains_ShowTris (cb_context_t *cbx, qmodel_t *model, texchain_
 			continue;
 
 		for (s = t->texturechains[chain]; s; s = s->texturechains[chain])
-			DrawGLPoly (cbx, s->polys, color, alpha);
+			R_DrawSurfaceShowTris (cbx, model, s, color, alpha);
 	}
 }
 

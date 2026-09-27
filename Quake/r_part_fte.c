@@ -4197,7 +4197,7 @@ static void Fragment_ClipPoly (fragmentdecal_t *dec, int numverts, vec3_t *inver
 		dec->callback (dec->ctx, decalfragmentverts, numtris);
 }
 // this could be inlined, but I'm lazy.
-static void Q1BSP_Fragment_Surface (fragmentdecal_t *dec, msurface_t *surf)
+static void Q1BSP_Fragment_Surface (qmodel_t *mod, fragmentdecal_t *dec, msurface_t *surf)
 {
 	int		  i;
 	vec3_t	  verts[MAXFRAGMENTVERTS];
@@ -4207,6 +4207,16 @@ static void Q1BSP_Fragment_Surface (fragmentdecal_t *dec, msurface_t *surf)
 	// water and sky should not get decals.
 	if (surf->flags & (SURF_DRAWSKY | SURF_DRAWTURB))
 		return;
+	if (!surf->polys)
+	{
+		if (surf->numedges > MAXFRAGMENTVERTS || surf->numedges < 3)
+			return;
+		for (i = 0; i < surf->numedges; ++i)
+			if (!Mod_SurfaceVertexPosition (mod, surf, i, verts[i]))
+				return;
+		Fragment_ClipPoly (dec, surf->numedges, verts);
+		return;
+	}
 
 	for (poly = surf->polys; poly; poly = poly->next)
 	{
@@ -4261,13 +4271,13 @@ static void Q1BSP_ClipDecalToNodes (qmodel_t *mod, fragmentdecal_t *dec, mnode_t
 				if (DotProduct (surf->plane->normal, dec->normal) > -0.5)
 					continue;
 			}
-			Q1BSP_Fragment_Surface (dec, surf);
+			Q1BSP_Fragment_Surface (mod, dec, surf);
 		}
 	}
 	else
 	{
 		for (i = 0; i < node->numsurfaces; i++, surf++)
-			Q1BSP_Fragment_Surface (dec, surf);
+			Q1BSP_Fragment_Surface (mod, dec, surf);
 	}
 
 	Q1BSP_ClipDecalToNodes (mod, dec, node->children[0]);
