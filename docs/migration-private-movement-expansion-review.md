@@ -43,6 +43,17 @@ duplicate QuakeC jump/water velocity edits. A blanket restoration here would
 erase deliberate teleporter pauses or waterjump impulses, so the boundary must
 be state-specific and checked against the pinned stock QC.
 
+The inherited OpenVR server already has a narrower adapter worth reusing:
+`quakespasm-openvr/Quake/sv_phys.c:5645-5750` filters stock QuakeC water
+drag, swim-jump and ledge-jump velocity from the PreThink delta while preserving
+other QuakeC forces. Its `SV_RunPMoveForEntity` seeds PMove waterjump from
+`FL_WATERJUMP` and `teleport_time`, then publishes the resulting timer back to
+the edict (`:5777-5845`). It is a behavior reference, not a drop-in server
+transplant: that fork runs a different QC cadence and owns movement policy
+transitions outside `2.0`'s selected queue. Port only the velocity/timer
+translation at the existing selected-command boundary, and check teleporter
+pause, ledge jump, and QuakeC-authored force separately.
+
 ## Acceptance proof for the water slice
 
 Run one selected remote stock-QC client and one public-protocol observer on a
