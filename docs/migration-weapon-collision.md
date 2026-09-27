@@ -73,7 +73,7 @@ and source findings rather than asserting runtime model provenance.
 | --- | --- |
 | Command retraction is private-only, but presentation currently accepts a local collision toggle on a public peer. | **Adopt.** Require one effective predicate: pinned private profile, local opt-in and server COLLISION bit. Keep the ordinary gameplay/tracking guards. A public peer cannot activate it with an offer. |
 | `Send_Spawn_Info` clears the reliable client message; an offer queued during signon can be lost. | **Adopt.** Use one bounded post-`begin` per-client offer/update helper. Invalidate its sent mode on each serverinfo/map, retry when the reliable message has room, and avoid a second signon fallback. |
-| The donor's COLLISION mode may produce contact payloads, even without a melee profile. | **Adapt.** Advertise only COLLISION or zero, with profile NONE. Keep the existing decoder compatible, but do not emit or consume contact gameplay samples until that separate feature is ported. |
+| The donor's COLLISION mode may produce contact payloads, even without a melee profile. | **Adapt.** Advertise only COLLISION or zero, with profile NONE. The current client emits stock-ranged contact samples and the server can use them for QuakeC touch callbacks; this behavior is already active when collision is authorized. A default-on change must account for those gameplay effects. |
 | Donor's command handler trusts permissive integer parsing and state resets on map but not necessarily all stop paths. | **Adapt.** Reuse the server-command registry with exact bounded decimal parsing; malformed server offers clear authorization. Reset on map, disconnect and demo stop. |
 | Revocation cannot rewrite commands already sampled or in redundant send history. | **Adopt.** Newly sampled commands use the new mode; the next synchronized view setup restores the raw gun/crosshair. Do not introduce a policy epoch or rewrite pending commands. |
 | A geometry fixture alone does not prove corrected shots. | **Adopt as a later end-to-end gate.** Compare actual offer, corrected gun/crosshair, post-clamp shot and unchanged body at a stock-shotgun wall, then policy-off restoration and public/silent-server cases. |
@@ -121,3 +121,45 @@ apply. Axe and hammer models remain on the separate melee edge path, and
 mod-defined ranged/melee classification remains unresolved. A Linux build
 passed; mission-pack near-wall behavior and the inherited default are not yet
 qualified.
+
+## Remaining parity boundary
+
+The donor defaults `vr_weapon_collision` to `1` and resolves the command muzzle
+even for immersive melee, using its actual cutting edge for the collision
+query. The `2.0` command path skips generic retraction for recognized melee;
+its separately retracted held mesh/contact does not always move the private
+firing origin. The current `sv_immersive_melee` default is also `0`, while the
+donor's server default is automatic (`-1`). These gates need a coordinated
+review before collision can safely default on.
+
+The present stock-ranged allowlist does not classify mod viewmodels. Muzzle
+calibration alone is insufficient because the supplied calibration data also
+contains melee models. Uncalibrated alias viewmodels currently cannot produce
+an ordinary private controller pose, although the donor uses the raw grip as
+its muzzle fallback. Any general mod policy must preserve existing dedicated
+held-melee and paired-weapon collision paths rather than applying generic
+retraction a second time.
+
+## Collision parity senior review (Astra Max)
+
+An Astra `gpt-6-astra`/max read-only review compared the donor and `2.0`
+command, contact, and presentation owners at `149e8745`. It found that
+restoring the local default now would widen gameplay, not just presentation:
+ordinary collision contacts can activate QuakeC buttons. Its recommendations
+are staged here; the review did not run a headset or gameplay test.
+
+| Finding | Disposition |
+| --- | --- |
+| Recognized melee corrects its visible edge but leaves the private command muzzle raw. | **Adopt.** Resolve the raw selected edge for the command sample and translate the calibrated muzzle before serialization. Keep the later render sample separate. |
+| Held and paired melee contacts incorporate render collision displacement, whereas donor physical contact edges remain raw. | **Adopt.** Keep raw tracked geometry and velocity for physical contact. Presentation collision remains a separate, local result. |
+| Generic collision eligibility is currently a stock-ranged list. Recipe names alone cannot exclude melee because an axe without a MELEE offer needs the generic fallback. | **Adapt.** Define active endpoint ownership using validated model and capability state. Preserve dedicated held/paired paths and one presentation offset. Expand calibrated mod retraction separately from contact publication. |
+| Uncalibrated aliases cannot enter the ordinary private-pose path. | **Stage.** Provide a raw-grip muzzle fallback only for valid alias geometry and finite pose input, then qualify shots and crosshair alignment. |
+| Collision defaults off in `2.0` while donor defaults on. | **Stage.** Restore `vr_weapon_collision 1` after endpoint ownership, contact gameplay, and mod fallback are covered. Preserve an explicit archived `0`. Leave the server melee default unchanged in this slice. |
+
+The end-to-end proof should use loopback command serialization, view
+preparation, server muzzle handling, and QuakeC. It must observe shot impact,
+button activation, and unchanged player position with a calibrated mod gun,
+an axe with and without MELEE authorization, an exact held/pair path,
+obstruction, and contact-history reset. Resolver-only fixtures cannot establish
+those outcomes. Runtime cost on a large map remains to be measured before a
+broadphase or other trace optimization is added.
