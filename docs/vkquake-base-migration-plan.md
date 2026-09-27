@@ -126,7 +126,7 @@ Never equate a matching feature name with behavioral equivalence.
 | Existing GL performance work | Material buckets, static indices, no-VIS/stereo visibility, alias instancing, GPU MD3/MD5, hidden masks, optional mirror and diagnostics | Preserve benefits or map to demonstrably equivalent/better donor mechanisms. Do not stack duplicate caches or port GL API code into Vulkan; retain old executable as behavior/performance reference |
 | New OpenXR work | `vr_openxr*`, foveation math/policy, XR input/tracker/session code and fixtures | Reuse common runtime logic and tests. Replace renderer attachment calls only where donor ownership requires it. Runtime-selected Vulkan device/queue and image lifetime remain mandatory |
 | Single-pass stereo and foveation goals | Existing stereo eligibility/camera work, Vulkan shaders/pass experiments and current constraints | Adapt donor view/task/pass data for two views; preserve per-eye visibility and transparency. Eye tracking optional/off; lost gaze full quality; fixed explicit-only. Qualify KHR/FDM by runtime/GPU, not headset name |
-| New large-map/feature goals | Donor feature audit; compact marksurfaces, memory/loading changes, precision/bias, GPU lighting, threading, Ironwail techniques | Inherit donor equivalents instead of re-porting them; carry only proven missing improvements. Measure `mj4m1` plus small scenes, map loads and peak memory; preserve dark-area precision and no-z-fighting goals |
+| New large-map/feature goals | Donor feature audit; compact marksurfaces, memory/loading changes, precision/bias, GPU lighting, threading, Ironwail techniques | Inherit donor equivalents instead of re-porting them; carry only proven missing improvements. Preserve dark-area precision and no-z-fighting goals; expose useful diagnostics for the user's later `mj4m1` measurements. |
 | Builds, assets and operations | Native Windows, Linux x86-64/ARM64, loader/licenses, `quakespasm.pak`, CI, private builders/deployment, tests | Retain client/catalog/audio features, ABI/package contracts, config/save paths and dedicated compatibility. Migrate private tools locally without publishing them. No deployment during research |
 | Uncommitted and later-discovered behavior | Current movement/Gorilla/avatar edits and pending lightmap patch | Preserve separately, identify author intent and validation state. Known pending GPU-history/late-overbright issue is not accepted behavior to reproduce. Any unmapped path or feature remains an open migration item |
 
@@ -265,12 +265,12 @@ updates and asynchronous resource patterns must have one owner each. Retain
 current no-VIS/stereo correctness fixes where donor desktop assumptions differ.
 Avoid importing two implementations of the same optimization.
 
-After implementation, compare complete old product, current-port candidate if
-available, unmodified donor desktop and migrated build with matched assets,
-settings and camera poses. Use `mj4m1`, a small map, animated lights, dense aliases,
-particles/alpha and moving brushes. Report CPU/GPU stages, frame-time tails,
-latency/missed frames, loading and peak memory. A lower feature count or reduced
-quality is not a speedup. Optional dynamic resolution is a separate user feature.
+The user will measure performance after implementation. Keep diagnostics and
+equivalent graphics/settings available so the old product, unmodified donor
+desktop and migrated build can later be compared on `mj4m1` and smaller scenes.
+Comparative frame-time, loading and memory results are not a 2.0 implementation
+completion gate and no speedup is claimed before those measurements. Optional
+dynamic resolution is a separate user feature.
 
 ### 6. Qualify the complete release and switch only after parity
 
