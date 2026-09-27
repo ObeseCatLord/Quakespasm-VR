@@ -126,10 +126,10 @@ static const r_vrik_prepared_palette_t *R_EntityBLASPalette (const entity_t *e, 
 		return NULL;
 	if (prepared->alternate_avatar)
 	{
-		/* The alternate is a built-in MD5 mesh. The original player entity owns
+		/* The alternate is an admitted MD5 mesh. The original player entity owns
 		 * its BLAS, while the BLAS records the selected model and geometry. */
 		if (strcmp (e->model->name, "progs/player.mdl") || prepared->model == e->model ||
-			!prepared->model->avatar_builtin || prepared->model->needload ||
+			!Mod_IsAdmittedAvatarModel (prepared->model) ||
 			geometry != (const aliashdr_t *)prepared->model->extradata[PV_MD5])
 			return NULL;
 		for (const aliashdr_t *surface = geometry; surface; surface = surface->nextsurface)

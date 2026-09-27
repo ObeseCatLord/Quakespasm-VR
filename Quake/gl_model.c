@@ -29,6 +29,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_mdl_split.h"
 #include "r_avatar.h"
 #include "r_vrik_render.h"
+#include "custom_avatar.h"
+#include <errno.h>
 
 /* miniz.h keeps this declaration disabled in the QuakeSpasm amalgamation,
  * while common.c still links the exported implementation from miniz.c. */
@@ -216,7 +218,7 @@ static void Mod_EnhancedModels_f (cvar_t *var)
 
 	for (i = 0, mod = mod_known; i < mod_numknown; i++, mod++)
 	{
-		if (mod->type == mod_alias)
+		if (mod->type == mod_alias && CustomAvatar_IdForModelName (mod->name) < 0)
 			Mod_LoadModel (mod, false);
 	}
 
@@ -578,6 +580,11 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 {
 	mod->is_generated_akimbo_half = false;
 	mod->avatar_builtin = false;
+	if (mod->avatar_custom_rgba[0] || mod->avatar_custom_rgba[1])
+		TexMgr_FreeTexturesForOwner (mod);
+	mod->avatar_custom_id = -1;
+	SAFE_FREE (mod->avatar_custom_rgba[0]);
+	SAFE_FREE (mod->avatar_custom_rgba[1]);
 	memset (&mod->stockaxe_edge, 0, sizeof (mod->stockaxe_edge));
 	SAFE_FREE (mod->qbj3_palm_centroids);
 	mod->qbj3_palm_pose_count = 0;
@@ -680,6 +687,7 @@ void Mod_ResetAll (void)
 			Mod_FreeModelMemory (mod);
 
 		memset (mod, 0, sizeof (qmodel_t));
+		mod->avatar_custom_id = -1;
 	}
 	mod_numknown = 0;
 	R_VRIKRenderResetAdmission ();
@@ -715,6 +723,7 @@ qmodel_t *Mod_FindName (const char *name)
 		q_strlcpy (mod->name, name, MAX_QPATH);
 		mod->needload = true;
 		mod->is_generated_akimbo_half = false;
+		mod->avatar_custom_id = -1;
 		mod_numknown++;
 		InvalidateTraceLineCache ();
 	}
@@ -5155,6 +5164,10 @@ We'll unpack the animation to separate framegroups (one-pose per, for consistenc
 MD5_ParseCheck
 ================
 */
+/* Only set around the main-thread load of a rehashed local package. */
+static const custom_avatar_data_t *mod_custom_avatar_data;
+static const custom_avatar_t *mod_custom_avatar;
+
 static qboolean MD5_ParseCheck (const char *s, const void **buffer)
 {
 	if (strcmp (com_token, s))
@@ -5170,7 +5183,18 @@ MD5_ParseUInt
 */
 static size_t MD5_ParseUInt (const void **buffer)
 {
-	size_t i = strtoull (com_token, NULL, 0);
+	char *end = NULL;
+	unsigned long long parsed;
+	size_t i;
+	if (!mod_custom_avatar)
+		i = strtoull (com_token, NULL, 0);
+	else
+	{
+		errno = 0;
+		parsed = strtoull (com_token, &end, 10);
+		i = (!com_token[0] || com_token[0] == '-' || errno || !end || *end ||
+			parsed > SIZE_MAX) ? SIZE_MAX : (size_t)parsed;
+	}
 	*buffer = COM_Parse (*buffer);
 	return i;
 }
@@ -5182,7 +5206,17 @@ MD5_ParseSInt
 */
 static long MD5_ParseSInt (const void **buffer)
 {
-	long i = strtol (com_token, NULL, 0);
+	char *end = NULL;
+	long i;
+	if (!mod_custom_avatar)
+		i = strtol (com_token, NULL, 0);
+	else
+	{
+		errno = 0;
+		i = strtol (com_token, &end, 10);
+		if (!com_token[0] || errno || !end || *end)
+			i = LONG_MAX;
+	}
 	*buffer = COM_Parse (*buffer);
 	return i;
 }
@@ -5194,7 +5228,17 @@ MD5_ParseFloat
 */
 static double MD5_ParseFloat (const void **buffer)
 {
-	double i = strtod (com_token, NULL);
+	char *end = NULL;
+	double i;
+	if (!mod_custom_avatar)
+		i = strtod (com_token, NULL);
+	else
+	{
+		errno = 0;
+		i = strtod (com_token, &end);
+		if (!com_token[0] || errno || !end || *end || !isfinite (i) || fabs (i) > FLT_MAX)
+			i = HUGE_VAL;
+	}
 	*buffer = COM_Parse (*buffer);
 	return i;
 }
@@ -6199,6 +6243,76 @@ SKIN_PATTERN_FUNC_DEF (MD5_Skin_Name)
 	q_snprintf (output_name, MAX_QPATH, "%s_%02u_%02u", basename, skin_index, framegroup_index);
 }
 
+/* The registry admits only bounded, uncompressed true-color TGAs. Keep the
+ * converted pixels model-owned because TexMgr_ReloadImage retains the source. */
+static qboolean Mod_LoadCustomAvatarSkin (qmodel_t *mod, aliashdr_t *surf)
+{
+	for (int kind = CUSTOM_AVATAR_SKIN; kind <= CUSTOM_AVATAR_GLOW; ++kind)
+	{
+		const byte *src = mod_custom_avatar_data->bytes[kind];
+		const size_t len = mod_custom_avatar_data->sizes[kind];
+		int width, height, components;
+		size_t offset, pixels;
+		byte *rgba;
+		gltexture_t *texture;
+		char name[MAX_QPATH];
+		if (!src)
+			continue;
+		if (len < 18 || src[1] || src[2] != 2 || src[3] || src[4] || src[5] ||
+			src[6] || src[7] || src[8] || src[9] || src[10] || src[11])
+			return false;
+		width = src[12] | (src[13] << 8);
+		height = src[14] | (src[15] << 8);
+		components = src[16] / 8;
+		offset = 18u + src[0];
+		pixels = (size_t)width * height;
+		if (width <= 0 || height <= 0 || width > CUSTOM_AVATAR_MAX_IMAGE_DIMENSION ||
+			height > CUSTOM_AVATAR_MAX_IMAGE_DIMENSION ||
+			(components != 3 && components != 4) ||
+			(src[17] & ~0x28) || (src[17] & 15) != (components == 4 ? 8 : 0) ||
+			offset > len || pixels > (len - offset) / (size_t)components ||
+			pixels > CUSTOM_AVATAR_MAX_IMAGE_BYTES / 4)
+			return false;
+		rgba = Mem_AllocNonZero (pixels * 4);
+		if (!rgba)
+			return false;
+		for (int y = 0; y < height; ++y)
+			for (int x = 0; x < width; ++x)
+			{
+			int sy = (src[17] & 0x20) ? y : height - 1 - y;
+			int sx = (src[17] & 0x10) ? width - 1 - x : x;
+			const byte *in = src + offset + ((size_t)sy * width + sx) * components;
+			byte *out = rgba + ((size_t)y * width + x) * 4;
+			out[0] = in[2]; out[1] = in[1]; out[2] = in[0];
+			out[3] = components == 4 ? in[3] : 255;
+			if (kind == CUSTOM_AVATAR_GLOW)
+			{
+				if (!out[3]) out[0] = out[1] = out[2] = 0;
+				out[3] = 255;
+			}
+			}
+		mod->avatar_custom_rgba[kind - CUSTOM_AVATAR_SKIN] = rgba;
+		q_snprintf (name, sizeof (name), "%s:%s", mod->name,
+			kind == CUSTOM_AVATAR_SKIN ? "skin" : "glow");
+		texture = TexMgr_LoadImage (mod, name, width, height, SRC_RGBA, rgba,
+			"", (src_offset_t)rgba, TEXPREF_MIPMAP | TEXPREF_ALPHA);
+		if (!texture)
+			return false;
+		for (int frame = 0; frame < MAX_FRAMEGROUPS; ++frame)
+			if (kind == CUSTOM_AVATAR_SKIN)
+				surf->gltextures[0][frame] = texture;
+			else
+				surf->fbtextures[0][frame] = texture;
+		if (kind == CUSTOM_AVATAR_SKIN)
+		{
+			surf->skinwidth = width;
+			surf->skinheight = height;
+		}
+	}
+	surf->numskins = 1;
+	return surf->gltextures[0][0] != NULL;
+}
+
 static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	size_t numjoints, size_t nummeshes, qboolean verified_rerelease_mesh,
 	const void *anim_override, qfilesize_t anim_override_size,
@@ -6223,8 +6337,19 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	TEMP_ALLOC_DECL (jointpose_t, joint_poses);
 	TEMP_ALLOC_DECL (jointpose_t, skinning_joints);
 	TEMP_ALLOC_DECL (jointpose_t, concat_joints);
+	TEMP_ALLOC_DECL (byte, vert_seen);
+	TEMP_ALLOC_DECL (byte, tri_seen);
+	TEMP_ALLOC_DECL (byte, weight_seen);
 
-	if (!MD5Anim_Begin (&anim, fname, anim_override, anim_override_size))
+	if (mod_custom_avatar)
+	{
+		anim.numposes = 1;
+		anim.numjoints = numjoints;
+		if (numjoints < 1 || numjoints > R_AVATAR_MAX_JOINTS || nummeshes != 1 ||
+			mesh_size <= 0 || mesh_size > 8 * 1024 * 1024)
+			MD5ERROR ("%s: invalid custom avatar dimensions\n", fname);
+	}
+	else if (!MD5Anim_Begin (&anim, fname, anim_override, anim_override_size))
 		return false;
 	if (anim_override && (numjoints > R_AVATAR_MAX_JOINTS ||
 		nummeshes > MAX_SURFACES || anim.numjoints > R_AVATAR_MAX_JOINTS ||
@@ -6283,10 +6408,17 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		vec3_t		  pos;
 		static vec3_t scale = {1, 1, 1};
 		vec4_t		  quat;
+		if (mod_custom_avatar && (!com_token[0] || strlen (com_token) >= sizeof (joint_infos[j].name)))
+			MD5ERROR ("%s: invalid custom joint name\n", fname);
 		q_strlcpy (joint_infos[j].name, com_token, sizeof (joint_infos[j].name));
+		if (mod_custom_avatar)
+			for (size_t previous = 0; previous < j; ++previous)
+				if (!strcmp (joint_infos[j].name, joint_infos[previous].name))
+					MD5ERROR ("%s: duplicate custom joint\n", fname);
 		buffer = COM_Parse (buffer);
 		joint_infos[j].parent = MD5SINT ();
-		if (joint_infos[j].parent < -1 || joint_infos[j].parent >= (ssize_t)numjoints)
+		if (joint_infos[j].parent < -1 || joint_infos[j].parent >=
+			(ssize_t)(mod_custom_avatar ? j : numjoints))
 			MD5ERROR ("%s: joint index out of bounds\n", fname);
 		joint_infos[j].poseparent = joint_infos[j].parent;
 		MD5EXPECT ("(");
@@ -6298,6 +6430,12 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		quat[0] = MD5FLOAT ();
 		quat[1] = MD5FLOAT ();
 		quat[2] = MD5FLOAT ();
+		if (mod_custom_avatar &&
+			(!isfinite (pos[0]) || !isfinite (pos[1]) || !isfinite (pos[2]) ||
+			!isfinite (quat[0]) || !isfinite (quat[1]) || !isfinite (quat[2]) ||
+			fabsf (pos[0]) > 1024 || fabsf (pos[1]) > 1024 || fabsf (pos[2]) > 1024 ||
+			DotProduct (quat, quat) > 1.0001f))
+			MD5ERROR ("%s: custom joint transform out of range\n", fname);
 		quat[3] = 1 - DotProduct (quat, quat);
 		if (quat[3] < 0)
 			quat[3] = 0; // we have no imagination.
@@ -6310,7 +6448,40 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 
 	if (strcmp (com_token, "}"))
 		MD5ERROR ("Mod_LoadMD5MeshModel(%s): expected \"%s\", found \"%s\"\n", fname, "}", com_token);
-	if (!MD5Anim_Load (&anim, joint_infos, joint_poses, numjoints))
+	if (mod_custom_avatar)
+	{
+		md5_skeleton_joint_t live_joints[R_AVATAR_MAX_JOINTS];
+		md5_skeleton_view_t live = {0};
+		r_avatar_rig_t rig;
+		float basis[12];
+		static const int parents[19] = {-1, 0, 1, 2, 3, 2, 5, 6, 7,
+			2, 9, 10, 11, 0, 13, 14, 0, 16, 17};
+		for (size_t j = 0; j < numjoints; ++j)
+		{
+			q_strlcpy (live_joints[j].name, joint_infos[j].name, sizeof (live_joints[j].name));
+			live_joints[j].parent = (int)joint_infos[j].parent;
+			live_joints[j].poseparent = (int)joint_infos[j].poseparent;
+			memcpy (live_joints[j].bind, joint_poses[j].mat, sizeof (live_joints[j].bind));
+		}
+		live.joints = live_joints;
+		live.joint_count = numjoints;
+		live.pose_count = 1;
+		if (!R_AvatarResolveRig (&mod_custom_avatar->profile, &live, &rig) ||
+			!R_AvatarCanonicalToTargetBasis (&rig, basis))
+			MD5ERROR ("%s: invalid custom avatar rig\n", fname);
+		for (int joint = 0; joint <= MD5_VRIK_FOOT_R; ++joint)
+			if (rig.joint[joint] < 0)
+				MD5ERROR ("%s: missing required custom avatar joint\n", fname);
+		for (int joint = 1; joint <= MD5_VRIK_FOOT_R; ++joint)
+		{
+			int ancestor = live_joints[rig.joint[joint]].parent;
+			while (ancestor >= 0 && ancestor != rig.joint[parents[joint]])
+				ancestor = live_joints[ancestor].parent;
+			if (ancestor < 0)
+				MD5ERROR ("%s: invalid custom avatar hierarchy\n", fname);
+		}
+	}
+	else if (!MD5Anim_Load (&anim, joint_infos, joint_poses, numjoints))
 		goto error;
 	buffer = COM_Parse (buffer);
 
@@ -6330,7 +6501,9 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	}
 
 	// 2. Compute absolute animation joints:
-	for (size_t pose_index = 0; pose_index < anim.numposes; ++pose_index)
+	if (mod_custom_avatar)
+		memcpy (skinning_joints, joint_poses, numjoints * sizeof (*joint_poses));
+	for (size_t pose_index = 0; !mod_custom_avatar && pose_index < anim.numposes; ++pose_index)
 	{
 		const jointpose_t *in_pose = anim.posedata + (pose_index * anim.numjoints);
 		jointpose_t		  *out_pose = skinning_joints + (pose_index * anim.numjoints);
@@ -6386,6 +6559,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		//"shader" is the texture of the surf
 		MD5EXPECT ("shader");
 		char shader_name[MAX_QPATH];
+		if (mod_custom_avatar && strcmp (com_token, "skin"))
+			MD5ERROR ("%s: custom avatar shader must be skin\n", fname);
 		q_strlcpy (shader_name, (const char *)com_token, sizeof (shader_name));
 
 		// MD5 have only 1 surface pose, meaning 1 vertex-like "pose" (not to ne mixed with md5animctx_t anim poses !)
@@ -6396,12 +6571,14 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		MD5EXPECT ("numverts");
 		size_t mesh_numverts = MD5UINT ();
 		if (!mesh_numverts || mesh_numverts > (size_t)UINT16_MAX + 1 ||
+			(mod_custom_avatar && mesh_numverts > CUSTOM_AVATAR_MAX_VERTICES) ||
 			(anim_override && mesh_numverts > (size_t)mesh_size / 8) ||
 			mesh_numverts > SIZE_MAX / sizeof (md5vertinfo_t) || mesh_numverts > SIZE_MAX / sizeof (md5vert8_t))
 			MD5ERROR ("%s: mesh vertex count is invalid or too large\n", fname);
 		surf->numverts_vbo = surf->numverts = (int)mesh_numverts;
 
 		TEMP_ALLOC_ASSIGN_ZEROED (vinfo, surf->numverts);
+		TEMP_ALLOC_ASSIGN_ZEROED_COND (vert_seen, surf->numverts, mod_custom_avatar != NULL);
 		unsigned int max_mesh_influences = 0;
 
 		while (MD5CHECK ("vert"))
@@ -6409,14 +6586,26 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 			size_t idx = MD5UINT ();
 			if (idx >= (size_t)surf->numverts)
 				MD5ERROR ("%s: vertex index out of bounds\n", fname);
+			if (mod_custom_avatar && vert_seen[idx]++)
+				MD5ERROR ("%s: duplicate custom vertex\n", fname);
 			MD5EXPECT ("(");
 			vinfo[idx].st[0] = MD5FLOAT ();
 			vinfo[idx].st[1] = MD5FLOAT ();
 			MD5EXPECT (")");
 			vinfo[idx].firstweight = MD5UINT ();
 			vinfo[idx].count = MD5UINT ();
+			if (mod_custom_avatar &&
+				(!vinfo[idx].count || vinfo[idx].count > CUSTOM_AVATAR_MAX_INFLUENCES ||
+				!isfinite (vinfo[idx].st[0]) || !isfinite (vinfo[idx].st[1]) ||
+				fabsf (vinfo[idx].st[0]) > 16 || fabsf (vinfo[idx].st[1]) > 16))
+				MD5ERROR ("%s: invalid custom vertex\n", fname);
 			max_mesh_influences = q_max (max_mesh_influences, vinfo[idx].count);
 		}
+		if (mod_custom_avatar)
+			for (size_t i = 0; i < mesh_numverts; ++i)
+				if (!vert_seen[i])
+					MD5ERROR ("%s: missing custom vertex\n", fname);
+		TEMP_FREE (vert_seen);
 
 		surf->poseverttype = (max_mesh_influences > NUM_JOINT_INFLUENCES_4_WEIGHT) ? PV_MD5_8 : PV_MD5;
 		const size_t md5_vertex_size = (surf->poseverttype == PV_MD5_8) ? sizeof (md5vert8_t) : sizeof (md5vert_t);
@@ -6426,7 +6615,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 
 		// MD5 violation: the skin is a single material. adding prefixes/postfixes here is the wrong thing to do.
 		// but we do so anyway, because rerelease compat.
-		surf->numskins = (int)Mod_LoadMDXSkinsByIndex (mod, surf, NULL, m, nummeshes, MAX_SKINS, shader_name, MD5_Skin_Name);
+		if (!mod_custom_avatar)
+			surf->numskins = (int)Mod_LoadMDXSkinsByIndex (mod, surf, NULL, m, nummeshes, MAX_SKINS, shader_name, MD5_Skin_Name);
 
 		if (surf->numskins == 0)
 			Con_Warning ("MD5: %s, no skins found for surf '%s' (%d)\n", fname, shader_name, m);
@@ -6436,17 +6626,21 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		/* A rejected private avatar must have a buffer on every surface so
 		 * GLMesh_DeleteMeshBuffers can retire the entire chain. */
 		if ((anim_override && (!mesh_numtris || mesh_numtris > (size_t)mesh_size / 8)) ||
+			(mod_custom_avatar && (!mesh_numtris || mesh_numtris > CUSTOM_AVATAR_MAX_TRIANGLES)) ||
 			mesh_numtris > INT_MAX / 3)
 			MD5ERROR ("%s: mesh triangle count is invalid or too large\n", fname);
 		surf->numtris = (int)mesh_numtris;
 		surf->numindexes = surf->numtris * 3;
 		TEMP_ALLOC_ASSIGN_ZEROED (poutindexes, surf->numindexes);
+		TEMP_ALLOC_ASSIGN_ZEROED_COND (tri_seen, surf->numtris, mod_custom_avatar != NULL);
 
 		while (MD5CHECK ("tri"))
 		{
 			size_t idx = MD5UINT ();
 			if (idx >= (size_t)surf->numtris)
 				MD5ERROR ("%s: triangle index out of bounds\n", fname);
+			if (mod_custom_avatar && tri_seen[idx]++)
+				MD5ERROR ("%s: duplicate custom triangle\n", fname);
 			idx *= 3;
 			for (size_t j = 0; j < 3; j++)
 			{
@@ -6456,45 +6650,121 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 				poutindexes[idx + j] = t;
 			}
 		}
+		if (mod_custom_avatar)
+			for (size_t i = 0; i < mesh_numtris; ++i)
+				if (!tri_seen[i])
+					MD5ERROR ("%s: missing custom triangle\n", fname);
+		TEMP_FREE (tri_seen);
 
 		// md5 is a gpu-unfriendly interchange format. :(
 		MD5EXPECT ("numweights");
 		size_t numweights = MD5UINT ();
 		if ((anim_override && numweights > (size_t)mesh_size / 8) ||
+			(mod_custom_avatar && (!numweights || numweights >
+				CUSTOM_AVATAR_MAX_VERTICES * CUSTOM_AVATAR_MAX_INFLUENCES)) ||
 			numweights > SIZE_MAX / sizeof (*weight))
 			MD5ERROR ("%s: weight count is too large\n", fname);
 		TEMP_ALLOC_ASSIGN_ZEROED (weight, numweights);
+		TEMP_ALLOC_ASSIGN_ZEROED_COND (weight_seen, numweights, mod_custom_avatar != NULL);
 
 		while (MD5CHECK ("weight"))
 		{
 			size_t idx = MD5UINT ();
 			if (idx >= numweights)
 				MD5ERROR ("%s: weight index out of bounds\n", fname);
+			if (mod_custom_avatar && weight_seen[idx]++)
+				MD5ERROR ("%s: duplicate custom weight\n", fname);
 
 			weight[idx].joint_index = MD5UINT ();
 			if (weight[idx].joint_index >= numjoints)
 				MD5ERROR ("%s: joint index out of bounds\n", fname);
 			weight[idx].pos[3] = MD5FLOAT ();
 			MD5EXPECT ("(");
-			weight[idx].pos[0] = MD5FLOAT () * weight[idx].pos[3];
-			weight[idx].pos[1] = MD5FLOAT () * weight[idx].pos[3];
-			weight[idx].pos[2] = MD5FLOAT () * weight[idx].pos[3];
+			for (int c = 0; c < 3; ++c)
+			{
+				double position = MD5FLOAT ();
+				if (mod_custom_avatar && (!isfinite (position) || fabs (position) > 1024))
+					MD5ERROR ("%s: custom weight position out of range\n", fname);
+				weight[idx].pos[c] = position * weight[idx].pos[3];
+			}
 			MD5EXPECT (")");
+			if (mod_custom_avatar &&
+				(!isfinite (weight[idx].pos[3]) || weight[idx].pos[3] < 0 || weight[idx].pos[3] > 1 ||
+				!isfinite (weight[idx].pos[0]) || !isfinite (weight[idx].pos[1]) ||
+				!isfinite (weight[idx].pos[2]) ||
+				fabsf (weight[idx].pos[0]) > 1024 || fabsf (weight[idx].pos[1]) > 1024 ||
+				fabsf (weight[idx].pos[2]) > 1024))
+				MD5ERROR ("%s: custom weight out of range\n", fname);
 		}
 
 		MD5EXPECT ("}");
+		if (mod_custom_avatar)
+		{
+			for (size_t i = 0; i < numweights; ++i)
+				if (!weight_seen[i])
+					MD5ERROR ("%s: missing custom weight\n", fname);
+			for (size_t i = 0; i < mesh_numverts; ++i)
+			{
+				double sum = 0;
+				if (vinfo[i].firstweight > numweights ||
+					vinfo[i].count > numweights - vinfo[i].firstweight)
+					MD5ERROR ("%s: invalid custom weight range\n", fname);
+				for (size_t k = 0; k < vinfo[i].count; ++k)
+					sum += weight[vinfo[i].firstweight + k].pos[3];
+				if (fabs (sum - 1.0) > 0.001)
+					MD5ERROR ("%s: custom weights must sum to one\n", fname);
+			}
+		}
+		TEMP_FREE (weight_seen);
 
 		// so make it gpu-friendly.
 		if (!MD5_BakeInfluences (fname, joint_poses, poutvertexes, surf->poseverttype, vinfo, weight, surf->numverts, numweights))
 			goto error;
+		if (mod_custom_avatar)
+		{
+			for (size_t i = 0; i < mesh_numverts; ++i)
+			{
+				const md5vert_t *v = (const md5vert_t *)(poutvertexes + i * md5_vertex_size);
+				for (int c = 0; c < 3; ++c)
+					if (!isfinite (v->xyz[c]) || fabsf (v->xyz[c]) > 4096)
+						MD5ERROR ("%s: custom vertex bounds are invalid\n", fname);
+			}
+			for (size_t i = 0; i < (size_t)surf->numindexes; i += 3)
+			{
+				const md5vert_t *a = (const md5vert_t *)(poutvertexes + poutindexes[i] * md5_vertex_size);
+				const md5vert_t *b = (const md5vert_t *)(poutvertexes + poutindexes[i + 1] * md5_vertex_size);
+				const md5vert_t *c = (const md5vert_t *)(poutvertexes + poutindexes[i + 2] * md5_vertex_size);
+				double u[3], v[3], cross[3], area2 = 0;
+				for (int axis = 0; axis < 3; ++axis)
+				{
+					u[axis] = (double)b->xyz[axis] - a->xyz[axis];
+					v[axis] = (double)c->xyz[axis] - a->xyz[axis];
+				}
+				cross[0] = u[1] * v[2] - u[2] * v[1];
+				cross[1] = u[2] * v[0] - u[0] * v[2];
+				cross[2] = u[0] * v[1] - u[1] * v[0];
+				for (int axis = 0; axis < 3; ++axis)
+					area2 += cross[axis] * cross[axis];
+				if (!isfinite (area2) || area2 <= 1e-12)
+					MD5ERROR ("%s: degenerate custom triangle\n", fname);
+			}
+		}
 		// and now make up the normals that the format lacks. we'll still probably have issues from seams, but then so did qme, so at least its faithful...
 		// :P
 		MD5_ComputeNormals (poutvertexes, md5_vertex_size, surf->numverts, poutindexes, surf->numindexes);
+		if (mod_custom_avatar)
+			for (size_t i = 0; i < mesh_numverts; ++i)
+			{
+				const md5vert_t *v = (const md5vert_t *)(poutvertexes + i * md5_vertex_size);
+				for (int c = 0; c < 3; ++c)
+					if (!isfinite (v->norm[c]))
+						MD5ERROR ("%s: invalid custom vertex normal\n", fname);
+			}
 
 		for (size_t j = 0; j < (size_t)surf->numverts; j++)
 		{
 			md5vert_t *poutvertex = (md5vert_t *)(poutvertexes + j * md5_vertex_size);
-			if (anim_override && (!isfinite (poutvertex->xyz[0]) ||
+			if ((anim_override || mod_custom_avatar) && (!isfinite (poutvertex->xyz[0]) ||
 				!isfinite (poutvertex->xyz[1]) || !isfinite (poutvertex->xyz[2])))
 				MD5ERROR ("%s: built-in avatar has nonfinite vertices\n", fname);
 			for (size_t k = 0; k < 3; k++)
@@ -6509,9 +6779,31 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 			if (radius < dist)
 				radius = dist;
 		}
+		if (mod_custom_avatar)
+		{
+			if (!isfinite (radius) || !isfinite (yawradius))
+				MD5ERROR ("%s: custom avatar bounds are invalid\n", fname);
+			for (int axis = 0; axis < 3; ++axis)
+				if (!isfinite (mod->mins[axis]) || !isfinite (mod->maxs[axis]) ||
+					mod->mins[axis] > mod->maxs[axis])
+					MD5ERROR ("%s: custom avatar bounds are invalid\n", fname);
+		}
 
 		TEMP_FREE (weight);
 		TEMP_FREE (vinfo);
+		if (mod_custom_avatar &&
+			(surf->numverts <= 0 || surf->numverts_vbo != surf->numverts ||
+			surf->numverts > CUSTOM_AVATAR_MAX_VERTICES ||
+			surf->numtris <= 0 || surf->numtris > CUSTOM_AVATAR_MAX_TRIANGLES ||
+			surf->numindexes != surf->numtris * 3 ||
+			surf->numframes != 1 || surf->numposes != 1 ||
+			surf->numjoints <= 0 || surf->numjoints > R_AVATAR_MAX_JOINTS ||
+			surf->poseverttype != PV_MD5 ||
+			(size_t)surf->numverts_vbo > INT_MAX / sizeof (md5vert_t) ||
+			num_skeleton_indexes < 0 || num_skeleton_indexes > 2 * (R_AVATAR_MAX_JOINTS - 1)))
+			MD5ERROR ("%s: invalid custom GPU mesh dimensions\n", fname);
+		if (mod_custom_avatar && !Mod_LoadCustomAvatarSkin (mod, surf))
+			MD5ERROR ("%s: invalid custom avatar skin\n", fname);
 
 		// Upload to GPU that surface/mesh m:
 		GLMesh_UploadBuffers (
@@ -6521,6 +6813,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		TEMP_FREE (poutindexes);
 
 	} // end foreach mesh
+	if (mod_custom_avatar && com_token[0])
+		MD5ERROR ("%s: trailing custom avatar mesh data\n", fname);
 
 	if (!isDedicated)
 	{
@@ -6544,7 +6838,7 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	}
 
 	// the MD5 format does not have its own modelflags, yet we still need to know about trails and rotating etc
-	mod->flags = MD5_HackyModelFlags (mod->name);
+	mod->flags = mod_custom_avatar ? 0 : MD5_HackyModelFlags (mod->name);
 
 	mod->synctype = ST_FRAMETIME; // keep MD5 animations synced to when .frame is changed. framegroups are otherwise not very useful.
 	mod->type = mod_alias;
@@ -6578,6 +6872,9 @@ error:
 	TEMP_FREE (vinfo);
 	TEMP_FREE (poutvertexes);
 	TEMP_FREE (poutindexes);
+	TEMP_FREE (vert_seen);
+	TEMP_FREE (tri_seen);
+	TEMP_FREE (weight_seen);
 	TEMP_FREE (skeleton_indexes);
 	SAFE_FREE (retained_skeleton);
 	SAFE_FREE (anim.posedata);
@@ -6622,6 +6919,9 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
 	numjoints = MD5UINT ();
 	MD5EXPECT ("numMeshes");
 	nummeshes = MD5UINT ();
+	if (mod_custom_avatar &&
+		(numjoints < 1 || numjoints > R_AVATAR_MAX_JOINTS || nummeshes != 1))
+		MD5ERROR ("%s: invalid custom avatar header\n", fname);
 
 	if (numjoints <= 0)
 		MD5ERROR ("%s has no joints\n", mod->name);
@@ -6757,6 +7057,78 @@ qmodel_t *Mod_GetAvatarBuiltinModel (int id)
 	Mod_FreeModelMemory (mod);
 	mod->path_id = 0;
 	mod->needload = true;
+	return NULL;
+}
+
+qboolean Mod_IsAdmittedAvatarModel (const qmodel_t *mod)
+{
+	if (!mod || mod->needload || mod->type != mod_alias ||
+		!mod->extradata[PV_MD5] || !mod->md5_skeleton)
+		return false;
+	if (mod->avatar_builtin)
+		return true;
+	return mod->avatar_custom_id >= 0 &&
+		CustomAvatar_Get (mod->avatar_custom_id) &&
+		!CustomAvatar_HasFailed (mod->avatar_custom_id) &&
+		!strcmp (mod->name, CustomAvatar_Get (mod->avatar_custom_id)->model_name);
+}
+
+qmodel_t *Mod_GetAvatarCustomModel (int id)
+{
+	const custom_avatar_t *avatar = CustomAvatar_Get (id);
+	custom_avatar_data_t data;
+	qmodel_t *mod = NULL;
+	qboolean loaded;
+
+	if (isDedicated || !avatar || CustomAvatar_HasFailed (id))
+		return NULL;
+	for (int i = 0; i < mod_numknown; ++i)
+		if (!strcmp (mod_known[i].name, avatar->model_name))
+		{
+			mod = &mod_known[i];
+			break;
+		}
+	if (!mod && mod_numknown == MAX_MODELS)
+		return NULL;
+	/* The admitted model is an immutable snapshot; stage selection may call
+	 * this every frame. Rehash only when the model needs admission again. */
+	if (mod && !mod->needload)
+		return mod->avatar_custom_id == id && Mod_IsAdmittedAvatarModel (mod) ? mod : NULL;
+	if (mod && (mod->extradata[PV_MD5] || mod->md5_skeleton))
+	{
+		CustomAvatar_MarkFailed (id);
+		return NULL;
+	}
+	if (!CustomAvatar_ReadData (id, &data))
+	{
+		CustomAvatar_MarkFailed (id);
+		Con_Warning ("Custom avatar %s changed or could not be read\n", avatar->key);
+		return NULL;
+	}
+	if (!mod)
+		mod = Mod_FindName (avatar->model_name);
+
+	mod->path_id = 0;
+	mod_custom_avatar = avatar;
+	mod_custom_avatar_data = &data;
+	loaded = Mod_LoadMD5MeshModel (mod, data.bytes[CUSTOM_AVATAR_MESH],
+		avatar->model_name, (qfilesize_t)data.sizes[CUSTOM_AVATAR_MESH], NULL, -1);
+	mod_custom_avatar_data = NULL;
+	mod_custom_avatar = NULL;
+	CustomAvatar_FreeData (&data);
+	if (loaded && mod->extradata[PV_MD5] && mod->md5_skeleton)
+	{
+		mod->avatar_custom_id = id;
+		mod->needload = false;
+		return mod;
+	}
+	if (mod->extradata[PV_MD5])
+		GLMesh_DeleteMeshBuffers ((aliashdr_t *)mod->extradata[PV_MD5]);
+	Mod_FreeModelMemory (mod);
+	mod->path_id = 0;
+	mod->needload = true;
+	CustomAvatar_MarkFailed (id);
+	Con_Warning ("Custom avatar %s rejected; using Ranger\n", avatar->key);
 	return NULL;
 }
 

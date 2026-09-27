@@ -757,6 +757,8 @@ typedef struct qmodel_s
 	byte *extradata[PV_SIZE]; // only access through Mod_Extradata
 	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
 	qboolean avatar_builtin; // private verified-pack cosmetic admission
+	int avatar_custom_id; // fixed local package ID, -1 unless admitted
+	byte *avatar_custom_rgba[2]; // stable in-memory texture reload sources
 	stockaxe_edge_t stockaxe_edge; // two copied points; source poses are not retained
 	/* Exact QBJ3 berserk source only: two eight-vertex palm means per pose.
 	 * The complete CPU pose mesh is discarded after alias upload. */
@@ -819,6 +821,9 @@ qboolean  Mod_AkimboPairUsesGeneratedHalves (const char *source);
 qboolean  Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out);
 /* Fixed profile ID only; NULL when the built-in rerelease MD5 is unavailable or invalid. */
 qmodel_t *Mod_GetAvatarBuiltinModel (int id);
+qmodel_t *Mod_GetAvatarCustomModel (int id);
+/* Model-owned admission identity; private model names are not profile paths. */
+qboolean Mod_IsAdmittedAvatarModel (const qmodel_t *mod);
 /* Returns frame 0's pinned stock-axe edge in scaled model-local coordinates.
  * The per-skin selected model must be the original MDL, not an MD5/MD3 replacement. */
 qboolean  Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);

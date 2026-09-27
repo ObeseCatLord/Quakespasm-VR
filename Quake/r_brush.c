@@ -35,7 +35,7 @@ static const r_vrik_prepared_palette_t *R_TLASVRIKPalette (const entity_t *e)
 	if (!prepared || !e || !e->model || !e->blas_data || !geometry ||
 		prepared->model != e->blas_data->model || prepared->geometry != geometry ||
 		(!prepared->alternate_avatar && prepared->model != e->model) ||
-		(prepared->alternate_avatar && (!prepared->model->avatar_builtin ||
+		(prepared->alternate_avatar && (!Mod_IsAdmittedAvatarModel (prepared->model) ||
 			geometry != (const aliashdr_t *)prepared->model->extradata[PV_MD5])) ||
 		prepared->descriptor_set == VK_NULL_HANDLE || !prepared->palette_address ||
 		(geometry->poseverttype != PV_MD5 && geometry->poseverttype != PV_MD5_8) ||

@@ -108,10 +108,10 @@ static const r_vrik_prepared_palette_t *R_AliasUsablePalette (entity_t *e, const
 		return NULL;
 	if (!prepared->alternate_avatar)
 		return prepared->model == e->model ? prepared : NULL;
-	/* Only the admitted built-in mesh may differ from the original player model. */
+	/* Only an admitted local avatar mesh may differ from the original player model. */
 	if (!e->model || strcmp (e->model->name, "progs/player.mdl") ||
 		!prepared->model || prepared->model == e->model ||
-		!prepared->model->avatar_builtin || prepared->model->needload ||
+		!Mod_IsAdmittedAvatarModel (prepared->model) ||
 		geometry != (const aliashdr_t *)prepared->model->extradata[PV_MD5])
 		return NULL;
 	for (const aliashdr_t *surface = geometry; surface; surface = surface->nextsurface)
