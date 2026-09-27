@@ -102,6 +102,13 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 | VR-015 — Optional desktop mirror and hidden-area depth mask | MAIN:Quake/vr.c:1933 (vr_mirror); MAIN:Quake/vr.c:741 (VR_DrawHiddenAreaDepthMask) | Quake/vr.c;donor render passes/WSI; **ADAPT**, P4 | Mirror can be disabled without losing XR submission; conservative per-eye mask never hides visible geometry or UI. |
 | VR-016 — VR MSAA and high-precision color targets | MAIN:Quake/vr.c:1932 (vr_msaa); MAIN:Quake/vr.c:1935 (vr_highprecision_targets) | Quake/gl_vidsdl.c;donor render passes; **DONOR-ADAPT**, P4 | Requested sample counts and color formats survive postprocess/resolve to XR; compare dark ramps and alpha edges. |
 
+VR-001 now has a bounded `vr_enable 0|1` session toggle on a Vulkan device
+selected with `-openxr` at startup. It releases VR input and retires borrowed
+images at a frame boundary, then reuses the existing backend for a healthy
+reattachment. Desktop-to-XR hot-connect without the startup binding, terminal
+runtime-loss recovery and live headset verification are still open; see the
+[session-toggle boundary](migration-openxr-session-toggle.md).
+
 For VR-015, the OpenXR backend exposes per-eye hidden triangles and the Vulkan
 postprocess subpass now covers those regions in black after UI. The
 [hidden-area mask boundary and senior review](migration-hidden-area-mask.md)
