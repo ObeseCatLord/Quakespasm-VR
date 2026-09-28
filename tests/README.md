@@ -1,5 +1,39 @@
 # Migration boundary fixtures
 
+## Opaque alias instancing
+
+`alias_batch_fixture.c` executes the production alias draw and batch functions
+with a captured Vulkan dispatch. It compares per-instance uniforms and geometry
+state between two immediate draws and one instanced draw; also checks 16/17
+capacity, incompatible-key flushes, immediate fallbacks, context isolation and
+MD3 stereo descriptor binding. Vulkan dispatch and uniform allocation are test
+boundaries; this is not a framebuffer, real worker or performance test.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-sanitize-recover=all -fno-omit-frame-pointer \
+  tests/alias_batch_fixture.c Quake/mathlib.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-alias-batch-fixture
+ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-alias-batch-fixture
+```
+
+Require `ALIAS_BATCH_COMMAND_CAPTURE_PASSED`. After the Linux Make build,
+validate its actual shader outputs:
+
+```sh
+spirv-val --target-env vulkan1.0 Shaders/Compiled/Release/alias_vert.spv
+spirv-val --target-env vulkan1.1 Shaders/Compiled/Release/alias_stereo_vert.spv
+spirv-val --target-env vulkan1.0 Shaders/Compiled/Release/alias_frag.spv
+```
+
+The vertex array must have a 112-byte stride with flags at offset 96; the
+shared fragment block reads the original record-zero prefix. Batching off
+still uses the new vertex shader, so it cannot alone establish equivalence to
+the pre-change shader. See `docs/migration-alias-instancing-review.md` for
+the architecture decision, evidence boundaries and separate framebuffer proof.
+
 ## Custom QuakeC physics
 
 `customphysics_fixture.c` executes the production callback adapter with the

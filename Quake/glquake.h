@@ -218,6 +218,7 @@ typedef struct vulkan_memory_s
 #define COOP_OVERLAY_PIPELINE_COUNT	   4
 #define FTE_PARTICLE_PIPELINE_COUNT		   16
 #define MAX_BATCH_SIZE					   65536
+#define MAX_UNIFORM_ALLOC				   2048
 #define NUM_WORLD_CBX					   6
 #define NUM_ENTITIES_CBX				   6
 
@@ -348,6 +349,8 @@ static const int SECONDARY_CB_MULTIPLICITY[SCBX_NUM] = {
 #define UI_PANEL_CLIP_PUSH_CONSTANT_OFFSET (20 * sizeof (float))
 #define UI_PANEL_FLAG_PUSH_CONSTANT_OFFSET (24 * sizeof (float))
 
+typedef struct r_alias_batch_s r_alias_batch_t;
+
 typedef struct cb_context_s
 {
 	VkCommandBuffer			   cb;
@@ -375,7 +378,37 @@ typedef struct cb_context_s
 	vulkan_pipeline_t		   current_pipeline;
 	uint32_t				   vbo_indices[MAX_BATCH_SIZE];
 	unsigned int			   num_vbo_indices;
+	// Points to a stack batch only during this context's opaque entity draw.
+	r_alias_batch_t		   *alias_batch;
 } cb_context_t;
+
+#include "alias_batch_limits.h"
+typedef struct
+{
+	float model_matrix[16];
+	float shade_vector[3];
+	float blend_factor;
+	float light_color[3];
+	float entalpha;
+	uint32_t flags;
+	uint32_t padding[3]; // std140 array stride: 112, with flags at byte 96
+} aliasubo_t;
+
+typedef struct
+{
+	vulkan_pipeline_t pipeline;
+	VkBuffer vertex_buffer, index_buffer;
+	VkDeviceSize vertex_offsets[3];
+	VkDescriptorSet skin_set, fullbright_set;
+	uint32_t index_count;
+} r_alias_draw_state_t;
+
+struct r_alias_batch_s
+{
+	r_alias_draw_state_t state;
+	uint32_t count;
+	aliasubo_t instances[ALIAS_BATCH_MAX_INSTANCES];
+};
 
 void GL_RecordOpenXRHiddenAreaStencil (cb_context_t *cbx);
 
@@ -880,6 +913,10 @@ int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *le
 int R_HeldMeleeMatrix (entity_t *e, const aliashdr_t *geometry,
 	lerpdata_t *lerpdata, float matrix[16]);
 void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys);
+void R_AliasBatchBegin (cb_context_t *cbx, r_alias_batch_t *batch);
+void R_AliasBatchFlush (cb_context_t *cbx);
+void R_AliasBatchEnd (cb_context_t *cbx);
+extern cvar_t r_aliasbatch;
 void R_DrawPreparedWheelAliasModel (
 	cb_context_t *cbx, entity_t *e, aliashdr_t *selected_geometry, const vec3_t tint, float mesh_scale, int *aliaspolys);
 void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpolys, qboolean sort, qboolean water_opaque_only, qboolean water_transparent_only);

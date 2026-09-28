@@ -13,7 +13,9 @@ layout (push_constant) uniform PushConsts
 }
 push_constants;
 
-layout (set = 2, binding = 0) uniform UBO
+#include "../Quake/alias_batch_limits.h"
+
+struct AliasInstance
 {
 	mat4  model_matrix;
 	vec3  shade_vector;
@@ -21,8 +23,16 @@ layout (set = 2, binding = 0) uniform UBO
 	vec3  light_color;
 	float entalpha;
 	uint  flags;
+};
+
+layout (std140, set = 2, binding = 0) uniform AliasInstances
+{
+	AliasInstance instances[ALIAS_BATCH_MAX_INSTANCES];
 }
-ubo;
+alias_ubo;
+
+// Fragment reads record zero. Batched surfaces share flags, alpha and skins.
+#define ubo alias_ubo.instances[gl_InstanceIndex]
 
 layout (location = 0) in vec2 in_texcoord;
 layout (location = 1) in vec4 in_pose1_position;

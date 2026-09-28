@@ -48,15 +48,10 @@ float r_avertexnormals[NUMVERTEXNORMALS][3] = {
 // precalculated dot products for quantized angles
 #define SHADEDOT_QUANT 16
 
-typedef struct
-{
-	float	 model_matrix[16];
-	float	 shade_vector[3];
-	float	 blend_factor;
-	float	 light_color[3];
-	float	 entalpha;
-	uint32_t flags;
-} aliasubo_t;
+cvar_t r_aliasbatch = {"r_aliasbatch", "1", CVAR_ARCHIVE};
+COMPILE_TIME_ASSERT (alias_instance_stride, sizeof (aliasubo_t) == 112);
+COMPILE_TIME_ASSERT (alias_instance_flags, offsetof (aliasubo_t, flags) == 96);
+COMPILE_TIME_ASSERT (alias_batch_uniform_size, sizeof (aliasubo_t) * ALIAS_BATCH_MAX_INSTANCES <= MAX_UNIFORM_ALLOC);
 
 typedef struct
 {
@@ -81,6 +76,81 @@ static VkDeviceSize GLARB_GetXYZOffset (entity_t *e, aliashdr_t *hdr, int pose)
 {
 	const int xyzoffs = offsetof (meshxyz_t, xyz);
 	return hdr->numverts_vbo * pose * sizeof (meshxyz_t) + xyzoffs;
+}
+
+static void GL_BindAliasPipeline (cb_context_t *cbx, vulkan_pipeline_t pipeline, qboolean coop_overlay)
+{
+	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+	if (coop_overlay)
+		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0,
+			sizeof (vulkan_globals.view_projection_matrix), vulkan_globals.view_projection_matrix);
+}
+
+/* Single draws and batches use the same upload/bind path. Allocate the entire
+ * array once: separate dynamic UBO allocations have device-aligned offsets. */
+static void GL_DrawAliasInstances (cb_context_t *cbx, const r_alias_draw_state_t *state,
+	const aliasubo_t *instances, uint32_t count)
+{
+	VkBuffer uniform_buffer;
+	uint32_t uniform_offset;
+	VkDescriptorSet ubo_set;
+	assert (count > 0 && count <= ALIAS_BATCH_MAX_INSTANCES);
+	GL_BindAliasPipeline (cbx, state->pipeline, (instances[0].flags & 0x8) != 0);
+	byte *data = R_UniformAllocate (count * sizeof (*instances), &uniform_buffer, &uniform_offset, &ubo_set);
+	memcpy (data, instances, count * sizeof (*instances));
+	VkDescriptorSet descriptor_sets[3] = {state->skin_set, state->fullbright_set, ubo_set};
+	vulkan_globals.vk_cmd_bind_descriptor_sets (
+		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, state->pipeline.layout.handle, 0, 3, descriptor_sets, 1, &uniform_offset);
+	VkBuffer vertex_buffers[3] = {state->vertex_buffer, state->vertex_buffer, state->vertex_buffer};
+	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 3, vertex_buffers, state->vertex_offsets);
+	vulkan_globals.vk_cmd_bind_index_buffer (cbx->cb, state->index_buffer, 0, VK_INDEX_TYPE_UINT16);
+	vulkan_globals.vk_cmd_draw_indexed (cbx->cb, state->index_count, count, 0, 0, 0);
+}
+
+void R_AliasBatchBegin (cb_context_t *cbx, r_alias_batch_t *batch)
+{
+	assert (!cbx->alias_batch && batch && cbx->subpass_type == SUBPASS_MAIN);
+	batch->count = 0;
+	cbx->alias_batch = batch;
+}
+
+void R_AliasBatchFlush (cb_context_t *cbx)
+{
+	r_alias_batch_t *batch = cbx->alias_batch;
+	if (!batch || !batch->count)
+		return;
+	GL_DrawAliasInstances (cbx, &batch->state, batch->instances, batch->count);
+	batch->count = 0;
+}
+
+void R_AliasBatchEnd (cb_context_t *cbx)
+{
+	R_AliasBatchFlush (cbx);
+	cbx->alias_batch = NULL;
+}
+
+/* Adapt Ironwail's adjacent alias batching at vkQuake's existing vertex-stream
+ * boundary. The bound poses must match; transform, shade, light and blend do
+ * not. Fragment-stage uniforms still read record zero, so flags/alpha match. */
+static void GL_AppendAliasInstance (cb_context_t *cbx, const r_alias_draw_state_t *state,
+	const aliasubo_t *instance)
+{
+	r_alias_batch_t *batch = cbx->alias_batch;
+	assert (batch);
+	const r_alias_draw_state_t *previous = &batch->state;
+	if (batch->count && (batch->count == ALIAS_BATCH_MAX_INSTANCES ||
+		previous->pipeline.handle != state->pipeline.handle ||
+		previous->pipeline.layout.handle != state->pipeline.layout.handle ||
+		previous->pipeline.alternatives != state->pipeline.alternatives ||
+		previous->vertex_buffer != state->vertex_buffer ||
+		previous->index_buffer != state->index_buffer || previous->index_count != state->index_count ||
+		previous->skin_set != state->skin_set || previous->fullbright_set != state->fullbright_set ||
+		memcmp (previous->vertex_offsets, state->vertex_offsets, sizeof (state->vertex_offsets)) ||
+		batch->instances[0].flags != instance->flags || batch->instances[0].entalpha != instance->entalpha))
+		R_AliasBatchFlush (cbx);
+	if (!batch->count)
+		batch->state = *state;
+	batch->instances[batch->count++] = *instance;
 }
 
 static qboolean R_IsVRViewmodel (entity_t *e)
@@ -281,11 +351,6 @@ static void GL_DrawAliasFrame (
 			cbx->subpass_type, vulkan_globals.alias_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.alias_wboit_pipelines[pipeline_index],
 			vulkan_globals.alias_mboit_moment_pipelines[pipeline_index], vulkan_globals.alias_mboit_composite_pipelines[pipeline_index]);
 
-	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-	if (coop_overlay_mode >= 0)
-		R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0,
-			sizeof (vulkan_globals.view_projection_matrix), vulkan_globals.view_projection_matrix);
-
 	float blend;
 
 	if (lerpdata.pose1 != lerpdata.pose2)
@@ -298,10 +363,8 @@ static void GL_DrawAliasFrame (
 	case PV_QUAKE1:
 	case PV_QUAKE3:
 	{
-		VkBuffer		uniform_buffer;
-		uint32_t		uniform_offset;
-		VkDescriptorSet ubo_set;
-		aliasubo_t	   *ubo = (aliasubo_t *)R_UniformAllocate (sizeof (aliasubo_t), &uniform_buffer, &uniform_offset, &ubo_set);
+		aliasubo_t instance = {0};
+		aliasubo_t *ubo = &instance;
 
 		memcpy (ubo->model_matrix, model_matrix, 16 * sizeof (float));
 		memcpy (ubo->shade_vector, shadevector, 3 * sizeof (float));
@@ -319,22 +382,32 @@ static void GL_DrawAliasFrame (
 
 		ubo->entalpha = entity_alpha;
 
-		VkDescriptorSet descriptor_sets[3] = {tx->descriptor_set, (fb != NULL) ? fb->descriptor_set : tx->descriptor_set, ubo_set};
-		vulkan_globals.vk_cmd_bind_descriptor_sets (
-			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout.handle, 0, 3, descriptor_sets, 1, &uniform_offset);
-
-		VkBuffer	 vertex_buffers[3] = {paliashdr->vertex_buffer, paliashdr->vertex_buffer, paliashdr->vertex_buffer};
-		VkDeviceSize vertex_offsets[3] = {
-			(unsigned)paliashdr->vbostofs, GLARB_GetXYZOffset (e, paliashdr, lerpdata.pose1), GLARB_GetXYZOffset (e, paliashdr, lerpdata.pose2)};
-		vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 3, vertex_buffers, vertex_offsets);
-		vulkan_globals.vk_cmd_bind_index_buffer (cbx->cb, paliashdr->index_buffer, 0, VK_INDEX_TYPE_UINT16);
-
-		vulkan_globals.vk_cmd_draw_indexed (cbx->cb, paliashdr->numindexes, 1, 0, 0, 0);
+		r_alias_draw_state_t state = {
+			.pipeline = pipeline,
+			.vertex_buffer = paliashdr->vertex_buffer,
+			.index_buffer = paliashdr->index_buffer,
+			.vertex_offsets = {(unsigned)paliashdr->vbostofs,
+				GLARB_GetXYZOffset (e, paliashdr, lerpdata.pose1), GLARB_GetXYZOffset (e, paliashdr, lerpdata.pose2)},
+			.skin_set = tx->descriptor_set,
+			.fullbright_set = fb ? fb->descriptor_set : tx->descriptor_set,
+			.index_count = paliashdr->numindexes,
+		};
+		if (cbx->alias_batch && cbx->subpass_type == SUBPASS_MAIN &&
+			!has_alpha && showtris == 0 && coop_overlay_mode < 0 && !force_unlit)
+			GL_AppendAliasInstance (cbx, &state, &instance);
+		else
+		{
+			// Flush before binding/pushing any immediate draw's state.
+			R_AliasBatchFlush (cbx);
+			GL_DrawAliasInstances (cbx, &state, &instance, 1);
+		}
 		break;
 	}
 	case PV_MD5:
 	case PV_MD5_8:
 	{
+		R_AliasBatchFlush (cbx);
+		GL_BindAliasPipeline (cbx, pipeline, coop_overlay_mode >= 0);
 		const r_vrik_prepared_palette_t *prepared = allow_tracked_palette ? R_AliasUsablePalette (e, selected_geometry) : NULL;
 		if (prepared && prepared->joint_count == (uint32_t)paliashdr->numjoints)
 			tracked_palette = prepared;

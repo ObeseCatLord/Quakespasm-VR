@@ -1094,6 +1094,7 @@ alphapass 0 for opaque, 1 for transparent overwater, 2 for transpatent underwate
 void R_DrawEntitiesOnList (cb_context_t *cbx, int alphapass, int chain, qboolean use_tasks) // johnfitz -- added parameter
 {
 	int i = -1;
+	assert (!cbx->alias_batch);
 
 	if (!r_drawentities.value)
 		return;
@@ -1105,6 +1106,10 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, int alphapass, int chain, qboolean
 
 	const int		 total = !alphapass ? cl_numvisedicts : alphapass == 1 ? cl_numvisedicts_alpha_overwater : cl_numvisedicts_alpha_underwater;
 	entity_t **const list = !alphapass ? cl_visedicts : alphapass == 1 ? cl_visedicts_alpha : cl_visedicts_alpha + cl_numvisedicts_alpha_overwater;
+
+	r_alias_batch_t alias_batch;
+	if (!alphapass && r_aliasbatch.value && cbx->subpass_type == SUBPASS_MAIN)
+		R_AliasBatchBegin (cbx, &alias_batch);
 
 	R_BeginDebugUtilsLabel (cbx, alphapass ? "Entities Alpha Pass" : "Entities");
 	// johnfitz -- sprites are not a special case
@@ -1143,23 +1148,26 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, int alphapass, int chain, qboolean
 		{
 			const int before_aliaspolys = aliaspolys;
 			R_DrawAliasModel (cbx, currententity, &aliaspolys);
-			/* Culled or rejected aliases do not submit geometry. Keep this
-			 * counter useful when diagnosing large-map visible work. */
+			/* Count accepted entities; instancing can merge their submissions.
+			 * Culled/rejected aliases do not contribute visible geometry. */
 			if (aliaspolys > before_aliaspolys)
 				++aliaspasses;
 			break;
 		}
 		case mod_brush:
+			R_AliasBatchFlush (cbx);
 			R_DrawBrushModel (
 				cbx, currententity, chain, &brushpolys, alphapass && R_UseAlphaSort (), !alphapass && opaque_with_transparent_water,
 				alphapass && opaque_with_transparent_water);
 			++brushpasses;
 			break;
 		case mod_sprite:
+			R_AliasBatchFlush (cbx);
 			R_DrawSpriteModel (cbx, currententity);
 			break;
 		}
 	}
+	R_AliasBatchEnd (cbx);
 	R_EndDebugUtilsLabel (cbx);
 
 	Atomic_AddUInt32 (&rs_brushpolys, brushpolys);

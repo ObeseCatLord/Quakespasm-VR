@@ -150,7 +150,6 @@ Dynamic vertex/index & uniform buffer
 #define INITIAL_DYNAMIC_UNIFORM_BUFFER_SIZE_KB 256
 #define NUM_DYNAMIC_BUFFERS					   2
 #define GARBAGE_FRAME_COUNT					   3
-#define MAX_UNIFORM_ALLOC					   2048
 
 static uint32_t		   current_dyn_vertex_buffer_size = INITIAL_DYNAMIC_VERTEX_BUFFER_SIZE_KB * 1024;
 static uint32_t		   current_dyn_index_buffer_size = INITIAL_DYNAMIC_INDEX_BUFFER_SIZE_KB * 1024;
@@ -5157,6 +5156,7 @@ void R_Init (void)
 	Cvar_RegisterVariable (&r_avatar_humanoid);
 	Cvar_RegisterVariable (&r_lightmap);
 	Cvar_RegisterVariable (&r_drawentities);
+	Cvar_RegisterVariable (&r_aliasbatch);
 	Cvar_RegisterVariable (&r_drawviewmodel);
 	Cvar_RegisterVariable (&r_wateralpha);
 	Cvar_RegisterVariable (&r_oit);
