@@ -113,3 +113,9 @@ Astra Max review. Component selection or permission alone cannot qualify the
 session. Real ability/trigger and wider AD/Mjolnir/cooperative-QC requirements
 remain open, as does the separately reproduced preexisting stock10ms liquid
 assertion. The plan records the fixtures' prepared/captured proof limits.
+
+The [q30 jump-boots lifecycle plan](predictive-q30-boots-2.0-plan.md) precedes
+actual pickup/native-action/expiry/replay-return fixture implementation. It reuses
+installed QC spawn/contact and existing normal-session owners, with separate
+initialized native/selected runs and explicit prepared item/resource limits.
+No new production ability or movement owner is authorized by this slice.
