@@ -152,6 +152,18 @@ pusher-support writes. No raw operational telemetry is part of this artifact.
 | Keep native qualification loss sticky after movement. | **Adopted.** Observe at movement/contact boundaries, retain the existing frame-native flag even if PostThink returns to WALK, complete the current head once, clear credit and stop batching. |
 | Cancel deferred Gorilla movement on holds/cameras. | **Adopted.** False eligibility alone makes the deferred consumer fall through to ordinary input. Cancel at its existing early-return boundary; physical contacts invalidate continuity while advancing the existing cursor. Keep stock waterjump clearing away from q30 ownership. |
 
+The implementation review found four concrete handoff defects. Its disposition
+changes no movement owner: observational frame validation precedes a probe;
+resetting hand continuity fences only completed work, preserving unstarted
+samples; sticky batching suppression is separate from current-owner validation.
+Native geometric eligibility is evaluated from the accepted head before command
+credit, so a deferred head needs no new credit/lifetime flag to enter the next
+fresh native frame. Native execution already uses world duration and coalesces
+accepted input independently of command-time credit. Ordinary dry maintenance
+still uses only completed levels and receives no uncompleted head. This is
+smaller than a second pending-native scheduler/latch. Verify that distinction
+in the final code review and retained-head checks.
+
 The review changed the restoration and deferred-input contracts; it was not
 just editorial approval. Final implementation review and consolidated acceptance
 are still required. The current classifier/probe checkpoint will retain closed
