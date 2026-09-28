@@ -1,6 +1,7 @@
 # Stock liquid movement and predictive replay
 
-Status: design reviewed; real-map qualification in progress. Baseline `81318dc3` on `2.0`; this is another
+Status: reviewed swim handoff correction implemented; remaining real-map/wet
+replay qualification in progress. Baseline `81318dc3` on `2.0`; this is another
 bounded stage of the [predictive movement plan](predictive-movement-2.0-plan.md),
 not ordinary selected activation or a complete migration claim.
 
@@ -166,3 +167,71 @@ continues to own the swim assignment for server/replay. Qualify actual press,
 hold and release plus focused residual/pause/ledge cases. This correction alone
 does **not** authorize wet replay; transition, ledge, hazard and callback
 qualification remain open.
+
+### Bounded implementation review and software evidence
+
+A second fresh local Astra (`gpt-6-astra`, effort `max`, verified model/effort)
+reviewed the [handoff implementation brief](predictive-stock-liquid-handoff-astra-brief.md)
+and production diff. Main spot-checked its load-bearing conditions against the
+helper, unchanged scheduled-Think boundary and actual replay/PMove ordering.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Retain the narrow overwrite correction; no blocker demonstrated in the bounded diff. | Adopted. Known swim speeds are removed without restoring imaginary vertical drag or replacing the existing movement owner. |
+| Preserve all-zero velocity, including an already stationary owner. | Adopted and tested. Otherwise subtracting a swim overwrite after a QC pause could invent a negative vertical force. This proves the handoff, not an entire pause-through-solver contract. |
+| Preserve wet residuals and scheduled Think precedence. | Adopted. Dry restore now excludes depth >=2; changed scheduled-Think velocity still bypasses reconciliation. Do not require exact final z equality, which would discard supported residual force. |
+| The predicate is not a general callback execution witness. | Accepted limitation. Recategorization/relocation or eligibility changes without a velocity change remain to qualify before default selection/wet permission. Do not expand ordinary evidence into a blanket QC contract. |
+| Keep both fluid gates and server permission restrictive. | Adopted. No wet replay, authority/protocol, timer-owner or selection-default change is included in this correction. |
+
+`stock_liquid_native_fixture.c` now reuses actual negotiation/spawn/begin,
+baseline codecs, command production/receipt, QC/world completion and complete
+client snapshot commitment. Physics/replay source is compiled directly into
+the fixture to inspect existing internal helpers, excluding its normal objects;
+there is no production test API or copied contents/ledge solver. Separate
+initialized native and selected runs use explicit resting starts, real hull
+support, release flags and the existing `kill`/`setpos`/recovery owners. They are
+prepared comparison states, not proof of a natural spawn-to-pool traversal.
+
+Passing normal matrix: stock `e1m1` native and selected at 25 ms; selected
+desktop at 10 and 100 ms (the latter uses negotiated solver substeps); selected
+VR at 25 ms with duplicate roomscale delivery; stock `e1m2` native and selected
+at 25 ms, including an actual ledge discovered with pinned QC and exercised
+through the admitted command path. Every selected desktop generated command
+has an actual **diagnostic pending shadow**, not an empty-history substitute.
+Flat-water displacement/velocity differences stay within bounds derived from
+1/8-unit velocity encoding plus float arithmetic. Full snapshot ACK, owner and
+authoritative jump/waterjump timer seeds agree. Actual replay is invoked after
+the snapshot and remains forbidden while wet or waterjumping.
+
+The reachable `e1m2` ledge starts and terminates a selected waterjump; the timer
+and flag clear on downward motion and dry replay reopens. Native QC's ledge
+impulse is `225`; the reused QSS-M solver intentionally uses `310` and its own
+horizontal/termination semantics. These are explicit donor-integrator
+differences, not a loose native-to-selected positional acceptance. The `e1m1`
+search found no qualifying ledge; it does not silently claim one.
+
+An initial `e1m2` shadow comparison failed when real `army_atk5` QC reduced
+health 100→84 and changed velocity after movement. The wrapper verified that
+external combat force; it was not a swimming-integrator mismatch and no
+production force was erased. Movement comparison runs now use actual `notarget`
+commands for both peers, retained after prepared respawns. Environmental QC
+stays enabled. This isolates movement and explicitly does not qualify combat
+prediction or hazardous-liquid gameplay.
+
+Focused residual/zero-pause/water/slime/lava/ledge arithmetic and sender startup
+checks pass ASan/UBSan with leak detection disabled for the environment. The
+Linux SDL3 build and admitted mixed startup/gap/native-state matrix pass.
+The final combined `e1m2` selected real-map run also passes ASan/UBSan: physics,
+replay, server snapshot and client parser/demo sources included in the fixture
+are instrumented; the other engine objects retain the normal Linux build. This
+is not whole-engine sanitizer coverage. Its instrumented compilation retains an
+existing `CL_SetInfo` format-overflow warning as nonfatal with the fixture-only
+`-Wno-error=format-overflow`; ordinary Linux builds retain `-Werror` and pass.
+
+Still required by the full liquid feature: hazardous real-map damage/drowning
+and crossings; arbitrary entry/exit including one-command fluid transit;
+callback/teleport deadline ownership; batching/gaps at wet boundaries; VR pending
+history and disposable preview through actual **live** wet permission. The
+ledge comparison logs do not close every collision/expiry/callback combination.
+Windows/ARM, connected/headset/eye trials and performance measurement remain
+deferred by user; skyrooms stay outside the goal.

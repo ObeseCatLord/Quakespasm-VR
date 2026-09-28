@@ -48,6 +48,40 @@ int main (void)
 		100, 0, .1f);
 	near_velocity (&player, 100, 0, 20); // shallow-water drag is also QC-owned
 
+	player.v.button2 = 1;
+	player.v.watertype = CONTENTS_WATER;
+	VectorSet (player.v.velocity, 84, 0, 100);
+	SV_PrivateWalkTrialReconcileQCWater (&player, before, 0, 2,
+		100, 0, .1f);
+	near_velocity (&player, 100, 0, 20); // remove overwrite, not imaginary z drag
+	VectorSet (player.v.velocity, 89, 0, 107);
+	SV_PrivateWalkTrialReconcileQCWater (&player, before, 0, 2,
+		100, 0, .1f);
+	near_velocity (&player, 105, 0, 27); // residual forces survive on both axes
+	player.v.watertype = CONTENTS_SLIME;
+	VectorSet (player.v.velocity, 76, 0, 80);
+	SV_PrivateWalkTrialReconcileQCWater (&player, before, 0, 3,
+		100, 0, .1f);
+	near_velocity (&player, 100, 0, 20);
+	player.v.watertype = CONTENTS_LAVA;
+	VectorSet (player.v.velocity, 76, 0, 50);
+	SV_PrivateWalkTrialReconcileQCWater (&player, before, 0, 3,
+		100, 0, .1f);
+	near_velocity (&player, 100, 0, 20);
+	VectorClear (player.v.velocity);
+	SV_PrivateWalkTrialReconcileQCWater (&player, before, 0, 3,
+		100, 0, .1f);
+	near_velocity (&player, 0, 0, 0); // swim input cannot undo a QC pause
+	SV_PrivateWalkTrialReconcileQCWater (&player, vec3_origin, 0, 3,
+		100, 0, .1f);
+	near_velocity (&player, 0, 0, 0); // including a player already at rest
+	player.v.flags = FL_WATERJUMP;
+	player.v.teleport_time = 102;
+	VectorSet (player.v.velocity, 84, 0, 225);
+	SV_PrivateWalkTrialReconcileQCWater (&player, before, 0, 2,
+		100, 0, .1f);
+	near_velocity (&player, 100, 0, 20); // ledge takes precedence over swim
+
 	puts ("Selected private water velocity handoff passed");
 	return 0;
 }

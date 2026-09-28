@@ -1877,6 +1877,65 @@ This checks removal of stock drag and ledge impulse, preservation of another
 QuakeC force and a deliberate pause. It is not a real-map water trajectory or
 mixed-peer proof; the selected water path remains experimental.
 
+The extended helper also checks water/slime/lava swim-overwrite reconciliation,
+vertical/horizontal residual forces, all-zero pause from a moving or stationary
+baseline and ledge precedence. The bounded real-map foundation is planned in
+[`predictive-stock-liquid-2.0-plan.md`](../docs/predictive-stock-liquid-2.0-plan.md):
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make negotiation-native-fixture \
+  USE_SDL3=1 -j4 NEGOTIATION_FIXTURE=/tmp/qsvr-stock-liquid \
+  NEGOTIATION_SOURCE=../tests/stock_liquid_native_fixture.c \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o cl_main.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram'
+/tmp/qsvr-stock-liquid -selected -dedicated 3 -noudp -nosound \
+  -basedir "$SERVER_PROFILE" -userdir "$SERVER_PROFILE"
+/tmp/qsvr-stock-liquid -selected -fixturemap e1m2 -requireledge \
+  -dedicated 3 -noudp -nosound -basedir "$SERVER_PROFILE" -userdir "$SERVER_PROFILE"
+```
+
+Use a disposable profile containing read-only stock pak0 assets. Omit `-selected`
+for native private movement; add `-vr` for prepared VR pose/duplicate-roomscale
+delivery. `-fixturemsec 10` and `100` exercise short and subdivided commands.
+`-fixturecase ledge` runs only the discovered ledge case. `-requireledge` fails
+if the loaded geometry search cannot find one; ordinary `e1m1` runs explicitly
+report that no qualifying ledge was found. Startup first samples/suppresses the
+two reserved commands; this fixture does not prove pause before that startup.
+The existing mixed driver now has `-selected -earlypause` for actual host
+pause/`svc_setpause`/reserved-command/recovery/completion/replay proof; it can be
+combined with `-arrivalgap`.
+
+The liquid driver runs actual stock admission, command codecs, QC/world physics,
+completion and full snapshots. It checks selected ACK/owner/timer commitment,
+press/hold/release, three depths, sink/up, duplicate roomscale and ledge
+startup/termination. Selected desktop comparisons invoke the actual diagnostic
+pending shadow from the preceding snapshot, with wire-derived bounds for the
+flat-water cases; ledge collision errors are logged separately. Shadow bypasses
+permission/fluid restrictions and is **not live wet prediction evidence**.
+Actual live replay is also invoked and must remain withheld while wet or
+waterjumping. Selected activation remains default-off.
+
+Starts use actual `kill`/`setpos` plus prepared resting velocity/support/release
+flags and no unrelated spawn hold. Actual `notarget` commands exclude monster
+knockback from movement comparison; environmental QC remains active. Native and
+QSS-M integrators intentionally differ, including stock `225` versus donor `310`
+ledge impulses. Captured delivery, prepared signon/resources/input and skipped
+player-skin texture uploads do not prove connected signon, upstream client,
+physical XR actions, combat/hazard prediction or performance. The plan retains
+the unqualified crossings, callback/deadline, hazard and live wet history/preview
+cases.
+
+For combined-fixture sanitizer coverage, build the ordinary Linux objects first,
+use a fresh `NEGOTIATION_FIXTURE` output name, add
+`CPPFLAGS='-fsanitize=address,undefined -fno-sanitize-recover=all -Wno-error=format-overflow'`
+to the make command and append `-fsanitize=address,undefined` to
+`NEGOTIATION_EXTRA_LDFLAGS`. Run with `ASAN_OPTIONS=detect_leaks=0` in this
+environment. Physics/replay/server snapshot/client parser/demo sources in the
+combined translation unit are instrumented; remaining objects are normal,
+so this does not establish whole-engine sanitizer coverage. The warning
+exception retains an inherited `CL_SetInfo` format-overflow diagnostic seen in
+this instrumented compilation; ordinary Linux builds still use `-Werror`.
+
 Start a fresh selected private server:
 
 ```sh

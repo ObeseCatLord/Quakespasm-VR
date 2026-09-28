@@ -7696,8 +7696,7 @@ static void SV_PrivateWalkTrialReconcileQCWater (edict_t *ent,
 		 after_teleport_time > before_teleport_time ||
 		 fabsf (ent->v.velocity[2] - 225.0f) < MOVE_EPSILON);
 
-	if (VectorCompare (ent->v.velocity, vec3_origin) &&
-		!VectorCompare (before, vec3_origin))
+	if (VectorCompare (ent->v.velocity, vec3_origin))
 		return;
 	VectorSubtract (ent->v.velocity, before, delta);
 	VectorClear (stock_drag);
@@ -7707,7 +7706,17 @@ static void SV_PrivateWalkTrialReconcileQCWater (edict_t *ent,
 		VectorScale (before, -0.8f * before_waterlevel * seconds, stock_drag);
 		VectorSubtract (delta, stock_drag, delta);
 	}
-	if (qc_waterjump)
+	if (before_waterlevel >= 2 && ent->v.button2 &&
+		!(after_flags & FL_WATERJUMP) && before_health > 0)
+	{
+		/* Stock PlayerJump overwrites z after WaterMove's drag. Removing drag
+		 * from that component would invent a force. PMove owns the same swim
+		 * assignment later; retain only a residual above the known QC write. */
+		float swim_speed = ent->v.watertype == CONTENTS_WATER ? 100.0f :
+			ent->v.watertype == CONTENTS_SLIME ? 80.0f : 50.0f;
+		delta[2] = ent->v.velocity[2] - swim_speed;
+	}
+	else if (qc_waterjump)
 		delta[2] -= 225.0f - (before[2] + stock_drag[2]);
 	VectorAdd (before, delta, ent->v.velocity);
 }
@@ -8112,7 +8121,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		/* Stock QC owns jump sounds and flags; PMove owns its dry impulse.
 		 * Exact q30 QuakeC owns its own impulse. Preserve a teleporter's
 		 * deliberate pause at zero velocity. */
-		if (!q30_program && was_grounded && (command.buttons & 2) &&
+		if (!q30_program && prethink_waterlevel < 2 && was_grounded && (command.buttons & 2) &&
 			ent->v.teleport_time <= qcvm->time &&
 			(prethink_teleport_time <= qcvm->time ||
 			 ent->v.teleport_time == prethink_teleport_time) &&
