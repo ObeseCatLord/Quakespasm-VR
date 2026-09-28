@@ -340,3 +340,36 @@ Broader wet boundary/replay, drowning, batching and command-time independent
 Think combinations remain the next qualification stage. Public/native and
 selected defaults, authority/capability profile and both live fluid gates are
 unchanged by this correction.
+
+### Live wet replay implementation stage
+
+Before edits, the authoritative baseline is `87c2768b`: selected authority and
+server/replay timer seeds work, but server wet permission and both aggregate
+client contact gates still prevent live wet replay. Finish the pending
+command/velocity-only Think composition cases, then implement and qualify the
+existing permission as one coherent experimental slice. A candidate gate must
+be exercised before it can be declared qualified; do not stage permission in
+the fixture or substitute diagnostic shadows for the actual live entry point.
+
+Minimum implementation: the server permits an alive stock WALK/SLIDEBOX owner
+at valid finite depth 0..3, with no pusher/pause/recovery exclusion, when its
+positive private waterjump timer agrees with FL_WATERJUMP or its zero timer has
+no flag/future external deadline. Validate finite timer/deadline fields. Keep
+unsupported QC/native/terminal ownership restrictive. Both client fluid gates
+are removed together for the existing private engine-compatible contract;
+the shared solver still records fluid contact for its own movement rules.
+Public PREDINFO, selection defaults and AD-family admission are unchanged.
+
+Reuse the admitted fixture: compare actual live pending replay with completed
+authoritative movement, then invoke a disposable positive-duration preview
+from the complete snapshot and prove it does not modify committed history or
+authoritative timer seeds. Use actual generated VR commands too. Add real-BSP
+surface entry/exit/transit, batched commands/snapshot delay, hazards/drowning,
+and negative teleport/pusher/pause/terminal checks. Existing wire-derived
+movement bounds remain; no health tolerance or invented dry state.
+
+Owners: main integrates the server/client gate and shared fixture changes;
+an available authorized coding delegate may own only the new real-map transit
+driver. Coding routes must not silently replace unavailable Luna. Review the
+coherent implementation and evidence locally with Astra before commit; reopen
+the architecture if callback corrections grow into a second state owner.
