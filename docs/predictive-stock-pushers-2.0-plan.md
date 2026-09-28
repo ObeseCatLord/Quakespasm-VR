@@ -1,6 +1,8 @@
 # Selected stock movement on moving brushes
 
-Status: preimplementation plan; baseline `a6ce3246` on `2.0`. This is the next
+Status: planned adapter implemented; normal software matrix passes, final
+review and consolidated sanitizer evidence follow below. Baseline `a6ce3246`
+on `2.0`. This is the next
 stage of [production predictive movement](predictive-movement-2.0-plan.md).
 The full outcome remains ordinary stock/mod desktop and VR gameplay, with
 prediction where its actual movement contract matches. An opt-in exact-stock
@@ -128,3 +130,90 @@ replay return pass. This does not prove palm-only or rollback behavior.
 The single authorized web coding attempt failed before edits when its browser
 could not open; no replacement local coding model was selected. Main implements
 the bounded fixture. This operational failure does not change feature scope.
+
+## Implementation and software evidence
+
+Production adds only the reviewed palm eligibility delta and pure snapshot
+predicate. The shared local-anchor/PMove, world pusher/support/rollback, QC,
+queue/completion and wire owners remain unchanged. Current robust mode accepts
+live brush contacts and withholds replay for fresh interaction or a retained
+model-matched planted palm. Legacy-mode and invalid/freed-reference guards
+remain; default selected movement stays off pending parent stages.
+
+The actual raw hand test first exposed omitted dedicated-client registration
+and reliable storage in the prepared harness. After those ordinary resources
+were supplied, the real server offer/client handler/queued capability/raw codec
+reproduced the original unsupported-pusher disconnect. Prepared headless
+disconnect resources subsequently faulted; that run establishes the emitted
+disconnect, not a clean connected negative lifecycle. The corrected adapter
+then completes the same real contact path without dropping the player.
+
+Normal consolidated acceptance uses one imported actual-code fixture:
+
+- Actual e1m1 lift `*7`: independently initialized native/selected 25-ms runs
+  both rise 152 units over 39 moving frames, one quiet carry and one batched
+  carry. Generated VR and selected 10/100-ms runs pass (100/10 moving frames).
+  Actual jump releases support and complete snapshots restore replay.
+- Foot-plus-palm binding: 19 moving contact frames with an explicit subthreshold
+  stroke, quiet and batched commands. Native carry records match actual brush
+  movement, local anchor height follows brush/body, and OFF clears state.
+- Palm-only on actual static floor beside the lift: stationary and moving quiet
+  frames have interaction flag zero, unchanged completion, RUNNING/unpaused,
+  zero waterjump/no external hold, but actual full-snapshot replay remains off.
+  Command batching and 10/25/100-ms subthreshold strokes pass; another public
+  player activates actual lift QC. No passive palm carriage is claimed. OFF
+  clears the binding and actual replay returns.
+- Prepared physical ceiling with ordinary bbox size: actual stock `plat_crush`
+  applies one damage, reverses the lift and rolls back body/brush positions.
+  Native/selected and selected-with-palms cases pass; anchors stay consistent.
+  Removing the wall allows ordinary reversed motion. Callback effects are not
+  expected to roll back with geometry.
+- Prepared trigger/destination with actual installed `teleport_touch` during
+  selected movement: epoch/reset generation advance; stale PMove hand output
+  is not republished into server/client baseline or replay permission.
+- Actual targeted e1m1 door `*17`: prepared invocation of installed
+  `door_go_up/down`, without mover velocity/Think field writes. Native/selected
+  real brush contact displaces a non-rider within brush-direction/motion bounds
+  with support carry record zero. Full snapshots deny selected replay; ordinary
+  relocation/command completion restores it. This is not map button progression.
+- Actual registered QC `setmodel` builtin and actual `ED_Free`, separately from
+  palm-only binding: existing reset/invalidation hooks clear the state; full
+  snapshots have no stale raw ACK and actual body replay returns. Builtin
+  parameters/argc are prepared through the existing registry, not simulated QC.
+
+Carry comparisons allow only the explicit 1/8 PMove position nudge plus hull
+`DIST_EPSILON` and small float arithmetic. Deliberate hand travel is explicitly
+subtracted from the foot-plus-palm carry oracle. No broad trajectory tolerance
+or artificial selection/ACK/permission is used. Prepared starts/resources/
+registration/input, physical obstacle, trigger/destination, callback activation,
+builtin arguments and longer outer world clocks remain documented component
+seams. Real installed QC/BSP/world/collision/message/parser/replay owners execute;
+this is not connected/device or arbitrary-QC/full-domain proof.
+
+## Publication boundary reopened before correction
+
+The implementation review identifies a narrower lifetime interval than the
+already-published surface tests: PMove can acquire a new brush binding, then a
+callback changes/frees that brush before the candidate state is published.
+Main verified `SV_GorillaInvalidateSurface` scans only current client bindings;
+the pending local `result_gorilla` is not there yet. Reset-generation and body
+relocation alone therefore cannot validate that new result's surface identity.
+This is a demonstrated source incompatibility, not a missing-test justification
+for a new lifetime owner.
+
+Amended minimum: at the existing result-publication boundary, verify each
+non-world candidate anchor still names a live solid brush with the matching
+model. If not, invoke the existing accepted-state invalidation/cutoff owner
+instead of publishing stale output. Do not roll back movement/QC, add a
+persistent surface generation or rerun hand physics. Main's production write
+set remains `sv_phys.c`/`sv_main.c`. Add only a fixture callback-composition hook
+after actual QC execution in the reused `stock_liquid_native_fixture.c` wrapper;
+new pusher variants use actual registered setmodel/ED_Free during actual
+PlayerPostThink, checking fresh acquisition before publication. Existing
+published-binding tests remain valid and need no speculative rerun.
+
+Acceptance: first reproduce stale candidate publication in this exact interval;
+then require existing reset/cutoff, no stale server/client raw baseline and
+working full-snapshot body replay after replacement/retirement. Keep prior
+relocation, carry, callback-effect and permission contracts. Astra reviews
+the final guard and this bounded seam after the correction.
