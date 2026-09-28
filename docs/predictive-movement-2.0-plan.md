@@ -42,6 +42,7 @@ intentional predictive-netcode improvement.
 | Stock reconciliation cannot simply be applied to arbitrary mods. | Verified in `SV_PrivateWalkTrialReconcileQCWater` and grounded-jump velocity restoration. These remove stock QC edits; the installed q30 authors map jump heights, boots forces and ladder velocity. See the [exact-program evidence](migration-mod-movement-review.md). |
 | Native customphysics now dispatches through the existing QC callback owner. | Verified in `SV_RunCustomPhysics` and native client/entity dispatch. Selected PMove still rejects active customphysics. Do not reimplement the callback dispatcher. |
 | A cooperative QC command hook is declared but not integrated. | Verified declaration `SV_RunClientCommand` in `Quake/progs.h`; no invocation or `PF_sv_pmove` implementation is present in this branch. QSS-M supplies both through its existing command and builtin owners. q30 has no such hook. |
+| Private demo startup is not currently self-describing. | Verified in `cl_demo.c:CL_Record_Serverdata`: its synthetic serverinfo emits the public extension mask without the selected private-profile marker. `CL_PlayDemo_f` calls `CL_Disconnect`, clearing offered/legacy profile state, and `CL_ParseServerInfo` requires a live offer even during playback. This is a concrete blocker before production private default-on. |
 
 Unverified: connected mixed-client behavior under all mod states; arbitrary
 mod/client prediction equivalence; general live native fallback from an already
@@ -67,6 +68,27 @@ state machine merely to instrument the migration. Exact program identity may
 identify a specific verified adapter; it is not itself proof of correct movement.
 
 ## Staged implementation
+
+### 0. Preserve private demo recording/playback before activation
+
+Owners: `cl_demo.c:CL_Record_Serverdata`, the protocol header reader within
+`cl_parse.c:CL_ParseServerInfo`, and focused demo/header fixtures. Scope: add the
+explicit selected profile marker to synthetic private demo serverinfo, and let
+offline playback accept the supported marked layout without a live network
+offer. Retain all live offer/ordering/extension/base-protocol validation; do not
+infer private framing from colliding public flags or replay a demo through
+network negotiation. The existing demo writer/reader and disconnect/reset owners
+remain authoritative.
+
+Compare early recording's real serverinfo and mid-map synthetic serverinfo.
+Exercise marked private and ordinary public playback, duplicate/misordered or
+unsupported profiles, incompatible flags and truncated headers. A recorded
+private owner update followed by another message must retain framing. Reject
+unmarked ambiguous legacy layouts rather than guessing from the shared mask;
+new recordings from an admitted legacy connection can emit the explicit marker.
+If a small private helper makes the existing header reader independently
+callable, move its existing logic within the same owner rather than implement a
+second parser for tests. Preserve demo world/reset/VR camera behavior.
 
 ### 1. Establish production private negotiation independently of replay
 
@@ -184,3 +206,12 @@ activation/admission code has been changed while drafting this proposal.
 Astra disposition: pending. Main must spot-check load-bearing findings, record
 adopted/adapted/rejected recommendations here and apply the resulting first
 stage before claiming implementation progress for activation.
+
+Preparation evidence: `tests/negotiation_native_fixture.c` now executes the
+actual client offer, server `SV_Pext_f` consumer and `SV_SendServerinfo` writer
+with stock `e1m1`/QC loaded. The native Linux build and matrix pass for server
+enable/disable, modern/legacy/no-extension/wrong/partial offers, incompatible
+base/flags, mixed peer isolation and same-owner serverinfo refresh. Socket sends
+are held and real MSG readers inspect the header. This is neither complete
+client signon nor replay evidence. The production defaults remain zero; the
+demo defects above still block changing them.

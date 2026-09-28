@@ -1,5 +1,32 @@
 # Migration boundary fixtures
 
+## Production private negotiation
+
+`negotiation_native_fixture.c` loads stock `e1m1` and QC through the existing
+offline engine bootstrap. It executes the actual client `cmd pext` offer,
+server command consumer, client initialization and serverinfo writer. Real MSG
+readers inspect the resulting protocol header. The test holds socket sends and
+does not execute client serverinfo parsing, full signon, prediction or VR input.
+
+Use an isolated directory with `id1/pak0.pak` and `pak1.pak` symlinks to the
+installed stock assets, then run from the `2.0` repository root:
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make \
+  negotiation-native-fixture USE_SDL3=1 -j4
+timeout --signal=TERM 25s /tmp/qsvr-negotiation-native-fixture \
+  -dedicated 3 -noudp -nosound -basedir /tmp/qsvr-negotiation-native \
+  -userdir /tmp/qsvr-negotiation-native
+```
+
+Require exit 0 and `NEGOTIATION_NATIVE_PASSED`. The cases include explicit server
+enable/disable, matching/absent/wrong offers, incomplete extension support,
+legacy offer generation, incompatible base protocol/coordinate flags,
+simultaneous private/public peer isolation, and serverinfo refresh. Negotiating
+private transport never selects PMove by itself. Defaults are reported
+separately; this matrix explicitly sets both server choices and cannot alone
+prove the production default or close the connected mixed-play gate.
+
 ## Opaque alias instancing
 
 `alias_batch_fixture.c` executes the production alias draw and batch functions
