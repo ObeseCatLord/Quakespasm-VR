@@ -119,3 +119,8 @@ actual pickup/native-action/expiry/replay-return fixture implementation. It reus
 installed QC spawn/contact and existing normal-session owners, with separate
 initialized native/selected runs and explicit prepared item/resource limits.
 No new production ability or movement owner is authorized by this slice.
+
+The [installed AD identity/reuse plan](predictive-ad-identical-program-2.0-plan.md)
+records byte-identical pak2 program evidence before actual mounted-session
+qualification. It uses existing exact-program owners without a new production
+implementation; older AD programs and Mjolnir remain separately qualified.
