@@ -7449,7 +7449,7 @@ static qboolean SV_PrivateWalkTrialStockHull (edict_t *ent)
 {
 	vec3_t mins = {-16, -16, -24};
 	vec3_t maxs = {16, 16, 32};
-	return (int)ent->v.solid == SOLID_SLIDEBOX &&
+	return ent->v.solid == SOLID_SLIDEBOX &&
 		VectorCompare (ent->v.mins, mins) && VectorCompare (ent->v.maxs, maxs);
 }
 
@@ -7462,44 +7462,60 @@ qboolean SV_PrivateWalkTrialTerminalState (client_t *client)
 		!client->edict || client->edict->free)
 		return false;
 	ent = client->edict;
-	if (!isfinite (ent->v.health) ||
+	if (!isfinite (ent->v.health) || !isfinite (ent->v.deadflag) ||
+		!isfinite (ent->v.movetype) ||
 		(ent->v.health > 0 && ent->v.deadflag == DEAD_NO))
 		return false;
-	switch ((int)ent->v.movetype)
-	{
-	case MOVETYPE_NONE:
-	case MOVETYPE_WALK:
-	case MOVETYPE_FLY:
-	case MOVETYPE_NOCLIP:
-	case MOVETYPE_TOSS:
-	case MOVETYPE_BOUNCE:
-	case MOVETYPE_GIB:
-		return true;
-	default:
-		return false;
-	}
+	return ent->v.movetype == MOVETYPE_NONE || ent->v.movetype == MOVETYPE_WALK ||
+		ent->v.movetype == MOVETYPE_FLY || ent->v.movetype == MOVETYPE_NOCLIP ||
+		ent->v.movetype == MOVETYPE_TOSS || ent->v.movetype == MOVETYPE_BOUNCE ||
+		ent->v.movetype == MOVETYPE_GIB;
 }
 
-const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
+/* Classification observes the current owner, not the previous frame's
+ * dispatcher. Callers still choose which states their execution permits. */
+sv_private_move_state_t SV_PrivateWalkTrialClassifyState (client_t *client)
+{
+	edict_t *ent;
+	if (!client || !client->active || !client->spawned ||
+		!client->edict || client->edict->free)
+		return SV_PRIVATE_MOVE_REJECTED;
+	ent = client->edict;
+	if (!isfinite (ent->v.health) || !isfinite (ent->v.deadflag) ||
+		!isfinite (ent->v.movetype))
+		return SV_PRIVATE_MOVE_REJECTED;
+	if (SV_PrivateWalkTrialTerminalState (client))
+		return SV_PRIVATE_MOVE_TERMINAL;
+	if (!SV_PrivateWalkTrialStockHull (ent))
+		return SV_PRIVATE_MOVE_REJECTED;
+	if (ent->v.movetype == MOVETYPE_WALK)
+		return SV_PRIVATE_MOVE_WALK;
+	if (ent->v.movetype == MOVETYPE_NOCLIP || ent->v.movetype == MOVETYPE_FLY)
+		return SV_PRIVATE_MOVE_NATIVE;
+	return SV_PRIVATE_MOVE_REJECTED;
+}
+
+/* Receipt and snapshots admit qualified native states as well as WALK.
+ * This validation must not run water categorization or consume input. */
+const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
 	const usercmd_t *cmd)
 {
 	eval_t *customphysics;
 	int groundprog, groundnum, i;
 	edict_t *ground;
+	sv_private_move_state_t state;
 
+	if (qcvm != &sv.qcvm)
+		return "server QC VM changed";
 	if (!client || !ent || !client->active || !client->spawned ||
 		client->edict != ent || ent->free)
 		return "client owner is no longer live";
-	if (sv.paused)
-		return "server paused";
 	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		!SV_PrivateWalkTrialSelected (client))
 		return "private profile selection changed";
-	if (SV_PrivateWalkTrialTerminalState (client))
-		return "owner entered terminal state";
-	if ((int)ent->v.movetype != MOVETYPE_WALK ||
-		!SV_PrivateWalkTrialStockHull (ent))
-		return "owner left stock WALK hull";
+	state = SV_PrivateWalkTrialClassifyState (client);
+	if (state == SV_PRIVATE_MOVE_REJECTED)
+		return "owner left supported stock movement state";
 	if (cmd && cmd->vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
 	if (cmd && cmd->vr_gorilla.flags &&
@@ -7512,15 +7528,16 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 		if (!isfinite (ent->v.velocity[i]))
 			return "owner has a non-finite velocity";
 	}
-	SV_CheckWater (ent);
-	if (ent->v.waterlevel < 0 || ent->v.waterlevel > 3)
+	if (!isfinite (ent->v.waterlevel) || ent->v.waterlevel < 0 || ent->v.waterlevel > 3)
 		return "invalid owner water level";
+	if (state == SV_PRIVATE_MOVE_TERMINAL)
+		return NULL; // dead hull/ground references are not a living WALK contract
 
 	customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
 	if (customphysics && customphysics->function)
 		return "customphysics became active";
 
-	groundprog = (int)ent->v.groundentity;
+	groundprog = ent->v.groundentity; // QC entity slots are integer byte offsets
 	if (qcvm->edict_size <= 0 || groundprog < 0 || (groundprog &&
 		(groundprog % qcvm->edict_size || groundprog / qcvm->edict_size >= qcvm->num_edicts)))
 		return "invalid ground entity";
@@ -7532,10 +7549,34 @@ const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
 			return "stale ground entity";
 		if (ground->v.movetype == MOVETYPE_PUSH && ground->v.solid == SOLID_BSP)
 		{
-			client->private_pmove_pusher_interaction = true;
 			if (sv_gameplayfix_elevators.value < 3.f)
 				return "owner is riding a pusher";
 		}
+	}
+	return NULL;
+}
+
+/* A command already executing PMove must remain WALK after each callback.
+ * Native eligibility does not authorize PM_NORMAL for a different movetype. */
+const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client,
+	const usercmd_t *cmd)
+{
+	const char *failure = SV_PrivateWalkTrialFrameStateError (ent, client, cmd);
+	edict_t *ground;
+	if (failure)
+		return failure;
+	if (sv.paused)
+		return "server paused";
+	if (SV_PrivateWalkTrialClassifyState (client) != SV_PRIVATE_MOVE_WALK)
+		return "owner left stock WALK hull";
+	SV_CheckWater (ent);
+	if (!isfinite (ent->v.waterlevel) || ent->v.waterlevel < 0 || ent->v.waterlevel > 3)
+		return "invalid owner water level";
+	if (ent->v.groundentity)
+	{
+		ground = PROG_TO_EDICT (ent->v.groundentity);
+		if (ground->v.movetype == MOVETYPE_PUSH && ground->v.solid == SOLID_BSP)
+			client->private_pmove_pusher_interaction = true;
 	}
 	return NULL;
 }
@@ -8876,12 +8917,12 @@ static qboolean SV_Physics_ClientNativeFrame (edict_t *ent, int num,
 		SV_CLIENT_NATIVE_FRESH, false, NULL);
 }
 
-/* A dead selected owner uses the ordinary world-frame dispatcher from its
+/* A native selected owner uses the ordinary world-frame dispatcher from its
  * beginning. Coalesce only the command levels/latches that the ordinary
  * private parser would have staged; physical contacts retain their ordered
  * queue cursor and are invalidated while the owner is still dead. */
-static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
-	client_t *client)
+static void SV_Physics_ClientSelectedNativeFrame (edict_t *ent, int num,
+	client_t *client, qboolean terminal)
 {
 	client_t *saved_host_client = host_client;
 	edict_t *saved_sv_player = sv_player;
@@ -8890,12 +8931,21 @@ static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
 	unsigned int offset, latched_buttons = 0;
 	int latched_impulse = 0;
 	qboolean consumed = false;
+	vec3_t roomscale = {0, 0, 0};
+	const char *failure;
+
+	if (!terminal && (failure = SV_PrivateWalkTrialFrameStateError (ent, client,
+		&client->cmd)) != NULL)
+	{
+		SV_PrivateWalkTrialDrop (client, failure);
+		return;
+	}
 
 	if (client->private_cmd_queue_count > SV_PRIVATE_CMD_QUEUE_SIZE ||
 		client->private_cmd_queue_head >= SV_PRIVATE_CMD_QUEUE_SIZE ||
 		client->private_cmd_queue_msec > SV_PRIVATE_CMD_QUEUE_MAX_MSEC)
 	{
-		SV_PrivateWalkTrialDrop (client, "invalid terminal command queue");
+		SV_PrivateWalkTrialDrop (client, "invalid native command queue");
 		return;
 	}
 	if (client->private_pmove_last_cmd_valid)
@@ -8910,13 +8960,17 @@ static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
 			(int)queued->sequence <= completed_move ||
 			(int)queued->sequence > client->lastmovemessage)
 		{
-			SV_PrivateWalkTrialDrop (client, "invalid terminal command order");
+			SV_PrivateWalkTrialDrop (client, "invalid native command order");
 			return;
 		}
 		completed_move = (int)queued->sequence;
 		latched_buttons |= queued->buttons & 3;
 		if (queued->impulse)
 			latched_impulse = queued->impulse;
+		if (!queued->vr_active)
+			VectorClear (roomscale);
+		else
+			VectorAdd (roomscale, queued->vr_roomscalemove, roomscale);
 		last = *queued;
 		consumed = true;
 	}
@@ -8925,7 +8979,10 @@ static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
 	staged.impulse = latched_impulse;
 	staged.seconds = 0; // the native dispatcher owns the world-frame clock
 	staged.msec = 0;
-	VectorClear (staged.vr_roomscalemove);
+	if (terminal)
+		VectorClear (staged.vr_roomscalemove);
+	else
+		VectorCopy (roomscale, staged.vr_roomscalemove);
 	client->cmd = staged;
 	VectorCopy (staged.viewangles, ent->v.v_angle);
 	ent->v.button0 = (staged.buttons & BUTTON_ATTACK) != 0;
@@ -8934,24 +8991,28 @@ static void SV_Physics_ClientTerminalFrame (edict_t *ent, int num,
 	ent->v.impulse = staged.impulse;
 	host_client = client;
 	sv_player = ent;
-	SV_ClientUpdateAnglesForClient (client);
-	/* Drain while dead, before a queued respawn input can revive the owner. */
-	if (!SV_VRContactDrainQueued (ent, client, completed_move))
-	{
-		SV_PrivateWalkTrialDrop (client, "terminal contact cursor invalidated");
-		host_client = saved_host_client;
-		sv_player = saved_sv_player;
-		return;
-	}
 	client->private_move_native_frame = true;
-	client->private_move_resume_pending = true;
 	client->private_pmove_credit_msec = 0.0;
 	client->private_pmove_jump_secs = 0.0f;
 	client->private_pmove_waterjump_secs = 0.0f;
-	SV_ResetGorillaClient (client);
-	/* A respawn in PreThink must not replay dead-frame hand samples. */
-	client->vr_gorilla_last_sequence = completed_move;
-	client->vr_gorilla_cursor_valid = true;
+	if (terminal)
+	{
+		SV_ClientUpdateAnglesForClient (client);
+		/* Drain while dead, before queued respawn input can revive the owner. */
+		if (!SV_VRContactDrainQueued (ent, client, completed_move))
+		{
+			SV_PrivateWalkTrialDrop (client, "terminal contact cursor invalidated");
+			host_client = saved_host_client;
+			sv_player = saved_sv_player;
+			return;
+		}
+		client->private_move_resume_pending = true;
+		SV_ResetGorillaClient (client);
+		client->vr_gorilla_last_sequence = completed_move;
+		client->vr_gorilla_cursor_valid = true;
+	}
+	else
+		SV_ClientThink (); // includes the single native angle/recoil update
 	if (SV_Physics_ClientNativeFrame (ent, num, completed_move) && consumed)
 	{
 		if (client->private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION &&
@@ -8986,9 +9047,11 @@ static void SV_Physics_Client (edict_t *ent, int num)
 	if (!client->knowntoqc && sv_gameplayfix_spawnbeforethinks.value)
 		return; // don't spam prethinks before we called putclientinserver.
 	if (SV_PrivateWalkTrialSelected (client) &&
-		SV_PrivateWalkTrialTerminalState (client))
+		(SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_TERMINAL ||
+		 SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE))
 	{
-		SV_Physics_ClientTerminalFrame (ent, num, client);
+		SV_Physics_ClientSelectedNativeFrame (ent, num, client,
+			SV_PrivateWalkTrialTerminalState (client));
 		return;
 	}
 

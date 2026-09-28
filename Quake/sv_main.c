@@ -857,7 +857,6 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 	edict_t *ground;
 	eval_t *customphysics;
 	int groundentity;
-	qboolean terminal;
 
 	if (!client || !client->active || !client->knowntoqc || !client->edict || client->edict->free)
 		return "client is not a live spawned owner";
@@ -872,22 +871,22 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 		return "requires the pinned stock progs identity";
 	if (!SV_PrivateWalkStatsDisjoint ())
 		return "custom stats overlap private movement stats";
-	terminal = SV_PrivateWalkTrialSelected (client) &&
-		SV_PrivateWalkTrialTerminalState (client);
-	if (!terminal && (client->edict->v.movetype != MOVETYPE_WALK ||
+	/* Initial selection remains dry WALK. Already admitted owners may execute
+	 * qualified native frames, with the same observational validation used at
+	 * receipt. Selection is not permission to run PMove in those states. */
+	if (SV_PrivateWalkTrialSelected (client))
+		return SV_PrivateWalkTrialFrameStateError (client->edict, client, &client->cmd);
+	if (client->edict->v.movetype != MOVETYPE_WALK ||
 		client->edict->v.solid != SOLID_SLIDEBOX ||
-		(!client->private_pmove_walk_selected && client->edict->v.waterlevel != 0)))
+		client->edict->v.waterlevel != 0)
 		return "requires a stock WALK/SOLID_SLIDEBOX owner, dry at selection";
 	if (client->cmd.vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
-	if (!terminal)
-	{
-		customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
-		if (customphysics && customphysics->function)
-			return "customphysics is active";
-	}
+	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
+	if (customphysics && customphysics->function)
+		return "customphysics is active";
 	groundentity = client->edict->v.groundentity;
-	if (groundentity && !terminal)
+	if (groundentity)
 	{
 		if (groundentity < 0 || qcvm->edict_size <= 0 ||
 			groundentity > (qcvm->num_edicts - 1) * qcvm->edict_size ||
@@ -1930,7 +1929,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	size_t					   entnum, ownernum = 0, i;
 	qboolean				   selected = client->protocol_qsvr == QSVR_PROTOCOL_PINNED && SV_PrivateWalkTrialSelected (client);
 	qboolean				   selected_engine = selected &&
-		!SV_PrivateWalkTrialTerminalState (client) && !client->private_move_native_frame;
+		SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK &&
+		!client->private_move_native_frame;
 	qboolean				   worldreset = false, wrote_optional = false;
 	qboolean				   gorilla_ack = false;
 	int					   ack_flags = 0;
@@ -4090,7 +4090,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 			 * their ACK permission stays off until an active-frame state check. */
 			trial_failure = SV_PrivateWalkTrialAdmissionFailure (client);
 			if (!trial_failure && !sv.paused &&
-				!SV_PrivateWalkTrialTerminalState (client))
+				SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK)
 				trial_failure = SV_PrivateWalkTrialStateError (client->edict, client,
 					&client->cmd);
 			if (trial_failure)

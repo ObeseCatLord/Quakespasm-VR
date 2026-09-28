@@ -618,6 +618,15 @@ extern cvar_t sv_voice;
 void SV_FinishPrivateUsercmds (void);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
 qboolean SV_PrivateWalkTrialTerminalState (client_t *client);
+typedef enum
+{
+	SV_PRIVATE_MOVE_REJECTED,
+	SV_PRIVATE_MOVE_WALK,
+	SV_PRIVATE_MOVE_NATIVE,
+	SV_PRIVATE_MOVE_TERMINAL
+} sv_private_move_state_t;
+sv_private_move_state_t SV_PrivateWalkTrialClassifyState (client_t *client);
+const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client, const usercmd_t *cmd);
 qboolean SV_PrivateWalkTrialQ30Program (void);
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client);
 const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client, const usercmd_t *cmd);

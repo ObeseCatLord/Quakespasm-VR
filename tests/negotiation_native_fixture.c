@@ -220,6 +220,8 @@ static void DemoEntityPackets (qboolean selected)
 	client->edict->v.deadflag = DEAD_NO;
 	client->edict->v.movetype = MOVETYPE_WALK;
 	client->edict->v.solid = SOLID_SLIDEBOX;
+	VectorSet (client->edict->v.mins, -16, -16, -24);
+	VectorSet (client->edict->v.maxs, 16, 16, 32);
 	client->edict->v.waterlevel = 0;
 	client->edict->v.teleport_time = 0;
 	client->vr_gorilla_capable = true;

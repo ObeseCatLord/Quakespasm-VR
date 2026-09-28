@@ -1,5 +1,6 @@
 /* Real stock QC, negotiated public/private owners, production send/receive,
- * native physics and snapshots. Only unreliable transport is captured;
+ * native physics and snapshots. Unreliable transport and player skin uploads
+ * are captured (the dedicated bootstrap has no renderer textures);
  * commands are synthetic, and client signon/resource state is prepared here.
  * This is not connected signon, upstream-client or OpenXR input evidence. */
 #define main NegotiationFixtureMain
@@ -8,7 +9,14 @@
 
 static byte captured[NET_MAXMESSAGE];
 static int captured_length;
+static int skin_uploads;
 extern qboolean SV_ReadClientMessage (void);
+
+void __wrap_R_TranslateNewPlayerSkin (int player)
+{
+	assert (player >= 0 && player < cl.maxclients);
+	skin_uploads++;
+}
 
 int __wrap_NET_SendUnreliableMessage (qsocket_t *socket, sizebuf_t *message)
 {
@@ -27,8 +35,24 @@ static client_t *SpawnPeer (int slot, const char *offer, unsigned profile)
 	Cmd_ExecuteString ("begin", src_client);
 	assert (client->active && client->spawned && client->knowntoqc);
 	assert (client->edict->v.health > 0 && !client->edict->free);
-	assert (!client->private_pmove_walk_selected);
+	assert (client->private_pmove_walk_selected == (profile && sv_private_pmove_walk.value));
 	return client;
+}
+
+static void ReadPeerSnapshot (client_t *peer, byte *bytes, size_t capacity)
+{
+	SV_PresendClientDatagram (peer);
+	net_message.data = bytes;
+	net_message.maxsize = capacity;
+	SZ_Clear (&net_message);
+	if (SV_PrivateWalkTrialSelected (peer))
+		assert (!SV_PrivateWalkTrialAdmissionFailure (peer));
+	SVFTE_WriteStats (peer, &net_message);
+	if (SV_PrivateWalkTrialSelected (peer))
+		assert (SVFTE_WritePrivateMoveStats (peer, &net_message));
+	assert (SVFTE_WriteEntitiesToClient (peer, &net_message, capacity, false));
+	CL_ParseServerMessage (); // commits stats/ACK/owner at the real message end
+	assert (msg_readcount == net_message.cursize);
 }
 
 int main (int argc, char **argv)
@@ -39,13 +63,17 @@ int main (int argc, char **argv)
 	vec3_t start[2];
 	float initial_shells[2];
 	qboolean saw_peer[2] = {false, false};
+	qboolean selected, saw_replay = false, saw_return_replay[2] = {false, false};
+	unsigned last_mode_epoch = 0;
 	static byte snapshots[NET_MAXMESSAGE];
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
+	selected = COM_CheckParm ("-selected") != 0;
 	assert (svs.maxclients >= 2);
 	/* Enable the existing profile explicitly for this component proof. The
 	 * separate negotiation fixture owns verification of production defaults. */
 	Cvar_SetQuick (&sv_qsvr_private, "1");
 	assert (!sv_private_pmove_walk.value);
+	if (selected) Cvar_SetQuick (&sv_private_pmove_walk, "1");
 	ClientOffer (0, false, modern_offer, sizeof (modern_offer));
 	ClientOffer (QSVR_PROTOCOL_PINNED, false, public_offer, sizeof (public_offer));
 	peers[0] = SpawnPeer (0, modern_offer, QSVR_PROTOCOL_PINNED);
@@ -62,6 +90,10 @@ int main (int argc, char **argv)
 		states[slot]->protocol_pext2 = peers[slot]->protocol_pext2;
 		states[slot]->protocol_qsvr = peers[slot]->protocol_qsvr;
 		states[slot]->viewentity = slot + 1;
+		states[slot]->worldmodel = sv.qcvm.worldmodel;
+		states[slot]->maxclients = svs.maxclients;
+		states[slot]->scores = Mem_Alloc (svs.maxclients * sizeof (*cl.scores));
+		states[slot]->gametype = GAME_COOP;
 		states[slot]->ackedmovemessages = -1;
 		states[slot]->max_edicts = qcvm->max_edicts;
 		states[slot]->num_entities = 1;
@@ -94,6 +126,28 @@ int main (int argc, char **argv)
 	{
 		pr_global_struct->frametime = host_frametime; /* Host_ServerFrame's QC clock. */
 		realtime += host_frametime;
+		if (selected && (frame == 20 || frame == 40 || frame == 60 || frame == 80))
+		{
+			host_client = peers[0];
+			sv_player = host_client->edict;
+			Cmd_ExecuteString (frame == 20 ? "fly 1" : frame == 40 ? "fly 0" :
+				frame == 60 ? "noclip 1" : "noclip 0", src_client);
+			assert (sv_player->v.movetype == (frame == 20 ? MOVETYPE_FLY :
+				frame == 60 ? MOVETYPE_NOCLIP : MOVETYPE_WALK));
+			cl = *states[0];
+			if (frame == 20 || frame == 60)
+			{
+				cl.move_replay_propagate_sequence[0] = 123456;
+				cl.move_replay_propagate_waterjumptime[0] = 1;
+			}
+			cls.netcon = peers[0]->netconnection;
+			ReadPeerSnapshot (peers[0], snapshots, sizeof (snapshots));
+			/* Entering native is observable before physics. Leaving it cannot
+			 * grant replay until the selected frame has actually run. */
+			assert (cl.move_ack_authority == MOVE_AUTHORITY_LEGACY_FRAME &&
+				!cl.move_ack_prediction_allowed && cl.move_ack_selected_owner);
+			*states[0] = cl;
+		}
 		for (int slot = 0; slot < 2; slot++)
 		{
 			usercmd_t command = {0};
@@ -125,7 +179,8 @@ int main (int argc, char **argv)
 				assert (SV_ReadClientMessage ());
 				/* The message owner's normal EOF read sets badread; acceptance
 				 * above, rather than that terminal flag, is its public contract. */
-				assert (host_client->cmd.vr_active == !slot);
+				if (!SV_PrivateWalkTrialSelected (host_client))
+					assert (host_client->cmd.vr_active == !slot);
 			}
 			if (!slot && frame % 30 == 2)
 			{
@@ -133,6 +188,12 @@ int main (int argc, char **argv)
 				 * packet before the world frame. Redundant older commands in
 				 * that packet must not accumulate their roomscale twice. */
 				float pending_roomscale = host_client->cmd.vr_roomscalemove[1];
+				float queued_roomscale = 0;
+				unsigned queued_count = host_client->private_cmd_queue_count;
+				int accepted = host_client->lastmovemessage;
+				for (unsigned i = 0; i < queued_count; ++i)
+					queued_roomscale += host_client->private_cmd_queue[
+						(host_client->private_cmd_queue_head + i) % SV_PRIVATE_CMD_QUEUE_SIZE].vr_roomscalemove[1];
 				command.buttons = command.impulse = 0;
 				VectorClear (command.vr_roomscalemove);
 				captured_length = 0;
@@ -142,34 +203,68 @@ int main (int argc, char **argv)
 				net_message.data = captured;
 				net_message.cursize = captured_length;
 				assert (SV_ReadClientMessage ());
-				assert ((host_client->cmd.buttons & BUTTON_ATTACK) &&
-					!host_client->private_latest_buttons && host_client->cmd.impulse == 2);
-				assert (host_client->cmd.vr_roomscalemove[1] == pending_roomscale);
+				if (!selected)
+				{
+					assert ((host_client->cmd.buttons & BUTTON_ATTACK) &&
+						!host_client->private_latest_buttons && host_client->cmd.impulse == 2);
+					assert (host_client->cmd.vr_roomscalemove[1] == pending_roomscale);
+				}
+				else
+				{
+					float after = 0;
+					assert (host_client->lastmovemessage == accepted + 1 &&
+						host_client->private_cmd_queue_count == queued_count + 1);
+					for (unsigned i = 0; i < host_client->private_cmd_queue_count; ++i)
+						after += host_client->private_cmd_queue[
+							(host_client->private_cmd_queue_head + i) % SV_PRIVATE_CMD_QUEUE_SIZE].vr_roomscalemove[1];
+					assert (after == queued_roomscale);
+				}
 			}
-			SV_ClientThink ();
+			if (!SV_PrivateWalkTrialSelected (host_client)) SV_ClientThink ();
 		}
 		SV_Physics ();
 		SV_FinishPrivateUsercmds ();
-		assert (!(peers[0]->cmd.buttons & BUTTON_ATTACK) && !peers[0]->cmd.impulse &&
-			!peers[0]->edict->v.impulse && !peers[0]->private_cmd_queue_count);
+		assert (!peers[0]->cmd.impulse && !peers[0]->edict->v.impulse);
+		if (!selected || peers[0]->private_move_native_frame)
+			assert (!(peers[0]->cmd.buttons & BUTTON_ATTACK) && !peers[0]->private_cmd_queue_count);
 		for (int slot = 0; slot < 2; slot++)
 		{
 			cl = *states[slot];
 			cls.netcon = peers[slot]->netconnection;
-			SV_PresendClientDatagram (peers[slot]);
-			net_message.data = snapshots;
-			net_message.maxsize = sizeof (snapshots);
-			SZ_Clear (&net_message);
-			assert (SVFTE_WriteEntitiesToClient (peers[slot], &net_message, sizeof (snapshots), false));
-			MSG_BeginReading ();
-			assert (MSG_ReadByte () == svcfte_updateentities);
-			CLFTE_ParseEntitiesUpdate ();
-			assert (!msg_badread && msg_readcount == net_message.cursize);
-			assert (!cl.move_ack_prediction_allowed && !peers[slot]->private_pmove_walk_selected);
+			ReadPeerSnapshot (peers[slot], snapshots, sizeof (snapshots));
+			if (selected && !slot)
+			{
+				vec3_t replay_origin;
+				qboolean native = peers[slot]->edict->v.movetype != MOVETYPE_WALK;
+				assert (cl.move_ack_selected_owner && cl.move_snapshot_valid);
+				assert (cl.move_ack_authority == (native ? MOVE_AUTHORITY_LEGACY_FRAME :
+					MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT));
+				if (frame == 20 || frame == 40 || frame == 60 || frame == 80)
+					assert (cl.move_ack_mode_epoch > last_mode_epoch);
+				last_mode_epoch = cl.move_ack_mode_epoch;
+				cl.time = qcvm->time;
+				cl.pendingcmd.servertime = cl.time;
+				qboolean replayed = CL_ReplayPlayerMovement (&cl.entities[1], replay_origin);
+				if (native)
+					assert (!cl.move_ack_prediction_allowed && !replayed);
+				else if (cl.move_ack_prediction_allowed && frame > 2)
+				{
+					assert (replayed && cl.move_replay_private_metadata_valid &&
+						cl.move_replay_private_mode_epoch == cl.move_ack_mode_epoch);
+					saw_replay = true;
+					if (frame >= 40 && frame < 60) saw_return_replay[0] = true;
+					if (frame >= 80) saw_return_replay[1] = true;
+					if (frame == 40 || frame == 80)
+						assert (!cl.move_replay_propagate_sequence[0] &&
+							!cl.move_replay_propagate_waterjumptime[0]);
+				}
+			}
+			else assert (!cl.move_ack_prediction_allowed && !peers[slot]->private_pmove_walk_selected);
 			saw_peer[slot] |= cl.entities[2 - slot].netstate.modelindex > 0;
 			if (frame >= 2)
 			{
-				assert (cl.ackedmovemessages == peers[slot]->lastmovemessage);
+				assert (cl.ackedmovemessages == (selected && !slot ?
+					peers[slot]->private_completed_move : peers[slot]->lastmovemessage));
 				assert (cl.ackedmovemessages < cl.movemessages);
 			}
 			*states[slot] = cl;
@@ -196,8 +291,15 @@ int main (int argc, char **argv)
 			initial_shells[slot], peers[slot]->edict->v.ammo_shells,
 			states[slot]->ackedmovemessages);
 		Mem_Free (states[slot]->entities);
+		Mem_Free (states[slot]->scores);
 		Mem_Free (states[slot]);
 	}
-	puts ("MIXED_NATIVE_PASSED synthetic commands/captured transport/actual QC physics/snapshots; no connected XR claim");
+	assert (skin_uploads > 0); // the graphics boundary actually ran
+	if (selected)
+	{
+		assert (saw_replay && saw_return_replay[0] && saw_return_replay[1] && last_mode_epoch >= 4);
+		puts ("MIXED_SELECTED_NATIVE_PASSED real admission/fly/noclip/return; full stats/snapshot/replay; captured transport");
+	}
+	else puts ("MIXED_NATIVE_PASSED synthetic commands/captured transport/actual QC physics/snapshots; no connected XR claim");
 	return 0;
 }

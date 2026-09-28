@@ -497,7 +497,7 @@ qboolean SV_GorillaEligible (client_t *client)
 	edict_t *ent;
 	eval_t *customphysics;
 	if (!client || !client->active || !client->spawned ||
-		SV_PrivateWalkTrialSelected (client) ||
+		(SV_PrivateWalkTrialSelected (client) && !client->private_move_native_frame) ||
 		client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		!client->vr_gorilla_capable || !sv_gorilla.value || sv.paused ||
 		(client->cmd.vr_gorilla.flags & VR_GORILLA_HANDS) != VR_GORILLA_HANDS)
@@ -543,7 +543,7 @@ static void SV_GorillaConsumeDeferredMove (client_t *client,
 	if (!client || !client->vr_gorilla_move_deferred)
 		return;
 	if (!client->edict || client->edict->free ||
-		SV_PrivateWalkTrialSelected (client) ||
+		(SV_PrivateWalkTrialSelected (client) && !client->private_move_native_frame) ||
 		client->edict->v.movetype == MOVETYPE_NONE ||
 		(client->edict->v.movetype != MOVETYPE_WALK &&
 		 client->edict->v.movetype != MOVETYPE_FLY &&
@@ -1234,39 +1234,11 @@ static qboolean SV_PrivateWalkTrialFail (client_t *client, const char *reason)
 
 static qboolean SV_PrivateWalkTrialStateValid (client_t *client)
 {
-	int groundentity;
-	edict_t *ground;
-	eval_t *customphysics;
-
-	if (qcvm != &sv.qcvm)
-		return SV_PrivateWalkTrialFail (client, "server QC VM changed");
+	const char *failure;
 	if (sv.paused)
 		return SV_PrivateWalkTrialFail (client, "server paused");
-	if (!client->active || !client->edict || client->edict->free ||
-		client->edict->v.movetype != MOVETYPE_WALK ||
-		client->edict->v.solid != SOLID_SLIDEBOX)
-		return SV_PrivateWalkTrialFail (client, "owner left WALK/SOLID_SLIDEBOX state");
-	/* A selected client keeps the same per-command owner in water. Physics
-	 * validates the water level and the snapshot withholds wet prediction. */
-
-	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
-	if (customphysics && customphysics->function)
-		return SV_PrivateWalkTrialFail (client, "customphysics became active");
-
-	groundentity = client->edict->v.groundentity;
-	if (groundentity)
-	{
-		if (groundentity < 0 || qcvm->edict_size <= 0 ||
-			groundentity > (qcvm->num_edicts - 1) * qcvm->edict_size ||
-			groundentity % qcvm->edict_size)
-			return SV_PrivateWalkTrialFail (client, "invalid groundentity offset");
-		ground = PROG_TO_EDICT (groundentity);
-		if (!ground->free && ground->v.movetype == MOVETYPE_PUSH &&
-			ground->v.solid == SOLID_BSP &&
-			sv_gameplayfix_elevators.value < 3.f)
-			return SV_PrivateWalkTrialFail (client, "owner contacted a pusher");
-	}
-	return true;
+	failure = SV_PrivateWalkTrialFrameStateError (client->edict, client, NULL);
+	return failure ? SV_PrivateWalkTrialFail (client, failure) : true;
 }
 
 /* Selected movement has one command owner. A pause discards its pending work
@@ -1514,6 +1486,15 @@ void SV_FinishPrivateUsercmds (void)
 				client->cmd.impulse = 0;
 				memset (client->cmd.vr_roomscalemove, 0,
 					sizeof (client->cmd.vr_roomscalemove));
+				if (client->private_move_native_frame &&
+					!SV_PrivateWalkTrialTerminalState (client))
+				{
+					/* Native coalescing used brief latches for this frame.
+					 * Publish the latest levels as the ordinary private path does. */
+					client->edict->v.button0 = (client->cmd.buttons & 1) != 0;
+					client->edict->v.button2 = (client->cmd.buttons & 2) != 0;
+					SV_SetClientExtraButtons (client->edict, client->cmd.buttons);
+				}
 			}
 			continue;
 		}

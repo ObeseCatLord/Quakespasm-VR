@@ -10,6 +10,18 @@ static qboolean kill_think, schedule_postthink;
 static float expected_world_frametime;
 static func_t fixture_think, fixture_prethink, fixture_postthink;
 static int callback_slots[3], num_callbacks;
+static int expected_impulse;
+static int observed_buttons, observed_impulse;
+extern cvar_t sv_altnoclip;
+static char callback_order[64];
+static int callback_count;
+static qboolean native_comparison;
+
+static void note_callback (char phase)
+{
+	assert (callback_count < sizeof (callback_order));
+	callback_order[callback_count++] = phase;
+}
 
 /* Add a two-statement QC callback calling a diagnostic builtin. Keep every
  * existing function-map entry pointed at its corresponding copied record. */
@@ -61,8 +73,9 @@ static void observe_think (void)
 {
 	edict_t *ent = PROG_TO_EDICT (pr_global_struct->self);
 	think_calls++;
+	note_callback ('T');
 	assert (fabsf (pr_global_struct->frametime - expected_world_frametime) < .000001f);
-	assert (ent->v.impulse == 0);
+	assert (ent->v.impulse == expected_impulse);
 	ent->v.nextthink = qcvm->time + .001f;
 	if (kill_think)
 		fixture_death (ent);
@@ -70,7 +83,13 @@ static void observe_think (void)
 
 static void observe_prethink (void)
 {
+	edict_t *ent = PROG_TO_EDICT (pr_global_struct->self);
 	prethink_calls++;
+	note_callback ('P');
+	if (native_comparison)
+		assert (fabsf (pr_global_struct->frametime - expected_world_frametime) < .000001f);
+	observed_buttons = (ent->v.button0 ? 1 : 0) | (ent->v.button2 ? 2 : 0);
+	observed_impulse = ent->v.impulse;
 	if (prethink_calls == kill_prethink)
 		fixture_death (PROG_TO_EDICT (pr_global_struct->self));
 }
@@ -78,6 +97,9 @@ static void observe_prethink (void)
 static void observe_postthink (void)
 {
 	postthink_calls++;
+	note_callback ('Q');
+	if (native_comparison)
+		assert (fabsf (pr_global_struct->frametime - expected_world_frametime) < .000001f);
 	if (schedule_postthink)
 		PROG_TO_EDICT (pr_global_struct->self)->v.nextthink = qcvm->time + .001f;
 }
@@ -104,6 +126,7 @@ static void prepare_selected (edict_t *owner, client_t *client, int commands)
 	owner->v.think = fixture_think;
 	owner->v.nextthink = qcvm->time + .001f;
 	think_calls = prethink_calls = postthink_calls = kill_prethink = 0;
+	callback_count = 0;
 	kill_think = schedule_postthink = false;
 	client->private_completed_move = 0;
 	client->lastmovemessage = commands;
@@ -118,6 +141,202 @@ static void prepare_selected (edict_t *owner, client_t *client, int commands)
 	G_INT (callback_slots[0]) = fixture_think + 1;
 	G_INT (callback_slots[1]) = fixture_prethink + 1;
 	G_INT (callback_slots[2]) = fixture_postthink + 1;
+}
+
+/* Compare the adapter with the existing native chain from the identical
+ * loaded player/QC/client checkpoint. Diagnostic QC observes callbacks;
+ * gameplay QC and negotiated admission are exercised by the mixed fixture. */
+static void compare_native_states (edict_t *owner, client_t *client)
+{
+	const size_t vars_size = qcvm->progs->entityfields * sizeof (float);
+	const size_t globals_size = qcvm->progs->numglobals * sizeof (float);
+	void *vars = Mem_Alloc (vars_size), *globals = Mem_Alloc (globals_size);
+	client_t *saved_client = Mem_Alloc (sizeof (*client));
+	const int modes[] = {MOVETYPE_NOCLIP, MOVETYPE_NOCLIP, MOVETYPE_FLY, MOVETYPE_FLY};
+	const int counts[] = {0, 2, 8};
+	vec3_t native_origin, native_velocity, native_punch;
+	vec3_t maintenance_origin, maintenance_velocity, maintenance_punch;
+	vr_gorilla_state_t native_gorilla;
+	const float saved_noclip = sv_altnoclip.value;
+	const float saved_gorilla = sv_gorilla.value;
+	Cvar_SetQuick (&sv_gorilla, "1");
+	native_comparison = true;
+	for (int mode = 0; mode < countof (modes); ++mode)
+	for (int n = 0; n < countof (counts); ++n)
+	{
+		const int commands = counts[n];
+		usercmd_t staged = {0};
+		prepare_selected (owner, client, commands);
+		owner->v.movetype = modes[mode];
+		VectorSet (owner->v.velocity, 30, 12, 0);
+		VectorSet (owner->v.punchangle, 5, 0, 0);
+		client->vr_gorilla_capable = mode == 3;
+		SV_ResetPrivateVRContactState (client);
+		staged.forwardmove = 120;
+		staged.sidemove = 40;
+		staged.upmove = 20;
+		staged.vr_active = true;
+		VectorCopy (owner->v.v_angle, staged.viewangles);
+		if (mode == 3)
+		{
+			staged.vr_gorilla.flags = VR_GORILLA_HANDS;
+			VectorSet (staged.vr_gorilla.head, 0, 0, 4);
+			VectorSet (staged.vr_gorilla.hand[0], 12, -12, 4);
+			VectorSet (staged.vr_gorilla.hand[1], 12, 12, 4);
+			assert (VRG_InputValid (&staged.vr_gorilla));
+		}
+		client->private_pmove_last_cmd = staged;
+		client->private_pmove_last_cmd_valid = true;
+		for (int i = 0; i < commands; ++i)
+		{
+			usercmd_t *queued = &client->private_cmd_queue[i];
+			*queued = staged;
+			queued->sequence = i + 1;
+			queued->msec = 5;
+			queued->seconds = .005f;
+			queued->vr_roomscalemove[0] = .5f;
+			if (!i) { queued->buttons = 3; queued->impulse = 7; }
+		}
+		/* What the ordinary parser would retain: last levels plus brief
+		 * latches, and each fresh head translation exactly once. */
+		staged.sequence = commands;
+		staged.buttons = commands ? 3 : 0;
+		staged.impulse = commands ? 7 : 0;
+		staged.vr_roomscalemove[0] = .5f * commands;
+		client->cmd = staged;
+		client->private_latest_buttons = 0;
+		VectorCopy (staged.viewangles, owner->v.v_angle);
+		owner->v.button0 = owner->v.button2 = commands != 0;
+		owner->v.impulse = staged.impulse;
+		memcpy (vars, &owner->v, vars_size);
+		memcpy (globals, qcvm->globals, globals_size);
+		*saved_client = *client;
+		Cvar_SetValueQuick (&sv_altnoclip, mode == 0 ? 0 : 1);
+		for (int selected = 0; selected < 2; ++selected)
+		{
+			SV_UnlinkEdict (owner);
+			memcpy (&owner->v, vars, vars_size);
+			memcpy (qcvm->globals, globals, globals_size);
+			*client = *saved_client;
+			client->private_pmove_walk_selected = selected;
+			host_client = client;
+			sv_player = owner;
+			SV_LinkEdict (owner, false);
+			think_calls = prethink_calls = postthink_calls = 0;
+			callback_count = 0;
+			host_frametime = .04;
+			pr_global_struct->frametime = expected_world_frametime = .04f;
+			expected_impulse = commands ? 7 : 0;
+			if (!selected) SV_ClientThink ();
+			SV_Physics_Client (owner, 1);
+			assert (client->active && owner->retain_count == 0);
+			assert (think_calls == 1 && prethink_calls == 1 && postthink_calls == 1);
+			assert (callback_count == 3 && !memcmp (callback_order, "PTQ", 3));
+			assert (fabsf (owner->v.punchangle[0] - 4.6f) < .0001f);
+			assert (observed_buttons == (commands ? 3 : 0) &&
+				observed_impulse == expected_impulse);
+			assert (client->private_completed_move == commands);
+			assert (host_frametime == .04 && pr_global_struct->frametime == .04f);
+			assert (!client->private_move_resume_pending);
+			if (!selected)
+			{
+				VectorCopy (owner->v.origin, native_origin);
+				VectorCopy (owner->v.velocity, native_velocity);
+				VectorCopy (owner->v.punchangle, native_punch);
+				native_gorilla = client->vr_gorilla_state;
+			}
+			else
+			{
+				assert (client->private_move_native_frame && !client->private_pmove_credit_msec);
+				for (int axis = 0; axis < 3; ++axis)
+				{
+					assert (fabsf (owner->v.origin[axis] - native_origin[axis]) < .0001f);
+					assert (fabsf (owner->v.velocity[axis] - native_velocity[axis]) < .0001f);
+					assert (fabsf (owner->v.punchangle[axis] - native_punch[axis]) < .0001f);
+				}
+				assert (client->vr_gorilla_state.initialized == native_gorilla.initialized);
+				assert (client->vr_gorilla_state.touching == native_gorilla.touching);
+				if (mode == 3 && commands)
+					assert (client->vr_gorilla_state.initialized &&
+						client->vr_gorilla_last_sequence == commands);
+			}
+			SV_FinishPrivateUsercmds ();
+			assert (!client->private_cmd_queue_count && !client->cmd.impulse &&
+				!owner->v.impulse && !owner->v.button0 && !owner->v.button2 &&
+				VectorCompare (client->cmd.vr_roomscalemove, vec3_origin));
+			/* Both paths get a subsequent world frame with no packet. */
+			{
+				expected_impulse = 0;
+				think_calls = prethink_calls = postthink_calls = 0;
+				callback_count = 0;
+				if (!selected) SV_ClientThink ();
+				SV_Physics_Client (owner, 1); // no new input: levels only
+				assert (think_calls == 1 && prethink_calls == 1 && postthink_calls == 1);
+				assert (callback_count == 3 && !memcmp (callback_order, "PTQ", 3));
+				assert (!observed_buttons && !observed_impulse &&
+					client->private_completed_move == commands);
+				if (!selected)
+				{
+					VectorCopy (owner->v.origin, maintenance_origin);
+					VectorCopy (owner->v.velocity, maintenance_velocity);
+					VectorCopy (owner->v.punchangle, maintenance_punch);
+				}
+				else for (int axis = 0; axis < 3; ++axis)
+				{
+					assert (fabsf (owner->v.origin[axis] - maintenance_origin[axis]) < .0001f);
+					assert (fabsf (owner->v.velocity[axis] - maintenance_velocity[axis]) < .0001f);
+					assert (fabsf (owner->v.punchangle[axis] - maintenance_punch[axis]) < .0001f);
+				}
+			}
+		}
+	}
+	Cvar_SetValueQuick (&sv_altnoclip, saved_noclip);
+	Cvar_SetValueQuick (&sv_gorilla, saved_gorilla);
+	expected_impulse = 0;
+	native_comparison = false;
+	Mem_Free (saved_client);
+	Mem_Free (globals);
+	Mem_Free (vars);
+	puts ("SELECTED_NATIVE_EQUIVALENCE_PASSED noclip0/noclip1/fly/rawhands; empty/two/eight commands");
+}
+
+static void check_native_state_guards (edict_t *owner, client_t *client)
+{
+	prepare_selected (owner, client, 0);
+	memset (&client->cmd, 0, sizeof (client->cmd));
+	client->vr_gorilla_capable = false;
+	owner->v.movetype = MOVETYPE_FLY;
+	owner->v.waterlevel = 2; // validator must not recategorize the dry map position
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+	assert (!SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	assert (owner->v.waterlevel == 2 && !client->private_pmove_pusher_interaction);
+	assert (SV_PrivateWalkTrialStateError (owner, client, &client->cmd));
+	assert (owner->v.waterlevel == 2); // strict WALK rejects before categorization
+	float saved = owner->v.origin[0];
+	owner->v.origin[0] = NAN;
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.origin[0] = saved;
+	owner->v.groundentity = -1;
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.groundentity = 1;
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.groundentity = qcvm->num_edicts * qcvm->edict_size;
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.groundentity = 0;
+	owner->v.health = NAN;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	owner->v.health = 100;
+	owner->v.movetype = 3.5f;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	owner->v.movetype = MOVETYPE_NOCLIP;
+	owner->v.maxs[2] = 31;
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.maxs[2] = 32;
+	qcvm->extfields.customphysics = ED_FindFieldOffset ("think");
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	qcvm->extfields.customphysics = -1;
+	assert (!SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	puts ("SELECTED_NATIVE_GUARDS_PASSED strict WALK/pure classification/finite/hull/customphysics/ground");
 }
 
 int main (int argc, char **argv)
@@ -239,6 +458,8 @@ int main (int argc, char **argv)
 	assert (think_calls == 1 && prethink_calls == 1 && postthink_calls == 1);
 	assert (client->private_completed_move == 1 && client->private_move_native_frame);
 	puts ("SELECTED_THINK_NATIVE_PASSED");
+	compare_native_states (owner, client);
+	check_native_state_guards (owner, client);
 	/* No connected socket was created; don't run dedicated network shutdown. */
 	SDL_Quit ();
 	return 0;

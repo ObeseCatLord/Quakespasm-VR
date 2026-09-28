@@ -24,6 +24,12 @@ qboolean SV_PrivateWalkTrialTerminalState (client_t *client)
 	return false;
 }
 
+const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
+	const usercmd_t *cmd)
+{
+	return NULL; // physics/state qualification is outside this pause-only fixture
+}
+
 qboolean SV_PrivateWalkTrialSelected (client_t *client)
 {
 	return client && client->private_pmove_walk_selected;
