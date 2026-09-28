@@ -26,8 +26,11 @@ enable/disable, matching/absent/wrong offers, incomplete extension support,
 legacy offer generation, incompatible base protocol/coordinate flags,
 simultaneous private/public peer isolation, and serverinfo refresh. Negotiating
 private transport never selects PMove by itself. Defaults are reported
-separately; this matrix explicitly sets both server choices and cannot alone
-prove the production default or close the connected mixed-play gate.
+separately. Require `NEGOTIATION_NATIVE_DEFAULT_PASSED`: before any override,
+the fixture checks registered/effective `private=1 pmove=0`, then an ordinary
+modern offer must select private transport with movement prediction unselected.
+The subsequent matrix explicitly sets both choices. None of this closes the
+connected mixed-play gate.
 
 Also require `DEMO_SERVERDATA_NATIVE_PASSED` and `DEMO_ENTITY_NATIVE_PASSED`.
 The fixture executes the actual synthetic startup writer, demo file writer/
@@ -49,6 +52,37 @@ An isolated negative control removing the synthetic private marker fails the
 offline header assertion (exit 134). The ACK fixture also seeds a pending-resume
 marker and a completable cursor: playback must leave them unchanged, while the
 identical live body must invoke the resume handler and clear the marker.
+
+`mixed_native_fixture.c` reuses this bootstrap and negotiation helper. It calls
+the real server `spawn`/`begin` commands for public and private stock-QC owners,
+then executes the production baseline codec, both client move senders, server
+packet receipt, native physics and snapshot/entity decoding in one world.
+Only unreliable transport is captured. The fixture explicitly enables private
+transport; the separate default assertion above proves the production choice.
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make \
+  negotiation-native-fixture USE_SDL3=1 -j4 \
+  NEGOTIATION_FIXTURE=/tmp/qsvr-mixed-native-fixture \
+  NEGOTIATION_SOURCE=../tests/mixed_native_fixture.c \
+  NEGOTIATION_EXTRA_LDFLAGS=-Wl,--wrap=NET_SendUnreliableMessage
+timeout --signal=TERM 25s /tmp/qsvr-mixed-native-fixture \
+  -dedicated 3 -noudp -nosound -basedir /tmp/qsvr-negotiation-native \
+  -userdir /tmp/qsvr-negotiation-native
+```
+
+Require `MIXED_NATIVE_PASSED`. Synthetic private VR and public desktop commands
+must move and fire both actual QC owners, publish advancing completed ACKs and
+matching owner positions, and expose the other player when visible. A private
+tap/impulse released by a second generated packet before the world frame must
+survive until processing, then clear; redundant commands must not reaccumulate
+roomscale. Selected PMove/replay remain off. Client signon/resource state is
+prepared by the fixture: this is a component chain, not connected signon,
+the upstream client, OpenXR action production, or full mixed gameplay.
+QC `frametime` follows the production host frame. The captured transport does
+not advance socket sequences, and the fixture calls entity decoding directly;
+it does not qualify reliability or full message dispatch. Impulse `2` checks
+retention/clearing without proving a change from the already selected shotgun.
 
 ## Opaque alias instancing
 
@@ -1406,7 +1440,10 @@ post-clamp muzzle or QuakeC projectile/damage effects.
 `QSVR_LIFECYCLE_RESULT=<output.json>`, with optional `QSVR_PEER_ADDRESS` overriding
 the local peer address. It checks public rejection of the private header,
 real error teardown, a failed private connection to a bound silent local UDP
-socket, private reconnection, local-map startup and public demo playback.
+socket, private reconnection, local-map startup and demo playback using the
+current local private-transport setting. Legacy connection opt-in and the
+actual decoder are checked separately; a newly recorded private demo needs
+no live offer during playback.
 It handles the diagnostic build's intentional `Host_Error` debug trap before
 checking native teardown. These are desktop loopback checks, not physical
 tracking, private-demo parity, packet-loss tolerance or performance benchmarks.
@@ -1670,12 +1707,12 @@ done
 QSVR_BINARY=/path/to/debug/vkquake
 ```
 
-Start the dedicated server in its own terminal on loopback. Private mode is
-opt-in; omit the cvar command for the default-off public case:
+Start the dedicated server in its own terminal on loopback. Matching private
+transport is enabled by default; `sv_private_pmove_walk` remains default-off:
 
 ```sh
 "$QSVR_BINARY" -dedicated 4 -ip 127.0.0.1 -port 28790 \
-  -basedir "$SERVER_PROFILE" +sv_qsvr_private 1 +coop 1 +map e1m1
+  -basedir "$SERVER_PROFILE" +coop 1 +map e1m1
 ```
 
 Run the private client case from the repository root with a GDB-enabled Linux
@@ -1690,6 +1727,31 @@ QSVR_LOCAL_RESULT="$CLIENT_PROFILE/private-result.json" \
   -novr -nosound -window -width 640 -height 480 -basedir "$CLIENT_PROFILE" \
   +vid_vsync 0 +host_maxfps 144 +connect 127.0.0.1:28790
 ```
+
+For a simultaneous public/private desktop pairing, use a fresh default server
+and two separate disposable client profiles. Run the command above with
+`QSVR_LOCAL_EXPECT_PEERS=2` on the 2.0 private client. Run the unchanged pinned
+upstream vkQuake binary concurrently with the same probe, its own result/profile,
+and `QSVR_LOCAL_UPSTREAM=1 QSVR_LOCAL_EXPECT_PRIVATE=0
+QSVR_LOCAL_EXPECT_PEERS=2`. Both must complete movement/fire checks and observe
+two named scoreboard peers. The public run requires public PREDINFO and no
+selected owner type; it reports private-only permission as `null` because the
+upstream struct has no such field. Do not patch its offer or force a dialect.
+
+The pinned upstream source can be built in a disposable directory:
+
+```sh
+mkdir -p /tmp/qsvr-stage1-upstream
+git -C ../vkquake archive 4bc898f29073e8aa41069f0e79e3cb5a9eb73afa | \
+  tar -x -C /tmp/qsvr-stage1-upstream
+make -C /tmp/qsvr-stage1-upstream/Quake USE_SDL3=1 -j4
+```
+
+That build and GDB field/type checks passed in this session. Connected probes
+could not run: the dedicated binary receives `Operation not permitted` when
+creating UDP sockets. Syntax/type checks and scoreboard expectations do not
+prove active server peers, OpenXR input, mixed gameplay or networking. The
+full public/VR and private/VR release matrix remains in the migration plan.
 
 ## Selected private WALK prediction opt-in
 
@@ -1757,8 +1819,8 @@ Whenever this GDB harness is run against a server started with
 `+sv_private_pmove_walk 1`, set `QSVR_LOCAL_EXPECT_PREDICTION=1` on the client
 command. Without it, the harness expects the default-off permission state.
 
-For public mode, start a fresh dedicated server with its default-off
-`sv_qsvr_private` and use `QSVR_LOCAL_EXPECT_PRIVATE=0` with a separate result
+For an explicitly public-only server, start a fresh dedicated server with
+`+sv_qsvr_private 0` and use `QSVR_LOCAL_EXPECT_PRIVATE=0` with a separate result
 path. The client still offers the versioned private profile during `pext`
 negotiation; the check requires public authority. The positional `qsvr1`
 argument is reserved for a server using the unmarked inherited legacy layout
@@ -1770,7 +1832,7 @@ settled movement pair, it requires the valid bit in `cl.stats[225]` to be clear
 and the gravity, max speed, jump speed and step height slots to remain zero. The
 JSON result records those flags and float values under
 `public_movement_stats`; success prints `QSVR_LOCAL_PUBLIC_MOVE_STATS_OFF_PASSED`.
-For example, with the fresh default-off public server running:
+For example, with the fresh explicitly public-only server running:
 
 ```sh
 QSVR_LOCAL_EXPECT_PRIVATE=0 \

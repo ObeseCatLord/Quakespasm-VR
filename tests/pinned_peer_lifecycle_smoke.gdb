@@ -40,10 +40,11 @@ def resume():
         gdb.execute('continue')
 def command(text):
     gdb.execute('call (void)Cbuf_AddText('+json.dumps(text+'\n')+')',to_string=True)
-def check(label,private=False):
+def check(label,private=False,dialect=None):
     assert gdb.newest_frame().name()=='Host_Frame'
     s=state(label); samples.append(s)
-    assert s['signon']==4 and s['legacy']==int(private) and s['dialect']==int(private),s
+    if dialect is None: dialect=int(private)
+    assert s['signon']==4 and s['legacy']==int(private) and s['dialect']==dialect,s
 
 try:
     gdb.execute('run')
@@ -71,7 +72,8 @@ try:
     phase='private_again'; command('connect '+peer+' qsvr1'); resume()
     check('private_reconnected',True)
     phase='local'; command('map e1m1'); resume()
-    check('local_after_private')
+    local_private=int(float(gdb.parse_and_eval('sv_qsvr_private.value'))!=0)
+    check('local_after_private',False,local_private)
     assert integer('sv.active')
     command('record lifecycle')
     phase='recorded'; record_until=time.monotonic()+1; resume()
@@ -80,7 +82,7 @@ try:
     phase='recorded'; record_until=time.monotonic()+.1; resume()
     assert not integer('cls.demorecording')
     phase='demo'; command('playdemo lifecycle'); resume()
-    check('public_demo')
+    check('private_demo' if local_private else 'public_demo',False,local_private)
     assert integer('cls.demoplayback')
     print('QSVR_LIFECYCLE_PASSED '+json.dumps(samples))
 finally:

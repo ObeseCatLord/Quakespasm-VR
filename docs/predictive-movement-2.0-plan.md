@@ -1,9 +1,9 @@
 # Production predictive movement on the vkQuake base
 
-Status: reviewed staged plan; stage 0 demo compatibility is implemented
-before production activation or broader mod admission. Baseline evidence:
+Status: reviewed staged plan; stage 0 demo compatibility and stage 1 production
+transport activation are implemented with bounded software checks. Baseline evidence:
 `3ba35dc8` on `2.0`, 2026-09-27. Local Astra review resolves the first stage;
-later activation/ownership decisions still need their bounded disposition.
+later movement-ownership decisions still need their bounded disposition.
 
 ## Intended outcome
 
@@ -93,6 +93,68 @@ second parser for tests. Preserve demo world/reset/VR camera behavior.
 
 ### 1. Establish production private negotiation independently of replay
 
+Implementation contract, 2026-09-27, before coding:
+
+- Behavioral reference: ordinary `connect <endpoint>` and vkQuake public FTE
+  signon. A matching 2.0 desktop or VR peer should use the existing private
+  framing automatically; an upstream peer remains public in the same world.
+- Verified owners: `Cmd_ForwardToServer` already sends the explicit pinned
+  offer; `SV_Pext_f` consumes it; `SV_SendServerinfo` selects per peer only with
+  the required extensions and RMQ float-coordinate/short-angle tuple. Private
+  movement decoding and native continuation already dispatch per peer. Stage 0
+  (`1881b577`) makes newly recorded private startup self-describing.
+- Minimal change: change only the existing `sv_qsvr_private` default after its
+  software gate. Keep its explicit disable and the matching-offer checks.
+  `sv_private_pmove_walk` stays off pending stage 2. A new client dialect toggle,
+  handshake or movement owner would duplicate working policy without evidence.
+- Exact write set: `sv_main.c` for the eventual default; the native negotiation
+  fixture for default selection before its explicit on/off matrix; the existing
+  local peer GDB probe for a real upstream public client and simultaneous-peer
+  observation; tests/README and this plan for reproducible commands/evidence.
+  Update the existing pinned-peer lifecycle probe's local/demo expectation for
+  the new default, preserving legacy admission as a separate field.
+  A separate bounded server observation fixture may be added if actual server
+  activity cannot be established through the existing probe.
+- First proof: build the pinned upstream vkQuake `4bc898f2` in `/tmp` without
+  editing its source; connect it beside an ordinary 2.0 private desktop peer.
+  Reuse the local movement/fire/settling probe instead of a second driver.
+  Require actual signon, movement, shell consumption, advancing ACKs, visible
+  peers and unchanged prediction permission. No packet/profile/server-state
+  injection qualifies the public client.
+- Remaining gate: exercise private OpenXR input in a simultaneous public/VR
+  session using the existing runtime/controller probe, then private/private.
+  Preserve explicit-disable and map-renegotiation cases. The established
+  full mixed-gameplay checklist remains stage 5; do not call a desktop-only
+  pairing complete VR cross-play or a injected selected bit PMove admission.
+- Unknowns: accessibility of a simulated OpenXR runtime and Vulkan device in
+  this session, and actual mixed-peer state behavior. If a concrete software
+  blocker appears, fix it at the existing owner or record it; do not replace
+  connection, world or movement machinery to make a test easier.
+- Review: local Astra audits the default/admission decision and acceptance
+  boundaries before activation; its disposition is recorded here. No hardware
+  trial, Windows/ARM build or performance benchmark is added to this slice.
+
+Stage 1 environment checkpoint: the unchanged pinned upstream vkQuake builds
+successfully in `/tmp`. Starting the current dedicated binary on loopback fails
+at `UDP4_OpenSocket` and `UDP6_OpenSocket` with `Operation not permitted`;
+no connected run has occurred. The existing GDB probe is being extended to use
+that actual public binary and require simultaneous named peers for later use.
+Do not treat that extension or an offline offer matrix as connected gameplay.
+The user defers actual live playtesting; the current permission profile offers
+no network escalation. Astra must distinguish an implementation default from
+release qualification and identify any source-proven activation blocker before
+the default changes. Both activation defaults are still off at this checkpoint.
+
+Supplemental offline proof: add a bounded fixture reusing the negotiation
+bootstrap/helpers, actual `spawn`/`begin` commands, both `CL_SendMove` codecs,
+`SV_ReadClientMessage`, the native QC/world-frame physics owner, and the existing
+entity writer/decoder. Capture only the unreliable transport boundary. Run two
+real-QC owners in the same world with synthetic public desktop and private VR
+commands, checking movement, firing, completed ACKs and peer snapshots without
+injecting selected movement. This extends the exact test write set to
+`tests/mixed_native_fixture.c` and its make dependencies. It is component-chain
+evidence, not upstream-client wire signon, OpenXR input or connected cross-play.
+
 Owners: `cmd.c`, `sv_main.c`, `cl_parse.c`, `host_cmd.c`; existing connection
 fixtures. Scope: preserve the current matching per-peer offer and public
 fallback, make ordinary 2.0 peers select the supported private transport, and
@@ -178,9 +240,9 @@ deferred checks are listed honestly and do not turn code omissions into
 
 ## Open decisions for Astra
 
-1. Is production private negotiation the first implementation stage, or does a
-   concrete transport blocker require a narrower correction first? Lean:
-   negotiate it normally independently of PMove, preserving public fallback.
+1. Resolved: the concrete demo blocker required stage 0 before ordinary private
+   negotiation in stage 1. Private negotiation is independent of PMove and
+   retains public fallback; see both review dispositions below.
 2. Can selected stock state transitions be completed by adapting existing
    native continuation, or is a smaller authority/selection change required?
    Lean: reuse current completion/mode owners; do not create a living native
@@ -198,11 +260,64 @@ must not convert the full mod/VR/predictive outcome into stock-only success.
 
 ## Scope and review record
 
+Stage 1 local Astra review, effective `gpt-6-astra` / `max` verified from local
+metadata, found no source-proven transport activation blocker. Main checked
+the exact offer conditions, native command latches/frame clock, per-peer
+dispatch, completion/retirement order and snapshot prediction conditions before
+adopting its recommendation. This is a source decision, not gameplay certification.
+
+| Stage 1 recommendation | Disposition |
+| --- | --- |
+| Enable existing private transport normally, retaining selected PMove off. | Adopted: `sv_qsvr_private=1`, `sv_private_pmove_walk=0`; no additional dialect/transport/movement owner. |
+| Prove untouched defaults before the existing on/off negotiation matrix. | Adopted: assert registered/effective defaults and negotiate an ordinary offer before any server override, requiring private framing and unselected PMove. |
+| Keep all private transport off until connected mixed gameplay qualification. | Adapted: later user direction defers actual live playtesting. Explicitly supersede the activation-only rule in `migration-network-map.md`; preserve its complete release gameplay matrix. |
+| Treat profile activation as behaviorally empty. | Rejected: native private input has brief action latches, redundant command retirement and roomscale semantics. Add an actual QC/physics/packet component chain; retain separate action-lifetime, local/listen and lifecycle qualification. |
+| Add another desktop/VR setting, handshake or queued-native owner. | Rejected: matching offer, native owner and separate prediction selection already exist. |
+| Claim prepared GDB probes or offline components prove connected cross-play. | Rejected: the upstream build and structural checks pass, but UDP is denied; no connected run occurred. |
+
+Deferred qualification after activation includes local/listen pause/resume,
+both map-renegotiation directions, broader live burst/tap/impulse lifetimes, simultaneous
+public/VR and private/VR gameplay, damage/pickups/death/rejoin/save/load and
+full demo lifecycle. These remain explicit checks; selected prediction,
+AD-family movement/replay contracts and co-op implementation still advance in
+stages 2–5 rather than being written off as testing.
+
+Stage 1 software evidence: the Linux SDL3 build passes. The native negotiation
+fixture passes untouched `private=1 pmove=0` registration/effective-value and
+ordinary-offer selection before its explicit opt-out, mismatch and per-peer
+matrix. Stage 0 writer/file/entity checks continue to pass in that executable.
+The mixed native fixture passes actual stock `spawn`/`begin`, baseline codec,
+private/public `CL_SendMove`, captured packet receipt, native QC/world physics,
+completed ACKs and entity snapshots for two owners. Both move and consume shells;
+each sees the other through the production visibility/delta path. A private
+tap/impulse released by a second packet before physics survives processing and
+clears afterward; redundant bodies do not double-accumulate pending roomscale.
+Initial missing client baselines caused model assertions to fail; consuming the
+production baseline codec corrected the fixture without a production rewrite.
+Signon/resource state and command inputs are prepared, so this remains a native
+component chain rather than a connected, upstream-client or OpenXR input result.
+
+Astra's focused follow-up found no additional production blocker and requested
+one fixture correction: set the QC `frametime` global before each world frame,
+matching `Host_ServerFrame`. Adopted before the final fixture run. Captured
+transport does not advance socket sequences, and entity decoding bypasses the
+complete message dispatcher; this proves neither reliability nor whole-message
+lifecycle. Impulse `2` proves input retention/clearing, not a weapon change when
+the shotgun is already selected. Scoreboard counts in the GDB probe are named
+entries, not proof of continuous mixed-peer gameplay.
+
+The unchanged pinned upstream build passes; GDB verifies the actual public
+binary's field types, and both updated probe scripts pass Python syntax checks.
+The lifecycle probe now separates legacy connection opt-in from the local/demo
+decoder selected by the server setting. Neither probe has a connected result
+in this permission profile. Stage 2 selected movement is still disabled by
+default, and the full migration remains incomplete.
+
 Expected scope is a sequence of small changes at the existing owners, not a
 second net driver, protocol, VM, server loop or prediction system. Each stage
 needs its own exact write-set contract and a focused implementation update
-before coding; reopen this plan when the verified boundaries change. No new
-activation/admission code has been changed while drafting this proposal.
+before coding; reopen this plan when the verified boundaries change. The initial
+proposal was drafted before any production activation/admission change.
 
 Astra reviewed the plan using effective `gpt-6-astra` / `max` settings, verified
 from local metadata. Main spot-checked the recorder, disconnect/offer reset,
@@ -222,8 +337,8 @@ review is not runtime certification.
 Stage 0 source changes follow that exact owner boundary: the mid-map recorder
 emits a private marker, the shared prefix reader admits supported marked
 playback without a live offer while retaining network admission, and the ACK
-reader consumes recorded metadata without enabling causal replay. Both server
-activation defaults remain unchanged. A focused Astra follow-up source review
+reader consumes recorded metadata without enabling causal replay. At stage 0
+both server activation defaults remained unchanged. A focused Astra follow-up source review
 found no commit-blocking production regression. Its P2 request for an explicit
 recorded `RESUME_PENDING` case was adopted: the fixture seeds a resume marker
 and completable ACK cursor, requires unchanged playback state, then proves that

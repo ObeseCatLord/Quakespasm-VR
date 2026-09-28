@@ -97,9 +97,17 @@ final cross-play sign-off.
 | Review finding | Disposition |
 | --- | --- |
 | Separate desktop and VR connections do not prove simultaneous cross-play. | **Adopt.** Qualify one dedicated server with an ordinary public vkQuake desktop peer and private OpenXR VR peer, then repeat with two `2.0` peers and only one in VR. Observe movement, aim/damage, pickups, death/rejoin and map transition from both clients and the server. |
-| `sv_qsvr_private` defaults off and public movement omits VR hand/room-scale data. | **Adopt.** Keep the development gate until VR and mixed-peer gameplay qualify; report public connectivity separately from full VR behavior. |
+| Private transport was default-off at this review, and public movement omits VR hand/room-scale data. | **Adapted by production stage 1.** Matching private transport is enabled normally; retain mixed gameplay as deferred release qualification under the later user direction. See the [activation plan/disposition](predictive-movement-2.0-plan.md). |
 | Desktop `2.0` also offers QSVR, so a desktop-plus-VR run may exercise two private clients. | **Adopt.** Include both public/private and private/private pairings; do not infer public compatibility from the latter. |
 | Add a desktop-versus-VR network dialect or duplicate movement owner now. | **Reject.** Current negotiation and movement dispatch are per client; no verified incompatibility requires another layer. Reopen only for a demonstrated mixed-peer failure. |
+
+The 2026-09-27 local Astra Max activation review supersedes only the earlier
+default-off activation requirement. `sv_qsvr_private` now defaults to `1`, with
+exact per-peer offer matching and an explicit `0` opt-out. Selected PMove stays
+default-off. The public/private and private/private gameplay matrix above still
+applies; activation is not cross-play certification. This session denies UDP
+socket creation, and actual live playtesting is deferred by the user. Offline
+component evidence and prepared probes must not be reported as connected runs.
 
 ### Server-mod reconnect senior review disposition
 

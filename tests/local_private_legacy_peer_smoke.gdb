@@ -3,6 +3,8 @@
 # QSVR_LOCAL_EXPECT_PREDICTION=1 expects selected-private prediction after movement.
 # QSVR_LOCAL_MAP_READY optionally names a readiness file for private -> public
 # changelevel. QSVR_LOCAL_RESULT is required and receives compact JSON evidence.
+# QSVR_LOCAL_UPSTREAM=1 uses the unchanged vkQuake public client layout.
+# QSVR_LOCAL_EXPECT_PEERS optionally requires simultaneous named peers.
 set pagination off
 set confirm off
 set debuginfod enabled off
@@ -13,6 +15,13 @@ import gdb, json, math, os, time
 
 expect_text = os.environ.get('QSVR_LOCAL_EXPECT_PRIVATE')
 expect_prediction_text = os.environ.get('QSVR_LOCAL_EXPECT_PREDICTION', '0')
+upstream_peer = os.environ.get('QSVR_LOCAL_UPSTREAM') == '1'
+try:
+    expected_peers = int(os.environ.get('QSVR_LOCAL_EXPECT_PEERS', '0'))
+except ValueError:
+    raise RuntimeError('QSVR_LOCAL_EXPECT_PEERS must be a nonnegative integer')
+if not 0 <= expected_peers <= 64:
+    raise RuntimeError('QSVR_LOCAL_EXPECT_PEERS must be between 0 and 64')
 result_path = os.environ.get('QSVR_LOCAL_RESULT')
 ready_path = os.environ.get('QSVR_LOCAL_MAP_READY') or None
 assert_action_ack = os.environ.get('QSVR_LOCAL_ASSERT_ACTION_ACK') == '1'
@@ -35,6 +44,10 @@ if expect_prediction_text not in ('0', '1'):
     raise RuntimeError('QSVR_LOCAL_EXPECT_PREDICTION must be 0 or 1')
 expect_private = expect_text == '1'
 expect_prediction = expect_prediction_text == '1'
+if upstream_peer and (expect_private or expect_prediction or ready_path or
+        assert_action_ack or assert_move_stats or assert_nonzero_jump_timer or
+        assert_coherent_owner or assert_pmove_type or assert_public_move_stats_off):
+    raise RuntimeError('upstream mode supports public movement/fire checks only')
 if expect_prediction and not expect_private:
     raise RuntimeError('prediction expectation requires a private peer')
 if ready_path and not expect_private:
@@ -79,14 +92,19 @@ def integer(expr):
 def world_name():
     return os.path.basename(gdb.parse_and_eval('cl.worldmodel->name').string())
 
+def named_peers():
+    return sum(bool(gdb.parse_and_eval('cl.scores[%d].name' % slot).string())
+               for slot in range(integer('cl.maxclients')))
+
 def sample(label):
     owner = integer('cl.viewentity')
     origin = [float(gdb.parse_and_eval('cl.entities[%d].netstate.origin[%d]' %
                                        (owner, axis))) for axis in range(3)]
     state = dict(label=label, signon=integer('cls.signon'),
-                 dialect=integer('cl.protocol_qsvr'),
-                 legacy=integer('cls.legacy_qsvr'),
-                 permission=bool(integer('cl.move_ack_prediction_allowed')),
+                 dialect=0 if upstream_peer else integer('cl.protocol_qsvr'),
+                 legacy=0 if upstream_peer else integer('cls.legacy_qsvr'),
+                 permission=None if upstream_peer else bool(integer('cl.move_ack_prediction_allowed')),
+                 extensions=integer('cl.protocol_pext2'), peers=named_peers(),
                  origin=origin, shells=integer('cl.stats[6]'),
                  ack=integer('cl.ackedmovemessages'),
                  owner_pmovetype=integer('cl.entities[%d].netstate.pmovetype' % owner),
@@ -200,7 +218,13 @@ def check_authority(state, private, expected_permission=False):
     require(state['signon'] == 4, 'signon')
     require(state['dialect'] == int(private) and state['legacy'] == 0,
             'protocol_authority')
-    if expected_permission is not None:
+    require(state['peers'] >= expected_peers, 'simultaneous_named_peers')
+    if upstream_peer:
+        require(state['extensions'] & 0x00000020 != 0, # protocol.h PEXT2_PREDINFO
+                'upstream_public_predinfo')
+        require(state['owner_pmovetype'] & 63 == 0,
+                'upstream_public_owner_prediction_not_selected')
+    if expected_permission is not None and not upstream_peer:
         require(state['permission'] == expected_permission, 'prediction_permission')
 
 def check_settled_pair(before, settled, private, prediction=False):
@@ -259,7 +283,8 @@ class HostFrame(gdb.Breakpoint):
             if phase == 'signon':
                 if integer('cls.signon') == 4:
                     phase, phase_time = 'baseline_wait', now
-            elif phase == 'baseline_wait' and now - phase_time >= 1:
+            elif phase == 'baseline_wait' and now - phase_time >= 1 and \
+                    named_peers() >= expected_peers:
                 samples.append(sample('before'))
                 if assert_action_ack:
                     first_attack_seq = integer('cl.movemessages')
@@ -374,6 +399,7 @@ except Exception:
 
 outcome = 'failed' if failure else 'passed'
 result = dict(status=outcome,
+              upstream_reference=upstream_peer, expected_peers=expected_peers,
               mode='map_switch' if ready_path else ('private' if expect_private else 'public'),
               samples=[{key: value for key, value in item.items()
                         if key not in ('origin', 'displayed', 'owner')}

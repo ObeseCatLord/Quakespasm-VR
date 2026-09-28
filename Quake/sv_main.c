@@ -177,7 +177,7 @@ static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 /* Rendering skyrooms is deferred; do not expand entity visibility by default. */
 static cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "0", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
-static cvar_t sv_qsvr_private = {"sv_qsvr_private", "0", CVAR_NONE};
+static cvar_t sv_qsvr_private = {"sv_qsvr_private", "1", CVAR_NONE};
 static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};
 extern cvar_t sv_gameplayfix_elevators;
 static void SV_AddSkyRoomPVS (const vec3_t org, qmodel_t *worldmodel);

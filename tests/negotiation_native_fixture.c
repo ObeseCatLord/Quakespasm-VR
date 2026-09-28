@@ -301,6 +301,12 @@ static void Cases (void)
 	unsigned saved_flags = sv.protocolflags;
 
 	ClientOffer (0, false, modern_offer, sizeof (modern_offer));
+	/* Before any server override: ordinary modern peers must reach the
+	 * production private transport, without selecting movement prediction. */
+	assert (!strcmp (sv_qsvr_private.default_string, "1") && sv_qsvr_private.value == 1);
+	assert (!strcmp (sv_private_pmove_walk.default_string, "0") && !sv_private_pmove_walk.value);
+	Negotiate (0, modern_offer, QSVR_PROTOCOL_PINNED);
+	puts ("NEGOTIATION_NATIVE_DEFAULT_PASSED untouched private=1 pmove=0");
 	ClientOffer (QSVR_PROTOCOL_PINNED, false, legacy_offer, sizeof (legacy_offer));
 	ClientOffer (0, true, plain_offer, sizeof (plain_offer));
 	assert (!strcmp (plain_offer, "pext"));
