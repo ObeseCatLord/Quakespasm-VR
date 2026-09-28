@@ -546,6 +546,17 @@ void CL_Resume_Record (qboolean recordsignons);
 // cl_parse.c
 //
 void CL_ParseServerMessage (void);
+
+/* Protocol prefix decoded by the serverinfo owner before world loading.
+ * The reader consumes MSG bytes, returns an error or NULL, and changes neither
+ * client state nor the result on failure. Marked demos need no live offer. */
+typedef struct
+{
+	int protocol;
+	unsigned int protocolflags, protocol_pext1, protocol_pext2, protocol_qsvr;
+} cl_server_protocol_t;
+const char *CL_ReadServerProtocol (qboolean playback, unsigned int offered,
+	unsigned int legacy, cl_server_protocol_t *result);
 void CL_RegisterParticles (void);
 void CL_NewTranslation (int slot);
 

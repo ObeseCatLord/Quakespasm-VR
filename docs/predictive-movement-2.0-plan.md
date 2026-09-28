@@ -1,8 +1,9 @@
 # Production predictive movement on the vkQuake base
 
-Status: source-verified proposal, before production activation or broader mod
-admission. Current evidence: `3ba35dc8` on `2.0`, 2026-09-27. A local Astra
-senior review must resolve the decisions below before their implementation.
+Status: reviewed staged plan; stage 0 demo compatibility is implemented
+before production activation or broader mod admission. Baseline evidence:
+`3ba35dc8` on `2.0`, 2026-09-27. Local Astra review resolves the first stage;
+later activation/ownership decisions still need their bounded disposition.
 
 ## Intended outcome
 
@@ -203,15 +204,61 @@ needs its own exact write-set contract and a focused implementation update
 before coding; reopen this plan when the verified boundaries change. No new
 activation/admission code has been changed while drafting this proposal.
 
-Astra disposition: pending. Main must spot-check load-bearing findings, record
-adopted/adapted/rejected recommendations here and apply the resulting first
-stage before claiming implementation progress for activation.
+Astra reviewed the plan using effective `gpt-6-astra` / `max` settings, verified
+from local metadata. Main spot-checked the recorder, disconnect/offer reset,
+serverinfo admission, ACK capability checks, producer flag conditions and
+client command-history gate before adopting this disposition. The source
+review is not runtime certification.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Repair demos before making private transport the production default. | Adopted as stage 0. Both preconnection raw serverinfo and mid-map synthetic startup need a supported, explicit private decoder. |
+| Extract the existing header reader within `cl_parse.c`, with explicit context and a small result type in `client.h`. | Adopted. One MSG reader validates the whole prefix without changing `cl`/`cls` or loading/resetting a world; `CL_ParseServerInfo` commits only a successful result. No new protocol module or persistent state owner. |
+| Consume complete recorded optional ACK bodies without live capability prerequisites. | Adopted only for admitted private playback. All flags, body sizes, finite values and state/surface/model bounds remain validated; capability-sent fields are not manufactured. |
+| Turn recorded ACKs into live command completions. | Rejected. Playback returns after complete body validation, before ACK expansion, resume handling or reconciliation state mutation. Entity decoding continues. |
+| Treat a manually authored trusted body as current server producer coverage. | Rejected. Current `SVFTE_WriteEntitiesToClient` emits the raw Gorilla body, not the trusted flag; the trusted case is inherited-layout codec coverage. |
+| Expand the prerequisite into general demo seeking or another movement owner. | Rejected. Keep the existing demo, packet, world-reset and movement owners. Later selection/replay work remains a separate stage. |
+
+Stage 0 source changes follow that exact owner boundary: the mid-map recorder
+emits a private marker, the shared prefix reader admits supported marked
+playback without a live offer while retaining network admission, and the ACK
+reader consumes recorded metadata without enabling causal replay. Both server
+activation defaults remain unchanged. A focused Astra follow-up source review
+found no commit-blocking production regression. Its P2 request for an explicit
+recorded `RESUME_PENDING` case was adopted: the fixture seeds a resume marker
+and completable ACK cursor, requires unchanged playback state, then proves that
+the identical live body invokes the resume callback and clears the marker.
+The follow-up was source review only; the main agent ran the software checks.
 
 Preparation evidence: `tests/negotiation_native_fixture.c` now executes the
 actual client offer, server `SV_Pext_f` consumer and `SV_SendServerinfo` writer
 with stock `e1m1`/QC loaded. The native Linux build and matrix pass for server
 enable/disable, modern/legacy/no-extension/wrong/partial offers, incompatible
 base/flags, mixed peer isolation and same-owner serverinfo refresh. Socket sends
-are held and real MSG readers inspect the header. This is neither complete
-client signon nor replay evidence. The production defaults remain zero; the
-demo defects above still block changing them.
+are held and the shared production prefix reader now decodes the actual output,
+including offline acceptance and live rejection without an offer. Truncated,
+unknown, mismatched, duplicated and misplaced private headers leave the result
+unchanged on rejection.
+
+The native fixture also executes `CL_Record_Serverdata` through a temporary
+file and `CL_GetDemoMessage` for public/private synthetic startup, including
+angles and the following signon byte. It executes the actual current server
+entity writer through the same file envelope and production entity decoder for
+two changed positions in ordinary-private and selected/raw-Gorilla cases. The
+selected state is injected to reach the body producer; the fixture verifies the
+actual optional flag before decoding and makes no production-admission claim.
+No command history, live ACK, prediction permission or Gorilla reconciliation
+state is created by playback. This is actual component/file/decoder evidence,
+not a complete `record`/`playdemo` world lifecycle or headset image comparison.
+
+The existing ACK fixture passes ASan/UBSan for ordinary, raw and inherited
+trusted bodies without live capabilities/history, a following service,
+truncation, nonfinite anchors, out-of-range models, and unchanged live capability
+rejection. The seeded pending-resume case preserves all client state offline
+and triggers the live handler in its control. Existing live ACK, wrap and queue
+checks still pass. The full Linux build passes. An isolated negative control
+removing only the synthetic private marker fails the native fixture's offline
+header assertion (exit 134), demonstrating detection of the original omission.
+Stage 1 must
+retain this boundary and close ordinary mixed-peer acceptance; these results do
+not activate PMove, qualify AD-family replay or complete the migration.

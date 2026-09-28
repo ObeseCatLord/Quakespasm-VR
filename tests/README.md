@@ -4,9 +4,11 @@
 
 `negotiation_native_fixture.c` loads stock `e1m1` and QC through the existing
 offline engine bootstrap. It executes the actual client `cmd pext` offer,
-server command consumer, client initialization and serverinfo writer. Real MSG
-readers inspect the resulting protocol header. The test holds socket sends and
-does not execute client serverinfo parsing, full signon, prediction or VR input.
+server command consumer, client initialization and serverinfo writer. The
+shared production protocol-prefix reader decodes the resulting header with
+live and offline contexts. The test holds socket sends; it does not execute
+the remaining client world-loading serverinfo path, full signon, prediction or
+VR input.
 
 Use an isolated directory with `id1/pak0.pak` and `pak1.pak` symlinks to the
 installed stock assets, then run from the `2.0` repository root:
@@ -26,6 +28,27 @@ simultaneous private/public peer isolation, and serverinfo refresh. Negotiating
 private transport never selects PMove by itself. Defaults are reported
 separately; this matrix explicitly sets both server choices and cannot alone
 prove the production default or close the connected mixed-play gate.
+
+Also require `DEMO_SERVERDATA_NATIVE_PASSED` and `DEMO_ENTITY_NATIVE_PASSED`.
+The fixture executes the actual synthetic startup writer, demo file writer/
+reader and shared prefix reader for public/private cases. Header failures cover
+truncation, unknown versions, incompatible tuples, duplicate/misplaced markers,
+unoffered live selection and unmarked colliding private-looking flags. Rejection
+does not commit a partial result.
+
+Two actual server-produced entity packets with changed owner positions are
+recorded, read and decoded for ordinary private and selected/raw-Gorilla cases.
+The fixture verifies that the current server really emitted the optional body;
+selected admission is injected, not proved. Playback has zero producer history
+and unset live capabilities; it neither advances live ACK/replay state nor
+loses a following service. This covers file/packet components, not the complete
+`record`/`playdemo` world/reset/camera lifecycle. Inherited trusted-body coverage
+belongs to the separate ACK fixture; the current server does not emit that flag.
+
+An isolated negative control removing the synthetic private marker fails the
+offline header assertion (exit 134). The ACK fixture also seeds a pending-resume
+marker and a completable cursor: playback must leave them unchanged, while the
+identical live body must invoke the resume handler and clear the marker.
 
 ## Opaque alias instancing
 
@@ -1146,6 +1169,14 @@ The sender and ACK fixtures also check the selected resume marker, clearing of
 pre-observation key edges and accumulated roomscale, fresh input after that
 boundary, terminal-authority marker production, unreliable marker-before-move
 ordering, and full-sequence ACK recovery across half/full wraps.
+
+The ACK fixture additionally requires `DEMO_MOVEACK_CONSUMPTION_PASSED`.
+It runs ordinary/raw-Gorilla/inherited-trusted recorded bodies with zero local
+command history and unset live capabilities. Complete validated bodies preserve
+all live client state and leave the following service aligned. Truncated,
+nonfinite and out-of-range bodies still fail; the same raw/trusted bodies still
+require capability admission during a live connection. This is codec coverage,
+not proof of the current server's trusted-body production or full demo playback.
 
 The command-name regression feeds literal svc 57/ACK bytes followed by opcode
 127 through the real MSG/ACK owners, then calls the production diagnostic lookup.

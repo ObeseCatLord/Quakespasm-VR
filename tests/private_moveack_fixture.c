@@ -149,6 +149,76 @@ static void test_command_names (void)
 	assert (!strcmp (CL_ServerCommandName (previous), "unknown"));
 }
 
+static void test_demo_ack_consumption (void)
+{
+	byte bytes[160];
+	cls.demoplayback = true;
+	cls.netcon = NULL;
+	for (int kind = 0; kind < 3; kind++)
+	{
+		reset_client ();
+		assert (!cl.movemessages && !cl.vr_gorilla_supported &&
+			!cl.vr_gorilla_trusted_cap_sent);
+		unsigned flags = MOVEACK_FLAG_AUTHORITATIVE | MOVEACK_FLAG_PREDICTION_ALLOWED |
+			MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_COMPLETED;
+		if (kind) flags |= MOVEACK_FLAG_VR_GORILLA;
+		if (kind == 2) flags |= MOVEACK_FLAG_GORILLA_TRUSTED;
+		int length = moveack (bytes, 19, flags, MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT,
+			2, 3, MOVEACK_DISCONTINUITY_NONE, kind == 2, kind != 0, 7);
+		client_state_t before = cl;
+		bytes[length] = svc_nop;
+		assert (parse (bytes, length + 1) && !msg_badread);
+		assert (!parse_ack_accepted && !memcmp (&cl, &before, sizeof (cl)));
+		assert (!smoothing_resets && !resume_resets && !flushes);
+		assert (msg_readcount == length && MSG_ReadByte () == svc_nop);
+		for (int cut = 0; cut < length; cut++)
+			assert_rejected_unchanged (bytes, cut);
+	}
+	/* Seed a resume marker and a completable cursor so the same body would
+	 * actually reset the marker in live play. Playback must preserve both. */
+	reset_client ();
+	cl.movemessages = 20;
+	cl.ackedmovemessages = 18;
+	cl.move_ack_discontinuity_epoch = 2;
+	cl.move_resume_marker_epoch_valid = true;
+	cl.move_resume_marker_epoch_sent = 3;
+	cl.move_resume_marker_first_sequence = 19;
+	int length = moveack (bytes, 19, MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 2, 4, MOVEACK_DISCONTINUITY_GAP,
+		false, false, 0);
+	client_state_t resume_before = cl;
+	bytes[length] = svc_nop;
+	assert (parse (bytes, length + 1) && !msg_badread);
+	assert (!parse_ack_accepted && !memcmp (&cl, &resume_before, sizeof (cl)));
+	assert (!smoothing_resets && !resume_resets && !flushes);
+	assert (msg_readcount == length && MSG_ReadByte () == svc_nop);
+	cls.demoplayback = false;
+	assert (parse (bytes, length) && parse_ack_accepted && resume_resets == 1);
+	assert (!cl.move_resume_marker_epoch_valid && !cl.move_resume_marker_first_sequence);
+	cls.demoplayback = true;
+	reset_client ();
+	length = moveack (bytes, 19, MOVEACK_FLAG_VR_GORILLA,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 2, 3, 0, false, true, 7);
+	/* Complete invalid bodies still fail offline: a NaN anchor, then an
+	 * out-of-range surface-model index. Only capability provenance is bypassed. */
+	int offset = 16;
+	put_float (bytes, &offset, NAN);
+	assert_rejected_unchanged (bytes, length);
+	length = moveack (bytes, 19, MOVEACK_FLAG_VR_GORILLA,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 2, 3, 0, false, true, QSVR_MODEL_LIMIT);
+	assert_rejected_unchanged (bytes, length);
+	cls.demoplayback = false;
+	reset_client ();
+	/* The identical complete body still requires live capability admission. */
+	length = moveack (bytes, 19, MOVEACK_FLAG_VR_GORILLA,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 2, 3, 0, false, true, 7);
+	assert_rejected_unchanged (bytes, length);
+	length = moveack (bytes, 19, MOVEACK_FLAG_GORILLA_TRUSTED,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 2, 3, 0, true, false, 0);
+	assert_rejected_unchanged (bytes, length);
+	puts ("DEMO_MOVEACK_CONSUMPTION_PASSED body/framing/validation; no live replay state");
+}
+
 int main (void)
 {
 	byte packet[160];
@@ -156,6 +226,7 @@ int main (void)
 	float servercommandframe = -1;
 
 	test_command_names ();
+	test_demo_ack_consumption ();
 
 	reset_client ();
 	cl.qcvm.extglobals.servercommandframe = &servercommandframe;

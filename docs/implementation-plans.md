@@ -29,7 +29,7 @@ commits stay on `2.0`; the product branch and unrelated user edits stay intact.
 
 | Feature | Plan | Current planning state |
 | --- | --- | --- |
-| Production predictive movement and mod support | [Predictive movement plan](predictive-movement-2.0-plan.md) | Source-verified proposal; local Astra review requested before activation/admission changes. |
+| Production predictive movement and mod support | [Predictive movement plan](predictive-movement-2.0-plan.md) | Stage 0 demo compatibility implemented and reviewed; production activation and mod admission remain later stages. |
 | Vulkan foveation | [Existing foveation plan](vulkan-foveation-2.0-plan.md), [Steam Frame review](migration-steam-frame-foveation-review.md) | Existing plan/review; revise before another major capability or architecture expansion. |
 | VR SSAO | [Existing SSAO design and review](migration-vr-ssao-review.md) | Existing design/review; revise before another major algorithm change. |
 | 3D weapon wheel | [Existing wheel design](migration-wheel-3d-design.md), [foreground review](migration-wheel-foreground-review.md) | Existing design/review; revise before expanding presentation ownership. |

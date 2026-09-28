@@ -1968,11 +1968,95 @@ static qboolean CL_CurrentServerGameMatches (const char *gamedir)
 	return !q_strcasecmp (current, gamedir);
 }
 
+/* One header reader for live serverinfo and recorded serverinfo. Loading,
+ * map reset and resource ownership remain in CL_ParseServerInfo. */
+const char *CL_ReadServerProtocol (qboolean playback, unsigned int offered,
+	unsigned int legacy, cl_server_protocol_t *result)
+{
+	cl_server_protocol_t header = {0};
+	unsigned int accepted_pext2 = legacy == QSVR_PROTOCOL_PINNED ?
+		QSVR_PEXT2_REQUIRED : PEXT2_ACCEPTED_CLIENT;
+	qboolean seen_extensions = false;
+	int i;
+
+	// parse protocol version number
+	for (;;)
+	{
+		i = MSG_ReadLong ();
+		if (i == PROTOCOL_QSVR_PROFILE)
+		{
+			const unsigned int selected = (unsigned int)MSG_ReadLong ();
+			/* Demos carry their selected layout, rather than a live offer.
+			 * Keep network admission strict and reject unsupported file layouts. */
+			if (msg_badread || selected != QSVR_PROTOCOL_PINNED ||
+				legacy || header.protocol_qsvr || seen_extensions ||
+				(!playback && selected != offered))
+				return "Unsupported, unoffered or misplaced private profile";
+			header.protocol_qsvr = selected;
+			accepted_pext2 = QSVR_PEXT2_REQUIRED;
+			continue;
+		}
+		if (i == PROTOCOL_FTE_PEXT1)
+		{
+			seen_extensions = true;
+			header.protocol_pext1 = MSG_ReadLong ();
+			if (header.protocol_pext1 & ~PEXT1_ACCEPTED_CLIENT)
+				return va ("Server returned FTE1 protocol extensions that are not supported (%#x)", header.protocol_pext1 & ~PEXT1_SUPPORTED_CLIENT);
+			continue;
+		}
+		if (i == PROTOCOL_FTE_PEXT2)
+		{
+			seen_extensions = true;
+			header.protocol_pext2 = MSG_ReadLong ();
+			if (header.protocol_pext2 & ~accepted_pext2)
+				return va ("Server returned FTE2 protocol extensions that are not supported (%#x)", header.protocol_pext2 & ~accepted_pext2);
+			continue;
+		}
+		break;
+	}
+
+	// johnfitz -- support multiple protocols
+	if (i != PROTOCOL_NETQUAKE && i != PROTOCOL_FITZQUAKE && i != PROTOCOL_RMQ)
+	{
+		return va ("Server returned version %i, not %i or %i or %i", i, PROTOCOL_NETQUAKE, PROTOCOL_FITZQUAKE, PROTOCOL_RMQ);
+	}
+	header.protocol = i;
+	// johnfitz
+
+	if (header.protocol == PROTOCOL_RMQ)
+	{
+		// mh - read protocol flags from server so that we know what protocol features to expect
+		header.protocolflags = (unsigned int)MSG_ReadLong ();
+	}
+	else
+		header.protocolflags = 0;
+
+	// Only an explicit connection opt-in admits the unmarked pinned layout.
+	// The colliding public extension bits alone can never select it.
+	if (legacy)
+	{
+		if (msg_badread || legacy != QSVR_PROTOCOL_PINNED ||
+			header.protocol != PROTOCOL_RMQ || header.protocol_pext1 != 0 ||
+			header.protocol_pext2 != QSVR_PEXT2_REQUIRED ||
+			header.protocolflags != (PRFL_FLOATCOORD | PRFL_SHORTANGLE))
+			return "Server does not match the selected legacy Quakespasm VR layout";
+		header.protocol_qsvr = legacy;
+	}
+	else if (header.protocol_qsvr &&
+		(msg_badread || header.protocol != PROTOCOL_RMQ || header.protocol_pext1 != 0 ||
+		 header.protocol_pext2 != QSVR_PEXT2_REQUIRED ||
+		 header.protocolflags != (PRFL_FLOATCOORD | PRFL_SHORTANGLE)))
+		return "Server selected an incompatible private Quakespasm VR layout";
+
+	if (msg_badread)
+		return "Truncated protocol header";
+	*result = header;
+	return NULL;
+}
+
 static qboolean CL_ParseServerInfo (void)
 {
 	const char *str;
-	unsigned int accepted_pext2 = cls.legacy_qsvr == QSVR_PROTOCOL_PINNED ?
-		QSVR_PEXT2_REQUIRED : PEXT2_ACCEPTED_CLIENT;
 	int			i;
 	qboolean	gamedirswitchwarning = false;
 	qboolean	gamedirinvalid = false;
@@ -2006,77 +2090,22 @@ static qboolean CL_ParseServerInfo (void)
 	Key_ClearStates ();
 	IN_ClearStates ();
 
-	// parse protocol version number
-	for (;;)
-	{
-		i = MSG_ReadLong ();
-		if (i == PROTOCOL_QSVR_PROFILE)
-		{
-			const unsigned int selected = (unsigned int)MSG_ReadLong ();
-			if (msg_badread || cls.legacy_qsvr || !cls.offered_qsvr ||
-				selected != cls.offered_qsvr || cl.protocol_qsvr || cl.protocol_pext2)
-				Host_Error ("Server selected an unoffered or misplaced private profile");
-			cl.protocol_qsvr = selected;
-			accepted_pext2 = QSVR_PEXT2_REQUIRED;
-			continue;
-		}
-		if (i == PROTOCOL_FTE_PEXT1)
-		{
-			cl.protocol_pext1 = MSG_ReadLong ();
-			if (cl.protocol_pext1 & ~PEXT1_ACCEPTED_CLIENT)
-				Host_Error ("Server returned FTE1 protocol extensions that are not supported (%#x)", cl.protocol_pext1 & ~PEXT1_SUPPORTED_CLIENT);
-			continue;
-		}
-		if (i == PROTOCOL_FTE_PEXT2)
-		{
-			cl.protocol_pext2 = MSG_ReadLong ();
-			if (cl.protocol_pext2 & ~accepted_pext2)
-				Host_Error ("Server returned FTE2 protocol extensions that are not supported (%#x)", cl.protocol_pext2 & ~accepted_pext2);
-			continue;
-		}
-		break;
-	}
-
-	// johnfitz -- support multiple protocols
-	if (i != PROTOCOL_NETQUAKE && i != PROTOCOL_FITZQUAKE && i != PROTOCOL_RMQ)
-	{
-		Con_Printf ("\n"); // because there's no newline after serverinfo print
-		Host_Error ("Server returned version %i, not %i or %i or %i", i, PROTOCOL_NETQUAKE, PROTOCOL_FITZQUAKE, PROTOCOL_RMQ);
-	}
-	cl.protocol = i;
-	// johnfitz
-
+	cl_server_protocol_t protocol;
+	const char *protocol_error = CL_ReadServerProtocol (cls.demoplayback,
+		cls.offered_qsvr, cls.legacy_qsvr, &protocol);
+	if (protocol_error)
+		Host_Error ("%s", protocol_error);
+	cl.protocol = protocol.protocol;
+	cl.protocolflags = protocol.protocolflags;
+	cl.protocol_pext1 = protocol.protocol_pext1;
+	cl.protocol_pext2 = protocol.protocol_pext2;
+	cl.protocol_qsvr = protocol.protocol_qsvr;
 	if (cl.protocol == PROTOCOL_RMQ)
 	{
 		const unsigned int supportedflags = (PRFL_SHORTANGLE | PRFL_FLOATANGLE | PRFL_24BITCOORD | PRFL_FLOATCOORD | PRFL_EDICTSCALE | PRFL_INT32COORD);
-
-		// mh - read protocol flags from server so that we know what protocol features to expect
-		cl.protocolflags = (unsigned int)MSG_ReadLong ();
-
-		if (0 != (cl.protocolflags & (~supportedflags)))
-		{
+		if (cl.protocolflags & ~supportedflags)
 			Con_Warning ("PROTOCOL_RMQ protocolflags %i contains unsupported flags\n", cl.protocolflags);
-		}
 	}
-	else
-		cl.protocolflags = 0;
-
-	// Only an explicit connection opt-in admits the unmarked pinned layout.
-	// The colliding public extension bits alone can never select it.
-	if (cls.legacy_qsvr)
-	{
-		if (msg_badread || cls.legacy_qsvr != QSVR_PROTOCOL_PINNED ||
-			cl.protocol != PROTOCOL_RMQ || cl.protocol_pext1 != 0 ||
-			cl.protocol_pext2 != QSVR_PEXT2_REQUIRED ||
-			cl.protocolflags != (PRFL_FLOATCOORD | PRFL_SHORTANGLE))
-			Host_Error ("Server does not match the selected legacy Quakespasm VR layout");
-		cl.protocol_qsvr = cls.legacy_qsvr;
-	}
-	else if (cl.protocol_qsvr &&
-		(msg_badread || cl.protocol != PROTOCOL_RMQ || cl.protocol_pext1 != 0 ||
-		 cl.protocol_pext2 != QSVR_PEXT2_REQUIRED ||
-		 cl.protocolflags != (PRFL_FLOATCOORD | PRFL_SHORTANGLE)))
-		Host_Error ("Server selected an incompatible private Quakespasm VR layout");
 
 	*gamedir = 0;
 	if (cl.protocol_pext2 & PEXT2_PREDINFO)
@@ -2952,7 +2981,8 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 	}
 	if (flags & MOVEACK_FLAG_GORILLA_TRUSTED)
 	{
-		if (!cl.vr_gorilla_trusted_cap_sent || net_message.cursize - msg_readcount < 4)
+		if ((!cls.demoplayback && !cl.vr_gorilla_trusted_cap_sent) ||
+			net_message.cursize - msg_readcount < 4)
 		{
 			msg_badread = true;
 			return false;
@@ -2962,7 +2992,8 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 	memset (&gorilla_state, 0, sizeof (gorilla_state));
 	if (flags & MOVEACK_FLAG_VR_GORILLA)
 	{
-		if (!cl.vr_gorilla_supported || net_message.cursize - msg_readcount < 4 + 3 + 18 * 4 + 16)
+		if ((!cls.demoplayback && !cl.vr_gorilla_supported) ||
+			net_message.cursize - msg_readcount < 4 + 3 + 18 * 4 + 16)
 		{
 			msg_badread = true;
 			return false;
@@ -3023,6 +3054,12 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 				return false;
 			}
 	}
+
+	/* A demo has no local command producer or live capability negotiation.
+	 * Consume and validate its complete recorded body, then continue entity
+	 * decoding without manufacturing ACK/replay/resume or Gorilla state. */
+	if (cls.demoplayback)
+		return !msg_badread;
 
 	/* Validate the whole payload before moving the replay baseline. The
 	 * resume marker gives the full first post-resume sequence.

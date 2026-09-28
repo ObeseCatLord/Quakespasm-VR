@@ -311,6 +311,14 @@ static void CL_Record_Serverdata (void)
 {
 	size_t i;
 	MSG_WriteByte (&net_message, svc_serverinfo);
+	/* Mid-map signon must identify the actual decoder, including recordings
+	 * made on an explicitly admitted legacy private connection. Public FTE
+	 * extension bits overlap the private layout and cannot identify it. */
+	if (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED)
+	{
+		MSG_WriteLong (&net_message, PROTOCOL_QSVR_PROFILE);
+		MSG_WriteLong (&net_message, cl.protocol_qsvr);
+	}
 	if (cl.protocol_pext2)
 	{
 		MSG_WriteLong (&net_message, PROTOCOL_FTE_PEXT2);
