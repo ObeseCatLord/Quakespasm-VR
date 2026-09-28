@@ -106,3 +106,25 @@ queued commands and quiet frames. Preserve existing liquid/pause regression
 acceptance. Renderer/headset/eye testing, performance measurement and Windows/
 ARM qualification stay deferred by the user. Senior-review disposition follows
 before production edits; implementation evidence follows after completion.
+
+## Astra design disposition and amended boundary
+
+Local `gpt-6-astra/max` read-only design review, effective fields independently
+verified from its latest `turn_context`. Main checked the source reset,
+maintenance and contact/permission lifetimes. Stage 1 prerequisite passes for
+actual e1m1 lift activation: separately initialized native and selected runs
+both rise 152 units over 39 moving world frames, including one quiet carry and
+one batched carry, then jump/release; selected completion and full-snapshot
+replay return pass. This does not prove palm-only or rollback behavior.
+
+| Recommendation | Disposition before production edits |
+| --- | --- |
+| A palm-loop mark can be lost on quiet frames without body contact. | Adopted. `SV_Physics_Client` resets the frame flag, and maintenance marks body ground only. Add a pure snapshot eligibility check against live/model-matched retained palm bindings, using existing state; no new persistent flag or hand owner. Main's production write set now also includes this narrow `sv_main.c` predicate. |
+| Local anchors do not imply passive palm-only carriage. | Adopted. Preserve the inherited physical-stroke budget; test foot-plus-palm support separately from palm-only binding/quiet/stopped/batched states and intentional strokes. Do not promise automatic hand-only lift riding or spend externally supplied motion as a hand stroke. |
+| Lift riding does not qualify non-rider door pushing or rollback. | Adopted as required acceptance. Add actual stock brush push and actual blocked-QC/reversal observations with explicitly prepared physical obstruction if needed. Keep support/rollback/callback owners. |
+| Check stale-result invalidation after callback relocation/replacement. | Adopted. Reuse existing reset-generation, model identity and relocation/publication guards; add focused composition evidence rather than another lifetime store or extra palm impacts. |
+| Existing architecture is sufficient if those contracts pass. | Adopted conditional adapter. Preserve authority versus replay permission and restrictive legacy modes; reopen if another movement phase/state owner becomes necessary. |
+
+The single authorized web coding attempt failed before edits when its browser
+could not open; no replacement local coding model was selected. Main implements
+the bounded fixture. This operational failure does not change feature scope.
