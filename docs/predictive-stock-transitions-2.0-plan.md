@@ -1,6 +1,8 @@
 # Selected stock movement: native state transitions
 
-Status: preimplementation draft for predictive movement stage 2. This is a
+Status: preimplementation plan reviewed by local Astra Max for the first
+frame-boundary slice. No production changes are part of this planning checkpoint.
+This is a
 bounded implementation plan, not a declaration that prediction or the migration
 is complete. The parent [predictive movement plan](predictive-movement-2.0-plan.md)
 retains mod support and the full desktop/VR acceptance matrix.
@@ -29,6 +31,8 @@ and use the existing authority/mode epoch to invalidate incompatible replay.
 | `Quake/sv_user.c`, `SV_PrivateWalkTrialStateValid`, rejects anything outside WALK/SLIDEBOX. `Quake/sv_main.c`, admission and snapshot validation, do the same. | Ordinary cheats currently disconnect an already selected client. Changing only the physics dispatcher is insufficient. |
 | `Quake/sv_phys.c`, `SV_Physics_ClientTerminalFrame`, coalesces queued command levels/latches before the existing native dispatcher. | Reuse that adapter, retaining dead-only contact invalidation and roomscale clearing. |
 | `SV_RunClients` skips `SV_ClientThink` for every selected owner; `SV_ClientThink` applies native acceleration. | A living native frame needs exactly one native input pass before PreThink. |
+| `SV_ClientUpdateAnglesForClient` decays punch angle; `SV_ClientThink` already calls it. | Replace the coalescer's angle-only call on the living branch, rather than adding native input after it. |
+| `SV_GorillaEligible` and `SV_GorillaConsumeDeferredMove` reject all selected owners, including ones executing native physics. | Establish native execution before native input and adapt these exact gates; keep selected WALK on its solver owner. |
 | `SV_Physics_ClientPrivateWalkTrial` already continues terminal transitions after PreThink/Think without restarting callbacks. Native continuation after weapon Think retains the pre-Think WALK dispatch type. | Do not generalize partial callback continuation by changing a boolean; phase/type/time ownership must be separately justified. |
 | The selected solver uses command duration; native frames use world duration. | Switching to a fresh full native frame after one or more completed commands could double movement time. Select a fresh native frame before selected callbacks. |
 | `SVFTE_WriteEntitiesToClient` already publishes native/engine authority and advances a mode epoch. `CL_ObservePrivateReplayMetadata` clears replay propagation on authority/epoch changes; ACK parsing invalidates the snapshot and resets smoothing. | Reuse metadata; verify that stale replay cannot survive transitions. |
@@ -54,6 +58,23 @@ contact, button-latch or replay policy. Factor checks only where needed to keep
 receipt, physics and snapshot decisions consistent; finite/framing errors remain
 errors rather than native eligibility.
 
+The shared classification is an observational result (WALK, supported native,
+terminal, rejected), not a new persistent mode. Receipt and snapshot callers
+may permit supported native states; an already-started selected command remains
+strictly WALK. Do not widen `SV_PrivateWalkTrialStateError` success to native
+types: its post-callback callers continue into `PM_NORMAL`. Do not move its
+`SV_CheckWater` side effect into receipt or native eligibility checks, because
+native input must observe water at the existing native boundary.
+
+Living native execution is established using the existing frame ownership
+discriminator before `SV_ClientThink`. Adapt only the Gorilla eligibility and
+deferred-input exclusions that currently mistake latched selection for active
+PMove ownership. Native contact processing retains native ordering. Dead-only
+pre-respawn draining, Gorilla reset and hand cursor invalidation remain separate.
+The new living branch does not set the corpse's `private_move_resume_pending`
+exemption or suppress the existing selected arrival-gap checks. General gap
+recovery still needs its own coherent change before stage-2 activation.
+
 | Alternative | Disposition before review |
 | --- | --- |
 | Extend PMove to fly/noclip now. | Defer: QSS-M supports solver modes, but this changes native cheat acceleration/settings and needs a larger behavioral contract. |
@@ -74,10 +95,13 @@ transitions and leaves mod callbacks out of the first slice.
 2. **Implement the stock native adapter.** `Quake/sv_phys.c` retains the current
    queue/coalescer, native dispatcher, completion tail and dead continuation.
    Living native frames accumulate only fresh queued roomscale once, retain
-   levels/brief latches, call `SV_ClientThink` once at the native input boundary,
+   levels/brief latches, replace the angle-only call with `SV_ClientThink` once
+   at the native input boundary after establishing native ownership,
    and reset selected timing debt without resetting accepted/completed sequence
    identity. Dead frames retain their current pre-respawn contact clearing.
-   Native maintenance with no new command must not repeat impulse or head motion.
+   Native maintenance with no new command must not repeat impulse or head motion
+   or inherit the corpse's indefinite stale-input exemption. `Quake/sv_user.c`
+   adapts the two Gorilla selected-owner exclusions to actual frame ownership.
 3. **Align receipt and snapshot policy.** `Quake/server.h`, `Quake/sv_user.c`
    and `Quake/sv_main.c` use the same narrow classification. Admission at begin
    remains stock WALK; an already selected valid native state stays connected.
@@ -112,13 +136,18 @@ generic mod fallback or wider solver rewrite becomes necessary.
 
 - Compare a selected native frame with the ordinary native chain from identical
   real stock QC/map state and queued input: origin/velocity, callback order/count,
-  due Think window, brief attack/jump/impulse, roomscale and completion/retirement.
+  due Think window, recoil, brief attack/jump/impulse, roomscale and completion/retirement.
   Include NOCLIP and FLY, both native noclip acceleration modes, no-new-command
-  maintenance, two/eight commands, and death/respawn regression cases.
+  maintenance, two/eight commands, FLY with raw Gorilla hands, and death/respawn
+  regression cases. Check that selected WALK still has only its solver owner.
 - Execute WALK -> NOCLIP/FLY -> WALK through actual engine command handlers in
   the admitted mixed-peer driver. Verify continued connection, increasing
   completed ACK, native snapshots with prediction off, mode epoch changes,
   owner state matching server, and actual client history/replay reset.
+  Carry the complete private movement stats and owner entity through the real
+  server-message end before invoking replay. Direct entity decoding alone does
+  not commit a usable movement snapshot. Do not clear the command journal
+  indiscriminately when reusing the existing metadata invalidation.
 - Ensure public desktop peers still use native physics and receive no private
   metadata. Private VR head movement must be consumed once despite redundant
   commands, native maintenance, toggling state and returning to WALK.
@@ -137,5 +166,23 @@ or an unactivated movement path complete.
 
 ## Astra disposition
 
-Pending review of this preimplementation draft. Record recommendations and their
-adopted/adapted/rejected disposition before the first production change.
+Review provenance: local `gpt-6-astra`, effective `max` effort verified; read-only
+review of the committed `2011abaa` draft and named source. Main spot-checked the
+load-bearing claims in `sv_user.c`, `sv_phys.c`, `sv_main.c`, `cl_parse.c` and
+`cl_main.c`. The [verified brief](predictive-stock-transitions-astra-brief.md)
+records the initial scope. No human decision is required.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Keep selection latched; reuse coalescer/native dispatcher rather than deselect/reselect. | Adopted for the first NOCLIP/FLY frame-boundary slice; one queue and completion owner remain. |
+| Establish native ownership before input; fix Gorilla exclusions that equate admission with execution. | Adopted. Gate changes are limited to `SV_GorillaEligible` and `SV_GorillaConsumeDeferredMove`, using existing frame ownership. FLY raw-hand equivalence becomes required acceptance. |
+| Replace angle update on the living branch; do not call it in addition to native input. | Adopted after verifying the `DropPunchAngle` call. Recoil is added to equivalence checks. |
+| Share observational classification while retaining caller-specific permitted outcomes. | Adopted. Native receipt/snapshot acceptance cannot weaken strict WALK checks in a command already executing PMove. Water observation stays at its existing execution boundary. |
+| Do not inherit terminal resume exemptions in living native maintenance. | Adopted for this bounded slice. Existing selected gap behavior remains until a separate recovery change; the parent plan still requires normal gap recovery before activation. |
+| Classify current state before snapshot physics, then use existing authority/mode epoch resets. | Adopted. Both pre-physics native authority and qualified WALK return are explicit checks; no new replay protocol is added. |
+| Actual replay proof needs complete stats and end-of-message snapshot commit. | Adopted after verifying `CLFTE_CommitMoveSnapshot`. The existing direct entity mixed fixture is baseline evidence only and must be extended for this slice. |
+| Keep partial-phase living continuation and broader mod contracts outside this first adapter. | Adopted as staging, not deletion from the parent goal. Production activation remains gated by the complete stage-2 contract. |
+
+The review changed the implementation boundaries and identified concrete VR
+movement/recoil regressions that a mechanical terminal-adapter generalization
+would have introduced. Production edits may begin against this revised plan.
