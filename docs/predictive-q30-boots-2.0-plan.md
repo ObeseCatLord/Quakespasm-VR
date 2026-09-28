@@ -1,7 +1,7 @@
 # q30 jump-boots pickup, native gameplay and replay return
 
-Status: implemented with focused Linux software qualification; final local Astra
-review in progress. The plan preceded implementation. Normal q30 session activation is committed
+Status: implemented with focused Linux software qualification and final local
+Astra review; the positive-preview P2 is resolved. The plan preceded implementation. Normal q30 session activation is committed
 at `624aa154`; this closes one real-QC ability lifecycle in the broader
 [AD-family plan](predictive-mod-admission-2.0-plan.md), not all ability/trigger or
 mod compatibility. Linux software checks now; connected/headset/eye, performance
@@ -143,3 +143,9 @@ still discriminates premature grants. No new production ability case is added.
 The follow-up local Astra pass checks that fix alongside the user's reopened
 [shared movement reuse decision](predictive-movement-reuse-reassessment-2.0-plan.md);
 future work should converge the shared QC adapter rather than grow per-mod gates.
+
+Final local Astra Max source review found no remaining blocker in the strengthened
+positive previews. Main verified effective model/effort and consolidated the
+recorded runs/countercheck. The shared-movement reassessment is now resolved in
+its linked disposition; the next work generalizes the existing adapter rather
+than adds another boots implementation or routine qualification hash.

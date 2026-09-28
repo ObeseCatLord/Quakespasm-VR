@@ -1,8 +1,8 @@
 # Reopened movement reuse and mod-special-case decision
 
-Status: architecture reopened following the user's direction to avoid a growing
-collection of mod special cases. No new production change is authorized before
-this comparison receives local Astra review and a concrete disposition/write set.
+Status: architecture reopened, reviewed by local Astra Max and resolved for the
+next shared-adapter vertical. This plan/disposition precedes production changes;
+the vertical below is not implemented yet.
 Keep the full migration goal: QSS-M-style modern predictive desktop/VR crossplay,
 QC/mod abilities, inherited VR contacts/roomscale and deliberate QBJ3 ladder fix.
 Working boots/AD pickup behavior is reference evidence, not permission to write
@@ -27,7 +27,7 @@ untouched. Hardware/performance/Windows/ARM checks remain deferred.
 
 Right-size: solo operator, retain working transport/server/renderer and existing
 QC lifetime. Prefer one shared movement integration with a narrow VR adapter and
-QB J3 ladder compatibility, rather than per-mod implementations. The existing
+QBJ3 ladder compatibility, rather than per-mod implementations. The existing
 exact-q30 path can remain a known reference during convergence; do not delete it
 blindly or append more hashes/ability gates as the default expansion strategy.
 
@@ -68,3 +68,116 @@ approval/taste decision is expected; the user has supplied the reuse preference.
 Main must spot-check findings and synthesize adopted/adapted/rejected disposition
 before committing the implementation contract. Stop expansion if a second
 scheduler/state machine or repeated interactions exceed this focused boundary.
+
+## Verified Astra review and main disposition
+
+Fresh local Astra verified actual sources before critique with effective
+`gpt-6-astra` / `max`; main independently verified turn settings. Main spot-checked
+PM_CheckJump's qc_jump_owner suppression, the existing command-duration QC scope,
+AD's authored pausetime velocity zero, QSS-M's unaware force reset and the
+product's assumed-water-drag subtraction. The latter produces +4 residual at
+waterlevel2/25ms/velocity100 even if QC leaves velocity unchanged. This is a
+source-derived counterexample, not a reproduced runtime failure. Astra reviewed
+source and main's recorded runs; it did not execute tests.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Separate general admission from proving every program's behavior. | **Adopted.** Remove the general stock/q30 identity condition for the new shared path. Retain actual protocol, lifecycle, numeric, hull/input and stat-overlap guards. A new program must not require another callback inventory or qualification hash. |
+| Reuse the product's world-QC/command-solver organization, not its guessed force subtraction. | **Adapted.** Integrate at existing SV_Physics_Client/private walk helpers. QC owns actual server impulse/release/ability writes; use existing qc_jump_owner server suppression without q30 identity. Neither reset velocity nor subtract imaginary stock effects. |
+| Define clock and executable input-prefix ownership before code. | **Adopted.** The contract below retains one unaware-QC world lifecycle, command solver duration, scheduled world Think and actual-prefix completion. It prevents unsampled suffix gameplay/tracking from being cleared or acknowledged. |
+| Generic client prediction may be corrected for unknown QC effects. | **Adopted.** Use existing ENGINE_COMPAT authority/complete seeds and generic forecast. Do not advertise the exact q30 ordinary policy for arbitrary QC or disable replay merely because a boots bit exists. Corrections are explicit; unknown QC is not reimplemented client-side. |
+| Use a genuinely different shipped program for the next vertical. | **Adopted.** Explicitly mount unchanged AD pak0 bytecode with hash assertion in the fixture only; normal AD pak2 is identical to q30 and cannot prove generic admission. |
+| Keep cooperative QC separate and accurately report its missing invocation/builtin. | **Adopted.** Existing ABI/solver/registry are reused later; this vertical neither falsely claims them connected nor copies receipt-time dispatch into the queue. |
+| Delete temporary distinctions as the shared owner qualifies behavior. | **Adopted.** First retain the exact stock/q30 paths as regression references within existing owners, then fold/remove ability and attack-name routing when the shared path passes their meaningful existing behaviors. No new identities/gates are added as routine expansion. |
+| Updated boots positive previews resolve prior P2. | **Verified/adopted.** Final review finds no remaining blocker in that strengthened proof. No production boots code is added by the fixture. |
+
+No user permission or taste decision is needed. The user's reuse preference
+selects the direction. This is a necessary convergence of a growing qualification
+architecture, not an authorization to replace neighboring working systems.
+
+## Next implementation: exact owners and phase/input contract
+
+Production write set: Quake/sv_phys.c and Quake/sv_main.c, owned together by main.
+Reuse sv_user.c receipt/credit/retirement, server state, transport and cl_main.c
+initially unchanged. pmove.c/h changes require demonstrated missing force/phase
+boundary and a recorded revised write set before editing. Test write set:
+tests/stock_liquid_native_fixture.c; main also owns plan/index/README. No main
+branch, runtime installation or user-dirty migration document edits.
+
+Implement the shared adapter inside the existing client physics/private command
+helpers; do not add a second movement entry point, queue or persistent phase
+state. Preserve qualified reference behavior during the first vertical, then
+converge it rather than leaving a permanent parallel implementation.
+
+1. **Reserve an executable prefix observationally.** Use actual queue order,
+   accepted durations, current credit and lifecycle fences. Only prefix input
+   supplies this world's unaware-QC lifecycle. Use the first eligible head's
+   view/pose and logical button levels. Stop before another unsampled impulse or
+   QC gameplay button transition; that head stays queued for the next lifecycle.
+   Do not pull suffix roomscale/contact samples into the initial QC scope. The
+   prefix is local traversal state, not another reservation queue/clock. Receipt
+   and retirement remain the existing owners.
+2. **Run unaware QC once on the world clock.** Prepare prefix input through the
+   existing input/weapon/view scope, execute PreThink and the existing scheduled
+   Think opportunity at world duration/time, then PostThink once after movement
+   or its existing surviving continuation. Maintenance retains one world QC
+   lifecycle when no command is executable; it gains neither duration nor ACK.
+   Do not rerun QC to recover from a phase transition.
+3. **Consume only executed movement.** Each reserved command keeps its accepted
+   PMove duration, roomscale/contact sample and completion identity. Actual QC
+   velocity/release state seeds the shared solver, with server qc_jump_owner
+   suppressing a duplicate generic jump. No residual-force guessing or ability
+   bit routing determines ordinary dry WALK. Preserve existing contact/melee and
+   weapon-pose owners; no separate multiplayer offsets are introduced.
+4. **Keep phase transitions explicit.** Preclassified wet/custom-physics or
+   demonstrated hold/ladder states use existing native input/QC/physics boundaries.
+   After command movement/contact changes state, complete that head once, finish
+   the surviving tail once and leave later unprocessed heads queued. Before
+   movement, only existing remaining-phase continuation may finish QC/input
+   already consumed; never append fresh native acceleration or repeat PreThink.
+   If current helpers cannot express a demonstrated transition without losing
+   input/effects, stop and reopen this narrow boundary before writing another
+   scheduler. Invalidated/dead owners use existing discontinuity cleanup, not
+   fabricated normal completion. Never clear/ACK an untouched suffix.
+5. **Publish generic forecast honestly.** Existing engine-compatible snapshot
+   authority, complete stats/position/velocity/latches/timers and actual completed
+   cursor seed ordinary replay. Generic replay predicts unacknowledged motion;
+   server QC effects correct it through subsequent authoritative snapshots.
+   Do not infer boots charges or claim exact arbitrary-QC prediction. Retain
+   relocation/ownership epochs, stat conflicts and malformed-state protection.
+
+## End-to-end vertical and convergence gate
+
+Use unchanged shipped AD pak0 progs.dat2345354 bytes / SHA256
+`f3c4218216ea0d3b00db35eef9e72945ee6687006b3e82c37ea2ae33a0eea922` explicitly
+in an isolated root with compatible licensed resources. Assert mounted identity
+in the fixture only, with no production checksum/boots-field admission gate.
+Reuse real offer/spawn/begin, command receipt, QC spawn/setup/contact, native
+reference, public desktop peer, full snapshot/parser and replay.
+
+Require positive ordinary horizontal movement and jump replay; actual pickup,
+grounded/airborne boots action and charge/expiry with movement input; dry ability
+movement through the shared adapter without a boots-specific native diversion;
+corrected client motion during the ability and ordinary replay afterward. Retain
+the existing112-sample reference as evidence, not a universal1e-6 requirement.
+For the new controlled initialized comparison declare a first target of at most
+1 unit position and1 unit/second velocity difference per sampled world frame,
+matching discrete lifecycle/charge/expiry outputs. Record all observed errors;
+an exceeded target must trigger investigation rather than silent widening.
+Arbitrary client QC forecast accuracy is a separate, honestly reported limit.
+
+Include one bounded batching/arrival gap: world QC timers/effects do not multiply
+with accepted motion commands; contacts, impulses and roomscale remain single
+consumption; prefix ACK/retirement matches execution and the suffix is retained.
+Keep existing stock/q30 session and hold/camera/attack evidence relevant to
+changed owners. Consolidate Linux checks after coherent implementation, then
+local Astra integration review. No whole-program branch proof is required merely
+to admit a generic program. Windows/ARM/device/performance stay deferred.
+
+Convergence removes general admission's whitelist and folds the exact-q30 ability
+and callback-name routing when the shared owner passes those behaviors. Exact
+identities remain appropriate for fixture references and genuinely incompatible
+QC adapters. Preserve QBJ3's deliberate ladder fix, VR combat/aim bridges and
+existing native continuations. Wet/custom physics, all representative mods,
+cooperative ABI, local/load and remaining movement scope remain part of the full
+goal; temporary dry/native limits do not count as final compatibility completion.
