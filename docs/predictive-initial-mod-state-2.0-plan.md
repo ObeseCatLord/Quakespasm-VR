@@ -64,7 +64,7 @@ new boundaries. Setting spawned/selected temporarily to reuse the frame API
 misrepresents state and is rejected. A second native queue/scheduler duplicates
 working owners and has no demonstrated necessity.
 
-Expected production scope: at most60 changed lines across `sv_main.c`,
+Expected production scope: about60 changed lines across `sv_main.c`,
 `sv_phys.c` and one declaration in `server.h`. Reopen if the work needs another
 persistent admission or movement state machine. Scope is a general initial
 state adapter, not a wet-only or cooperative-program whitelist.
@@ -135,3 +135,26 @@ guard before adopting the following recommendations.
 The review identified missing initial publication evidence and the risk of
 selecting stale-reference/scheduled-Think owners. The new first snapshot gate
 and shared validator address these directly; no new protocol or identity policy.
+
+## Reopened publication preflight before production correction
+
+Final Astra review found that malformed optional entity gravity passes the
+owner validator but makes the existing private movevar builder fail. Main
+reproduced the admission gap on actually loaded older AD with a prepared NaN
+gravity field: admission returned eligible and the refusal assertion failed
+(exit134). Do not duplicate gravity/cvar rules in the owner validator.
+
+Adopt the minimal existing-builder preflight in nonstock initial admission:
+after successful owner validation, call `SV_PrivateWalkTrialBuildMoveVars` into
+local scratch and retain native admission on failure. No stock/frame/queue
+changes. This adds about8 lines at the existing admission boundary. Require the
+malformed-gravity refusal test with repaired native gameplay after begin, then
+rerun the relevant coherent healthy-state/default matrix.
+
+The first empty-queue snapshot intentionally rejects ACK0 while no command has
+been produced (`CL_UpdateMoveAck`). Acceptance is complete datagram/body/stats
+parsing, usable fresh private stat receipts and stale-ACK accounting without
+invented selected/replay metadata. Positive command snapshots later confirm
+the selected owner and completion. AD dry-return acceptance also requires
+fresh horizontal displacement and completed/retired cursor advancement after
+relocation, allowing legal time-credit tails to finish on a no-send world pass.
