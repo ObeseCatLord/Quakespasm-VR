@@ -57,7 +57,7 @@ the design if the change needs another persistent owner.
 4. Exercise one/two standard calls, roomscale-once, nested entity isolation and
    immutable scratch/input restoration. Existing quiet/retained-tail/duplicate
    command checks remain relevant regressions. Qualify prepared `PMF_LADDER`
-   control numerically if practical; do not claim an authored ladder traversal.
+   control numerically with differing pitch; do not claim authored ladder traversal.
 5. Build Linux and run the coherent focused checks, then final local Astra
    source review. Document evidence/limits and commit explicit paths only.
 
@@ -85,3 +85,19 @@ review runs, without changing production before disposition.
 Environment: this `quakespasm-2.0` worktree only; sibling engines/assets are
 read-only references, captured transport/native VM fixtures are available,
 Linux SDL3 is the current builder, and Windows/ARM/live hardware are deferred.
+
+## Local Astra Max disposition before production
+
+The reviewer used verified effective `gpt-6-astra` / `max`. Main spot-checked
+the standard input bridge, retained context lifetime, PM water movement before
+NQ jump, and VR ladder yaw-only vectors before adopting the following decisions.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Prove swimming with displacement, not terminal upward velocity. | Adopted. NQ jump can give desktop and VR identical final velocity. Same-start body and decoded snapshot displacement, desktop controls and an identity-cleared negative control are required. |
+| Make prepared ladder numerical qualification required. | Adopted. Compare VR pitch0/65 under matching forward/yaw and private/public desktop controls. This qualifies the consumer, not authored ladder detection. |
+| Capture identity before callbacks; exact retained actor equality only. | Adopted. No mutable host-client/QC-self/enclosing-context lookup. Existing nested save/restore remains authoritative. Test foreign NPC isolation and borrowed context restoration; freed builtin targets must fail without mutation. |
+| Keep QC timing/inputs and zero tracked fields unchanged. | Adopted. Copy one bit after QC bridge, leave msec zero, and retain one/two-call differences. No new settings, protocol, queues or hand propulsion. |
+
+The review changed acceptance by making ladder behavior an explicit gate and
+clarifying why terminal swimming velocity is insufficient evidence.
