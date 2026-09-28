@@ -297,6 +297,100 @@ static void LiquidDisposablePreview (client_state_t *state)
 #ifndef STOCK_LIQUID_FIXTURE_ENTRY
 #define STOCK_LIQUID_FIXTURE_ENTRY main
 #endif
+
+/* Reuse admitted peers, actual native/QC owner, shared real-BSP finder and
+ * full production publication. The late relocation is prepared, not authored
+ * map traversal; checkpoints do not restore every actor/effect stream. */
+static void Q30Publication (client_t *peers[2], client_state_t *states[2])
+{
+	client_t *peer = peers[0];
+	edict_t *player = peer->edict;
+	assert (SV_PrivateWalkTrialQ30Program () && peer->private_pmove_walk_selected);
+	/* Complete a real native fly command, then use the existing command
+	 * owner to return to WALK before publication. Do not stage a frame flag. */
+	host_client = peer;
+	sv_player = player;
+	Cmd_ExecuteString ("fly 1", src_client);
+	assert (player->v.movetype == MOVETYPE_FLY);
+	realtime += host_frametime;
+	LiquidSend (peer, states[0], 0, 80, 0, true, 0);
+	GapWorldFrame ();
+	assert (peer->private_move_native_frame && peer->private_completed_move >= 2 &&
+		!peer->private_cmd_queue_count);
+	host_client = peer;
+	sv_player = player;
+	Cmd_ExecuteString ("fly 0", src_client);
+	assert (SV_PrivateWalkTrialClassifyState (peer) == SV_PRIVATE_MOVE_WALK &&
+		peer->private_move_native_frame && !peer->private_cmd_queue_count &&
+		!player->v.waterlevel);
+	vec3_t wet = {0};
+	assert (FindLiquidPosition (player, CONTENTS_WATER, 2, wet));
+	VectorCopy (wet, player->v.origin);
+	SV_LinkEdict (player, false);
+	assert (SV_PrivateWalkTrialClassifyState (peer) == SV_PRIVATE_MOVE_WALK &&
+		SV_PrivateWalkTrialQ30NeedsNative (player, peer, NULL) && !player->v.waterlevel);
+	const float cached_level = player->v.waterlevel, cached_type = player->v.watertype;
+	realtime += host_frametime;
+	LiquidSend (peer, states[0], 0, 100, 0, true, 0);
+	assert (peer->private_cmd_queue_count == 1);
+	assert (peer->private_cmd_queue[peer->private_cmd_queue_head].forwardmove == 100 &&
+		!peer->private_cmd_queue[peer->private_cmd_queue_head].upmove &&
+		!peer->private_cmd_queue[peer->private_cmd_queue_head].buttons &&
+		!peer->private_cmd_queue[peer->private_cmd_queue_head].impulse);
+	const unsigned sequence = peer->private_cmd_queue[peer->private_cmd_queue_head].sequence;
+	const size_t vars_size = qcvm->progs->entityfields * sizeof (float);
+	const size_t globals_size = qcvm->progs->numglobals * sizeof (float);
+	void *vars = Mem_Alloc (vars_size), *globals = Mem_Alloc (globals_size);
+	client_t *saved_peer = Mem_Alloc (sizeof (*peer));
+	memcpy (vars, &player->v, vars_size);
+	memcpy (globals, qcvm->globals, globals_size);
+	memcpy (saved_peer, peer, sizeof (*peer));
+	const int datagram_size = sv.datagram.cursize;
+	const double time = qcvm->time;
+	/* Reference consumes the same actually received head through the existing
+	 * fresh native owner, without any intervening publication. */
+	SV_Physics_ClientSelectedNativeFrame (player, 1, peer, false);
+	SV_FinishPrivateUsercmds ();
+	assert (peer->active && peer->private_completed_move == (int)sequence &&
+		!peer->private_cmd_queue_count && player->v.waterlevel == 2);
+	vec3_t origin, velocity;
+	VectorCopy (player->v.origin, origin);
+	VectorCopy (player->v.velocity, velocity);
+	const float flags = player->v.flags, health = player->v.health;
+	SV_UnlinkEdict (player);
+	memcpy (&player->v, vars, vars_size);
+	memcpy (qcvm->globals, globals, globals_size);
+	memcpy (peer, saved_peer, sizeof (*peer));
+	qcvm->time = time;
+	sv.datagram.cursize = datagram_size;
+	SV_LinkEdict (player, false);
+	GapSnapshot (peer, states[0]); // actual SV_SendClientDatagram, one captured packet
+	assert (peer->active && player->v.waterlevel == cached_level &&
+		player->v.watertype == cached_type && peer->private_move_native_frame &&
+		SV_PrivateWalkTrialClassifyState (peer) == SV_PRIVATE_MOVE_WALK &&
+		states[0]->move_snapshot_valid && states[0]->move_ack_selected_owner &&
+		states[0]->move_ack_authority == MOVE_AUTHORITY_LEGACY_FRAME &&
+		!states[0]->move_ack_prediction_allowed);
+	SV_Physics_Client (player, 1);
+	SV_FinishPrivateUsercmds ();
+	assert (peer->active && peer->private_move_native_frame &&
+		peer->private_completed_move == (int)sequence && !peer->private_cmd_queue_count &&
+		!peer->private_cmd_queue_msec && peer->private_pmove_credit_msec == 0 &&
+		player->v.waterlevel == 2 && VectorCompare (origin, player->v.origin) &&
+		VectorCompare (velocity, player->v.velocity) && player->v.flags == flags &&
+		player->v.health == health);
+	puts ("Q30_PUBLICATION_WATER_PASSED actual begin/received head/native-completed WALK/full-send/cached-water/next-native parity; prepared late relocation and bounded checkpoint");
+	Mem_Free (saved_peer);
+	Mem_Free (globals);
+	Mem_Free (vars);
+	for (int slot = 0; slot < 2; ++slot)
+	{
+		Mem_Free (states[slot]->entities);
+		Mem_Free (states[slot]->scores);
+		Mem_Free (states[slot]);
+	}
+}
+
 int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 {
 	client_t *peers[2];
@@ -320,6 +414,11 @@ int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 	contents = !strcmp (liquid, "water") ? CONTENTS_WATER :
 		!strcmp (liquid, "slime") ? CONTENTS_SLIME : CONTENTS_LAVA;
 	StartLiquidPeers (argc, argv, map, command_msec, peers, states);
+	if (COM_CheckParm ("-q30publication"))
+	{
+		Q30Publication (peers, states);
+		return 0;
+	}
 	const qboolean selected = COM_CheckParm ("-defaultselection") || COM_CheckParm ("-selected");
 	const qboolean vr = COM_CheckParm ("-vr") != 0;
 	for (int depth = 1; depth <= 3; ++depth)

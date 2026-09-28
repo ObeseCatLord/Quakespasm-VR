@@ -265,19 +265,20 @@ static void Q30PolicySnapshots (client_t *client, byte *bytes, size_t capacity)
 		net_message.data = bytes;
 		net_message.maxsize = capacity;
 		SZ_Clear (&net_message);
+		SVFTE_WriteStats (client, &net_message);
 		assert (SVFTE_WritePrivateMoveStats (client, &net_message));
 		assert (SVFTE_WriteEntitiesToClient (client, &net_message, capacity, false));
 		CL_ParseServerMessage ();
 		assert (msg_readcount == net_message.cursize && cl.move_snapshot_valid);
 		assert (cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND &&
-			!cl.move_ack_prediction_allowed); // q30 admission/permission stays closed
+			cl.move_ack_prediction_allowed); // injected qualified writer, not admission proof
 		assert (PMCL_SetMoveVars () && (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY) &&
 			movevars.jumpspeed == heights[i] && movevars.qc_maxvelocity == sv_maxvelocity.value);
-		assert (!CL_ReplayPlayerMovement (&cl.entities[1], replay_origin));
+		assert (CL_ReplayPlayerMovement (&cl.entities[1], replay_origin));
 	}
 	G_FLOAT (height->ofs) = saved_height;
 	client->offered_pmove_policies = saved_cap;
-	puts ("Q30_POLICY_SNAPSHOT_PASSED actual stats/writer/full-parser/movevars; injected owner remains unpredicted");
+	puts ("Q30_POLICY_SNAPSHOT_PASSED actual stats/writer/full-parser/movevars/replay; injected qualified owner");
 }
 
 static void DemoEntityPackets (qboolean selected)

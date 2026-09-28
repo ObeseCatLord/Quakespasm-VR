@@ -3,8 +3,11 @@
 Status: implementation in progress. This plan preceded the typed-classification
 and bounded-dispatch checkpoint of
 [ordinary q30 replay](predictive-q30-replay-2.0-plan.md). Policy transport and
-the replay consumer are committed at `8a0871c1`; normal q30 admission remains
-closed. This plan retains the full [AD-family outcome](predictive-mod-admission-2.0-plan.md).
+the replay consumer are committed at `8a0871c1`; bounded normal admission now
+passes the [activation slice](predictive-q30-activation-2.0-plan.md), consolidated
+Linux checks and final local Astra review. Real ability/trigger traversal and
+broader mod compatibility remain open. This plan retains the full
+[AD-family outcome](predictive-mod-admission-2.0-plan.md).
 
 ## Behavior and reference
 
@@ -172,8 +175,10 @@ The review changed the restoration and deferred-input contracts. The bounded
 checkpoint has since passed final local Astra implementation review and focused
 Linux acceptance, with a separately reproduced stock-liquid failure recorded
 in the [implementation review](predictive-q30-transition-implementation-review.md).
-The broader feature still requires callback closure, traversal and normal
-admission acceptance plus final review of those stages.
+At that checkpoint, callback closure, traversal and normal admission acceptance
+remained required. Subsequent bounded closure/traversal work and the
+[normal activation slice](predictive-q30-activation-2.0-plan.md) are now qualified;
+real ability/trigger traversal and wider-mod compatibility remain required.
 
 ## Implemented checkpoint and next work
 
@@ -181,7 +186,8 @@ Typed current-state and pre-begin predicates, native hold/contact boundaries,
 dispatch-only water/roomscale lookahead, later-head deferral and sticky
 after-movement completion are implemented in the existing owners. The hand
 reset preserves an existing relocation cutoff while retaining unstarted raw
-samples. Normal q30 admission and replay permission remain closed.
+samples. Normal q30 admission and replay permission remained closed at this
+checkpoint; the later activation slice above connects the qualified session.
 
 The exact-q30 fixture passes actual native startup/ordinary return, staged typed
 ability/reference cases, actual QC hold cancellation, valid-versus-held contact,
@@ -192,12 +198,13 @@ pass. Stock water/VR at 25 ms passes; its 10 ms ledge assertion reproduces with 
 pre-checkpoint physics/input sources and remains unresolved. Component fixtures
 do not establish actual horizontal water entry or normal q30 admission.
 
-Next, resolve living qualification loss first created by PreThink or scheduled
-Think using the existing remaining-phase owners. Prove ordinary callback
-closure and actual roomscale/trigger traversal before enabling the normal
-offer/spawn/begin/serialization/parser/replay vertical. Revise and commit this
-plan before expanding that contract; do not introduce generic late ClientThink,
-another world interval or a second movement scheduler.
+This checkpoint's next stages addressed living qualification loss from PreThink
+or scheduled Think using existing remaining-phase owners, bounded ordinary
+callback closure and real roomscale traversal, followed by the normal session
+vertical. Their later records and activation qualification retain the broader
+ability/trigger requirements. Revise and commit the plan before expanding that
+contract; do not introduce generic late ClientThink, another world interval or
+a second movement scheduler.
 
 ## Callback-phase design disposition
 

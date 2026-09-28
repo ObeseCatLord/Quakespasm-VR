@@ -520,13 +520,76 @@ covers missing/unknown policy offers, reconnect clearing and serverinfo
 preservation. The loaded q30 registry has nine customstats disjoint from223; staged
 scalar/two-slot/vector collisions reject. An injected selected owner writes
 complete stats and owner bytes through the production full parser/movevar
-consumer, preserving height120/0/4000/1e30 and velocity limit. Normal q30
-admission stays stock-only and server replay permission stays false. This
-fixture explicitly verifies that refusal; it does not manufacture a successful
-ordinary q30 replay session. Existing stock negotiation/demo checks still run.
+consumer, preserving height120/0/4000/1e30 and velocity limit. Qualified offered
+q30 policy now permits replay; the injected writer also sends actual full health
+stats before movement/owner data and checks the real replay consumer. It remains
+a prepared owner, not the normal-session proof. Existing stock negotiation/demo
+checks still run.
 Its ordinary writer seam explicitly prepares initialized QC lifecycle and
 matching skill state for the shared classifier; those assignments are not a
 startup/admission claim.
+
+Normal q30 activation uses the existing mixed-session fixture and actual
+production datagram sender. Build it with the recipe near the start of this
+README, then use the isolated q30 asset root created above:
+
+```sh
+timeout --signal=TERM 30s /tmp/qsvr-mixed-native-fixture \
+  -q30session -dedicated 3 -noudp -nosound -game q30a1024 \
+  -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-session-user
+```
+
+Require exit0, `Q30_SESSION_REPLAY_COMPLETION_PASSED` and `Q30_SESSION_PASSED`.
+Untouched product defaults, actual client offer/server negotiation/spawn/begin,
+generated input, receipt, whole-world QC/physics, completion/retirement, production
+send, full snapshot parser and client replay run in one public/private world.
+Selected/startup/ACK/authority fields are not assigned to manufacture success.
+Before any generated input, ACK0 is correctly too new for the client; received
+native startup snapshots are checked after real sequences begin. Ordinary motion
+then uses QC_COMMAND, live height/limit inputs and actual jump. The public peer
+must remain native, visible, and move horizontally.
+
+A generated sequence17 is replayed while delivery is withheld, then consumed on
+its actual command interval: exact completion/empty queue and received ACK17 are
+required; each replay position component differs from authoritative completion
+by less than .01 units, accounting for the eighth-unit velocity seed. A prepared
+future pausetime executes actual native QC horizontal cancellation and expires
+to ordinary replay; gravity remains native for an airborne body. Actual older
+and unknown-only private policy offers attempt spawn/begin in the spare slot
+and remain native. Client signon/resources, captured delivery, synthetic inputs
+and the prepared hold remain explicit seams. This does not prove authored
+ability pickups/triggers, connected signon, tracked-pose or hardware behavior.
+
+The discriminating q30 publication check reuses the existing stock-liquid driver,
+its imported native/session owners and shared real-BSP finder:
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make \
+  negotiation-native-fixture USE_SDL3=1 -j4 \
+  NEGOTIATION_SOURCE=../tests/stock_liquid_native_fixture.c \
+  NEGOTIATION_FIXTURE=/tmp/qsvr-q30-publication \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o cl_main.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram'
+timeout --signal=TERM 30s /tmp/qsvr-q30-publication \
+  -q30publication -defaultselection -vr \
+  -dedicated 3 -noudp -nosound -game q30a1024 \
+  -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-publication-user
+```
+
+Require exit0 and `Q30_PUBLICATION_WATER_PASSED`. An actual admitted fly command
+completes natively; the actual fly0 command returns the owner to WALK with its
+native-completed frame flag intact. Prepared late relocation to real water2 keeps
+cached dry fields. The actual received head requires forward100 with zero
+up/buttons/impulse. That input, a canonical fresh-native reference
+without publication, full production publication, and normal next native dispatch
+must agree on body/flags/health/water/completion/retirement; publication must not
+refresh cached water before native input/PreThink. The q30 full-send fixture
+requires exactly one captured packet, rather than silently parsing only the last
+of multiple packets. The checkpoint restores body/globals/client, world time and
+logical datagram append length, not every actor/effect stream. No authored
+relocation, general effect replay or full-world restoration is claimed.
 
 The mixed native fixture's `-velocityseeds` option checks actual serialized
 signed-short velocity boundaries through the full parser and replay gate.

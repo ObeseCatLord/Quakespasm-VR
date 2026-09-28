@@ -69,9 +69,10 @@ records the missing replay consumer, bounded compatibility and velocity-limit
 inputs, pre-QC VR ordering, exact write set and end-to-end acceptance before
 production edits. Its Astra review changed the ordering contract; ordinary
 q30 policy transport, complete movement inputs and the actual replay consumer
-are now implemented and pass local component checks. Ordinary q30 admission and
-complete native transitions remain incomplete; the plan records the exact
-remaining vertical and traversal requirements.
+are implemented and pass local component checks. At that checkpoint ordinary
+q30 admission and complete native transitions remained incomplete. Later slices
+below qualify bounded closure/traversal and actual normal-session activation;
+real ability/trigger traversal and wider compatibility remain required.
 
 The next [q30 native-state and admission plan](predictive-q30-transitions-2.0-plan.md)
 records the actual state inventory, fresh-native reuse, bounded write set and
@@ -104,5 +105,11 @@ Revise the plan before implementing any newly expanded phase contract.
 The next [normal q30 activation plan](predictive-q30-activation-2.0-plan.md)
 records program/policy admission, qualified replay permission and the actual
 offer/spawn/begin/command/public-peer/full-parser/replay vertical before edits.
-It retains real ability/trigger and wider-mod requirements after bounded
-activation; component selection or permission alone cannot qualify the session.
+It was reopened before fixes to the mutating water publication check and weak
+capture/replay assertions. Bounded normal-session activation, numerical replay
+versus authoritative completion, horizontal public movement and observational
+publication/next-native parity now pass consolidated Linux checks and final local
+Astra Max review. Component selection or permission alone cannot qualify the
+session. Real ability/trigger and wider AD/Mjolnir/cooperative-QC requirements
+remain open, as does the separately reproduced preexisting stock10ms liquid
+assertion. The plan records the fixtures' prepared/captured proof limits.

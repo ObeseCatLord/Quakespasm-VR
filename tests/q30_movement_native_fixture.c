@@ -1,6 +1,7 @@
-/* Exact installed q30 QC and real world hulls. Selection remains injected
- * here, with admission closed. Exercise current-state/native dispatch and
- * compare native or qualified selected movement from the same player state. */
+/* Exact installed q30 QC and real world hulls. Selection is injected in this
+ * component driver; normal admission is proved by the mixed-session fixture.
+ * Exercise current-state/native dispatch and compare native or qualified
+ * selected movement from the same player state. */
 #include "../Quake/sv_phys.c"
 #include <assert.h>
 #include "native_engine_fixture.h"

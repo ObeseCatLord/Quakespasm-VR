@@ -1,6 +1,9 @@
 # Normal q30 predictive-session activation
 
-Status: plan before implementation. This implements stages3–4 of the
+Status: bounded normal q30 admission/session activation implemented and qualified
+by consolidated Linux software checks and final local Astra Max review. Broader
+ability/trigger traversal and AD/Mjolnir/cooperative-QC compatibility remain open.
+The plan preceded implementation. This implements stages3–4 of the
 [transition plan](predictive-q30-transitions-2.0-plan.md), retaining its complete
 native-state, admission, publication/parser/replay requirements and the wider
 [AD-family goal](predictive-mod-admission-2.0-plan.md).
@@ -17,8 +20,8 @@ Older peers without Q30_JUMP policy, unknown programs, colliding customstats,
 loadgame/local-only and initially wet sessions retain existing native behavior.
 Those retained paths do not finish wider-mod/local/load prediction requirements.
 
-Verified current evidence: normal admission in sv_main.c still requires pinned
-stock identity, and snapshot replay permission explicitly excludes q30. Typed
+Preimplementation evidence: normal admission in sv_main.c required pinned
+stock identity, and snapshot replay permission explicitly excluded q30. Typed
 BeginState already classifies pre-begin live known-to-QC owners without toggling
 spawned. BuildMoveVars already carries live map_jumpheight/maxvelocity under the
 negotiated policy; complete stats, parser and shared PMove replay consumer exist.
@@ -125,3 +128,49 @@ snapshot owners, compile under the existing negotiation make target, then run
 consolidated software checks and a fresh local Astra fix review. Neither source
 analysis nor the existing dry-session pass substitutes for the discriminating
 publication case. Remaining parent-goal requirements stay intact.
+
+## Final qualification and review disposition
+
+The production change stays within sv_main.c: pinned q30 plus offered Q30_JUMP
+joins the existing admission owner, pre-begin startup uses the existing typed
+predicate, and qualified ordinary snapshots may permit replay. The extra
+mutating publication validator is stock-only. No native scheduler, water probe,
+protocol layout, bootstrap, build target or movement solver was added.
+
+Fresh local Astra Max fix review found no remaining blockers for the three
+reopened findings. The main agent independently verified effective
+`gpt-6-astra` / `max` final-turn settings and reviewed the integration. Astra
+reviewed the source and recorded Linux evidence; it did not run the tests itself.
+
+| Final finding | Disposition and evidence |
+| --- | --- |
+| q30 publication changes cached water before native input/PreThink. | **Fixed.** Actual admitted fly/native completion and fly0 return to WALK, prepared late real-water2 relocation, accepted input and full production send preserve cached water. Normal next native dispatch matches the same accepted-state canonical reference without publication for origin, velocity, flags, health, water, completion and queue retirement. |
+| Only the last captured packet was parsed. | **Fixed.** Each q30 full-send case requires exactly one actual send before parsing. This bounds the evidence to the single-packet scenarios exercised. |
+| Replay/public displacement did not prove command consumption. | **Fixed.** Actual withheld journal sequence17 replays within .01 units of its subsequent authoritative completion; ACK17, exact retirement and empty queue are required. Both peers must move horizontally. |
+| Publication fixture passed80/100 as buttons rather than forward movement. | **Adopted from final review.** Corrected helper arguments; the accepted head explicitly requires forward100 and zero up/buttons/impulse. The focused publication check passes after correction. No production change was needed. |
+
+Linux production build and the following consolidated checks pass: actual q30
+normal session; q30 ordinary native/replay comparisons; real1024_tango airborne
+traversal and retained-head handoff; scheduled-camera and empty-ammo handoffs;
+stock public/native and selected mixed sessions with pause/arrival/velocity-seed
+checks; and stock/q30 negotiation. The full-stats injected q30 writer now checks
+actual replay for heights120/0/4000/1e30, while remaining distinct from normal
+admission. Focused publication qualification was rerun after the final helper
+argument correction. Recipes and aggregate success markers are in
+[tests/README.md](../tests/README.md).
+
+A temporary copy of the publication driver, outside the repository, reinserts
+only the removed actual strict StateError call immediately before publication
+and a diagnostic. With the corrected forward input it reports cached0 becoming
+water2 and deliberately fails the cached-water preservation assertion (exit134).
+This discriminates the removed mutation; it is not an old-server binary or an
+authored water crossing. The authoritative source stays unchanged by this check.
+
+These are software compositions with prepared client signon resources, captured
+delivery, synthetic inputs, a prepared hold and late relocation, and bounded
+body/global/client checkpoints. They do not certify connected signon, authored
+ability pickup/trigger traversal, restoration of every actor/effect stream,
+hardware tracking or unrestricted q30/mod state. The preexisting stock10ms VR
+liquid ledge assertion remains unresolved; the earlier stock25ms case passed.
+Neither this bounded activation nor deferred device testing retires the broader
+parent goal. Future scope expansion still requires a committed plan first.

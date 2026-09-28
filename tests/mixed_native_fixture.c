@@ -9,6 +9,7 @@
 
 static byte captured[NET_MAXMESSAGE];
 static int captured_length;
+static int captured_sends;
 static int skin_uploads;
 extern qboolean SV_ReadClientMessage (void);
 
@@ -21,6 +22,7 @@ void __wrap_R_TranslateNewPlayerSkin (int player)
 int __wrap_NET_SendUnreliableMessage (qsocket_t *socket, sizebuf_t *message)
 {
 	assert (socket && message->cursize <= sizeof (captured));
+	captured_sends++;
 	memcpy (captured, message->data, message->cursize);
 	captured_length = message->cursize;
 	return 1;
@@ -55,6 +57,22 @@ static void ReadPeerSnapshot (client_t *peer, byte *bytes, size_t capacity)
 			failure, peer->edict->v.health, peer->edict->v.deadflag,
 			peer->edict->v.movetype, peer->edict->v.solid);
 		assert (!failure);
+	}
+	if (SV_PrivateWalkTrialQ30Program ())
+	{
+		/* Cover the actual publication validator, damage/clientdata and
+		 * datagram owner too; transport remains the same captured boundary. */
+		captured_length = 0;
+		captured_sends = 0;
+		assert (SV_SendClientDatagram (peer) && captured_sends == 1 && captured_length > 0 &&
+			(size_t)captured_length <= capacity);
+		memcpy (bytes, captured, captured_length);
+		net_message.data = bytes;
+		net_message.maxsize = capacity;
+		net_message.cursize = captured_length;
+		CL_ParseServerMessage ();
+		assert (msg_readcount == net_message.cursize);
+		return;
 	}
 	SVFTE_WriteStats (peer, &net_message);
 	if (SV_PrivateWalkTrialSelected (peer))
@@ -449,6 +467,177 @@ static client_state_t *CreateMixedPeerState (client_t *peer, int slot)
 	return state;
 }
 
+/* Actual offer/spawn/begin and queued commands; client signon resources and
+ * delivery still use the existing prepared/captured fixture boundaries. */
+static void RunQ30Session (client_t **peers, client_state_t **states)
+{
+	assert (SV_PrivateWalkTrialQ30Program () &&
+		peers[0]->private_pmove_walk_selected && !peers[1]->private_pmove_walk_selected &&
+		(peers[0]->offered_pmove_policies & QSVR_PMOVE_CAP_Q30_JUMP));
+	ddef_t *hold = ED_FindField ("pausetime");
+	ddef_t *height = ED_FindGlobal ("map_jumpheight");
+	assert (hold && height && (hold->type & ~DEF_SAVEGLOBAL) == ev_float &&
+		(height->type & ~DEF_SAVEGLOBAL) == ev_float);
+	vec3_t starts[2];
+	for (int slot = 0; slot < 2; ++slot)
+		VectorCopy (peers[slot]->edict->v.origin, starts[slot]);
+	GapSnapshot (peers[0], states[0]);
+	printf ("Q30_SESSION_INITIAL snapshot=%d selected=%d authority=%d allowed=%d ack=%d class=%d completed=%d\n",
+		states[0]->move_snapshot_valid, states[0]->move_ack_selected_owner,
+		states[0]->move_ack_authority, states[0]->move_ack_prediction_allowed,
+		states[0]->ackedmovemessages, SV_PrivateWalkTrialClassifyState (peers[0]),
+		peers[0]->private_completed_move);
+	/* Before any client sequence exists, ACK0 cannot become an accepted
+	 * owner snapshot. Observe actual server startup; check received startup
+	 * metadata below only after real client sequences have been generated. */
+	assert (SV_PrivateWalkTrialClassifyState (peers[0]) == SV_PRIVATE_MOVE_NATIVE &&
+		peers[0]->private_completed_move == 0 && !states[0]->move_ack_prediction_allowed);
+	qboolean saw_replay = false, saw_hold = false, saw_return = false;
+	qboolean saw_startup = false, saw_jump = false, saw_unacked = false;
+	qboolean saw_peer[2] = {false, false};
+	int previous_completed = 0;
+	for (int frame = 0; frame < 64; ++frame)
+	{
+		if (frame == 24)
+			GetEdictFieldValue (peers[0]->edict, hold->ofs)->_float = qcvm->time + .125f;
+		realtime += host_frametime;
+		for (int slot = 0; slot < 2; ++slot)
+		{
+			usercmd_t command = {0};
+			cl = *states[slot];
+			cls.netcon = peers[slot]->netconnection;
+			cl.time = command.servertime = qcvm->time;
+			VectorCopy (cl.viewangles, command.viewangles);
+			command.forwardmove = slot ? -80 : 80;
+			command.buttons = !slot && frame == 10 ? BUTTON_JUMP : 0;
+			command.vr_active = command.vr_handpos_relative = !slot;
+			captured_length = 0;
+			CL_SendMove (&command);
+			*states[slot] = cl;
+			if (captured_length) GapDeliver (peers[slot], captured, captured_length);
+		}
+		GapWorldFrame ();
+		assert (peers[0]->active && peers[1]->active &&
+			peers[0]->private_completed_move >= previous_completed &&
+			peers[0]->private_completed_move <= peers[0]->lastmovemessage);
+		previous_completed = peers[0]->private_completed_move;
+		if (frame == 10 && peers[0]->edict->v.velocity[2] > 0 &&
+			!((int)peers[0]->edict->v.flags & FL_ONGROUND)) saw_jump = true;
+		for (int slot = 0; slot < 2; ++slot)
+		{
+			GapSnapshot (peers[slot], states[slot]);
+			cl = *states[slot];
+			saw_peer[slot] |= cl.entities[2 - slot].netstate.modelindex > 0;
+			if (slot)
+				assert (!peers[slot]->private_pmove_walk_selected &&
+					!cl.move_ack_selected_owner && !cl.move_ack_prediction_allowed);
+			else
+			{
+				assert (cl.move_snapshot_valid && cl.move_ack_selected_owner &&
+					cl.ackedmovemessages == peers[0]->private_completed_move);
+				if (cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND)
+				{
+					assert (cl.move_ack_prediction_allowed && PMCL_SetMoveVars () &&
+						(movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY) &&
+						movevars.jumpspeed == G_FLOAT (height->ofs));
+					vec3_t replay;
+					cl.time = cl.pendingcmd.servertime = qcvm->time;
+					if (cl.ackedmovemessages > 0)
+					{
+						assert (CL_ReplayPlayerMovement (&cl.entities[1], replay));
+						saw_replay = true;
+						if (frame > 29) saw_return = true;
+					}
+				}
+				else
+				{
+					vec3_t replay;
+					assert (cl.move_ack_authority == MOVE_AUTHORITY_LEGACY_FRAME &&
+						!cl.move_ack_prediction_allowed &&
+						!CL_ReplayPlayerMovement (&cl.entities[1], replay));
+					if (frame < 3) saw_startup = true;
+					if (frame >= 24 && frame < 28)
+					{
+						/* QC cancels horizontal input; native WALK still owns
+						 * gravity/collision if the held body is airborne. */
+						assert (!peers[0]->edict->v.velocity[0] && !peers[0]->edict->v.velocity[1]);
+						saw_hold = true;
+					}
+				}
+			}
+			*states[slot] = cl;
+		}
+		if (frame == 16)
+		{
+			/* Generate a real journal command after the accepted snapshot;
+			 * replay it while delivery is withheld, then deliver it once. */
+			assert (states[0]->move_ack_prediction_allowed);
+			const int completed = peers[0]->private_completed_move;
+			realtime += .001;
+			GapSend (peers[0], states[0], 0, 0, 0);
+			cl = *states[0];
+			const int sequence = cl.movemessages - 1;
+			assert (sequence > cl.ackedmovemessages &&
+				cl.movecmds[sequence & MOVECMDS_MASK].sequence == sequence &&
+				cl.movecmds[sequence & MOVECMDS_MASK].msec > 0);
+			vec3_t replay;
+			assert (CL_ReplayPlayerMovement (&cl.entities[1], replay) &&
+				peers[0]->private_completed_move == completed);
+			*states[0] = cl;
+			GapDeliver (peers[0], captured, captured_length);
+			/* Consume only that accepted journal command on its actual
+			 * interval, before sending the next one. Wire velocity uses
+			 * eighth-units; compare the numeric replay with a .01-unit bound. */
+			const double world_frame = host_frametime;
+			host_frametime = cl.movecmds[sequence & MOVECMDS_MASK].seconds;
+			GapWorldFrame ();
+			assert (peers[0]->active && peers[0]->private_completed_move == sequence &&
+				!peers[0]->private_cmd_queue_count && !peers[0]->private_cmd_queue_msec);
+			for (int axis = 0; axis < 3; ++axis)
+				assert (fabsf (replay[axis] - peers[0]->edict->v.origin[axis]) < .01f);
+			GapSnapshot (peers[0], states[0]);
+			assert (states[0]->ackedmovemessages == sequence);
+			host_frametime = world_frame;
+			printf ("Q30_SESSION_REPLAY_COMPLETION_PASSED sequence=%d one accepted head retired; numeric error<.01\n", sequence);
+			saw_unacked = true;
+		}
+	}
+	assert (saw_startup && saw_replay && saw_hold && saw_return && saw_jump && saw_unacked &&
+		saw_peer[0] && saw_peer[1] && skin_uploads > 0);
+	for (int slot = 0; slot < 2; ++slot)
+	{
+		vec3_t displacement;
+		VectorSubtract (peers[slot]->edict->v.origin, starts[slot], displacement);
+		assert (peers[slot]->active && hypotf (displacement[0], displacement[1]) > 1);
+		Mem_Free (states[slot]->entities);
+		Mem_Free (states[slot]->scores);
+		Mem_Free (states[slot]);
+	}
+	/* Older private peers and unknown-only policy offers are real begin
+	 * attempts in the spare slot; they must retain native movement. */
+	assert (svs.maxclients >= 3);
+	for (int unknown = 0; unknown < 2; ++unknown)
+	{
+		char offer[1024];
+		q_snprintf (offer, sizeof (offer), "pext %#x %#x %#x %#x",
+			PROTOCOL_FTE_PEXT2, PEXT2_SUPPORTED_CLIENT,
+			PROTOCOL_QSVR_PROFILE, QSVR_PROTOCOL_PINNED);
+		if (unknown)
+		{
+			char old[1024];
+			q_strlcpy (old, offer, sizeof (old));
+			q_snprintf (offer, sizeof (offer), "%s %#x %#x", old,
+				PROTOCOL_QSVR_PMOVE_POLICIES, 0x80000000u);
+		}
+		client_t *older = Negotiate (2, offer, QSVR_PROTOCOL_PINNED);
+		Cmd_ExecuteString ("spawn", src_client);
+		Cmd_ExecuteString ("begin", src_client);
+		assert (older->active && older->spawned && older->knowntoqc &&
+			!older->offered_pmove_policies && !older->private_pmove_walk_selected);
+	}
+	puts ("Q30_SESSION_PASSED real offer/spawn/begin/startup/QC/jump/commands/full-parser/unacked replay/public peer/hold-return; prepared hold/resources and captured delivery");
+}
+
 #ifndef MIXED_NATIVE_FIXTURE_ENTRY
 #define MIXED_NATIVE_FIXTURE_ENTRY main
 #endif
@@ -491,7 +680,8 @@ int MIXED_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 	unsigned last_mode_epoch = 0;
 	static byte snapshots[NET_MAXMESSAGE];
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
-	const qboolean defaults = COM_CheckParm ("-defaultselection") != 0;
+	const qboolean q30_session = COM_CheckParm ("-q30session") != 0;
+	const qboolean defaults = q30_session || COM_CheckParm ("-defaultselection") != 0;
 	selected = defaults || COM_CheckParm ("-selected") != 0;
 	assert (svs.maxclients >= 2);
 	ConfigurePrivateMovementFixture (selected, defaults);
@@ -511,6 +701,11 @@ int MIXED_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 		initial_shells[slot] = peers[slot]->edict->v.ammo_shells;
 	}
 	host_frametime = .025;
+	if (q30_session)
+	{
+		RunQ30Session (peers, states);
+		return 0;
+	}
 	if (COM_CheckParm ("-earlypause")) RunStartupPauseChecks (peers[0], states[0]);
 	for (int frame = 0; frame < 120; frame++)
 	{

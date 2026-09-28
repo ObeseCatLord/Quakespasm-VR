@@ -2,8 +2,10 @@
 
 Status: implementation in progress following exact-QC decision proof `489dfe5e`.
 Policy negotiation and replay consumption are implemented at `8a0871c1`;
-the native-state checkpoint below follows them. Normal q30 admission remains
-closed. This is a coherent slice of the
+the native-state checkpoint below follows them. Bounded normal admission now
+passes the [activation slice](predictive-q30-activation-2.0-plan.md), Linux checks
+and final local Astra review. Real ability/trigger and broader mod compatibility
+remain open. This is a coherent slice of the
 [AD-family plan](predictive-mod-admission-2.0-plan.md); it retains that plan's
 complete native-state/session requirements and later AD/Mjolnir/cooperative-QC
 scope. It does not replace the migration's movement or protocol owners.
@@ -161,9 +163,11 @@ huge finite height, airborne press, low release with repeated roomscale and
 initial grounded stop, and 125 ms substeps. Position/velocity differences stay
 below .01 and release/ground flags match every command in those cases. Physent
 collection is a fixture seam, not a normal client session. A separate actual
-serialized stats/owner → full parser → movevars check preserves height/limit and
-confirms that the injected q30 owner remains unpredicted. The actual registry
-has nine customstats disjoint from223; staged width/collision cases reject.
+serialized stats/owner → full parser → movevars check preserved height/limit and
+confirmed at that checkpoint that the injected q30 owner remained unpredicted.
+The later activation slice permits qualified replay and updates this injected
+writer to exercise the actual consumer; normal admission is separately proved.
+The actual registry has nine customstats disjoint from223; staged width/collision cases reject.
 
 Address/UB/explicit float-cast-overflow checks cover missing/stale/negative/
 nonfinite limits and huge finite height/limit values. Real solver previews
@@ -179,9 +183,10 @@ subsequent [native-transition checkpoint](predictive-q30-transition-implementati
 implements shared typed classification, startup/ability/hold/camera predicates,
 bounded dispatch and raw Gorilla hold qualification. Complete callback-phase
 transitions, real step/ledge/trigger traversals and the smallest normal
-offer/spawn/begin/session vertical below remain required. q30 admission
-and prediction permission are still closed. Wider AD/Mjolnir and cooperative-QC
-compatibility remain in the parent plan; they are not retired by these checks.
+offer/spawn/begin/session vertical below remained required at that checkpoint.
+Later bounded closure/traversal and the activation slice above qualify normal
+admission and prediction permission. Real ability/trigger traversal and wider
+AD/Mjolnir and cooperative-QC compatibility remain in the parent plan; they are not retired by these checks.
 
 ## Acceptance and completion
 
