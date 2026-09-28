@@ -414,7 +414,7 @@ observational validator, not a composed malformed PostThink execution. Real
 roomscale/trigger traversal, before-movement callback closure and normal q30
 spawn/begin/full-parser/replay remain required before admission.
 
-The scheduled-axe follow-up uses a separate mode of the same fixture:
+The scheduled damage-target follow-up uses a separate mode of the same fixture:
 
 ```sh
 timeout --signal=TERM 30s /tmp/qsvr-q30-movement-native-fixture \
@@ -423,13 +423,17 @@ timeout --signal=TERM 30s /tmp/qsvr-q30-movement-native-fixture \
   -userdir /tmp/qsvr-q30-movement-native
 ```
 
-Require exit0 and `Q30_SCHEDULED_CAMERA_HANDOFF_PASSED`. Prepared monster HP-target
-and camera properties execute actual scheduled axe, damage, target and camera
-QC on real BSP. Native and selected dispatch compare body/velocity/flags/weapon/
-completion with nonzero analog input and Gorilla disabled/enabled. All five
-third-axe function identities, not-due and consumed-opportunity decisions are
-checked; actual safe axe2 animation stays selected. A no-command due attack uses
-native world time while retaining ACK0; malformed deadline/function bounds reject.
+Require exit0, four `Q30_SCHEDULED_CAMERA_CALLBACK_PASSED` markers (axe3, sg1,
+light1 and light2), and `Q30_SCHEDULED_CAMERA_HANDOFF_PASSED`. Prepared monster
+HP-target and camera properties execute actual scheduled axe, hitscan shotgun,
+lightning, damage, target and camera QC on real BSP. Shotgun uses the actual
+configflag bit131072. Native and selected dispatch compare body/velocity/flags/
+weapon/health/ammo/cooldown/completion with nonzero analog input and Gorilla
+disabled/enabled. All eight gated function identities, not-due and consumed
+opportunities are checked; actual safe axe2, sg2 and run animation stay selected.
+A no-command due attack uses native world time and real completed held input
+from a prior safe-animation command, retaining its completed cursor; malformed
+deadline/function bounds reject. It does not inject a last-command history.
 The mode exits before the ordinary replay matrix, so the usual fixture run is
 still required. Selection/entities are prepared; this is not normal q30
 admission, an authored map traversal, device input or a complete scheduled-Think

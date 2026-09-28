@@ -8112,7 +8112,7 @@ static qboolean SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (edict_t *ent,
 	const sv_client_think_window_t *window)
 {
 	const char *attacks[] = {"player_axe3", "player_axeb3", "player_axec3",
-		"player_axed3", "player_axee3"};
+		"player_axed3", "player_axee3", "player_sg1", "player_light1", "player_light2"};
 	if (!window || !window->available || !isfinite (window->world_frametime) ||
 		window->world_frametime < 0 || ent->v.nextthink <= 0 ||
 		ent->v.nextthink > qcvm->time + window->world_frametime ||

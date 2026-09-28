@@ -1,7 +1,7 @@
 # q30 ordinary callback closure
 
-Status: ordinary PreThink closure verified; bounded third-axe native dispatch
-implemented, with remaining scheduled weapon Think closure in progress. Normal
+Status: ordinary PreThink closure verified; bounded axe/shotgun/lightning native
+dispatch implemented, with remaining scheduled weapon Think closure in progress. Normal
 admission remains closed. This follows the local Astra
 decision in the [transition plan](predictive-q30-transitions-2.0-plan.md).
 
@@ -166,3 +166,52 @@ Exact write set: `Quake/sv_phys.c` and
 index and test README. Expected production expansion is three identities in
 the current predicate. Existing ordinary PreThink closure is a dependency;
 headset, performance and Windows/ARM checks stay deferred as instructed.
+
+## Projectile and ordinary-animation audit disposition
+
+A separate read-only local Astra Max verified the installed SHA-pinned binary
+and redecoded load-bearing branches. Main independently verified effective
+`gpt-6-astra` / `max` turn settings and spot-checked the current weapon2 native
+exclusion, actual empty-nail branch and best-weapon/store operands. This audit
+ran no software checks and does not certify normal-session reachability.
+
+| Finding | Disposition |
+| --- | --- |
+| Successful ordinary dry projectile launches only initialize separate entities. | **Adopted within the audited paths.** launch_projectile961 PCs41266–41553, Launch_Missile970 PCs42577–43007, Launch_Grenade977 PCs43267–43519 and launch_plasma958 PCs40311–40553 store delayed Think/touch callbacks. Player-type branches bypass monster targeting. Ordinary waterlevel0 excludes plasma's direct wet damage. |
+| Builtins/native hooks preserve this distinction. | **Verified/adopted.** Spawn excludes reserved clients and clears fields; model/size/origin relink without trigger callbacks. Aim/muzzle traces query only. Stock nail interception requires a different function/PC. VR pose restoration and friendly-fire scope restoration retain the firing body on these audited launch paths. The brief's nonexistent sv_vr_weapons.c reference was corrected to the actual sv_phys.c owner. |
+| Empty-ammo fallback prevents blanket projectile closure. | **Adopted; remains open.** W_FireSpikes69565, grenade69646, rocket69717 and plasma69772 call forceweaponswitch1322. W_BestWeapon70439–70445 can return2 from super-shotgun ownership and shells>1; forceweaponswitch68942 stores weapon2, which the current classifier excludes. This is a static counterexample over accepted dry states, not a demonstrated normal gameplay sequence yet. |
+| Ordinary stand/run, dry pain and pure reset/continuation frames preserve the body. | **Adopted within the audited successor graph.** Functions1369–1371 PCs71215–71361, footstep1199 PCs60153–60430 and pain1431–1442 PCs72033–72062 write animation/sound/bookkeeping. OP_STATE schedules rather than recursively executing the next attack. Supersg6 has an ammo fallback and is not labeled pure animation. |
+| Retain distinct qualification rather than all-firing native. | **Adopted.** First prove the empty-ammo path through actual preceding QC and compare nonzero movement, then plan the smallest existing-boundary exception. No new scheduler or generic late input is justified. Arbitrary target/camera-installed scheduling is outside this audit. |
+
+The remaining concrete callback question is due projectile Think → empty ammo
+→ forced weapon2 → post-Think strict WALK rejection. Current hitscan production
+scope remains the three identities committed in the preceding plan. Normal
+admission/traversal remains incomplete.
+
+## Scheduled hitscan implementation review
+
+The final fresh local Astra Max review found no blocking production defect.
+Main verified final effective `gpt-6-astra` / `max` metadata, the installed
+damage/target operands and the restored target's field stores. No raw telemetry
+is included. Astra inspected check markers but did not run software checks.
+
+| Final review recommendation | Disposition |
+| --- | --- |
+| The three identities reuse the existing due-window/pre-staging/native owner. | **Verified/adopted.** Production only extends that list; no new clock, queue, movement interval or firing policy. |
+| Safe-animation release retained a target already disarmed by earlier damage. | **Fixed.** Main confirmed T_Damage37768–37771 clears the HP threshold/target. Restore target_vars before the negative case and assert unchanged health, HP threshold and target string, plus selected ownership and no camera. |
+| Quiet callback frame must use actual completed held input. | **Verified/adopted.** First complete a safe-animation command with a cooldown, retire its queue, then stage the due callback. The quiet native frame preserves that completed cursor without injecting command history. |
+| Keep prepared-entity/component and broader admission limits explicit. | **Adopted.** No authored traversal, normal admission, full closure or headset result is claimed. |
+
+Linux SDL3 production and fixture builds exit0. All four actual callback markers
+and the aggregate scheduled-camera marker pass, as do the seven ordinary q30
+replay cases, stock mixed pause/arrival-gap/native-return checks and actual q30
+negotiation/stats/writer/full-parser checks. Final safe-target restoration is
+checked separately after adopting the review finding; production stayed unchanged.
+
+The audit's empty-ammo counterexample now has an actual preceding-QC proof:
+prepared ordinary inventory, QC impulse4, last nail fired, repeated native held
+input, then due player_nail2 at frame12 invokes the fallback and selects weapon2.
+The temporary Linux proof exits0. Inventory is prepared; normal admission and
+the selected comparison remain open. The next
+[empty-ammo handoff plan](predictive-q30-empty-ammo-2.0-plan.md) records the
+conditional extension before production, preserving ordinary successful launches.

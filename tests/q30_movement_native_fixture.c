@@ -181,10 +181,11 @@ static void restore_player (edict_t *player, client_t *client,
 	SV_LinkEdict (player, false);
 }
 
-/* A real scheduled weapon callback can activate a camera through a monster's
- * authored HP target. Entities/HP target are prepared map properties; the axe
- * trace, damage, target dispatch and camera use all execute the pinned QC. */
-static void scheduled_camera_case (edict_t *player, client_t *client, double time)
+/* Real scheduled weapon callbacks can activate a camera through a monster's
+ * authored HP target. Entities/HP target are prepared map properties; weapon
+ * traces, damage, target dispatch and camera use all execute the pinned QC. */
+static void scheduled_camera_case (edict_t *player, client_t *client, double time,
+	const char *attack, const char *weapon, const char *safe_animation)
 {
 	qcvm->time = time;
 	initialize_player (player, client);
@@ -193,10 +194,16 @@ static void scheduled_camera_case (edict_t *player, client_t *client, double tim
 	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
 	set_global_float ("coop", 0); // q30 intentionally ignores camera use in co-op
 	set_global_float ("cam_active", 0);
-	player->v.weapon = global_float ("IT_AXE");
+	// The actual q30 config bit selects hitscan shotgun instead of projectiles.
+	set_global_float ("configflag", (int)global_float ("configflag") | 131072);
+	player->v.weapon = global_float (weapon);
+	player->v.items = (int)player->v.items | (int)player->v.weapon;
+	player->v.ammo_cells = 100;
+	player_float (player, "attack_finished")->_float = 0;
 	usercmd_t command = {0};
 	command.sequence = 1;
 	command.forwardmove = 160;
+	command.buttons = BUTTON_ATTACK;
 	command.msec = 8;
 	command.seconds = .008f;
 	vec3_t source, finish, direction, right, up;
@@ -240,14 +247,15 @@ static void scheduled_camera_case (edict_t *player, client_t *client, double tim
 	camera->v.use = ED_FindFunction ("misc_camera_use") - qcvm->functions;
 	VectorCopy (command.viewangles, player->v.v_angle);
 	client->cmd = command;
-	player->v.think = ED_FindFunction ("player_axe3") - qcvm->functions;
+	player->v.button0 = 1;
+	player->v.think = ED_FindFunction (attack) - qcvm->functions;
 	player->v.nextthink = qcvm->time + .005f;
 	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
 	host_frametime = .010;
 	pr_global_struct->frametime = .010f;
 	sv_client_think_window_t window = {true, .010, .010f};
 	const char *attacks[] = {"player_axe3", "player_axeb3", "player_axec3",
-		"player_axed3", "player_axee3"};
+		"player_axed3", "player_axee3", "player_sg1", "player_light1", "player_light2"};
 	for (int i = 0; i < countof (attacks); ++i)
 	{
 		player->v.think = ED_FindFunction (attacks[i]) - qcvm->functions;
@@ -259,9 +267,9 @@ static void scheduled_camera_case (edict_t *player, client_t *client, double tim
 	player->v.nextthink = qcvm->time + .020f;
 	assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
 	player->v.nextthink = qcvm->time + .005f;
-	player->v.think = ED_FindFunction ("player_axe2") - qcvm->functions;
+	player->v.think = ED_FindFunction (safe_animation) - qcvm->functions;
 	assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
-	player->v.think = ED_FindFunction ("player_axe3") - qcvm->functions;
+	player->v.think = ED_FindFunction (attack) - qcvm->functions;
 	const double callback_time = qcvm->time;
 	const size_t vars_size = qcvm->progs->entityfields * sizeof (float);
 	const size_t globals_size = qcvm->progs->numglobals * sizeof (float);
@@ -299,6 +307,10 @@ static void scheduled_camera_case (edict_t *player, client_t *client, double tim
 			VectorCompare (samples[0].velocity, samples[1].velocity) &&
 			samples[0].flags == samples[1].flags &&
 			samples[0].weapon == samples[1].weapon &&
+			samples[0].health == samples[1].health &&
+			samples[0].shells == samples[1].shells &&
+			samples[0].ammo == samples[1].ammo &&
+			samples[0].attack_finished == samples[1].attack_finished &&
 			samples[0].completed == samples[1].completed);
 		if (!gorilla)
 		{
@@ -311,20 +323,39 @@ static void scheduled_camera_case (edict_t *player, client_t *client, double tim
 	Cvar_SetQuick (&sv_gorilla, "0");
 	command.vr_gorilla.flags = 0;
 	restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
-	player->v.think = ED_FindFunction ("player_axe2") - qcvm->functions;
+	SV_UnlinkEdict (target);
+	memcpy (&target->v, target_vars, vars_size);
+	SV_LinkEdict (target, false);
+	player->v.think = ED_FindFunction (safe_animation) - qcvm->functions;
+	command.buttons = 0; // safe animation must not start another shot in PostThink
 	step_authored_command (player, client, true, command);
-	assert (!client->private_move_native_frame && global_float ("cam_active") == 0);
+	assert (!client->private_move_native_frame && global_float ("cam_active") == 0 &&
+		target->v.health == 100 && player_float (target, "turrethealth")->_float == .999f &&
+		!strcmp (PR_GetString (GetEdictFieldValue (target,
+			ED_FindFieldOffset ("turrettarget"))->string), "fixture_q30_camera"));
 	/* Actual selected no-command dispatch keeps the completed cursor while
 	 * native world-time input/QC handles the due attack, before maintenance. */
 	restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
 	SV_UnlinkEdict (target);
 	memcpy (&target->v, target_vars, vars_size);
 	SV_LinkEdict (target, false);
-	client->private_pmove_walk_selected = true;
+	/* Complete real held input through safe animation first. Cooldown prevents
+	 * another PostThink shot; the next quiet world frame receives those actual
+	 * completed levels, without a fabricated last-command record or new ACK. */
+	player->v.think = ED_FindFunction (safe_animation) - qcvm->functions;
+	player_float (player, "attack_finished")->_float = callback_time + 1;
+	command.buttons = BUTTON_ATTACK;
+	step_authored_command (player, client, true, command);
+	assert (client->private_pmove_last_cmd_valid && !client->private_cmd_queue_count &&
+		!client->private_move_native_frame && global_float ("cam_active") == 0);
+	const int completed = client->private_completed_move;
+	player->v.think = ED_FindFunction (attack) - qcvm->functions;
+	player->v.nextthink = qcvm->time + .005f;
+	player_float (player, "attack_finished")->_float = 0;
 	host_frametime = .010;
 	pr_global_struct->frametime = .010f;
 	SV_Physics_Client (player, 1);
-	assert (client->active && client->private_completed_move == 0 &&
+	assert (client->active && client->private_completed_move == completed &&
 		client->private_move_native_frame && target->v.health < 100 &&
 		global_float ("cam_active") == 1);
 	restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
@@ -339,7 +370,8 @@ static void scheduled_camera_case (edict_t *player, client_t *client, double tim
 	Mem_Free (vars);
 	ED_Free (target);
 	ED_Free (camera);
-	puts ("Q30_SCHEDULED_CAMERA_HANDOFF_PASSED actual native comparison / safe animation / no-command frame");
+	printf ("Q30_SCHEDULED_CAMERA_CALLBACK_PASSED think=%s actual native comparison / safe animation / no-command frame\n",
+		attack);
 }
 
 /* Commands share a world opportunity; QC time does not advance within the
@@ -899,7 +931,12 @@ int main (int argc, char **argv)
 		vars_size, globals_checkpoint, globals_size);
 	if (COM_CheckParm ("-scheduledcamera"))
 	{
-		scheduled_camera_case (player, client, baseline_time);
+		const char *attacks[] = {"player_axe3", "player_sg1", "player_light1", "player_light2"};
+		const char *weapons[] = {"IT_AXE", "IT_SHOTGUN", "IT_LIGHTNING", "IT_LIGHTNING"};
+		const char *safe[] = {"player_axe2", "player_sg2", "player_run", "player_run"};
+		for (int i = 0; i < countof (attacks); ++i)
+			scheduled_camera_case (player, client, baseline_time, attacks[i], weapons[i], safe[i]);
+		puts ("Q30_SCHEDULED_CAMERA_HANDOFF_PASSED axe / shotgun / both lightning roots");
 		Mem_Free (vars_checkpoint);
 		Mem_Free (globals_checkpoint);
 		return EXIT_SUCCESS;
