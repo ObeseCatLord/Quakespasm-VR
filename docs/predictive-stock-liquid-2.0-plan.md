@@ -235,3 +235,14 @@ history and disposable preview through actual **live** wet permission. The
 ledge comparison logs do not close every collision/expiry/callback combination.
 Windows/ARM, connected/headset/eye trials and performance measurement remain
 deferred by user; skyrooms stay outside the goal.
+
+### Next permission stage: plan refinement before production edits
+
+The [verified permission-stage brief](predictive-stock-liquid-permission-astra-brief.md)
+records the remaining stock handoff/quiet-frame/completion ownership forks.
+Prefer a captured PreThink witness and the existing semantic relocation and
+timer completion boundary, rather than another persistent deadline or wet
+state machine. Resolve the final flag/timer/hold contract with fresh local Astra
+before production changes. Main extends the existing real-map fixture to every
+released liquid type and pending live history/preview; these checks must not
+be replaced by empty-history or policy-bypassing shadow evidence.
