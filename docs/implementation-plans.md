@@ -100,3 +100,9 @@ closes normally initialized client/target scheduling without another gate;
 arbitrary save/command mutations and full normal admission remain outside that
 bounded closure. Production is unchanged by this traversal slice.
 Revise the plan before implementing any newly expanded phase contract.
+
+The next [normal q30 activation plan](predictive-q30-activation-2.0-plan.md)
+records program/policy admission, qualified replay permission and the actual
+offer/spawn/begin/command/public-peer/full-parser/replay vertical before edits.
+It retains real ability/trigger and wider-mod requirements after bounded
+activation; component selection or permission alone cannot qualify the session.
