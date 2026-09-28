@@ -12,7 +12,7 @@ typedef struct
 	int flags;
 	float health, deadflag;
 	float boots_left, ladder;
-	float shells, weapon, ammo, impulse, attack_finished;
+	float shells, nails, rockets, cells, weapon, ammo, impulse, attack_finished;
 	int completed;
 } movement_sample_t;
 
@@ -87,6 +87,9 @@ static movement_sample_t sample_player (edict_t *player, client_t *client)
 	sample.boots_left = player_float (player, "jumpboots_airlvl")->_float;
 	sample.ladder = player_float (player, "onladder")->_float;
 	sample.shells = player->v.ammo_shells;
+	sample.nails = player->v.ammo_nails;
+	sample.rockets = player->v.ammo_rockets;
+	sample.cells = player->v.ammo_cells;
 	sample.weapon = player->v.weapon;
 	sample.ammo = player->v.currentammo;
 	sample.impulse = player->v.impulse;
@@ -372,6 +375,191 @@ static void scheduled_camera_case (edict_t *player, client_t *client, double tim
 	ED_Free (camera);
 	printf ("Q30_SCHEDULED_CAMERA_CALLBACK_PASSED think=%s actual native comparison / safe animation / no-command frame\n",
 		attack);
+}
+
+/* Keep the last-shot prefix authored by actual QC. Inventory is prepared;
+ * selection uses the real impulse, firing and animation scheduling. */
+static void prepare_empty_ammo_prefix (edict_t *player, client_t *client, double time)
+{
+	qcvm->time = time;
+	initialize_player (player, client);
+	for (int i = 0; i < 4; ++i)
+		step_player (player, client, false, i + 1, 0, 5);
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	player->v.items = (int)player->v.items | (int)global_float ("IT_NAILGUN") |
+		(int)global_float ("IT_SUPER_SHOTGUN");
+	player->v.ammo_nails = 1;
+	player->v.ammo_rockets = player->v.ammo_cells = 0;
+	player->v.ammo_shells = 25;
+	player_float (player, "attack_finished")->_float = 0;
+	usercmd_t command = {0};
+	command.forwardmove = 100;
+	command.buttons = BUTTON_ATTACK;
+	command.msec = 8;
+	command.seconds = .008f;
+	VectorCopy (player->v.v_angle, command.viewangles);
+	const int first = client->private_completed_move + 1;
+	command.sequence = first;
+	command.impulse = 4;
+	step_authored_command (player, client, false, command);
+	assert (player->v.weapon == global_float ("IT_NAILGUN") && player->v.ammo_nails == 0);
+	command.impulse = 0;
+	for (int i = 1; i < 40; ++i)
+	{
+		if (player->v.think == ED_FindFunction ("player_nail2") - qcvm->functions &&
+			player->v.nextthink > 0 && player->v.nextthink <= qcvm->time + .008)
+		{
+			assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+			printf ("Q30_EMPTY_AMMO_AUTHORED_PREFIX_PASSED actual QC impulse/last nail/due fallback frame=%d\n", i);
+			return;
+		}
+		command.sequence = first + i;
+		step_authored_command (player, client, false, command);
+	}
+	assert (!"authored empty-ammo callback was not reached");
+}
+
+static void scheduled_empty_ammo_cases (edict_t *player, client_t *client, double time)
+{
+	prepare_empty_ammo_prefix (player, client, time);
+	const double callback_time = qcvm->time;
+	const size_t vars_size = qcvm->progs->entityfields * sizeof (float);
+	const size_t globals_size = qcvm->progs->numglobals * sizeof (float);
+	void *prefix = Mem_Alloc (vars_size), *vars = Mem_Alloc (vars_size);
+	void *globals = Mem_Alloc (globals_size);
+	memcpy (prefix, &player->v, vars_size);
+	memcpy (globals, qcvm->globals, globals_size);
+	const char *attacks[] = {"player_nail2", "player_nail1", "player_nail3", "player_nail4",
+		"player_nail5", "player_nail6", "player_nail7", "player_nail8",
+		"player_snail1", "player_snail2", "player_snail3", "player_snail4",
+		"player_snail5", "player_snail6", "player_snail7", "player_snail8",
+		"player_grenade1", "player_rocket1", "player_plasma1", "player_plasma2"};
+	for (int scenario = 0; scenario <= countof (attacks); ++scenario)
+	{
+		// Final case lets QC choose ordinary shotgun rather than super shotgun.
+		const int index = scenario == countof (attacks) ? 0 : scenario;
+		const char *attack = attacks[index];
+		restore_player (player, client, prefix, vars_size, globals, globals_size, callback_time);
+		const char *weapon = index < 8 ? "IT_NAILGUN" : index < 16 ? "IT_SUPER_NAILGUN" :
+			index == 16 ? "IT_GRENADE_LAUNCHER" : index == 17 ? "IT_ROCKET_LAUNCHER" : "IT_LIGHTNING";
+		player->v.weapon = global_float (weapon);
+		player->v.items = (int)player->v.items | (int)player->v.weapon;
+		if (scenario == countof (attacks))
+			player->v.items = (int)player->v.items & ~(int)global_float ("IT_SUPER_SHOTGUN");
+		if (index >= 18)
+			player_float (player, "moditems")->_float = 64; // actual plasma upgrade bit
+		player_float (player, "attack_finished")->_float = 0;
+		// The first nail2 case retains the actual deadline from the authored prefix.
+		if (scenario != 0)
+		{
+			player->v.think = ED_FindFunction (attack) - qcvm->functions;
+			player->v.nextthink = callback_time + .005f;
+		}
+		const float deadline = player->v.nextthink;
+		assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+		memcpy (vars, &player->v, vars_size);
+		usercmd_t command = {0};
+		command.sequence = 1;
+		command.forwardmove = 100;
+		command.buttons = BUTTON_ATTACK;
+		command.msec = 8;
+		command.seconds = .008f;
+		VectorCopy (player->v.v_angle, command.viewangles);
+		sv_client_think_window_t window = {true, .008, .008f};
+		assert (SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+		window.available = false;
+		assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+		window.available = true;
+		player->v.nextthink = callback_time + .020f;
+		assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+		player->v.nextthink = deadline;
+		player->v.think = ED_FindFunction ("player_run") - qcvm->functions;
+		assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+		player->v.think = ED_FindFunction (attack) - qcvm->functions;
+		client->private_pmove_walk_selected = true;
+		assert (!SV_PrivateWalkTrialStateError (player, client, &command));
+		assert (SV_RunClientWeaponThink (player, client, &command, &window));
+		const float fallback = global_float (scenario == countof (attacks) ? "IT_SHOTGUN" : "IT_SUPER_SHOTGUN");
+		assert (player->v.weapon == fallback);
+		assert (!SV_PrivateWalkTrialFrameStateError (player, client, &command));
+		if (scenario < countof (attacks))
+			assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE &&
+				SV_PrivateWalkTrialStateError (player, client, &command));
+		else
+			assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK &&
+				!SV_PrivateWalkTrialStateError (player, client, &command));
+		for (int gorilla = 0; gorilla < 2; ++gorilla)
+		{
+			movement_sample_t samples[2];
+			for (int selected = 0; selected < 2; ++selected)
+			{
+				restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
+				client->vr_gorilla_capable = gorilla;
+				Cvar_SetQuick (&sv_gorilla, gorilla ? "1" : "0");
+				command.vr_gorilla.flags = gorilla ? VR_GORILLA_HANDS : 0;
+				samples[selected] = step_authored_command (player, client, selected, command);
+				assert (player->v.weapon == fallback);
+				if (selected)
+					assert (client->private_move_native_frame &&
+						client->private_pmove_credit_msec == 0 && !client->private_cmd_queue_count);
+			}
+			assert (VectorCompare (samples[0].origin, samples[1].origin) &&
+				VectorCompare (samples[0].velocity, samples[1].velocity) &&
+				samples[0].flags == samples[1].flags && samples[0].weapon == samples[1].weapon &&
+				samples[0].ammo == samples[1].ammo && samples[0].shells == samples[1].shells &&
+				samples[0].nails == samples[1].nails && samples[0].rockets == samples[1].rockets &&
+				samples[0].cells == samples[1].cells && samples[0].completed == samples[1].completed);
+			if (!gorilla)
+			{
+				vec3_t moved;
+				VectorSubtract (samples[0].origin, ((entvars_t *)vars)->origin, moved);
+				assert (VectorLength (moved) > .01f);
+			}
+		}
+		client->vr_gorilla_capable = false;
+		Cvar_SetQuick (&sv_gorilla, "0");
+		command.vr_gorilla.flags = 0;
+		// Exact one-ammo boundary and ample ammo launch through selected movement.
+		const float amounts[] = {1, 10};
+		for (int i = 0; i < countof (amounts); ++i)
+		{
+			restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
+			float *ammo = index < 16 ? &player->v.ammo_nails : index < 18 ?
+				&player->v.ammo_rockets : &player->v.ammo_cells;
+			*ammo = amounts[i];
+			window.available = true;
+			assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+			step_authored_command (player, client, true, command);
+			assert (!client->private_move_native_frame && player->v.weapon == global_float (weapon) && *ammo < amounts[i]);
+		}
+		// Complete held input first; quiet native fallback advances no ACK.
+		restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
+		player->v.nextthink = callback_time + .020f;
+		player_float (player, "attack_finished")->_float = callback_time + 1;
+		// Low-ammo not-due callback leaves this actual command selected.
+		step_authored_command (player, client, true, command);
+		assert (!client->private_move_native_frame && client->private_pmove_last_cmd_valid &&
+			!client->private_cmd_queue_count && player->v.weapon == global_float (weapon));
+		const int completed = client->private_completed_move;
+		const float completed_forward = client->private_pmove_last_cmd.forwardmove;
+		const unsigned completed_buttons = client->private_pmove_last_cmd.buttons;
+		player->v.nextthink = qcvm->time + .005f;
+		player_float (player, "attack_finished")->_float = 0;
+		host_frametime = .010;
+		pr_global_struct->frametime = .010f;
+		SV_Physics_Client (player, 1);
+		assert (client->active && client->private_completed_move == completed &&
+			client->private_move_native_frame && player->v.weapon == fallback &&
+			client->cmd.forwardmove == completed_forward && client->cmd.buttons == completed_buttons &&
+			client->private_pmove_last_cmd.forwardmove == completed_forward &&
+			client->private_pmove_last_cmd.buttons == completed_buttons);
+		printf ("Q30_EMPTY_AMMO_CALLBACK_PASSED think=%s fallback=%.0f native/selected/positive/quiet\n",
+			attack, fallback);
+	}
+	Mem_Free (globals);
+	Mem_Free (vars);
+	Mem_Free (prefix);
+	puts ("Q30_EMPTY_AMMO_HANDOFF_PASSED all20 roots / ordinary fallback / actual last-shot prefix");
 }
 
 /* Commands share a world opportunity; QC time does not advance within the
@@ -929,6 +1117,13 @@ int main (int argc, char **argv)
 	void *globals_checkpoint = Mem_Alloc (globals_size);
 	native_state_cases (player, client, baseline_time, vars_checkpoint,
 		vars_size, globals_checkpoint, globals_size);
+	if (COM_CheckParm ("-emptyammo"))
+	{
+		scheduled_empty_ammo_cases (player, client, baseline_time);
+		Mem_Free (vars_checkpoint);
+		Mem_Free (globals_checkpoint);
+		return EXIT_SUCCESS;
+	}
 	if (COM_CheckParm ("-scheduledcamera"))
 	{
 		const char *attacks[] = {"player_axe3", "player_sg1", "player_light1", "player_light2"};

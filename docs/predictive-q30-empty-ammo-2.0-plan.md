@@ -1,7 +1,9 @@
 # q30 scheduled empty-ammo handoff
 
-Status: plan before production. Actual preceding native-QC sequence proves the
-gap, with ordinary inventory prepared. Full q30 admission remains closed. This
+Status: committed before production; bounded handoff implemented and locally
+reviewed by Astra, with Linux component checks passing. Actual
+preceding native-QC sequence proves the gap, with ordinary inventory prepared.
+Full q30 admission remains closed. This
 extends the [callback closure contract](predictive-q30-callback-closure-review.md)
 and retains its traversal/session requirements and the broader AD-family goal.
 
@@ -23,9 +25,11 @@ spawn-only alternatives; main independently checked their load-bearing stores.
 
 Main's temporary Linux proof prepares one nail and ordinary weapon ownership,
 then uses actual QC impulse4, fires the last nail, runs native held input and
-reaches due player_nail2 at frame12. Actual QC selects weapon2 and current strict
-validation rejects it. Exit0 and Q30_EMPTY_AMMO_AUTHORED_PREFIX_PASSED verify that
-prefix; this is not normal offer/spawn/begin or a selected/native comparison yet.
+reaches due player_nail2 at frame12. Actual QC selects weapon2 and classification
+becomes native. Its initial strict-error assertion also encountered an unselected
+profile; the final corrected fixture below proves the intended movement-class
+rejection. Exit0 and Q30_EMPTY_AMMO_AUTHORED_PREFIX_PASSED verify that prefix;
+this is not normal offer/spawn/begin evidence.
 
 ## Minimal adapter and rejected alternatives
 
@@ -68,3 +72,48 @@ and linked planning/review records. Expected scope: three ammo comparisons and
 20 exact identities, plus reuse of existing native fixtures. Reopen before new
 body policy or another owner is required. Hardware/eye tracking, performance
 measurement and Windows/ARM checks remain deferred as instructed.
+
+## Implementation checkpoint evidence
+
+The existing due-window predicate now groups20 exact projectile identities by
+their corresponding current ammo value. Only ammo<1 qualifies those callbacks
+for the existing native frame; actual QC still picks the replacement weapon.
+No new state/cache/queue/clock, later input or extra movement interval was added.
+
+The existing q30 fixture's separate -emptyammo mode retains the actual native
+impulse4/last-shot prefix and nail2 deadline for its first case. All20 root cases
+and an additional ordinary-shotgun fallback compare actual raw callback,
+native/selected body/velocity/flags/weapon/all ammo/completion, analog movement
+and configured Gorilla on/off. Exact one-ammo and ample-ammo cases execute actual
+launch QC while remaining selected. A not-due callback first completes held input,
+then its due quiet native frame keeps the completed cursor and input levels
+without inventing command history. Quiet-frame movement parity is not compared.
+Future/consumed opportunities and safe run animation do not gate. Later roots,
+inventory/selection and quiet deadlines are prepared component seams; this is
+not authored pickup/traversal, real pose/contact or normal admission evidence.
+
+Linux SDL3 production and fixture builds exit0 without warnings. Empty-ammo mode
+exits0 with prefix,21 callback and aggregate markers. Scheduled-camera mode
+retains all four actual callback markers. The normal seven q30 replay cases and
+native-state checks pass. Stock mixed pause/arrival-gap/native-return, bounded
+velocity writer/parser and q30 negotiation/stats/full-parser checks pass.
+
+## Final local Astra disposition
+
+The read-only final local Astra Max review found no blocking production defect
+and one false-positive fixture assertion. Main independently verified final
+effective gpt-6-astra/max metadata and checked the reset/validation source order
+behind that finding. No raw telemetry is included; Astra ran no software checks.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Raw-QC strict rejection was passing because the restored profile was unselected. | **Fixed.** Select the profile and require initial strict validation success. After actual QC, require frame validation success and NATIVE classification plus strict failure for weapon2. Ordinary-shotgun fallback remains WALK and passes strict validation. |
+| The existing due-window/ammo/identity predicate is the minimal adapter. | **Verified/adopted.** Actual bytecode thresholds match all20 names and the existing fresh-native/deferral/completion ownership is retained. |
+| Quiet case did not compare movement or retained analog levels. | **Adapted.** Add assertions for retained actual completed forward/attack levels and cursor. Keep movement-parity claims limited to the commanded native/selected comparisons; no quiet-body comparison is claimed. |
+| Zero/ten ammo did not exercise the exact usable boundary. | **Addressed.** Actual selected launch now runs with ammo1 and ammo10 for all20 roots and the ordinary-fallback case. |
+| Preserve component, pose and admission limits. | **Adopted.** Only first nail2 has the actual preceding-shot deadline; other roots/quiet scheduling are prepared, Gorilla uses synthetic configuration, and normal admission/traversal remains open. |
+
+The corrected fixture rebuilds without warnings and -emptyammo exits0 with all
+21 callback markers and the aggregate marker. Production is unchanged after the
+review. Normal replay, scheduled-camera, mixed and negotiation checks above were
+already green for this same production code; review fixes affect only this mode.

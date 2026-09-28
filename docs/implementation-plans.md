@@ -86,8 +86,10 @@ Remaining scheduled callbacks, actual traversal and normal admission remain open
 The same record planned the synchronous shotgun/lightning target extension
 before implementation and records a separate projectile closure audit. Successful
 dry launches and ordinary animations have bounded closure evidence; empty-ammo
-forced weapon selection still needs its native handoff.
-An actual native-QC last-nail sequence now demonstrates that gap; the next
+forced weapon selection has a bounded native handoff with local Astra review.
+An actual native-QC last-nail sequence demonstrates that gap; the
 [empty-ammo handoff plan](predictive-q30-empty-ammo-2.0-plan.md) defines its
 conditional existing-boundary fix and selected/native proof before production.
+The implemented gate and all20 roots plus ordinary fallback pass Linux component
+checks. Actual traversal and complete normal admission still remain open.
 Revise the plan before implementing any newly expanded phase contract.

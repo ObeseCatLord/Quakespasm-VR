@@ -440,6 +440,35 @@ admission, an authored map traversal, device input or a complete scheduled-Think
 closure proof. Camera activation explicitly uses QC coop0 because the mod ignores
 that activation in co-op.
 
+The empty-ammo follow-up uses another separate mode of that same fixture:
+
+```sh
+timeout --signal=TERM 30s /tmp/qsvr-q30-movement-native-fixture \
+  -emptyammo -dedicated 3 -noudp -nosound -game q30a1024 \
+  -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-movement-native
+```
+
+Require exit0, `Q30_EMPTY_AMMO_AUTHORED_PREFIX_PASSED`,21
+`Q30_EMPTY_AMMO_CALLBACK_PASSED` markers and `Q30_EMPTY_AMMO_HANDOFF_PASSED`.
+Actual QC impulse4 consumes the last nail and schedules due nail2; the first
+comparison retains that authored deadline. All20 affected nail/snail/grenade/
+rocket/plasma callbacks then execute actual QC fallback, native-versus-selected
+body/velocity/flags/weapon/ammo/completion with analog input and configured Gorilla
+on/off, actual selected launches with ammo1 and ammo10, and quiet fallback after a
+real completed held-input command without advancing its cursor or losing forward/
+attack levels. Quiet movement parity is not compared. The21st case lets QC
+choose ordinary shotgun. Future and consumed opportunities plus safe run animation
+do not gate. Raw QC is checked with selection active: strict validation initially
+passes; afterward frame validation passes and weapon2 is NATIVE with strict
+rejection, while ordinary shotgun remains WALK and passes. Normal and
+scheduled-camera modes must still pass separately.
+
+Inventory and selection are prepared. Later callback identities/deadlines and
+quiet-frame scheduling are also prepared; only the first nail2 prefix is authored
+by the preceding actual shot. These are component checks, not normal admission,
+authored pickup/map traversal, real tracked-pose/contact or headset evidence.
+
 The existing negotiation fixture can also run against this isolated q30 root:
 
 ```sh

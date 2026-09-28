@@ -183,10 +183,11 @@ ran no software checks and does not certify normal-session reachability.
 | Ordinary stand/run, dry pain and pure reset/continuation frames preserve the body. | **Adopted within the audited successor graph.** Functions1369–1371 PCs71215–71361, footstep1199 PCs60153–60430 and pain1431–1442 PCs72033–72062 write animation/sound/bookkeeping. OP_STATE schedules rather than recursively executing the next attack. Supersg6 has an ammo fallback and is not labeled pure animation. |
 | Retain distinct qualification rather than all-firing native. | **Adopted.** First prove the empty-ammo path through actual preceding QC and compare nonzero movement, then plan the smallest existing-boundary exception. No new scheduler or generic late input is justified. Arbitrary target/camera-installed scheduling is outside this audit. |
 
-The remaining concrete callback question is due projectile Think → empty ammo
+The concrete callback question identified here was due projectile Think → empty ammo
 → forced weapon2 → post-Think strict WALK rejection. Current hitscan production
-scope remains the three identities committed in the preceding plan. Normal
-admission/traversal remains incomplete.
+scope at that checkpoint remained the three identities committed in the preceding
+plan. The subsequent empty-ammo implementation below resolves this counterexample;
+normal admission/traversal remains incomplete.
 
 ## Scheduled hitscan implementation review
 
@@ -215,3 +216,18 @@ The temporary Linux proof exits0. Inventory is prepared; normal admission and
 the selected comparison remain open. The next
 [empty-ammo handoff plan](predictive-q30-empty-ammo-2.0-plan.md) records the
 conditional extension before production, preserving ordinary successful launches.
+
+## Empty-ammo handoff checkpoint
+
+The [committed empty-ammo plan](predictive-q30-empty-ammo-2.0-plan.md) now records
+the implemented conditional dispatch and final local Astra disposition. It reuses
+the same due-window/native owner for20 projectile identities only when their
+corresponding ammo<1; actual QC still picks the replacement. Successful one-ammo
+and ample-ammo launches remain selected. All20 actual raw callback and native/
+selected comparisons plus ordinary fallback and retained quiet input/cursor pass
+Linux checks. Astra caught an unselected-profile false-positive strict assertion;
+the corrected fixture proves initial strict acceptance, valid native frame and
+strict class rejection for weapon2, with ordinary fallback remaining WALK.
+Arbitrary target-installed scheduling, actual traversal and normal session
+admission/publication/replay still need their full qualification. This checkpoint
+does not close the complete migration or the AD-family goal.

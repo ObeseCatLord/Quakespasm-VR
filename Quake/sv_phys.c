@@ -8105,8 +8105,9 @@ static qboolean SV_TakeClientThinkWindow (sv_client_think_window_t *window)
 }
 
 /* These exact-q30 scheduled attacks can synchronously invoke an HP/death
- * target before movement. Choose native input before QC instead of attempting
- * a late acceleration or another movement interval after the callback. Safe
+ * target or auto-select an incompatible weapon before movement. Choose native
+ * input before QC instead of attempting a late acceleration or another movement
+ * interval after the callback. Safe
  * animation and future deadlines retain the selected command owner. */
 static qboolean SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (edict_t *ent,
 	const sv_client_think_window_t *window)
@@ -8121,6 +8122,30 @@ static qboolean SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (edict_t *ent,
 	for (int i = 0; i < countof (attacks); ++i)
 		if (ED_FindFunction (attacks[i]) == &qcvm->functions[ent->v.think])
 			return true;
+	/* Successful dry launches only initialize a separate projectile. At low
+	 * ammo, the same callbacks can choose super shotgun through actual QC.
+	 * Observe the three authored fallback tests, without copying W_BestWeapon
+	 * or its cooldown/button policy into another input or scheduling owner. */
+	const char *nails[] = {"player_nail1", "player_nail2", "player_nail3", "player_nail4",
+		"player_nail5", "player_nail6", "player_nail7", "player_nail8",
+		"player_snail1", "player_snail2", "player_snail3", "player_snail4",
+		"player_snail5", "player_snail6", "player_snail7", "player_snail8"};
+	const char *rockets[] = {"player_grenade1", "player_rocket1"};
+	const char *cells[] = {"player_plasma1", "player_plasma2"};
+	const struct
+	{
+		const char *const *functions;
+		int count;
+		float ammo;
+	} projectiles[] = {
+		{nails, countof (nails), ent->v.ammo_nails},
+		{rockets, countof (rockets), ent->v.ammo_rockets},
+		{cells, countof (cells), ent->v.ammo_cells}};
+	for (int i = 0; i < countof (projectiles); ++i)
+		if (projectiles[i].ammo < 1)
+			for (int j = 0; j < projectiles[i].count; ++j)
+				if (ED_FindFunction (projectiles[i].functions[j]) == &qcvm->functions[ent->v.think])
+					return true;
 	return false;
 }
 
