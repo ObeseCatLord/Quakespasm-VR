@@ -143,3 +143,26 @@ is still off; this initial run does not qualify ledges, transitions, hazardous
 liquids or wet replay. The fixture reuses the existing captured mixed-driver
 bootstrap and compiles the actual physics owner to inspect its internal helpers;
 no production test API or copied contents classifier is introduced.
+
+### Demonstrated swim-button correction (before production edit)
+
+The admitted pending-command diagnostic executes pinned stock PreThink and the
+actual replay solver from the preceding complete snapshot. At depth 2/3, stock
+QC overwrites vertical velocity with `100` while the current adapter adds back
+drag as though that component were still a scaled old velocity. The server
+therefore moves approximately 1.94/1.71 units ahead on the initial press, and
+0.08/0.105 on held commands, despite matching final `100` velocity. Non-button
+sink/up cases differ only by the existing 1/8-unit velocity encoding. This
+confirms Astra's suspected handoff incompatibility; it is not a reason to replace
+the solver or restore all QC velocity.
+
+Correction: when the pinned stock wet PlayerJump path runs without active
+waterjump, remove its known vertical overwrite (water `100`, slime `80`, lava
+`50`), restore the preceding vertical component, and retain any residual force.
+Keep horizontal drag reconciliation, deliberate zero-velocity pause and
+scheduled weapon-Think precedence. Bound the separate grounded dry-jump restore
+to depth <2, where QC actually applies its dry impulse. The same shared PMove
+continues to own the swim assignment for server/replay. Qualify actual press,
+hold and release plus focused residual/pause/ledge cases. This correction alone
+does **not** authorize wet replay; transition, ledge, hazard and callback
+qualification remain open.
