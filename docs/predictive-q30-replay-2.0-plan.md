@@ -1,6 +1,6 @@
 # Ordinary q30 command prediction and replay
 
-Status: preimplementation plan following exact-QC decision proof `489dfe5e`.
+Status: planned implementation in progress following exact-QC decision proof `489dfe5e`.
 No production q30 admission, policy negotiation or replay consumer is implemented
 by that proof. This is the next coherent slice of the
 [AD-family plan](predictive-mod-admission-2.0-plan.md); it retains that plan's
@@ -52,6 +52,17 @@ session telemetry is part of this artifact.
 | Keep the ordinary QC latch and support contract. | **Adopted.** Release clears held; a supported released press consumes the latch, clears support and adds live height to Z. Airborne press does not consume release. Keep `qc_jump_owner` through release commands. Create no generic jump-timer credit. |
 | Bump the entire profile, normalize generic jumping or add cache infrastructure. | **Rejected.** Existing negotiation distinguishes the necessary compatibility. Those alternatives change working owners or policies without a demonstrated need. |
 
+An additional local Astra Max review of the actual transport/consumer edits
+identified three boundaries before their verification. Main independently
+verified its effective model/effort in the final turn metadata and spot-checked
+the following source findings. q30 admission stays closed during this work.
+
+| Implementation review recommendation | Disposition |
+| --- | --- |
+| Keep QC positive-rise exclusion during roomscale, use ordinary categorization only for the disposable instant-stop probe. | **Adopted.** The existing roomscale helper categorizes before/after translation; restoring only support cannot undo a low-airborne ground snap. Add a real-QC release/roomscale comparison close to the floor. |
+| Define integer companions before checking floating height/limit stats. | **Adopted.** Reuse the existing timer numeric-parser guard for the two new live inputs, preserving their actual float value. Add explicit float-cast-overflow instrumentation, including large finite values. |
+| Do not predict from an unrepresentable authoritative velocity seed. | **Adopted.** The existing signed-short eighth-unit snapshot range is −4096 through 4095.875. Make its conversion defined and withhold private replay through the existing permission boundary outside that range. Preserve authored velocity and the wire layout; do not introduce a clamped physics policy. Exercise writer/parser boundaries rather than accepting a solver-only comparison. |
+
 Main spot-checked roomscale/instant-stop ordering, accepted QC_COMMAND replay,
 VM lookup ownership, complete-stat commitment, exact ordinary jump writes and
 both selected `SV_CheckVelocity` calls. The selected solver publishes its result
@@ -92,6 +103,9 @@ frame guard alone does not establish individual necessity.
    require an absent new scalar from an otherwise compatible old stock server.
    A missing/non-finite/negative limit or a custom-stat collision prevents the
    unsupported policy from being used; preserve working native playback.
+   Guard numeric integer companions before conversion. The snapshot encoder
+   must have defined conversion for out-of-range velocities and withhold replay
+   when the authoritative velocity is outside the existing encoded range.
 4. **Implement the actual replay consumer at the existing command boundary.**
    `pmove.c`/`pmove.h` keep one shared solver. After existing pre-QC roomscale/
    instant-stop effects, reproduce only the verified ordinary jump branch, then
