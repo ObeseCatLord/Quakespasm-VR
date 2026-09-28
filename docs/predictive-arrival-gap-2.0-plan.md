@@ -128,3 +128,21 @@ commit and retained HMD baseline in the cited source owners.
 No user decision is required for this bounded adapter. The held-stick choice
 preserves the requested VR behavior and follows the existing held-key policy.
 Implementation/check results will be recorded after the coherent slice.
+
+### Evidence-driven terminal qualification correction
+
+The expanded admitted driver executes actual stock `T_Damage` from the world,
+then native gib/death frames. It exposed `invalid owner water level` with
+health -99, deadflag 3, MOVETYPE_GIB and SOLID_NOT. Verified source:
+`sv_phys.c:SV_CheckWaterTransition` stores the point contents (EMPTY -1 or
+SOLID -2) as `waterlevel` outside water; living WALK uses depth 0..3.
+Stock `ClientKill` immediately respawns in this cooperative program, so it was
+not a valid way to create the intended corpse test.
+
+Before correcting production qualification, the chosen minimal change is to
+admit the native range -2..3 only for already classified terminal owners.
+Living validation remains 0..3 and non-finite state is still rejected. Native
+physics, QC, snapshot and completion ownership remain unchanged. Add an
+actual-code guard and rerun the real death/respawn recovery chain. This is a
+demonstrated state incompatibility within the planned terminal matrix, not a
+reason to replace water categorization or widen living replay.
