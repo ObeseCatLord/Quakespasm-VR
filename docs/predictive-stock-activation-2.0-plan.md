@@ -1,7 +1,10 @@
 # Ordinary stock predictive-movement activation
 
-Status: reviewed plan reopened for stock intermission before production edits,
-baseline `66fdea42` on `2.0`. This advances
+Status: consolidated checks passed; final Astra found a delayed physical-contact
+regression. Plan reopened for the narrow eligibility correction below before
+that production edit. The plan was committed before production
+edits (`63d44ae1`) and reopened for stock intermission (`0543cfd3`), baseline
+`66fdea42` on `2.0`. This advances
 stage 2 of the [full predictive movement plan](predictive-movement-2.0-plan.md).
 It does not replace the required AD-family/cooperative-QC and mixed-gameplay
 stages with a stock-only goal.
@@ -26,7 +29,7 @@ The user
 has not required network-style local-SP physics; mod compatibility and modern
 mod prediction still require the parent stages.
 
-## Verified current state and unknowns
+## Verified preimplementation state and unknowns
 
 | Claim | Evidence / implication |
 | --- | --- |
@@ -142,3 +145,59 @@ native execution and once-only callback/clock obligations; retain negative
 unrecognized NONE states. Consolidate default/regression/build/sanitizer checks
 after this correction. If these boundaries grow into a new movement phase or
 parallel state machine, reopen the architecture instead of extending the patch.
+
+## Implemented checkpoint and consolidated evidence
+
+The supported stock default is now1. Existing actual begin selects the same
+queue/PMove/completion owner; matching transport before begin does not imply
+selection. Explicit disable0, public peers and initially unsupported states
+retain native movement. Initial legacy elevator mode<3 remains native even
+on static floor. This setting is not a mid-session revocation mechanism.
+
+Stock living freeze classification observes the typed, bounded actual QC
+global and exact program identity; it does not store another intermission
+lifetime. PreThink/weapon-Think freezes reuse the existing remaining native
+phases and world clock. Late movement/contact/PostThink freezes commit once
+without another integration or accepted hand publication. The existing native
+loop owns later frozen frames and pending batch retirement. Unrecognized
+living NONE remains rejected, and dead/terminal classification is unchanged.
+
+| Completed software check | Evidence and practical bound |
+| --- | --- |
+| Untouched defaults/negotiation and mixed gameplay | Defaults1 asserted before offers; actual spawn/begin, generated private VR/public desktop movement/fire, complete snapshots/replay, native modes, death/respawn, teleport and early pause/arrival-gap recovery pass. Explicit-native0 comparison also passes. Signon/resources/input and delivery remain prepared/captured component boundaries. |
+| Previously implemented stock paths under ordinary defaults | Wet/ledge/causal pause and planted moving-brush/pending replacement chains pass through actual default admission. Existing broad decoder/brush tests are not repeated without a changed owner. |
+| Initial native admission | Seven cases pass actual begin, repeated-begin isolation and commands/native gameplay: wet, noclip, disabled, load, program, slots, elevators. Wet is real BSP/water categorization; noclip/elevators use actual cvars/commands. Load/program/slots are prepared admission metadata, not completed save/load, foreign-mod or local-transport qualification. |
+| Actual exit and renewed selection | Real e1m1 trigger/installed Think, reliable intermission fanout/parser, native frozen quiet/batch clocks/ACKs, deadline/button-driven IntermissionThink/NextLevel and actual host changelevel to e1m2 pass; renewed serverinfo/spawn/begin selects again. Native0 comparison passes. Reliable reconnect broadcast is captured/asserted, client resources prepared; no connected reconnect routing is claimed. |
+| Finale and freeze phases | Actual end-map boss/train with prepared installed death callback passes. Prepared composition invokes actual stock exit QC after real PreThink/due Think/PostThink; quiet and three-command cases verify once-only callbacks, queue-head completion, remaining tail retirement and no post-freeze body integration. No natural boss combat/scene-rendering claim. |
+| Final build and focused sanitizers | SDL3 Linux `-Werror` build passes. Final partial ASan/UBSan driver passes nine cases: default/native exit, prepared finale and the three callback phases with both quiet/batch input. Included physics/server/client owners instrumented; remaining engine objects normal, leaks disabled. No whole-engine sanitizer claim. GDB probe's embedded Python parses, but ptrace execution is unavailable. |
+
+The [verified final review brief](predictive-stock-activation-implementation-astra-brief.md)
+records exact owner lines, local evidence paths and the explicit seams. This
+bounded stage does not complete the parent goal: AD/q30/Mjolnir admission,
+cooperative QC hooks and wider local/load/mixed compatibility need their next
+preimplementation plan. Device/eye/platform/performance trials remain deferred
+by the user. No release transport or alternate test server was introduced.
+
+## Final Astra finding: delayed contact correction plan
+
+Local `gpt-6-astra/max` final source review found a conditional regression,
+independently checked by main: selected receipt retains frozen commands, native
+completion drains their physical contacts, and the existing living/fresh/weapon
+eligibility does not reject living NONE/NOT. Installed exit/finale retains the
+weapon identity. Delayed valid axe samples can establish continuity, accumulate
+a stroke and emit a physical whiff sound/cooldown after freeze; explicit native0
+discards those arrivals. Earlier generated VR commands had no contact records,
+so their passing frozen checks did not cover this behavior.
+
+| Recommendation | Disposition before correction |
+| --- | --- |
+| Reuse the existing exact frozen predicate at contact eligibility | Adopted. `sv_phys.c:SV_VRContactSampleValid` rejects selected exact-stock frozen contact execution; a forward declaration shares the same predicate. Existing drain still advances its cursor and clears contact/stroke continuity. Public/native and living stock contact policy remain unchanged. |
+| Prove delayed valid physical contacts through actual input/receipt | Adopted. Extend only the existing intermission driver with an optional prepared axe selection and encoded contact sequence delivered after actual freeze, before reliable client intermission parsing. Compare default-selected/native0; assert no contact QC cues/cooldown/hostility effects, while callback counts, command retirement and map progression still complete. Include an ordinary live validity/positive control so an invalid sample cannot make the negative test pass. |
+| Replace or generalize native continuation | Rejected. The existing phase adapter is necessary and correct; this incompatibility is at contact eligibility, not a missing movement or transport owner. |
+
+Production write set remains the existing `sv_phys.c` owner; test write set is
+`tests/stock_intermission_native_fixture.c`. No general intermission contact
+service or another phase is introduced. After this coherent correction, rebuild
+Linux and the affected fixture, run delayed-contact default/native and frozen
+phase/finale cases with focused sanitizers as warranted, then request bounded
+follow-up Astra disposition. Do not reopen unchanged mixed/decoder/map tests.
