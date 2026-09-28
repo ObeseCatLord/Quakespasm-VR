@@ -75,10 +75,10 @@ int main (int argc, char **argv)
 	liquid_trace_player = NULL;
 	/* Pinned scheduled Think plus prepared deadline-only/flag-only callback
 	 * outputs exercises composition, not a claim that stock Think authors
-	 * those fields. No velocity write is injected. */
+	 * those fields. Each mode writes exactly one independent field. */
 	dfunction_t *stand = ED_FindFunction ("player_stand1");
 	assert (stand);
-	for (int mode = 1; mode <= 2; ++mode)
+	for (int mode = 1; mode <= 3; ++mode)
 	{
 		PrepareLiquidCase (peers[0], states[0], ledge, yaw);
 		liquid_think_player = peers[0]->edict;
@@ -86,6 +86,7 @@ int main (int argc, char **argv)
 		liquid_think_override = mode;
 		liquid_think_override_calls = 0;
 		liquid_think_deadline = (float)qcvm->time + .7f;
+		VectorSet (liquid_think_velocity, 7, 3, 10);
 		peers[0]->edict->v.think = liquid_think_function;
 		peers[0]->edict->v.nextthink = qcvm->time;
 		int completed = peers[0]->private_completed_move;
@@ -97,10 +98,50 @@ int main (int argc, char **argv)
 		if (COM_CheckParm ("-requirecontract"))
 			assert (!peers[0]->private_pmove_waterjump_secs &&
 				!((int)peers[0]->edict->v.flags & FL_WATERJUMP) &&
-				VectorCompare (peers[0]->edict->v.velocity, vec3_origin) &&
+				VectorCompare (peers[0]->edict->v.velocity, mode == 3 ? liquid_think_velocity : vec3_origin) &&
 				peers[0]->edict->v.teleport_time == (mode == 1 ? liquid_think_deadline : 0));
 		printf ("STOCK_QUIET_THINK_COMPOSITION mode=%d velocity_z=%g deadline=%g ack=%d\n",
 			mode, peers[0]->edict->v.velocity[2], peers[0]->edict->v.teleport_time, completed);
+		liquid_think_override = 0;
+		liquid_think_player = NULL;
+	}
+	/* Command-time counterparts. A callback deadline blocks acquisition; a
+	 * flag-only cancellation releases the provisional deadline, leaving the
+	 * actual command free to acquire a solver jump. A velocity write survives
+	 * the handoff; face open water so an unrelated new ledge impulse cannot
+	 * obscure that independent force case. */
+	for (int mode = 1; mode <= 3; ++mode)
+	{
+		PrepareLiquidCase (peers[0], states[0], ledge, mode == 3 ? yaw + 180 : yaw);
+		liquid_think_player = peers[0]->edict;
+		liquid_think_function = stand - qcvm->functions;
+		liquid_think_override = mode;
+		liquid_think_override_calls = 0;
+		liquid_think_deadline = (float)qcvm->time + .7f;
+		VectorSet (liquid_think_velocity, 7, 3, 10);
+		peers[0]->edict->v.think = liquid_think_function;
+		peers[0]->edict->v.nextthink = qcvm->time;
+		int completed = peers[0]->private_completed_move;
+		realtime += host_frametime;
+		LiquidSend (peers[0], states[0], 0, 0, 0, false, 0);
+		GapWorldFrame ();
+		GapSnapshot (peers[0], states[0]);
+		assert (liquid_think_override_calls == 1 && peers[0]->private_completed_move > completed);
+		if (COM_CheckParm ("-requirecontract"))
+		{
+			if (mode == 1)
+				assert (!peers[0]->private_pmove_waterjump_secs &&
+					peers[0]->edict->v.teleport_time == liquid_think_deadline);
+			if (mode == 2)
+				assert (peers[0]->private_pmove_waterjump_secs > 0 &&
+					((int)peers[0]->edict->v.flags & FL_WATERJUMP));
+			if (mode == 3)
+				assert (peers[0]->edict->v.velocity[0] > 0 && peers[0]->edict->v.velocity[1] > 0);
+		}
+		printf ("STOCK_COMMAND_THINK_COMPOSITION mode=%d velocity=%g,%g,%g deadline=%g timer=%g ack=%d\n",
+			mode, peers[0]->edict->v.velocity[0], peers[0]->edict->v.velocity[1],
+			peers[0]->edict->v.velocity[2], peers[0]->edict->v.teleport_time,
+			peers[0]->private_pmove_waterjump_secs, peers[0]->private_completed_move);
 		liquid_think_override = 0;
 		liquid_think_player = NULL;
 	}

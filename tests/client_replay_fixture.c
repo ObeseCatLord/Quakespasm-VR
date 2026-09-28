@@ -490,23 +490,30 @@ static void check_public_waterjump_propagation (void)
 	assert (observed_waterjump_before[0] == 53);
 }
 
-static void check_private_replay_stops_at_fluid_crossing (void)
+static void check_private_replay_allows_qualified_fluid_crossing (void)
 {
 	vec3_t origin;
 
 	reset_client ();
 	admit_private_snapshot ();
 	fluid_contact_call = 0;
-	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
-	assert (move_calls == 1 && preview_calls == 0);
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (move_calls == 2 && preview_calls == 1);
 	assert (cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] == 0);
 
 	reset_client ();
 	admit_private_snapshot ();
 	fluid_contact_call = 1;
-	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
 	assert (move_calls == 2 && preview_calls == 1);
 	assert (cl.move_replay_propagate_sequence[4 & MOVECMDS_MASK] == 0);
+
+	reset_client ();
+	admit_private_snapshot ();
+	cl.move_ack_prediction_allowed = false;
+	fluid_contact_call = 0;
+	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (!move_calls && !preview_calls);
 
 	reset_client ();
 	fluid_contact_call = 0;
@@ -703,7 +710,7 @@ int main (void)
 	check_pause_death_and_move_modes ();
 	check_private_authoritative_waterjump_seed ();
 	check_public_waterjump_propagation ();
-	check_private_replay_stops_at_fluid_crossing ();
+	check_private_replay_allows_qualified_fluid_crossing ();
 	check_trusted_gorilla_generation ();
 	check_raw_gorilla_state_provenance ();
 	check_raw_gorilla_preview_after_ack ();

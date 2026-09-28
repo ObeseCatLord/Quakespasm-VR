@@ -615,6 +615,7 @@ extern cvar_t sv_gorilla;
 extern cvar_t sv_gorilla_trustclient;
 extern cvar_t sv_voice;
 void SV_FinishPrivateUsercmds (void);
+void SV_SendPauseNotifications (void);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
 qboolean SV_PrivateWalkTrialTerminalState (client_t *client);
 typedef enum

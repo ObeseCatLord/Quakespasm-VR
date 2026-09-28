@@ -1340,7 +1340,7 @@ static qboolean CL_UpdateMoveAck (int ack)
 	return true;
 }
 
-static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted);
+static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted, int *source_epoch);
 
 static void CLFTE_QueueAckFrame (int sequence)
 {
@@ -1529,7 +1529,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 			cl.net_snapshot_sequence = frame_sequence;
 		cl.net_snapshot_packets++;
 
-		if (!CL_ParseMoveAckPayload (&move_ack_accepted))
+		if (!CL_ParseMoveAckPayload (&move_ack_accepted, NULL))
 			return;
 	}
 	else
@@ -2936,7 +2936,7 @@ static void CL_ParseStatString (int stat, const char *str)
 	// hud doesn't know/care about any of these strings so don't bother invalidating anything.
 }
 
-static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
+static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted, int *source_epoch)
 {
 	int ack16, flags, authority, mode_epoch, discontinuity_epoch, reason;
 	int state_sequence = -1;
@@ -2945,6 +2945,8 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 	vr_gorilla_state_t gorilla_state;
 	if (ack_accepted)
 		*ack_accepted = false;
+	if (source_epoch)
+		*source_epoch = -1;
 
 	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
 		net_message.cursize - msg_readcount < 2)
@@ -3061,6 +3063,10 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 	 * decoding without manufacturing ACK/replay/resume or Gorilla state. */
 	if (cls.demoplayback)
 		return !msg_badread;
+	/* Reliable pause pairing needs the validated event epoch even when an
+	 * older ACK is rejected. This output cannot grant replay or change ACKs. */
+	if (source_epoch && (flags & MOVEACK_FLAG_SELECTED))
+		*source_epoch = discontinuity_epoch;
 
 	/* Validate the whole payload before moving the replay baseline. The
 	 * resume marker gives the full first post-resume sequence.
@@ -3077,6 +3083,13 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 	if (cl.move_ack_selected_owner && (flags & MOVEACK_FLAG_SELECTED) &&
 		epoch_delta >= 0x8000)
 		return true; /* an older selected snapshot cannot restore its epoch */
+	if ((flags & MOVEACK_FLAG_SELECTED) && cl.move_ack_resume_pending &&
+		cl.move_resume_marker_epoch_valid &&
+		cl.move_resume_marker_first_sequence == 0 &&
+		((unsigned short)(discontinuity_epoch - cl.move_resume_marker_epoch_sent) == 0 ||
+		 (unsigned short)(discontinuity_epoch - cl.move_resume_marker_epoch_sent) >= 0x8000 ||
+		 !(flags & MOVEACK_FLAG_RESUME_PENDING)))
+		return true; /* pause observed; await the server's newer pending fence */
 	if ((flags & MOVEACK_FLAG_RESUME_COMPLETED) &&
 		cl.move_resume_marker_epoch_valid &&
 		(unsigned short)(discontinuity_epoch -
@@ -3139,9 +3152,9 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 	return !msg_badread;
 }
 
-static void CL_ParseMoveAck (void)
+static void CL_ParseMoveAck (int *source_epoch)
 {
-	CL_ParseMoveAckPayload (NULL);
+	CL_ParseMoveAckPayload (NULL, source_epoch);
 }
 
 /*
@@ -3154,6 +3167,7 @@ void CL_ParseServerMessage (void)
 	int			cmd;
 	int			i;
 	int			voicecommands = 0;
+	int private_pause_epoch = -1; // only an immediately adjacent reliable pair
 	const char *str;			   // johnfitz
 	int			total, j, lastcmd; // johnfitz
 	qboolean received_setangle = false;
@@ -3181,6 +3195,8 @@ void CL_ParseServerMessage (void)
 			Host_Error ("CL_ParseServerMessage: Bad server message");
 
 		cmd = MSG_ReadByte ();
+		if (cmd != svc_setpause && cmd != QSVR_SVC_MOVEACK)
+			private_pause_epoch = -1;
 
 		if (cmd == -1)
 		{
@@ -3451,6 +3467,21 @@ void CL_ParseServerMessage (void)
 			cl.paused = MSG_ReadByte ();
 			if (cl.paused)
 			{
+				if (!cls.demoplayback && cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+					private_pause_epoch >= 0 &&
+					(unsigned short)(private_pause_epoch - cl.move_ack_discontinuity_epoch) < 0x8000)
+				{
+					/* Latch the observed generation without inventing the
+					 * server's next epoch or producing a resume marker for
+					 * this discarded one. Zero means no marker was sent. */
+					cl.move_ack_resume_pending = true;
+					cl.move_ack_prediction_allowed = false;
+					cl.move_resume_marker_epoch_valid = true;
+					cl.move_resume_marker_epoch_sent = (unsigned short)private_pause_epoch;
+					cl.move_resume_marker_first_sequence = 0;
+					CL_InvalidateMoveSnapshot ();
+					CL_ResetPredictionSmoothing ();
+				}
 				CDAudio_Pause ();
 				BGM_Pause ();
 			}
@@ -3459,6 +3490,7 @@ void CL_ParseServerMessage (void)
 				CDAudio_Resume ();
 				BGM_Resume ();
 			}
+			private_pause_epoch = -1;
 			break;
 
 		case svc_signonnum:
@@ -3580,7 +3612,7 @@ void CL_ParseServerMessage (void)
 		case QSVR_SVC_MOVEACK:
 			if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED)
 				Host_Error ("Received private move ACK without the pinned private layout");
-			CL_ParseMoveAck ();
+			CL_ParseMoveAck (&private_pause_epoch);
 			break;
 		case svcdp_trailparticles:
 			if (!cl.protocol_particles)

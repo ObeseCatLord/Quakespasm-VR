@@ -1326,6 +1326,37 @@ static void SV_PrivateSyncPauseState (client_t *client)
 	}
 }
 
+/* Capture pause/fence state at the toggle, not at a later world tick. The
+ * existing private ACK immediately precedes the ordinary pause service;
+ * its source epoch remains meaningful across reliable/snapshot reordering. */
+void SV_SendPauseNotifications (void)
+{
+	for (int slot = 0; slot < svs.maxclients; ++slot)
+	{
+		client_t *client = &svs.clients[slot];
+		if (!client->active)
+			continue;
+		if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED && SV_PrivateWalkTrialSelected (client))
+		{
+			int flags = MOVEACK_FLAG_SELECTED;
+			SV_PrivateSyncPauseState (client);
+			if (client->private_input_phase == PRIVATE_INPUT_AWAIT_MARKER)
+				flags |= MOVEACK_FLAG_RESUME_PENDING;
+			if (client->private_move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE)
+				flags |= MOVEACK_FLAG_DISCONTINUITY;
+			MSG_WriteByte (&client->message, QSVR_SVC_MOVEACK);
+			MSG_WriteShort (&client->message, client->private_completed_move & 0xffff);
+			MSG_WriteByte (&client->message, flags);
+			MSG_WriteByte (&client->message, MOVE_AUTHORITY_UNKNOWN);
+			MSG_WriteShort (&client->message, client->private_move_mode_epoch);
+			MSG_WriteShort (&client->message, client->private_move_discontinuity_epoch);
+			MSG_WriteByte (&client->message, client->private_move_discontinuity_reason);
+		}
+		MSG_WriteByte (&client->message, svc_setpause);
+		MSG_WriteByte (&client->message, sv.paused);
+	}
+}
+
 static qboolean SV_HandlePrivateResumeMarker (const char *s)
 {
 	unsigned int epoch, first_sequence;

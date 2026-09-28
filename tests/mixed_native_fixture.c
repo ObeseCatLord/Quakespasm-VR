@@ -117,14 +117,14 @@ static void StartupPauseCommand (client_t *peer, client_state_t *state)
 {
 	host_client = peer;
 	sv_player = peer->edict;
-	SZ_Clear (&sv.reliable_datagram);
+	SZ_Clear (&peer->message);
 	Cmd_ExecuteString ("pause", src_client);
 	cl = *state;
-	net_message = sv.reliable_datagram;
+	net_message = peer->message;
 	CL_ParseServerMessage (); // actual svc_setpause, no staged client pause bit
 	assert (msg_readcount == net_message.cursize && cl.paused == sv.paused);
 	*state = cl;
-	SZ_Clear (&sv.reliable_datagram);
+	SZ_Clear (&peer->message);
 	SV_RunClients ();
 	GapSnapshot (peer, state);
 }

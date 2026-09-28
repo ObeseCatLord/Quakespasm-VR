@@ -1,7 +1,8 @@
 # Stock liquid movement and predictive replay
 
-Status: reviewed swim handoff correction implemented; remaining real-map/wet
-replay qualification in progress. Baseline `81318dc3` on `2.0`; this is another
+Status: reviewed ownership corrections implemented; coherent experimental
+live wet replay passes bounded Linux/software checks, with final review below.
+Original baseline `81318dc3` on `2.0`; this is another
 bounded stage of the [predictive movement plan](predictive-movement-2.0-plan.md),
 not ordinary selected activation or a complete migration claim.
 
@@ -192,7 +193,7 @@ initialized native and selected runs use explicit resting starts, real hull
 support, release flags and the existing `kill`/`setpos`/recovery owners. They are
 prepared comparison states, not proof of a natural spawn-to-pool traversal.
 
-Passing normal matrix: stock `e1m1` native and selected at 25 ms; selected
+Historical pre-release matrix: stock `e1m1` native and selected at 25 ms; selected
 desktop at 10 and 100 ms (the latter uses negotiated solver substeps); selected
 VR at 25 ms with duplicate roomscale delivery; stock `e1m2` native and selected
 at 25 ms, including an actual ledge discovered with pinned QC and exercised
@@ -201,7 +202,9 @@ has an actual **diagnostic pending shadow**, not an empty-history substitute.
 Flat-water displacement/velocity differences stay within bounds derived from
 1/8-unit velocity encoding plus float arithmetic. Full snapshot ACK, owner and
 authoritative jump/waterjump timer seeds agree. Actual replay is invoked after
-the snapshot and remains forbidden while wet or waterjumping.
+the snapshot and, at that stage, remained forbidden while wet or waterjumping.
+The later live implementation stage below supersedes those diagnostic-only
+permission claims.
 
 The reachable `e1m2` ledge starts and terminates a selected waterjump; the timer
 and flag clear on downward motion and dry replay reopens. Native QC's ledge
@@ -373,3 +376,99 @@ an available authorized coding delegate may own only the new real-map transit
 driver. Coding routes must not silently replace unavailable Luna. Review the
 coherent implementation and evidence locally with Astra before commit; reopen
 the architecture if callback corrections grow into a second state owner.
+
+### Live implementation software evidence
+
+The coherent candidate now uses the existing stock permission for water,
+slime, lava and owned ledge jumps, and removes both aggregate client fluid
+gates. The solver, command/QC/completion/stat owners and public propagation
+remain shared. Selection stays default-off; q30/other mod admission and full
+production activation remain separate stages.
+
+Actual live pending replay replaces diagnostic shadows in the admitted liquid
+driver, including generated VR history. Complete snapshots supply all seeds.
+Positive-duration desktop previews preserve the committed journal, timers,
+ACK and owner netstate. Quiet and command Think composition covers independent
+deadline, flag and velocity writes after actual pinned Think; these prepared
+outputs do not claim natural stock callback reachability.
+
+The new transit driver checks actual BSP entry/exit, three-world-frame snapshot
+delay and multiple received commands completed in a prepared longer world
+frame, with unchanged wire-derived origin/velocity bounds. Water/slime/lava,
+generated VR and 10/25/100-ms runs pass. Real wet pause and arrival gaps recover
+through the existing marker/epoch/completion owners, including positive e1m2
+ledge timers. The initial pause assertion correctly tested actual replay rather
+than assuming cached metadata was always replaced. Final review then identified
+the unpause-before-fence ordering gap; the separately planned parser correction
+below invalidates baseline/permission for the pause event's source generation
+and retains the existing recovery tuple until its actual fresh pending fence
+arrives. Final review required causal context for inverse arrival ordering;
+the existing reliable ACK body supplies that context without another owner.
+
+Independent initialized native/selected drowning runs have ten equal actual
+damage-event frame/time/health/depth tuples through death and native
+continuation. Only air/pain expiration is prepared; health/damage are actual QC.
+Prepared pusher-marker/nonfinite-deadline/flag-timer negatives deny permission
+through complete snapshots; actual pusher qualification remains later work.
+
+Limitations: captured delivery and prepared client resources/signon/input,
+controlled starting positions/velocity/support, and callback/link/time seams
+remain explicit. One-command dry→wet→dry has actual shared-solver evidence with
+a synthetic hull/contents seam, not a real-stock-BSP case. The strengthened
+ledge oracle below replaces diagnostic-only differences with explicit bounds
+and exact zero-preview solver exceptions.
+This is not arbitrary geometry/QC/mod/combat/connected-XR or performance proof.
+The final local Astra review and software acceptance are recorded below and
+in the pause plan; these claims do not declare the parent movement/migration
+goal finished.
+
+### Ledge replay oracle follow-up
+
+The final review correctly separates selected-server/replay agreement from
+native/donor integrator differences. Nominal e1m2 live position error is at
+most .002121 units, but four dry grounded slope frames log vertical velocity
+differences of 36.15..90. The actual zero-duration preview re-enters
+`PM_AirMove`; its grounded branch removes the upward component before a
+zero-duration move. This is a presentation-step hypothesis, not an accepted
+broad velocity tolerance.
+
+Before extending the fixture, qualify it explicitly: require the actual live
+origin/x-y velocity within the existing wire-derived bounds through ledge
+acquisition/collision/termination. Compare diagnostic history-only output with
+completed server velocity using the same bounds, then require every exceptional
+live z velocity to be exactly the zero-preview grounded/dry/no-waterjump clip.
+Also compare the actual live PM timer seeds with server completion. Do not
+replace live replay with the diagnostic oracle or loosen error bounds. If this
+hypothesis fails, investigate the specific discrepancy before calling ledge
+replay qualified; no new production movement owner is planned.
+
+The oracle now passes e1m2 desktop at 25/100 ms and generated VR at 25 ms.
+Live origins and tangential velocities use the same original bounds. Desktop
+history-only diagnostic velocities do too; the inherited diagnostic API
+deliberately rejects VR commands, so VR uses actual live output and exact
+solver-rule assertions. Zero-duration `PM_AirMove` clips upward dry-ground
+velocity; zero-duration `PM_PlayerMoveStep` also clears a falling disposable
+waterjump timer before the next authoritative command. The latter is a
+derived preview result, not a rewrite of the server seed. All exceptions
+require their exact grounded/dry/upward or positive-server-T/downward conditions.
+Positive previews separately prove authoritative stats/history remain unchanged.
+
+### Live implementation senior-review disposition
+
+Fresh local Astra Max reviewed the coherent candidate from the
+[verified brief](predictive-stock-liquid-live-implementation-astra-brief.md).
+Main checked its load-bearing parser/replay claims, reproduced the pause issue
+with actual captured delivery, and inspected the actual zero-duration solver
+branches before strengthening the ledge oracle.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Fix unpause before recovery metadata; the helper's immediate snapshot hides it. | Adopted. Commit `e72aa276` planned the correction before production edits. Actual plain wet and active ledge reproduction reopened old replay before correction; both now deny it, including delayed pre-pause metadata. Final review exposed the inverse-order ambiguity; commit `59bf0c6c` reopened the plan before adding source context through the existing per-recipient reliable ACK body. Keep the existing epoch/first-sequence/resume owners, with no new field, opcode or body. A newer pre-pause relocation snapshot must also be rejected until a true newer pending fence. |
+| Ledge authoritative execution is not bounded replay correctness. | Adopted. Require actual live position/tangential motion and desktop history-only velocity bounds, with only exact zero-preview ground/falling-timer exceptions. No native-versus-donor excuse for server/replay differences. Generated VR remains live evidence rather than a manufactured diagnostic shadow. |
+| Keep single-command actual-BSP dry→wet→dry as an open qualification. | Adopted bounded limitation. Existing synthetic-hull actual-solver proof and separate real crossings/batching stay explicit; full-domain/default activation remains later work. |
+| Existing movement/snapshot/timer architecture is sufficient. | Adopted. Keep both aggregate contact gates removed for this default-off experiment; retain the shared fluid latch and all authoritative seeds/owners. |
+
+The final correction review and acceptance are recorded in the
+[pause plan](predictive-pause-ordering-2.0-plan.md). Neither disposition changes
+default selection, admits another QC program or declares the parent migration
+complete.

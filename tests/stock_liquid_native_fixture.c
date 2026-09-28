@@ -18,6 +18,7 @@ static edict_t *liquid_think_player;
 static func_t liquid_think_function;
 static int liquid_think_override, liquid_think_override_calls;
 static float liquid_think_deadline;
+static vec3_t liquid_think_velocity;
 static edict_t *liquid_late_entity, *liquid_late_player, *liquid_late_trigger;
 static int liquid_late_calls;
 static float liquid_late_deadline;
@@ -55,8 +56,10 @@ void __wrap_PR_ExecuteProgram (func_t function)
 	{
 		if (liquid_think_override == 1)
 			liquid_think_player->v.teleport_time = liquid_think_deadline;
-		else
+		else if (liquid_think_override == 2)
 			liquid_think_player->v.flags = (int)liquid_think_player->v.flags & ~FL_WATERJUMP;
+		else
+			VectorCopy (liquid_think_velocity, liquid_think_player->v.velocity);
 		liquid_think_override_calls++;
 	}
 	if (late)
@@ -272,6 +275,51 @@ static void StartLiquidPeers (int argc, char **argv, const char *map,
 	}
 }
 
+static qboolean LiquidPendingReplay (client_state_t *state, vec3_t origin,
+	vec3_t velocity)
+{
+	cl = *state;
+	const qboolean expected = cl.move_ack_prediction_allowed && cl.stats[STAT_HEALTH] > 0;
+	qboolean replayed = CL_ReplayPlayerMovement (&cl.entities[cl.viewentity], origin);
+	assert (replayed == expected);
+	if (replayed) VectorCopy (cl.velocity, velocity);
+	*state = cl;
+	return replayed;
+}
+
+static void LiquidDisposablePreview (client_state_t *state)
+{
+	cl = *state;
+	if (!cl.move_ack_prediction_allowed || cl.stats[STAT_HEALTH] <= 0)
+		return;
+	usercmd_t *history = Mem_Alloc (sizeof (cl.movecmds));
+	memcpy (history, cl.movecmds, sizeof (cl.movecmds));
+	const usercmd_t pending = cl.pendingcmd;
+	const float jump = cl.statsf[STAT_PRIVATE_JUMP_SECS];
+	const float waterjump = cl.statsf[STAT_PRIVATE_WATERJUMP_SECS];
+	const entity_state_t baseline = cl.entities[cl.viewentity].netstate;
+	const int ack = cl.ackedmovemessages;
+	const double clock = realtime;
+	/* Prepared desktop axis state; the committed VR-history cases exercise
+	 * actual serialized VR fields separately. No headset input is claimed. */
+	cl.pendingcmd.upmove = 100;
+	realtime += host_frametime * .5;
+	usercmd_t preview;
+	CL_PrepareReplayPreview (&preview, true);
+	assert (preview.msec > 0 && preview.seconds > 0);
+	vec3_t origin;
+	assert (CL_ReplayPlayerMovement (&cl.entities[cl.viewentity], origin));
+	assert (!memcmp (history, cl.movecmds, sizeof (cl.movecmds)) &&
+		cl.statsf[STAT_PRIVATE_JUMP_SECS] == jump &&
+		cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] == waterjump &&
+		!memcmp (&baseline, &cl.entities[cl.viewentity].netstate, sizeof (baseline)) &&
+		cl.ackedmovemessages == ack);
+	realtime = clock;
+	cl.pendingcmd = pending;
+	Mem_Free (history);
+	*state = cl;
+}
+
 #ifndef STOCK_LIQUID_FIXTURE_ENTRY
 #define STOCK_LIQUID_FIXTURE_ENTRY main
 #endif
@@ -337,41 +385,67 @@ int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 				scenario == 4 ? 100 : 0, vr, scenario == 5 && frame == 0 ? 1 : 0);
 			if (scenario == 5 && frame == 0 && captured_length)
 				GapDeliver (peers[0], captured, captured_length); // same roomscale twice
-			/* Diagnostic shadow deliberately bypasses wet permission. It is a
-			 * solver/force comparison, not proof of live replay enablement. */
-			cl_replay_result_t shadow = {0};
-			cl = *states[0];
-			qboolean shadowed = selected && !vr && CL_ComputeReplayPlayerMovement (
-				&cl.entities[1], &shadow, true, cl.movemessages - 1);
-			if (selected && !vr) assert (shadowed);
-			*states[0] = cl;
+			vec3_t pending_origin = {0}, pending_velocity = {0};
+			qboolean predicted = selected && LiquidPendingReplay (states[0], pending_origin, pending_velocity);
+			const float pending_timer = predicted ? pmove.waterjumptime : 0;
+			const float pending_jump = predicted ? pmove.jump_secs : 0;
+			cl_replay_result_t ledge_history = {0};
+			if (predicted && scenario == 8 && !vr)
+			{
+				/* Separate the actual live zero-preview presentation from a
+				 * diagnostic history-only oracle. Live remains required. */
+				cl = *states[0];
+				assert (CL_ComputeReplayPlayerMovement (&cl.entities[cl.viewentity],
+					&ledge_history, true, cl.movemessages - 1));
+			}
 			GapWorldFrame ();
 			if (scenario == 5)
 				assert (fabsf (peers[0]->edict->v.origin[1] - water[2][1] - (vr ? 1 : 0)) < .001f);
-			if (shadowed)
+			if (predicted)
 			{
-				/* One-command flat-water error is bounded by truncating the
+				/* One-command error is bounded by truncating the
 				 * authoritative velocity to 1/8 plus float arithmetic. Ledge
-				 * collision/termination is logged separately, not hidden by a
-				 * broad trajectory tolerance. */
-				if (scenario != 8)
-					for (int axis = 0; axis < 3; ++axis)
+				 * slope history has the same bound; its zero-preview ground
+				 * clip is checked explicitly below, not tolerated loosely. */
+				for (int axis = 0; axis < 3; ++axis)
+				{
+					const qboolean zero_preview_clip = scenario == 8 && axis == 2 &&
+						fabsf (pending_velocity[axis] - peers[0]->edict->v.velocity[axis]) >= .126f;
+					if (fabsf (pending_origin[axis] - peers[0]->edict->v.origin[axis]) >= .125f * host_frametime + .001f ||
+						(!zero_preview_clip && fabsf (pending_velocity[axis] - peers[0]->edict->v.velocity[axis]) >= .126f))
+						fprintf (stderr, "STOCK_PENDING_MISMATCH map=%s case=%s frame=%d axis=%d predicted=%.9g/%.9g server=%.9g/%.9g water=%g flags=%g timer=%g\n",
+							map, cases[scenario], frame, axis, pending_origin[axis], pending_velocity[axis],
+							peers[0]->edict->v.origin[axis], peers[0]->edict->v.velocity[axis],
+							peers[0]->edict->v.waterlevel, peers[0]->edict->v.flags, peers[0]->private_pmove_waterjump_secs);
+					assert (fabsf (pending_origin[axis] - peers[0]->edict->v.origin[axis]) <
+						.125f * host_frametime + .001f);
+					if (!zero_preview_clip)
+						assert (fabsf (pending_velocity[axis] - peers[0]->edict->v.velocity[axis]) < .126f);
+					else
 					{
-						if (fabsf (shadow.origin[axis] - peers[0]->edict->v.origin[axis]) >= .125f * host_frametime + .001f ||
-							fabsf (shadow.velocity[axis] - peers[0]->edict->v.velocity[axis]) >= .126f)
-							fprintf (stderr, "STOCK_PENDING_MISMATCH map=%s case=%s frame=%d axis=%d predicted=%.9g/%.9g server=%.9g/%.9g water=%g flags=%g timer=%g\n",
-								map, cases[scenario], frame, axis, shadow.origin[axis], shadow.velocity[axis],
-								peers[0]->edict->v.origin[axis], peers[0]->edict->v.velocity[axis],
-								peers[0]->edict->v.waterlevel, peers[0]->edict->v.flags, peers[0]->private_pmove_waterjump_secs);
-						assert (fabsf (shadow.origin[axis] - peers[0]->edict->v.origin[axis]) <
-							.125f * host_frametime + .001f);
-						assert (fabsf (shadow.velocity[axis] - peers[0]->edict->v.velocity[axis]) < .126f);
+						assert ((vr || (ledge_history.onground && !ledge_history.inwater && ledge_history.velocity[2] > 0)) &&
+							((int)peers[0]->edict->v.flags & FL_ONGROUND) && peers[0]->edict->v.waterlevel == 0 &&
+							peers[0]->edict->v.velocity[2] > 0 &&
+							states[0]->onground && !states[0]->inwater && pending_timer == 0 &&
+							pending_velocity[2] == 0);
+						printf ("STOCK_LEDGE_ZERO_PREVIEW_CLIP frame=%d vr=%d server_z=%g\n",
+							frame, vr, peers[0]->edict->v.velocity[2]);
 					}
-				printf ("STOCK_PENDING_SHADOW case=%s frame=%d origin_error=%.6f,%.6f,%.6f velocity_error=%.6f,%.6f,%.6f\n",
-					cases[scenario], frame, shadow.origin[0] - peers[0]->edict->v.origin[0],
-					shadow.origin[1] - peers[0]->edict->v.origin[1], shadow.origin[2] - peers[0]->edict->v.origin[2],
-					shadow.velocity[0] - peers[0]->edict->v.velocity[0], shadow.velocity[1] - peers[0]->edict->v.velocity[1],
-					shadow.velocity[2] - peers[0]->edict->v.velocity[2]);
+					if (scenario == 8 && !vr)
+						assert (fabsf (ledge_history.velocity[axis] - peers[0]->edict->v.velocity[axis]) < .126f);
+				}
+				if (fabsf (pending_timer - peers[0]->private_pmove_waterjump_secs) >= .000001f)
+					/* Zero-duration categorization terminates the disposable
+					 * falling timer before the next authoritative command. */
+					assert (scenario == 8 && pending_timer == 0 &&
+						peers[0]->private_pmove_waterjump_secs > 0 &&
+						peers[0]->edict->v.velocity[2] < 0 && pending_velocity[2] < 0);
+				assert (fabsf (pending_jump - peers[0]->private_pmove_jump_secs) < .000001f);
+				printf ("STOCK_PENDING_LIVE case=%s frame=%d origin_error=%.6f,%.6f,%.6f velocity_error=%.6f,%.6f,%.6f\n",
+					cases[scenario], frame, pending_origin[0] - peers[0]->edict->v.origin[0],
+					pending_origin[1] - peers[0]->edict->v.origin[1], pending_origin[2] - peers[0]->edict->v.origin[2],
+					pending_velocity[0] - peers[0]->edict->v.velocity[0], pending_velocity[1] - peers[0]->edict->v.velocity[1],
+					pending_velocity[2] - peers[0]->edict->v.velocity[2]);
 			}
 			if (scenario == 8)
 			{
@@ -392,11 +466,10 @@ int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 					cl.move_snapshot_owner == cl.viewentity);
 				assert (fabsf (cl.statsf[STAT_PRIVATE_JUMP_SECS] - peers[0]->private_pmove_jump_secs) < .000001f &&
 					fabsf (cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] - peers[0]->private_pmove_waterjump_secs) < .000001f);
-				if (peers[0]->edict->v.waterlevel > 0 || peers[0]->private_pmove_waterjump_secs > 0 ||
-					((int)peers[0]->edict->v.flags & FL_WATERJUMP))
-					assert (!cl.move_ack_prediction_allowed && !replayed);
+				assert (cl.move_ack_prediction_allowed && replayed);
 			}
 			*states[0] = cl;
+			if (selected) LiquidDisposablePreview (states[0]);
 			printf ("STOCK_LIQUID_SAMPLE selected=%d vr=%d liquid=%s case=%s frame=%d origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f flags=%d water=%g health=%g jump=%.6f waterjump=%.6f ack=%d prediction=%d replay=%d\n",
 				selected, vr, liquid, cases[scenario], frame,
 				peers[0]->edict->v.origin[0], peers[0]->edict->v.origin[1], peers[0]->edict->v.origin[2],
@@ -408,7 +481,7 @@ int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 		if (scenario == 8) assert (saw_ledge && saw_ledge_end);
 		liquid_trace_player = NULL;
 	}
-	printf ("STOCK_LIQUID_COMPONENT_PASSED liquid=%s actual admission/geometry/command receipt/QC/world/full snapshots/replay invocation; liquid permission not qualified\n", liquid);
+	printf ("STOCK_LIQUID_COMPONENT_PASSED liquid=%s actual admission/geometry/command receipt/QC/world/full snapshots/live pending replay/disposable preview\n", liquid);
 	for (int slot = 0; slot < 2; ++slot)
 	{
 		Mem_Free (states[slot]->entities);

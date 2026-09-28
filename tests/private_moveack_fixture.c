@@ -20,6 +20,7 @@ static int smoothing_resets;
 static int resume_resets;
 static int flushes;
 static qboolean parse_ack_accepted;
+static int parsed_source_epoch;
 int NET_QSocketGetSequenceIn (const struct qsocket_s *sock) { return 77; }
 void CL_ResetPredictionSmoothing (void) { smoothing_resets++; }
 void CL_PrivateMoveResumeObserved (void) { resume_resets++; }
@@ -101,6 +102,7 @@ static void reset_client (void)
 	resume_resets = 0;
 	flushes = 0;
 	parse_ack_accepted = false;
+	parsed_source_epoch = -1;
 }
 
 static qboolean parse (const byte *bytes, int length)
@@ -108,7 +110,7 @@ static qboolean parse (const byte *bytes, int length)
 	net_message.data = (byte *)bytes;
 	net_message.cursize = length;
 	MSG_BeginReading ();
-	return CL_ParseMoveAckPayload (&parse_ack_accepted);
+	return CL_ParseMoveAckPayload (&parse_ack_accepted, &parsed_source_epoch);
 }
 
 static void test_pending_epoch_after_lost_completion (void)
@@ -232,7 +234,7 @@ static void test_command_names (void)
 	MSG_BeginReading ();
 	const int previous = MSG_ReadByte ();
 	assert (previous == QSVR_SVC_MOVEACK);
-	CL_ParseMoveAck ();
+	CL_ParseMoveAck (NULL);
 	assert (!msg_badread && cl.ackedmovemessages == 1);
 	assert (MSG_ReadByte () == 127 && msg_readcount == sizeof (ack_then_bad));
 	assert (!strcmp (CL_ServerCommandName (previous), "unknown"));
@@ -306,6 +308,50 @@ static void test_demo_ack_consumption (void)
 		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 2, 3, 0, true, false, 0);
 	assert_rejected_unchanged (bytes, length);
 	puts ("DEMO_MOVEACK_CONSUMPTION_PASSED body/framing/validation; no live replay state");
+}
+
+static void check_paused_generation_fence (void)
+{
+	byte packet[256];
+	for (int wrap = 0; wrap < 2; ++wrap)
+	{
+		reset_client ();
+		cl.movemessages = 110;
+		cl.ackedmovemessages = 100;
+		cl.move_ack_selected_owner = true;
+		cl.move_ack_resume_pending = true;
+		cl.move_ack_discontinuity_epoch = wrap ? 0xffff : 5;
+		cl.move_resume_marker_epoch_valid = true;
+		cl.move_resume_marker_epoch_sent = cl.move_ack_discontinuity_epoch;
+		cl.move_resume_marker_first_sequence = 0;
+		const unsigned old_epoch = cl.move_ack_discontinuity_epoch;
+		int length = moveack (packet, 101,
+			MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_COMPLETED | MOVEACK_FLAG_PREDICTION_ALLOWED,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, old_epoch,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		client_state_t before = cl;
+		assert (parse (packet, length) && !parse_ack_accepted && !memcmp (&before, &cl, sizeof (cl)));
+		assert (parsed_source_epoch == (int)old_epoch);
+		length = moveack (packet, 101,
+			MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_COMPLETED | MOVEACK_FLAG_PREDICTION_ALLOWED,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, (old_epoch + 1) & 0xffff,
+			MOVEACK_DISCONTINUITY_RESET_TELEPORT, false, false, 0);
+		assert (parse (packet, length) && !parse_ack_accepted && !memcmp (&before, &cl, sizeof (cl)));
+		assert (parsed_source_epoch == (int)((old_epoch + 1) & 0xffff));
+		length = moveack (packet, 100, MOVEACK_FLAG_SELECTED,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, old_epoch,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		assert (parse (packet, length) && !parse_ack_accepted && !memcmp (&before, &cl, sizeof (cl)));
+		length = moveack (packet, 100, MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, (old_epoch + 1) & 0xffff,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		assert (parse (packet, length) && parse_ack_accepted && cl.move_ack_resume_pending &&
+			!cl.move_ack_prediction_allowed && !cl.move_resume_marker_epoch_valid &&
+			!cl.move_resume_marker_first_sequence && resume_resets == 1 &&
+			cl.move_ack_discontinuity_epoch == ((old_epoch + 1) & 0xffff));
+	}
+	reset_client ();
+	puts ("Private pause generation: stale completed/suspended metadata denied, fresh fence accepted across wrap");
 }
 
 int main (void)
@@ -459,6 +505,7 @@ int main (void)
 	{
 		client_state_t before = cl;
 		assert (!parse (packet, prefix));
+		assert (parsed_source_epoch == -1);
 		assert (msg_badread && !memcmp (&cl, &before, sizeof (cl)));
 	}
 	length = moveack (packet, 2, MOVEACK_FLAG_PREDICTION_ALLOWED | MOVEACK_FLAG_VR_GORILLA,
@@ -483,6 +530,7 @@ int main (void)
 	assert (cl.ackframes_count == CL_ACKFRAME_HISTORY && flushes == 1);
 	CLFTE_QueueAckFrame (79);
 	assert (cl.net_snapshot_ack_queue_overflows == 1);
+	check_paused_generation_fence ();
 
 	puts ("Private move ACK: production parsing, state atomicity, wrap, Gorilla and queue checks passed");
 }

@@ -3476,9 +3476,7 @@ static void Host_Pause_f (void)
 			SV_BroadcastPrintf ("%s unpaused the game\n", PR_GetString (sv_player->v.netname));
 		}
 
-		// send notification to all clients
-		MSG_WriteByte (&sv.reliable_datagram, svc_setpause);
-		MSG_WriteByte (&sv.reliable_datagram, sv.paused);
+		SV_SendPauseNotifications ();
 	}
 }
 

@@ -277,6 +277,28 @@ static void test_private_resume_marker (void)
 		!strcmp (MSG_ReadString (), "qsvr_resume 36 10"));
 }
 
+static void test_pause_source_waits_for_pending_fence (void)
+{
+	for (int source_ahead = 0; source_ahead < 2; ++source_ahead)
+	{
+		byte reliable[256];
+		usercmd_t command = {0};
+		setup ();
+		cls.message.data = reliable; cls.message.maxsize = sizeof reliable;
+		cl.movemessages = 42;
+		cl.move_ack_selected_owner = cl.move_ack_resume_pending = true;
+		cl.move_ack_discontinuity_epoch = 33;
+		cl.move_resume_marker_epoch_valid = true;
+		cl.move_resume_marker_epoch_sent = 33 + source_ahead;
+		cl.move_resume_marker_first_sequence = 0;
+		CL_SendMove (&command);
+		assert (!cls.message.cursize && cl.move_resume_marker_first_sequence == 0 &&
+			cl.move_resume_marker_epoch_sent == 33 + source_ahead);
+		begin_packet ();
+		assert (MSG_ReadByte () == clc_move); // no obsolete inline marker
+	}
+}
+
 static void test_startup_resume_marker (void)
 {
 	for (int initial = 0; initial <= 1; ++initial)
@@ -604,6 +626,7 @@ int main (void)
 	test_clock ();
 	test_ack_queue ();
 	test_private_resume_marker ();
+	test_pause_source_waits_for_pending_fence ();
 	test_startup_resume_marker ();
 	test_full_bundle_and_wrap ();
 	test_packet_angles ();

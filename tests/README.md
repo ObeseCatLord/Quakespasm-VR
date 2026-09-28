@@ -1222,6 +1222,10 @@ packet widths and complete payload consumption.
 The public-protocol regression case also proves that VR-only and paired-weapon
 fields cannot change desktop packet bytes, while predinfo and the shared weapon
 selection field remain encoded.
+The pause-source regression also prepares a zero-first-sequence latch at the
+current or source-ahead epoch and executes the real sender; neither case may
+queue an obsolete reliable or inline resume marker. It exercises the existing
+producer, rather than substituting a second recovery implementation.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
@@ -1561,9 +1565,11 @@ PREDINFO retains timer propagation. The raw-Gorilla replay check includes a firs
 preview when all sent commands are acknowledged. It also checks that an OFF
 journal command clears the old planted-hand snapshot before preview and that a
 raw command with no reconstructible baseline suppresses prediction.
-The selected private PMove-engine dry-snapshot check discards replay after a
-fluid crossing in either the journal or the unsent preview; public replay and
-the separate QC-command authority remain unaffected.
+The selected private PMove-engine contract permits fluid crossings in both
+the journal and unsent preview when the received server permission allows
+replay. Withheld permission still prevents solver/preview execution. Public
+replay and the separate QC-command authority retain their behavior. These
+PM probes complement the admitted real-map liquid driver below.
 `client_replay_solver_fixture.c`
 instead uses the actual shared PM solver
 and donor collision functions to check empty-history, zero-duration underwater
@@ -1916,12 +1922,20 @@ times but depth 2/20 damage versus depth 3/30 damage under the two integrators.
 The liquid driver runs actual stock admission, command codecs, QC/world physics,
 completion and full snapshots. It checks selected ACK/owner/timer commitment,
 press/hold/release, three depths, sink/up, duplicate roomscale and ledge
-startup/termination. Selected desktop comparisons invoke the actual diagnostic
-pending shadow from the preceding snapshot, with wire-derived bounds for the
-flat-water cases; ledge collision errors are logged separately. Shadow bypasses
-permission/fluid restrictions and is **not live wet prediction evidence**.
-Actual live replay is also invoked and must remain withheld while wet or
-waterjumping. Selected activation remains default-off.
+startup/termination. Selected desktop/generated-VR comparisons invoke actual
+live pending replay from the preceding complete snapshot, with wire-derived
+bounds for flat-water and ledge positions/tangential velocities. Desktop ledge
+history-only diagnostic velocities use the same bounds. The actual zero-duration
+live preview can clip upward velocity on dry grounded slopes, or terminate a
+falling disposable waterjump timer before the next authoritative command;
+those exceptions require the exact solver conditions, rather than a broader
+tolerance. The diagnostic shadow deliberately excludes VR, so generated VR
+uses actual live position/velocity and those explicit solver-rule assertions.
+Positive-duration disposable previews also run and preserve the committed
+journal, ACK, authoritative jump timers and owner netstate. Their pending axis
+state is prepared desktop input; generated VR history is a separate check.
+Received permission/ACK/selection are never staged. Selected activation remains
+default-off.
 
 Starts use actual `kill`/`setpos` plus prepared resting velocity/support/release
 flags and no unrelated spawn hold. Actual `notarget` commands exclude monster
@@ -1929,9 +1943,9 @@ knockback from movement comparison; environmental QC remains active. Native and
 QSS-M integrators intentionally differ, including stock `225` versus donor `310`
 ledge impulses. Captured delivery, prepared signon/resources/input and skipped
 player-skin texture uploads do not prove connected signon, upstream client,
-physical XR actions, combat/hazard prediction or performance. The plan retains
-the unqualified crossings, callback/deadline, hazard and live wet history/preview
-cases.
+physical XR actions, combat/hazard prediction or performance. The transit and
+callback drivers below add bounded software evidence; they do not certify
+every geometry/mod/pusher or a connected upstream-client session.
 
 The separately invoked `stock_liquid_contract_fixture.c` reuses this admitted
 driver and checks command-time timer/callback ownership:
@@ -1954,9 +1968,10 @@ setpos release without fake ACK progress. `-roundingboundary` prepares double
 clocks at which QC float addition differs from double addition then conversion,
 through actual pinned quiet and command PreThink.
 
-Deadline-only/flag-only composition executes actual scheduled pinned Think,
-then injects explicitly prepared callback field outputs without a velocity
-write. A later-world scheduled Think composition links the player through the
+Deadline-only/flag-only/velocity-only composition executes actual scheduled
+pinned Think, then supplies explicitly prepared independent field outputs.
+Both quiet and command-time cases check surviving ownership. A later-world
+scheduled Think composition links the player through the
 actual trigger dispatcher; supplied QC time makes the real pinned teleport's
 deadline numerically equal to the solver deadline. It checks immediate semantic
 timer cancellation and a complete equal-ACK snapshot without another command.
@@ -1969,9 +1984,66 @@ deadline-only/flag-only takeover, same-value semantic relocation, preservation
 of unrelated flags and that a flag cannot manufacture a private timer. The
 pause fixture checks immediate semantic cancellation/preserved QC hold,
 explicit no-hold release and untouched native-owned timer/flag/deadline fields.
-Wet **live** history/preview, arbitrary crossings, drowning and the complete
-released-fluid boundary/batching domain remain qualification work. The
-ownership fix does not enable wet replay or default selection.
+The ownership fix preceded the coherent server permission/client contact-gate
+change. The latter now permits experimental stock wet live replay under the
+same existing authority; neither changes default selection or mod admission.
+
+`stock_liquid_transit_fixture.c` reuses the admitted driver for actual BSP
+surface entry/exit, delayed snapshots over three world frames, and multiple
+received commands queued before one prepared longer world frame. It compares
+actual live pending origin/velocity against completed movement, retains the
+wire-derived bounds, then commits a complete snapshot and positive preview.
+The prepared world-frame duration feeds the existing credit owner; per-command
+QC/solver/completion remain actual. No collision/contents stubs are used.
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make negotiation-native-fixture \
+  USE_SDL3=1 -j4 NEGOTIATION_FIXTURE=/tmp/qsvr-stock-liquid-transit \
+  NEGOTIATION_SOURCE=../tests/stock_liquid_transit_fixture.c \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o cl_main.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram'
+/tmp/qsvr-stock-liquid-transit -selected -drown \
+  -dedicated 3 -noudp -nosound -basedir "$SERVER_PROFILE" -userdir "$SERVER_PROFILE"
+/tmp/qsvr-stock-liquid-transit -selected -fixturemap e1m2 -ledge-recovery \
+  -dedicated 3 -noudp -nosound -basedir "$SERVER_PROFILE" -userdir "$SERVER_PROFILE"
+```
+
+The same liquid/map/VR/msec switches apply. Normal water/slime/lava, generated
+VR and 10/25/100-ms matrices pass. Predicate-only prepared pusher, nonfinite
+deadline and mismatched flag/timer inputs check actual snapshot permission
+denial; they do not qualify actual pusher movement. Wet pause and arrival-gap
+use real host pause/`svc_setpause`, fence/marker/command completion/full snapshot
+and replay. Pause immediately invalidates the selected baseline/permission and
+latches the observed generation without producing an old resume marker. The
+driver also withholds paused/recovery snapshots, delivers unpause, then delivers
+an old snapshot. Ordinary wet movement includes a newer pre-pause snapshot
+from actual setpos relocation; a merely newer completed generation must not
+masquerade as the resume fence. Replay stays denied until an actual newer
+pending fence and marked command complete. The causal fix reuses standalone
+private ACK metadata immediately before each selected recipient's reliable
+pause service; it provides that actual pending fence even if the owner snapshot
+is lost. UNKNOWN control authority cannot grant replay. Message-local source
+context distinguishes a delayed old pause from a new pause at the current
+generation. The inverse driver delivers pending and completed snapshots before
+distinct delayed reliable pairs, then a fresh pause after completion. Rapid
+toggles have no intermediate server tick; a third actually admitted selected
+peer checks per-recipient epochs alongside public native pause bytes.
+`-ledge-recovery` also checks active owned timers across both ordering directions
+and ordinary recovery.
+The focused sender, ACK parser and owner-snapshot fixtures pass ASan/UBSan.
+Owner acceptance keeps the production rule that ACK must precede the next
+producer cursor: produced command 10 uses cursor 11, while next-cursor 10/ACK
+10 remains an explicit rejection case.
+
+`-drown` prepares expired air/pain clocks, leaving actual pinned environmental
+QC to apply health damage through death and native continuation. `-drown-only`
+starts that case independently; compare separately initialized native and
+selected runs by omitting/including `-selected`. The observed ten damage-event
+frame/time/health/depth tuples agree. Do not claim arbitrary hazard/combat
+prediction from these events. A one-command dry→wet→dry path remains covered
+by the synthetic-hull shared-solver fixture, not by an actual stock BSP case.
+Captured delivery and prepared starts/velocities/signon/resources/input retain
+the same explicit component boundary.
 
 For combined-fixture sanitizer coverage, build the ordinary Linux objects first,
 use a fresh `NEGOTIATION_FIXTURE` output name, add

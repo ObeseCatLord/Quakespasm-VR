@@ -1981,19 +1981,28 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			client->private_input_phase == PRIVATE_INPUT_RUNNING)
 		{
 			ack_flags |= MOVEACK_FLAG_AUTHORITATIVE;
-			/* Wet movement and an active ledge jump keep the selected command
-			 * owner, but replay requires a live WALK owner and proven dry state. */
+			/* Stock WALK replay includes the shared solver's liquid domain.
+			 * A positive private timer owns a ledge jump; an unowned future
+			 * deadline remains a QC teleport hold, never a replay seed. */
 			if (!SV_PrivateWalkTrialQ30Program () &&
 				client->edict && !client->edict->free &&
 				client->edict->v.health > 0 &&
 				client->edict->v.deadflag == DEAD_NO &&
 				client->edict->v.movetype == MOVETYPE_WALK &&
 				client->edict->v.solid == SOLID_SLIDEBOX &&
-				client->edict->v.waterlevel == 0 &&
-				!((int)client->edict->v.flags & FL_WATERJUMP) &&
-				client->private_pmove_waterjump_secs == 0.0f &&
+				isfinite (client->edict->v.waterlevel) &&
+				client->edict->v.waterlevel >= 0 && client->edict->v.waterlevel <= 3 &&
+				isfinite (client->edict->v.flags) &&
+				isfinite (client->edict->v.teleport_time) &&
+				isfinite (client->private_pmove_waterjump_secs) &&
+				client->private_pmove_waterjump_secs >= 0.0f &&
+				client->private_pmove_waterjump_secs <= 2.0f &&
 				!client->private_pmove_pusher_interaction &&
-				qcvm->time >= client->edict->v.teleport_time)
+				((client->private_pmove_waterjump_secs > 0.0f &&
+				  ((int)client->edict->v.flags & FL_WATERJUMP)) ||
+				 (client->private_pmove_waterjump_secs == 0.0f &&
+				  !((int)client->edict->v.flags & FL_WATERJUMP) &&
+				  qcvm->time >= client->edict->v.teleport_time)))
 				ack_flags |= MOVEACK_FLAG_PREDICTION_ALLOWED;
 		}
 		if (client->private_move_discontinuity_reason != MOVEACK_DISCONTINUITY_NONE)

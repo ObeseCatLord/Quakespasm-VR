@@ -1038,7 +1038,8 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 		cl.move_ack_selected_owner &&
 		cl.move_ack_resume_pending &&
 		(!cl.move_resume_marker_epoch_valid ||
-			cl.move_resume_marker_epoch_sent != cl.move_ack_discontinuity_epoch))
+			(cl.move_resume_marker_first_sequence > 0 &&
+			 cl.move_resume_marker_epoch_sent != cl.move_ack_discontinuity_epoch)))
 	{
 		/* The parser cleared older latches at the observed epoch. This marker
 		 * also rides before moves in the current datagram, so reliable-channel

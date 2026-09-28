@@ -23,6 +23,7 @@ double v_punchangles_times[2];
 struct qsocket_s { int unused; };
 int NET_QSocketGetSequenceIn (const struct qsocket_s *sock) { return 1; }
 void CL_ResetPredictionSmoothing (void) {}
+void CL_PrivateMoveResumeObserved (void) { assert (!"unexpected resume input boundary"); }
 void VR_InputInvalidateMotion (void) {}
 void CL_FlushAckFrames (void) {}
 void R_TranslateNewPlayerSkin (int playernum) {}
@@ -103,7 +104,7 @@ static void reset_client (void)
 	memset (entities, 0, sizeof (entities));
 	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
 	cl.protocol_pext2 = QSVR_PEXT2_REQUIRED; // the pinned selection includes PREDINFO
-	cl.movemessages = 10;
+	cl.movemessages = 11; // command 10 has been produced; 11 is the next cursor
 	cl.ackedmovemessages = -1;
 	cl.viewentity = 1;
 	cl.max_edicts = countof (entities);
@@ -187,6 +188,13 @@ int main (void)
 {
 	byte packet[64];
 	int length;
+
+	reset_client ();
+	cl.movemessages = 10;
+	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+	parse_private_update (packet, length);
+	finish_message_if_complete (length);
+	assert (!cl.move_snapshot_valid && cl.net_move_stale_acks == 1); // not yet produced
 
 	reset_client ();
 	length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
@@ -299,7 +307,7 @@ int main (void)
 	net_message.cursize = length;
 	MSG_BeginReading ();
 	qboolean accepted = false;
-	assert (CL_ParseMoveAckPayload (&accepted) && accepted);
+	assert (CL_ParseMoveAckPayload (&accepted, NULL) && accepted);
 	assert (!cl.move_snapshot_valid);
 
 	/* Omission, owner removal, world reset, and changed viewentity all fail closed. */
