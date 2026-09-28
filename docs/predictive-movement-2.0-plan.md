@@ -1,7 +1,9 @@
 # Production predictive movement on the vkQuake base
 
-Status: reviewed staged plan; stage 0 demo compatibility and stage 1 production
-transport activation are implemented with bounded software checks. Baseline evidence:
+Status: reviewed staged plan; stage 0 demo compatibility, stage 1 production
+transport activation and bounded stage 2 ordinary stock selection are implemented
+with local software checks and final local Astra/max implementation review;
+AD/cooperative-QC admission and broader compatibility remain open. Baseline evidence:
 `3ba35dc8` on `2.0`, 2026-09-27. Local Astra review resolves the first stage;
 later movement-ownership decisions still need their bounded disposition.
 
@@ -29,7 +31,10 @@ in [source updates](migration-source-updates.md). The user prefers reuse through
 adapters and specifically does not require identical vkQuake netcode after the
 intentional predictive-netcode improvement.
 
-## Verified starting point
+## Verified starting point (historical baseline)
+
+The table describes the pre-stage-0 baseline, not current defaults or demo
+behavior. Implemented checkpoints below supersede those historical blockers.
 
 | Claim | Evidence / implication |
 | --- | --- |
@@ -196,8 +201,17 @@ reviewed swim handoff correction, bounded live wet/ledge replay and
 [stock moving-brush slice](predictive-stock-pushers-2.0-plan.md) qualifies the
 existing body-support path and adapts palm contacts using retained anchors,
 existing replay permission and the existing publication tail. Its bounded
-local software checks and final Astra review pass. Full-domain stock qualification and automatic
-selection remain ahead; these slices do not substitute for mod admission.
+local software checks and final Astra review pass. The subsequent
+[ordinary stock activation plan](predictive-stock-activation-2.0-plan.md) was
+committed before changing defaults and reopened after Astra found the native
+living intermission/finale boundary. Selected stock now defaults on: exact
+compatible stock begin selects the existing owner, while explicit disable and
+initial unsupported states retain native play. Actual exit/finale and phased
+quiet/batched completion, default mixed/wet/pusher chains, native admission
+exclusions and Linux/focused sanitizer checks pass. Final Astra/max review
+accepted the implementation after the planned delayed-contact correction;
+these bounded slices do not substitute for mod admission, arbitrary
+QC equivalence or connected/device qualification.
 
 Owners: `sv_main.c`, `sv_user.c`, `sv_phys.c`, `pmove.c`, `cl_main.c` and existing
 movement fixtures. Scope: dry/wet WALK, jumping, command batching/credit,
@@ -215,6 +229,10 @@ native behavior remains distinct unless a demonstrated requirement calls for
 network-style command ownership there.
 
 ### 3. Assign AD-family QC ownership at the existing movement boundary
+
+The next [AD-family admission plan](predictive-mod-admission-2.0-plan.md),
+committed as `3ce7a77d` before new production work, expands this stage's complete
+ownership/admission contract and the required bounded Astra design decision.
 
 Owners: `sv_phys.c` QC-to-PMove handoff; `sv_main.c` movevar/permission/admission;
 `pmove.c` solver inputs; existing mod fixtures. Start with the installed exact

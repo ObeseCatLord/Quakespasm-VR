@@ -464,13 +464,10 @@ int MIXED_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 	unsigned last_mode_epoch = 0;
 	static byte snapshots[NET_MAXMESSAGE];
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
-	selected = COM_CheckParm ("-selected") != 0;
+	const qboolean defaults = COM_CheckParm ("-defaultselection") != 0;
+	selected = defaults || COM_CheckParm ("-selected") != 0;
 	assert (svs.maxclients >= 2);
-	/* Enable the existing profile explicitly for this component proof. The
-	 * separate negotiation fixture owns verification of production defaults. */
-	Cvar_SetQuick (&sv_qsvr_private, "1");
-	assert (!sv_private_pmove_walk.value);
-	if (selected) Cvar_SetQuick (&sv_private_pmove_walk, "1");
+	ConfigurePrivateMovementFixture (selected, defaults);
 	ClientOffer (0, false, modern_offer, sizeof (modern_offer));
 	ClientOffer (QSVR_PROTOCOL_PINNED, false, public_offer, sizeof (public_offer));
 	peers[0] = SpawnPeer (0, modern_offer, QSVR_PROTOCOL_PINNED);

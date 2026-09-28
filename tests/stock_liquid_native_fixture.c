@@ -248,10 +248,10 @@ static void StartLiquidPeers (int argc, char **argv, const char *map,
 	char public_offer[1024];
 	srand (1); // identical initialized runs, including stock QC random effects
 	Fixture_InitNativeEngine (argc, argv, map, true);
-	const qboolean selected = COM_CheckParm ("-selected") != 0;
+	const qboolean defaults = COM_CheckParm ("-defaultselection") != 0;
+	const qboolean selected = defaults || COM_CheckParm ("-selected") != 0;
 	const qboolean vr = COM_CheckParm ("-vr") != 0;
-	Cvar_SetQuick (&sv_qsvr_private, "1");
-	if (selected) Cvar_SetQuick (&sv_private_pmove_walk, "1");
+	ConfigurePrivateMovementFixture (selected, defaults);
 	ClientOffer (0, false, modern_offer, sizeof (modern_offer));
 	ClientOffer (QSVR_PROTOCOL_PINNED, false, public_offer, sizeof (public_offer));
 	peers[0] = SpawnPeer (0, modern_offer, QSVR_PROTOCOL_PINNED);
@@ -351,7 +351,7 @@ int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 	contents = !strcmp (liquid, "water") ? CONTENTS_WATER :
 		!strcmp (liquid, "slime") ? CONTENTS_SLIME : CONTENTS_LAVA;
 	StartLiquidPeers (argc, argv, map, command_msec, peers, states);
-	const qboolean selected = COM_CheckParm ("-selected") != 0;
+	const qboolean selected = COM_CheckParm ("-defaultselection") || COM_CheckParm ("-selected");
 	const qboolean vr = COM_CheckParm ("-vr") != 0;
 	for (int depth = 1; depth <= 3; ++depth)
 	{

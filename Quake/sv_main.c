@@ -178,7 +178,7 @@ static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 static cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "0", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "1", CVAR_NONE};
-static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "0", CVAR_SERVERINFO};
+static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "1", CVAR_SERVERINFO};
 extern cvar_t sv_gameplayfix_elevators;
 static void SV_AddSkyRoomPVS (const vec3_t org, qmodel_t *worldmodel);
 
@@ -852,9 +852,14 @@ qboolean SV_PrivateWalkTrialSelected (client_t *client)
 
 static qboolean SV_PrivateWalkStatsDisjoint (void);
 
+qboolean SV_PrivateWalkTrialStockProgram (void)
+{
+	return qcvm == &sv.qcvm && qcvm->progssize == 340014 &&
+		qcvm->progscrc == 0x0bf8 && qcvm->progshash == 0xcf69c3e2;
+}
+
 static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 {
-	edict_t *ground;
 	eval_t *customphysics;
 	int groundentity;
 
@@ -866,8 +871,7 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 		return "loadgame state is outside the trial";
 	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 		return "requires the pinned private profile";
-	if (qcvm != &sv.qcvm || qcvm->progssize != 340014 || qcvm->progscrc != 0x0bf8 ||
-		qcvm->progshash != 0xcf69c3e2)
+	if (!SV_PrivateWalkTrialStockProgram ())
 		return "requires the pinned stock progs identity";
 	if (!SV_PrivateWalkStatsDisjoint ())
 		return "custom stats overlap private movement stats";
@@ -876,6 +880,10 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 	 * receipt. Selection is not permission to run PMove in those states. */
 	if (SV_PrivateWalkTrialSelected (client))
 		return SV_PrivateWalkTrialFrameStateError (client->edict, client, &client->cmd);
+	/* A legacy mode cannot handle later selected platform contacts, even if
+	 * the initial spawn is on static floor. Keep that session native. */
+	if (sv_gameplayfix_elevators.value < 3.f)
+		return "requires robust elevator physics";
 	if (client->edict->v.movetype != MOVETYPE_WALK ||
 		client->edict->v.solid != SOLID_SLIDEBOX ||
 		client->edict->v.waterlevel != 0)
@@ -892,10 +900,6 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 			groundentity > (qcvm->num_edicts - 1) * qcvm->edict_size ||
 			groundentity % qcvm->edict_size)
 			return "owner has an invalid groundentity offset";
-		ground = PROG_TO_EDICT (groundentity);
-		if (!ground->free && ground->v.movetype == MOVETYPE_PUSH &&
-			ground->v.solid == SOLID_BSP && sv_gameplayfix_elevators.value < 3.f)
-			return "owner is riding a pusher";
 	}
 	return NULL;
 }
@@ -910,7 +914,7 @@ void SV_PrivateWalkTrialSelectAtBegin (client_t *client)
 	reason = SV_PrivateWalkTrialAdmissionFailure (client);
 	if (reason)
 	{
-		Sys_Printf ("%s: private WALK trial not selected: %s\n", client->name, reason);
+		Sys_Printf ("%s: using native movement: %s\n", client->name, reason);
 		return;
 	}
 
@@ -921,7 +925,7 @@ void SV_PrivateWalkTrialSelectAtBegin (client_t *client)
 	client->private_latched_impulse = 0;
 	client->lastmovetime = 0;
 	client->private_pmove_walk_selected = true;
-	Sys_Printf ("%s: selected private stock-QC WALK trial\n", client->name);
+	Sys_Printf ("%s: selected stock predictive movement\n", client->name);
 }
 
 /*

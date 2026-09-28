@@ -218,8 +218,14 @@ the existing invalidation owner. Body support, strokes, quiet/batched commands,
 blocked QC and release/replay return have bounded stock component coverage.
 Final Linux/focused sanitizer checks and local Astra/max source review pass.
 
-This remains a default-off exact-stock stage, with documented prepared/captured
-fixture seams. The older paragraph describes its historical dry-only checkpoint;
-the linked parent plan records the subsequent wet/pause progress and remaining
-full-domain/default/local/mod implementation stages. No arbitrary-QC, device or
-performance qualification is claimed here.
+That moving-brush checkpoint still had default-off selection. The later
+[ordinary stock activation](predictive-stock-activation-2.0-plan.md) enables
+compatible exact-stock selection by default and recognizes the actual living
+intermission/finale freeze through existing native phases. Current/retained
+pusher palms still withhold replay; the default change does not broaden the
+solver contract. Default mixed/wet/pusher and frozen lifecycle component
+checks and final local Astra/max activation implementation review pass. Earlier
+default-off/dry-only paragraphs are historical checkpoints. Native authority
+remains available for unsupported initial states and nonstock programs; the
+parent mod/local/load stages remain open. Prepared/captured fixture seams claim
+no arbitrary-QC, device or performance qualification.

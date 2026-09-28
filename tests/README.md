@@ -1785,9 +1785,11 @@ exit. The caller owns starting/stopping the separate simulated runtime service.
 `local_private_legacy_peer_smoke.gdb` observes an initialized client connected
 to an isolated loopback dedicated server. It checks signon, private or public
 protocol authority, prediction permission, settled authoritative movement,
-shell consumption and advancing bounded move ACKs. The ordinary cases expect
-prediction permission off; the selected-private opt-in case below also checks
-between-send replay and settling. This is not a VR-input or physical-damage test.
+shell consumption and advancing bounded move ACKs. Ordinary eligible stock
+private cases expect prediction and check between-send replay/settling; public
+cases expect it off. Set `QSVR_LOCAL_EXPECT_PREDICTION=0` with an explicitly
+disabled/native server or an unsupported mod admission. This is not a VR-input
+or physical-damage test.
 
 Give the client and server separate disposable basedirs. In each, link the
 canonical Straight `id1/pak0.pak` and the read-only `id1/vr_weapons.txt`:
@@ -1805,7 +1807,7 @@ QSVR_BINARY=/path/to/debug/vkquake
 ```
 
 Start the dedicated server in its own terminal on loopback. Matching private
-transport is enabled by default; `sv_private_pmove_walk` remains default-off:
+transport and eligible stock predictive movement are enabled by default:
 
 ```sh
 "$QSVR_BINARY" -dedicated 4 -ip 127.0.0.1 -port 28790 \
@@ -1818,6 +1820,7 @@ environment if SDL's Wayland driver reports no displays in the test session:
 
 ```sh
 QSVR_LOCAL_EXPECT_PRIVATE=1 \
+QSVR_LOCAL_EXPECT_PREDICTION=1 \
 QSVR_LOCAL_RESULT="$CLIENT_PROFILE/private-result.json" \
   timeout --signal=TERM 150s gdb -nx --batch \
   -x tests/local_private_legacy_peer_smoke.gdb --args "$QSVR_BINARY" \
@@ -1850,23 +1853,29 @@ creating UDP sockets. Syntax/type checks and scoreboard expectations do not
 prove active server peers, OpenXR input, mixed gameplay or networking. The
 full public/VR and private/VR release matrix remains in the migration plan.
 
-## Selected private WALK prediction opt-in
+## Ordinary stock private prediction
 
-`sv_private_pmove_walk` is a default-off, server-side cvar. With the pinned
-private profile enabled, it selects only eligible stock-QC WALK owners for the
-private movement trial; only that selected owner can receive prediction
-permission while the server is active. Public peers and unsupported or
-ineligible owners receive no permission from this opt-in. Keep the cvar off for
-ordinary private/public checks above.
+`sv_private_pmove_walk` defaults to1 on the server. With the matching private
+profile, ordinary eligible stock-QC WALK owners select the existing command
+owner at `begin`; only a matching supported state receives replay permission.
+Public peers and excluded initial programs/states retain native play. Set
+`+sv_private_pmove_walk 0` on a fresh server for explicitly native comparison
+checks, and `QSVR_LOCAL_EXPECT_PREDICTION=0` on its private client probe.
+The [activation plan](../docs/predictive-stock-activation-2.0-plan.md) separates
+this supported stock default from remaining AD/cooperative-QC stages.
 
 For this focused Linux loopback probe, use fresh client/server profiles, the
 debug-symbol Linux binary, GDB with Python support, and stock `e1m1` assets. The
 owner must qualify as a live, dry stock WALK/SLIDEBOX player with the pinned
-stock `progs.dat`; raw Gorilla hands are accepted, while trusted Gorilla
-motion, custom physics and riding a pusher are outside the trial.
+stock `progs.dat`; raw Gorilla hands are accepted. Initial loaded/local or
+unsupported state/program admission stays native. Trusted authored Gorilla
+motion and custom physics remain outside the selected contract. Robust
+moving-brush interaction is accepted through the native carry/rollback owner;
+its transient marks and retained planted palms withhold replay.
 
 After selection, the current adapter continues the same per-command owner
-through water and withholds prediction permission while wet or waterjumping.
+through water with bounded wet/ledge replay; native holds, pause and incompatible
+support states still withhold permission.
 Its QuakeC/PMove water velocity handoff has a focused fixture:
 
 ```sh
@@ -1934,8 +1943,10 @@ uses actual live position/velocity and those explicit solver-rule assertions.
 Positive-duration disposable previews also run and preserve the committed
 journal, ACK, authoritative jump timers and owner netstate. Their pending axis
 state is prepared desktop input; generated VR history is a separate check.
-Received permission/ACK/selection are never staged. Selected activation remains
-default-off.
+Received permission/ACK/selection are never staged. `-selected` explicitly
+chooses the selected component policy; `-defaultselection` instead leaves both
+production activation cvars untouched. Native comparison runs explicitly set
+selection0, independently of the production default.
 
 Starts use actual `kill`/`setpos` plus prepared resting velocity/support/release
 flags and no unrelated spawn hold. Actual `notarget` commands exclude monster
@@ -2085,9 +2096,10 @@ establish general movement parity, packet-loss robustness, VR tracking or
 physical damage. A failed selection or unsupported state is not a public
 prediction fallback.
 
-Whenever this GDB harness is run against a server started with
-`+sv_private_pmove_walk 1`, set `QSVR_LOCAL_EXPECT_PREDICTION=1` on the client
-command. Without it, the harness expects the default-off permission state.
+Private stock runs default to `QSVR_LOCAL_EXPECT_PREDICTION=1`; setting it
+explicitly makes the expected owner clear. For a fresh server with
+`+sv_private_pmove_walk 0`, or an excluded native/mod admission, set0. Public
+and unchanged upstream runs expect0.
 
 For an explicitly public-only server, start a fresh dedicated server with
 `+sv_qsvr_private 0` and use `QSVR_LOCAL_EXPECT_PRIVATE=0` with a separate result
@@ -2114,13 +2126,14 @@ QSVR_LOCAL_RESULT="$CLIENT_PROFILE/public-move-stats-result.json" \
   +vid_vsync 0 +host_maxfps 144 +connect 127.0.0.1:28790
 ```
 
-For an opt-in private PMove server trial, set
+For a selected private PMove server, set
 `QSVR_LOCAL_ASSERT_ACTION_ACK=1` on the private client command. It records the
 first attack command sequence and fails if authoritative shell consumption
 appears before the completed move ACK reaches that sequence. This checks one
 visible action/ACK ordering path; it does not prove every queued action, VR
 weapon pose, or packet-loss case. Run a fresh selected server with
-`+sv_private_pmove_walk 1` and keep the default-off server result separate.
+`+sv_private_pmove_walk 1` (the stock default), and keep any explicitly
+disabled/native result separate.
 Add `QSVR_LOCAL_ASSERT_MOVE_STATS=1` for the stock selected-owner stat probe:
 it checks the received valid movement flags plus gravity, max speed, jump speed
 and step height against the stock server defaults. It does not enable or prove
@@ -2154,12 +2167,12 @@ Add `QSVR_LOCAL_ASSERT_COHERENT_OWNER=1` to check that the selected client's
 message-end candidate names the current owner and completed ACK after receiving
 the full movement-stat group. This verifies one loopback snapshot boundary;
 loss, split-packet recovery and eventual replay parity still need separate
-checks. This assertion alone does not require prediction; use a default-off
-server for it. Against a selected server, set
+checks. This assertion alone does not require prediction; use an explicitly
+disabled native server for that case. Against a selected server, set
 `QSVR_LOCAL_EXPECT_PREDICTION=1` as described above.
 Add `QSVR_LOCAL_ASSERT_PMOVE_TYPE=1` for a selected WALK server to require the
 received owner `pmovetype` to be WALK (3), with its grounded bit matching the
-owner's existing `EFLAGS_ONGROUND`. The default-off run expects prediction
+owner's existing `EFLAGS_ONGROUND`. The explicitly disabled run expects prediction
 permission off; against a selected server, set
 `QSVR_LOCAL_EXPECT_PREDICTION=1` as described above. The owner projection
 assertion alone does not test replay safety. Combine it with
@@ -2238,6 +2251,104 @@ stranded slots to expire. These are local client/server checks only; they do
 not establish headset behavior, physical damage or general prediction
 correctness.
 
+## Stock production-default activation components
+
+The [preimplementation activation plan](../docs/predictive-stock-activation-2.0-plan.md)
+records source review, software evidence and remaining parent scope.
+`-defaultselection` in the mixed/liquid/pusher drivers asserts untouched
+`sv_qsvr_private=1` and `sv_private_pmove_walk=1` before actual offers/spawn/begin.
+It performs no activation-cvar override. `-selected` explicitly chooses1;
+omitting both flags explicitly chooses0 for the native reference.
+
+Build the negotiation driver with the common make target above and no extra
+object exclusions; its untouched-default case checks transport only and requires
+selection to remain absent until `begin`. Build the mixed driver with
+`NEGOTIATION_SOURCE=../tests/mixed_native_fixture.c` and linker wrappers for
+`NET_SendUnreliableMessage`/`R_TranslateNewPlayerSkin`; its ordinary stock run is:
+
+```sh
+/tmp/qsvr-mixed-default -defaultselection -earlypause -arrivalgap \
+  -dedicated 3 -noudp -nosound -basedir "$SERVER_PROFILE" -userdir "$SERVER_PROFILE"
+```
+
+The existing actual-code driver checks private generated VR/public desktop
+movement/fire, full snapshots/replay, native cheat transitions, recovery,
+teleport and death/respawn. Use the same binary without those three options
+for explicitly native private/public gameplay. Build the liquid transit and
+pusher drivers as described in their sections and replace `-selected` with
+`-defaultselection` to qualify wet/pause and planted-pusher default admission.
+No real device input or connected cross-play is inferred.
+
+The distinct initial-exclusion driver reuses the liquid bootstrap:
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make negotiation-native-fixture \
+  USE_SDL3=1 -j4 NEGOTIATION_FIXTURE=/tmp/qsvr-stock-default-admission \
+  NEGOTIATION_SOURCE=../tests/stock_activation_native_fixture.c \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o cl_main.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram'
+/tmp/qsvr-stock-default-admission -admissioncase wet \
+  -dedicated 3 -noudp -nosound -basedir "$SERVER_PROFILE" -userdir "$SERVER_PROFILE"
+```
+
+Run one case per process: `wet`, `noclip`, `disabled`, `load`, `program`,
+`slots` or `elevators`. The last sets actual elevator mode2 before a static-floor
+begin, avoiding later selected platform rejection. Wet uses a real BSP location and actual relocation/water categorization;
+noclip uses the actual engine command. Load/slot/identity exclusions are prepared
+admission metadata, not actual save/load, local-SP transport or foreign-mod QC
+proof. Each actual `begin` remains native, repeated `begin` cannot retroactively
+select it, and actual commands/native QC movement/fire/full snapshots complete
+without replay permission or injected selection. Captured delivery and prepared
+signon/resources/input retain the same explicit component limits as the shared
+drivers. Parent mod/load/mixed-gameplay requirements stay open.
+
+The stock intermission driver adds actual game progression:
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make negotiation-native-fixture \
+  USE_SDL3=1 -j4 NEGOTIATION_FIXTURE=/tmp/qsvr-stock-intermission \
+  NEGOTIATION_SOURCE=../tests/stock_intermission_native_fixture.c \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o cl_main.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=NET_SendToAll -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram'
+/tmp/qsvr-stock-intermission -defaultselection -dedicated 3 -noudp -nosound \
+  -basedir "$SERVER_PROFILE" -userdir "$SERVER_PROFILE"
+```
+
+Prepared relocation reaches the real e1m1 exit volume. Actual trigger/Think QC
+freezes living players, the production reliable fanout/parser delivers the
+intermission, and frozen quiet/batched generated VR commands cannot integrate
+the body or receive replay permission. PreThink/PostThink execute once with the
+native world clock; ACK/queue completion remains correct. Actual IntermissionThink
+accepts a button after its natural deadline, queues changelevel and executes
+the host/world reload to e1m2; real refreshed serverinfo/spawn/begin selects anew.
+Omitting `-defaultselection` explicitly compares native admission.
+
+`-finale` uses the real end map/boss/train context and directly activates the
+boss's installed death callback with a prepared player `other`; natural boss
+combat and scene rendering are not claimed. `-freezephase pre|think|post` uses
+prepared composition after actual player QC/installed due Think to invoke the
+actual exit callback, covering existing continuation/publication boundaries.
+Add `-phasebatch` or `-phasequiet`; completed callbacks must not run again,
+unconsumed batch tails complete in the next frozen native frame, and a quiet
+transition does not invent a command ACK. Unrecognized living NONE without the
+actual intermission global remains a predicate-only rejection check.
+
+Add `-delayedcontacts` for the physical-contact regression. Actual impulse1
+selects the stock axe, and an encoded live contact sequence produces its QC
+whiff/cooldown as a positive control. After actual freeze, the same valid samples
+arrive before the client parses reliable intermission. Selected/native0 cases
+must preserve cooldown/hostility/cue counts, clear contact continuity and retire
+commands without replay; normal map progression still completes. Generated
+physical contact poses are a component input seam, not a device-tracking test.
+
+The combined component prepares separate host/client context at command-buffer
+execution, discards unexecuted bootstrap quake.rc/map-start commands, and
+captures the reliable reconnect broadcast at `NET_SendToAll` because its
+synthetic socket has no live driver. This adds no delivery/ACK simulator or
+transport service and proves no reconnect routing/connected signon. Linux and
+focused partial-instrumentation sanitizer checks complement those explicit
+prepared/captured boundaries; device/platform/performance remain deferred.
+
 ## Selected stock moving-brush adapter
 
 The preimplementation plan and review disposition are in
@@ -2292,7 +2403,9 @@ Captured socket sends/skin upload and prepared client resources, registration,
 input, starting positions, physical obstacles, callback activation/builtin
 arguments and longer outer world frames are explicit component seams. They
 do not qualify connected transport, device input, arbitrary QC or full-domain
-default activation. The selected owner remains off by default.
+default activation across arbitrary programs. Compatible stock owners now
+select normally; these cases use explicit component policy unless
+`-defaultselection` is supplied.
 
 Focused ASan/UBSan builds use a fresh `NEGOTIATION_FIXTURE` path and add
 `CPPFLAGS='-fsanitize=address,undefined -fno-sanitize-recover=all -Wno-error=format-overflow'`

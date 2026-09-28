@@ -1,6 +1,8 @@
 # Focused initialized loopback smoke for the private legacy profile.
 # QSVR_LOCAL_EXPECT_PRIVATE=1 expects private signon; 0 expects public signon.
 # QSVR_LOCAL_EXPECT_PREDICTION=1 expects selected-private prediction after movement.
+# Stock private probes expect prediction by default; set0 for explicitly
+# disabled/native admission or mod checks. Public/upstream probes expect0.
 # QSVR_LOCAL_MAP_READY optionally names a readiness file for private -> public
 # changelevel. QSVR_LOCAL_RESULT is required and receives compact JSON evidence.
 # QSVR_LOCAL_UPSTREAM=1 uses the unchanged vkQuake public client layout.
@@ -14,7 +16,8 @@ python
 import gdb, json, math, os, time
 
 expect_text = os.environ.get('QSVR_LOCAL_EXPECT_PRIVATE')
-expect_prediction_text = os.environ.get('QSVR_LOCAL_EXPECT_PREDICTION', '0')
+expect_prediction_text = os.environ.get('QSVR_LOCAL_EXPECT_PREDICTION',
+                                       '1' if expect_text == '1' else '0')
 upstream_peer = os.environ.get('QSVR_LOCAL_UPSTREAM') == '1'
 try:
     expected_peers = int(os.environ.get('QSVR_LOCAL_EXPECT_PEERS', '0'))

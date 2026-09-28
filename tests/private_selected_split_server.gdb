@@ -1,4 +1,4 @@
-# Diagnostic server wrapper for an opt-in stock-QC private WALK trial.
+# Diagnostic server wrapper for selected stock-QC private WALK movement.
 # Supply normal dedicated arguments and run a separate loopback client.
 # Shrink only the selected peer's datagram budget and mark its currently
 # visible non-owner entities for reset once; this forces a real continuation

@@ -20,6 +20,22 @@ qboolean __wrap_NET_CanSendMessage (qsocket_t *socket)
 
 static char modern_offer[1024];
 
+/* Default-path checks must not manufacture activation. Other component cases
+ * explicitly choose native or selected policy, independent of product defaults. */
+static void ConfigurePrivateMovementFixture (qboolean selected, qboolean defaults)
+{
+	if (defaults)
+	{
+		assert (selected && !strcmp (sv_qsvr_private.default_string, "1") &&
+			sv_qsvr_private.value == 1);
+		assert (!strcmp (sv_private_pmove_walk.default_string, "1") &&
+			sv_private_pmove_walk.value == 1);
+		return;
+	}
+	Cvar_SetQuick (&sv_qsvr_private, "1");
+	Cvar_SetQuick (&sv_private_pmove_walk, selected ? "1" : "0");
+}
+
 static void ClientOffer (unsigned legacy, qboolean no_extensions, char *out,
 	size_t capacity)
 {
@@ -303,12 +319,11 @@ static void Cases (void)
 	unsigned saved_flags = sv.protocolflags;
 
 	ClientOffer (0, false, modern_offer, sizeof (modern_offer));
-	/* Before any server override: ordinary modern peers must reach the
-	 * production private transport, without selecting movement prediction. */
-	assert (!strcmp (sv_qsvr_private.default_string, "1") && sv_qsvr_private.value == 1);
-	assert (!strcmp (sv_private_pmove_walk.default_string, "0") && !sv_private_pmove_walk.value);
+	/* Before any override, observe production defaults. Negotiation still
+	 * cannot select movement before the real spawn/begin boundary. */
+	ConfigurePrivateMovementFixture (true, true);
 	Negotiate (0, modern_offer, QSVR_PROTOCOL_PINNED);
-	puts ("NEGOTIATION_NATIVE_DEFAULT_PASSED untouched private=1 pmove=0");
+	puts ("NEGOTIATION_NATIVE_DEFAULT_PASSED untouched private=1 pmove=1; selection awaits begin");
 	ClientOffer (QSVR_PROTOCOL_PINNED, false, legacy_offer, sizeof (legacy_offer));
 	ClientOffer (0, true, plain_offer, sizeof (plain_offer));
 	assert (!strcmp (plain_offer, "pext"));

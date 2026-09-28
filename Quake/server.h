@@ -628,6 +628,7 @@ typedef enum
 sv_private_move_state_t SV_PrivateWalkTrialClassifyState (client_t *client);
 const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client, const usercmd_t *cmd);
 qboolean SV_PrivateWalkTrialQ30Program (void);
+qboolean SV_PrivateWalkTrialStockProgram (void);
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client);
 const char *SV_PrivateWalkTrialStateError (edict_t *ent, client_t *client, const usercmd_t *cmd);
 void SV_ClientUpdateAnglesForClient (client_t *client);

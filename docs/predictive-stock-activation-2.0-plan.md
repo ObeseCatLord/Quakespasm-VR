@@ -1,8 +1,8 @@
 # Ordinary stock predictive-movement activation
 
-Status: consolidated checks passed; final Astra found a delayed physical-contact
-regression. Plan reopened for the narrow eligibility correction below before
-that production edit. The plan was committed before production
+Status: bounded stock activation implemented; final Linux/focused checks and
+local Astra/max implementation review accepted, including the delayed-contact
+correction. That correction was planned before its production edit. The plan was committed before production
 edits (`63d44ae1`) and reopened for stock intermission (`0543cfd3`), baseline
 `66fdea42` on `2.0`. This advances
 stage 2 of the [full predictive movement plan](predictive-movement-2.0-plan.md).
@@ -201,3 +201,24 @@ service or another phase is introduced. After this coherent correction, rebuild
 Linux and the affected fixture, run delayed-contact default/native and frozen
 phase/finale cases with focused sanitizers as warranted, then request bounded
 follow-up Astra disposition. Do not reopen unchanged mixed/decoder/map tests.
+
+Correction evidence: actual impulse1/live encoded axe contacts produce a real
+QC whiff as positive control. The same delayed sequence after actual freeze,
+before reliable client notification, passes default/native0/finale and all
+PreThink/Think/PostThink quiet/batch compositions. The nine updated partial
+ASan/UBSan cases pass; final ordinary Linux `-Werror` linkage also passes.
+An isolated source copy without only the eligibility guard reproduces cue
+delta1 and cooldown/hostility delta0.775, failing the original no-effects
+assertion. This upgrades the review's conditional source finding to a reproduced
+component regression and its correction; no alternate transport is added.
+Final bounded follow-up Astra disposition: **accepted**, local `gpt-6-astra/max`,
+effective fields independently checked. Main spot-checked the eligibility/drain
+cursor order, actual-code control differences and output markers. The earlier
+stock movement/default disposition stands; no further software gate is needed
+for this contact correction.
+
+| Final recommendation | Main disposition |
+| --- | --- |
+| Keep the exact-state adapter/default; resolve only delayed contact eligibility | Adopted. The shared predicate and existing drain close the reproduced path without a second movement/contact lifetime. Public/native and live stock behavior are retained. |
+| Require meaningful delayed contact evidence rather than pose-only frozen commands | Adopted. Actual live cue/cooldown positive control, delayed default/native comparison, guard-removal failure and nine affected sanitizer cases supply the bounded behavior proof. |
+| Preserve documented limits instead of expanding this correction into parent mod work | Adopted. Captured delivery, prepared resources/finale activation and partial instrumentation remain explicit. Broader implementation proceeds under the separately committed [AD-family admission plan](predictive-mod-admission-2.0-plan.md). |
