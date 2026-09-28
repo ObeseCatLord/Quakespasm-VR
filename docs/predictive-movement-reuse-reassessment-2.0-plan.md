@@ -213,3 +213,32 @@ executable-prefix input, suffix retirement and remaining-phase transitions remai
 the existing committed contract. Main will finish the bounded batching proof
 while Astra reviews the production owners and this decision; no broader scope
 or user permission is needed.
+
+## Integration-review disposition and narrowed acceptance
+
+Local Astra Max verified the production diff. Main independently confirmed the
+load-bearing call/cleanup order and the actual impulse failure and successful
+weapon-effect rerun. The main's112-frame native comparison remains a failed1/1
+comparison, not a parity pass. Adopt existing QSS-M solver semantics as the
+movement reference; keep native QC ability ownership/charge/expiry/gameplay and
+world-callback cadence as the compatibility reference. Native acceleration,
+analytic-gravity displacement and landing snap order are recorded differences;
+landing damage/sound behavior is still an open compatibility check. This changes
+the numerical acceptance reference explicitly, without hiding observed errors,
+inventing boots-specific arithmetic or modifying PMove's write set.
+
+| Integration finding | Disposition / implementation contract |
+| --- | --- |
+| First impulse was cleared before the single PostThink. | **Adopted/fixed.** Keep the actual QC-owned edict value across intermediate commands, including an actual QC clear; mirror it in disposable QC input and clear after the surviving tail. Actual AD weapon changes now pass the batched prefix/suffix case. |
+| Later roomscale/wet lookahead could skip the world tail. | **Adopted smaller boundary.** Inside the existing command helper, after movement/contact validation, observe only the next executable-prefix head. If native is needed, run the existing current-head PostThink/validation/publication/completion tail once, then defer the untouched next head after debiting current credit. Remove the duplicate shared later-head outer-loop check. No pending-phase bit or second tail scheduler. |
+| The last command could replace the originating QC pose. | **Adopted.** Store first QC input/pose only in the existing frame-local think window. Movement/contacts keep their own commands. Temporarily restore originating input for the sole PostThink without repeating angle/recoil/roomscale work, and retain actual QC impulse/angle writes. |
+| Living remaining-phase continuation drained physical contacts before movement. | **Adopted.** Keep terminal/frozen cleanup unchanged. For a living shared continuation, pass only the executing head's sequence to the existing native owner; its normal after-movement contact tail consumes that sample. Do not prematurely drain/reset that living command. |
+| Shared after-Think continuation reselected dispatch unlike the native reference. | **Adopted.** Retain pre-Think WALK dispatch, as the existing helper/reference does. Do not change desktop dispatch merely because the generic adapter invokes a remaining phase. |
+| A generic helper/pending flag could close loop exits. | **Rejected for this demonstrated case.** Moving the lookahead before the existing tail is smaller and retains all validation/publication/cleanup in one owner. |
+
+Production owners and test write set remain unchanged. Next proof adds actual
+originating pose and first-command weapon effect with a later roomscale head
+deferred, actual QC clearing without resurrection, and living remaining-phase
+continuation. Empty contact cursor checks do not certify physical callbacks.
+Cooperative hooks, broader wet/local/load/mod behavior and all remaining full
+migration requirements stay open. Astra did source review, not runtime tests.
