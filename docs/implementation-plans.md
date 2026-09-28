@@ -49,3 +49,7 @@ not retrospectively claim that every earlier change had a written preimplementat
 plan. The [complete feature map](migration-feature-map.md) still defines the
 full migration scope. Optional candidates stay proposals until selected, and
 skyrooms remain outside the goal.
+
+Next predictive stage: [stock moving-brush plan](predictive-stock-pushers-2.0-plan.md)
+qualifies the reused body-support path and adapts the demonstrated palm-contact
+veto before broader activation.
