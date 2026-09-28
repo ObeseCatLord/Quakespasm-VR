@@ -1,6 +1,9 @@
 # Cooperative QuakeC movement through existing owners
 
-Status: stage1 implemented and software-checked; stages2–3 remain open. Extends the
+Status: stages1–2 and the [VR identity adapter](predictive-cooperative-vr-input-2.0-plan.md)
+are implemented with bounded software checks; complete states/replay in stage3
+remain open. [Current scope](migration-scope-decisions.md) excludes Gorilla
+locomotion and instant stop. Extends the
 shared-QC checkpoint `be57cdfe`, retaining the complete predictive desktop/VR
 goal and all existing native/public behavior. Main owns integration on `2.0`;
 the user's modified migration status document stays untouched.

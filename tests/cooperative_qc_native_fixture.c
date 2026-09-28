@@ -4,6 +4,7 @@
 #define MIXED_NATIVE_FIXTURE_ENTRY ImportedCooperativeMixedMain
 #include "mixed_native_fixture.c"
 #include "../Quake/sv_phys.c"
+#include "native_liquid_fixture.h"
 
 static edict_t *fixture_trigger, *fixture_player, *fixture_nested;
 static int trigger_calls, nested_calls;
@@ -11,6 +12,33 @@ static qboolean observe_commands;
 static int observed_pre, observed_post, observed_think, observed_hooks, observed_custom;
 static qboolean schedule_after_post, custom_handoff, invalid_post;
 static int later_due_think_waited;
+static qboolean observe_vr_move, expected_actor_vr;
+static int observed_vr_moves, observed_nested_moves, observed_vr_mismatches;
+void __real_PM_PlayerMove (float gamespeed);
+void __wrap_PM_PlayerMove (float gamespeed)
+{
+	if (observe_vr_move)
+	{
+		/* The prepared nested entity is PM_NONE. The wrapper observes the
+		 * real solver input, then always executes that solver unchanged. */
+		if (pmove.pm_type == PM_NONE)
+		{
+			assert (!pmove.cmd.vr_active);
+			++observed_nested_moves;
+		}
+		else
+		{
+			if (pmove.cmd.vr_active != (expected_actor_vr &&
+				sv_qc_pmove_context && sv_qc_pmove_context->entity == fixture_player))
+				++observed_vr_mismatches;
+			if (sv_qc_pmove_context && sv_qc_pmove_context->entity == fixture_player)
+				++observed_vr_moves;
+		}
+		assert (!pmove.cmd.vr_gorilla.flags && !pmove.cmd.vr_gorilla_motion.flags &&
+			VectorLength (pmove.cmd.vr_roomscalemove) == 0);
+	}
+	__real_PM_PlayerMove (gamespeed);
+}
 typedef struct
 {
 	float seconds, frame, sequence, buttons, impulse;
@@ -145,6 +173,152 @@ static void SendCooperative (client_t *peer, client_state_t *state, qboolean vr,
 	CL_SendMove (&command);
 	*state = cl;
 	if (captured_length) GapDeliver (peer, captured, captured_length);
+}
+
+static void RunCooperativeVRInputChecks (client_t **peers, client_state_t **states)
+{
+	assert (FixtureGlobal ("fixture_expected_calls") > 0);
+	vec3_t wet, starts[2];
+	assert (FindLiquidPosition (peers[0]->edict, CONTENTS_WATER, 3, wet));
+	for (int slot = 0; slot < 2; ++slot)
+		VectorCopy (peers[slot]->edict->v.origin, starts[slot]);
+	float displacement[3];
+	observed_vr_mismatches = 0;
+	for (int scenario = 0; scenario < 3; ++scenario)
+	{
+		const int slot = scenario == 2;
+		const qboolean vr = scenario == 0;
+		client_t *peer = peers[slot];
+		edict_t *player = peer->edict;
+		assert (!peers[0]->private_cmd_queue_count);
+		/* Same-start prepared body/input; actual QC, BSP, queue and message
+		 * owners remain live. No injected selection or replay permission. */
+		for (int other = 0; other < 2; ++other)
+		{
+			edict_t *ent = peers[other]->edict;
+			VectorCopy (starts[other], ent->v.origin);
+			VectorClear (ent->v.velocity);
+			ent->v.button2 = 0;
+		}
+		VectorCopy (wet, player->v.origin);
+		VectorCopy (wet, player->v.oldorigin);
+		player->v.flags = FL_CLIENT | FL_JUMPRELEASED;
+		player->v.groundentity = 0;
+		player->v.teleport_time = 0;
+		player->v.nextthink = 0;
+		SV_CheckWater (player);
+		SV_LinkEdict (player, false);
+		assert (player->v.waterlevel == 3 && !SV_TestEntityPosition (player));
+		/* Actual trigger links invoke the existing prepared nested QC caller.
+		 * Its other entity must not inherit the player's command identity. */
+		fixture_trigger->v.solid = SOLID_TRIGGER;
+		VectorCopy (wet, fixture_trigger->v.origin);
+		SV_LinkEdict (fixture_trigger, false);
+		trigger_calls = nested_calls = 0;
+		fixture_player = player;
+		fixture_nested->v.movetype = MOVETYPE_NONE;
+		VectorCopy (wet, fixture_nested->v.origin);
+		fixture_nested->v.origin[2] += 128;
+		VectorCopy (fixture_nested->v.origin, fixture_nested->v.oldorigin);
+		observed_vr_moves = observed_nested_moves = 0;
+		expected_actor_vr = vr;
+		observe_vr_move = true;
+		usercmd_t command = {0};
+		cl = *states[slot]; cls.netcon = peer->netconnection; cl.time = qcvm->time;
+		command.servertime = cl.time;
+		command.buttons = BUTTON_JUMP;
+		command.vr_active = command.vr_handpos_relative = vr;
+		VectorClear (cl.viewangles);
+		cl.move_msec_sample_time = realtime;
+		cl.move_msec_fractional_carry = .25;
+		realtime += host_frametime;
+		captured_length = 0;
+		CL_SendMove (&command);
+		*states[slot] = cl;
+		assert (captured_length);
+		GapDeliver (peer, captured, captured_length);
+		GapWorldFrame ();
+		observe_vr_move = false;
+		displacement[scenario] = player->v.origin[2] - wet[2];
+		printf ("COOPERATIVE_VR_SWIM scenario=%d vr=%d z=%g velocity=%g moves=%d nested=%d\n",
+			scenario, vr, displacement[scenario], player->v.velocity[2],
+			observed_vr_moves, observed_nested_moves);
+		assert (observed_vr_moves == FixtureGlobal ("fixture_expected_calls") &&
+			observed_nested_moves == FixtureGlobal ("fixture_expected_calls") &&
+			nested_calls == 1 && player->v.waterlevel >= 2 && player->v.health > 0);
+		FullSnapshot (peer, states[slot]);
+		assert (!states[slot]->move_ack_prediction_allowed && peer->active && peers[1 - slot]->active);
+		assert (fabsf (states[slot]->entities[slot + 1].netstate.origin[2] -
+			player->v.origin[2]) <= .125f);
+	}
+	assert (!observed_vr_mismatches && displacement[0] > displacement[1] + .01f &&
+		fabsf (displacement[1] - displacement[2]) < .001f);
+	vec3_t ladder_move[5];
+	for (int scenario = 0; scenario < 5; ++scenario)
+	{
+		const int slot = scenario == 4;
+		const qboolean vr = scenario < 2;
+		const float pitch = scenario == 1 || scenario >= 3 ? 65 : 0;
+		client_t *peer = peers[slot];
+		edict_t *player = peer->edict;
+		vec3_t ladder_start;
+		VectorCopy (starts[slot], ladder_start);
+		ladder_start[2] += 32;
+		assert (!peers[0]->private_cmd_queue_count);
+		VectorCopy (ladder_start, player->v.origin);
+		VectorCopy (ladder_start, player->v.oldorigin);
+		VectorClear (player->v.velocity);
+		player->v.flags = FL_CLIENT | FL_JUMPRELEASED;
+		player->v.groundentity = 0;
+		player->v.teleport_time = 0;
+		player->v.nextthink = 0;
+		/* Prepared QC ladder state, not an authored detection/traversal claim. */
+		GetEdictFieldValue (player, qcvm->extfields.pmove_flags)->_float = PMF_LADDER;
+		SV_CheckWater (player); SV_LinkEdict (player, false);
+		assert (!player->v.waterlevel && !SV_TestEntityPosition (player));
+		fixture_trigger->v.solid = SOLID_NOT;
+		SV_LinkEdict (fixture_trigger, false);
+		fixture_player = player;
+		observed_vr_moves = observed_nested_moves = 0;
+		expected_actor_vr = vr;
+		observe_vr_move = true;
+		usercmd_t command = {0};
+		cl = *states[slot]; cls.netcon = peer->netconnection; cl.time = qcvm->time;
+		cl.move_msec_sample_time = realtime;
+		cl.move_msec_fractional_carry = .25;
+		VectorSet (cl.viewangles, pitch, 0, 0);
+		VectorCopy (cl.viewangles, command.viewangles);
+		command.servertime = cl.time;
+		command.forwardmove = 100;
+		command.vr_active = command.vr_handpos_relative = vr;
+		realtime += host_frametime;
+		captured_length = 0;
+		CL_SendMove (&command);
+		*states[slot] = cl;
+		assert (captured_length);
+		GapDeliver (peer, captured, captured_length);
+		GapWorldFrame ();
+		observe_vr_move = false;
+		VectorSubtract (player->v.origin, ladder_start, ladder_move[scenario]);
+		printf ("COOPERATIVE_VR_LADDER scenario=%d vr=%d pitch=%g move=(%g,%g,%g)\n",
+			scenario, vr, pitch, ladder_move[scenario][0], ladder_move[scenario][1], ladder_move[scenario][2]);
+		assert (observed_vr_moves == FixtureGlobal ("fixture_expected_calls") &&
+			!observed_vr_mismatches && player->v.health > 0);
+		FullSnapshot (peer, states[slot]);
+		assert (!states[slot]->move_ack_prediction_allowed && peer->active && peers[1 - slot]->active);
+		for (int axis = 0; axis < 3; ++axis)
+			assert (fabsf (states[slot]->entities[slot + 1].netstate.origin[axis] -
+				player->v.origin[axis]) <= .125f);
+		GetEdictFieldValue (player, qcvm->extfields.pmove_flags)->_float = 0;
+	}
+	assert (ladder_move[0][2] > .01f && ladder_move[1][2] > .01f &&
+		fabsf (ladder_move[2][2] - ladder_move[3][2]) > .01f);
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		assert (fabsf (ladder_move[0][axis] - ladder_move[1][axis]) < .001f);
+		assert (fabsf (ladder_move[3][axis] - ladder_move[4][axis]) < .001f);
+	}
+	puts ("COOPERATIVE_VR_INPUT_PASSED actual private VR/private desktop/public desktop swim displacement and nested solver isolation; prepared deep-water starts/QC and captured transport");
 }
 
 static void RunCooperativeCommandChecks (client_t *peer, client_state_t *state)
@@ -403,6 +577,8 @@ int main (int argc, char **argv)
 	}
 	if (COM_CheckParm ("-commandchecks"))
 		RunCooperativeCommandChecks (peers[0], states[0]);
+	if (COM_CheckParm ("-vrinputchecks"))
+		RunCooperativeVRInputChecks (peers, states);
 	/* Validation probes the same builtin backend before VM error reporting;
 	 * invalid QC scalars and a zero duration must leave body/scratch intact. */
 	const playermove_t saved_move = pmove;

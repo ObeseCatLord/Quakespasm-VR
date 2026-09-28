@@ -2892,7 +2892,7 @@ make -C Quake -f ../tests/negotiation_native.make USE_SDL3=1 -j4 \
   NEGOTIATION_SOURCE=../tests/cooperative_qc_native_fixture.c \
   NEGOTIATION_FIXTURE=/tmp/qsvr-cooperative-qc-native-fixture \
   NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o' \
-  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram -Wl,--wrap=PM_PlayerMove' \
   negotiation-native-fixture
 timeout --signal=TERM 30s /tmp/qsvr-cooperative-qc-native-fixture \
   -dedicated 3 -noudp -nosound -game cooperative \
@@ -3061,3 +3061,40 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -o /tmp/qsvr-alk-calibration-fixture
 ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-alk-calibration-fixture
 ```
+
+
+## Cooperative standard physics VR identity
+
+Build the cooperative fixture above with its `PM_PlayerMove` link wrapper,
+then add `-vrinputchecks`. Run the one-call prepared program with and without
+`-defaultselection`, and the two-call program with `-defaultselection`, each
+with a separate userdir. Require exit0 and `COOPERATIVE_VR_INPUT_PASSED`.
+The wrapper observes input then always calls the real solver; it does not
+implement movement.
+
+All three Linux SDL3 cases pass. The actual private producer/receipt, loaded QC,
+standard builtin, BSP solver and full snapshot parser show same-start deep-water
+jump displacement of 2.625 units for VR versus 1.48749 for private/public desktop
+with one call. Two half-duration calls give 2.5625 versus 1.99377; those schedules
+are intentionally not claimed equivalent. All finish with velocity100, showing
+why final velocity alone cannot establish the VR swim rule. Parsed owner height
+matches materialized body height within coordinate quantization.
+
+Prepared `PMF_LADDER` starts show identical VR movement at pitch0 and pitch65,
+with ascent from forward input. Desktop pitch affects movement; private/public
+desktop controls match. This proves the existing ladder consumer, not authored
+mod ladder detection or complete wet/local/load admission. Actual trigger links
+invoke a prepared nested QC caller on a separate PM_NONE entity; its solver
+input has no VR identity. The existing scratch/input restoration assertions
+remain active. One/two-call roomscale-once and QC input transforms still pass.
+
+An isolated temporary copy clearing only the borrowed identity fails the swim
+assertion (exit134): all three same-start cases move1.48749 units. Production
+files are unchanged by this negative control. The earlier unmodified backend
+also failed the VR check. Zero-call and accepted10/15/50ms, duplicate, quiet and
+retained-head regressions pass with the adapter. Linux production build passes.
+
+QC, body starts, input clocks and transport/sign-on are prepared/captured; this
+is not a connected multiplayer, physical headset or arbitrary authored-mod
+qualification. Gorilla locomotion and instant stop are excluded from the goal
+and this adapter copies neither their state nor tracked displacement.

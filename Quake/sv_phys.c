@@ -8153,6 +8153,7 @@ typedef struct
 	double interval;
 	qboolean standard_linked;
 	vec3_t standard_link_origin;
+	qboolean vr_active;
 } sv_qc_pmove_context_t;
 static sv_qc_pmove_context_t *sv_qc_pmove_context;
 
@@ -8230,6 +8231,10 @@ const char *SV_RunStandardPlayerPhysics (edict_t *ent)
 					return "invalid QC input vector";
 	usercmd_t input = {0};
 	PR_GetSetInputs (&input, false);
+	/* QC owns ordinary input/time; the retained command scope owns identity.
+	 * Foreign entities never inherit the enclosing player's VR movement mode. */
+	if (sv_qc_pmove_context && sv_qc_pmove_context->entity == ent)
+		input.vr_active = sv_qc_pmove_context->vr_active;
 	if (!input.seconds)
 		return NULL; // no categorization, contacts or fabricated duration
 	if (!isfinite (ent->v.flags) || (double)ent->v.flags < INT_MIN ||
@@ -9724,7 +9729,9 @@ static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
 	vec3_t callback_origin, callback_delta;
 	const func_t command_hook = qcvm->extfuncs.SV_RunClientCommand;
 	sv_qc_input_scope_t input_scope;
-	sv_qc_pmove_context_t frame_context = {ent, host_frametime, false};
+	sv_qc_pmove_context_t frame_context = {
+		.entity = ent, .interval = host_frametime,
+		.vr_active = command_hook && client->cmd.vr_active};
 	sv_qc_pmove_context_t *saved_context = sv_qc_pmove_context;
 	client_t *saved_host_client = host_client;
 	edict_t *saved_sv_player = sv_player;

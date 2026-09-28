@@ -1,6 +1,6 @@
 # Cooperative standard physics: command-scoped VR identity
 
-Status: proposed bounded adapter, before production edits. Extends the accepted
+Status: bounded adapter implemented and Linux software-checked. Extends the accepted
 cooperative command implementation `999cef74`. Gorilla locomotion and instant
 stop are [excluded](migration-scope-decisions.md), not prerequisites for this work.
 
@@ -101,3 +101,42 @@ NQ jump, and VR ladder yaw-only vectors before adopting the following decisions.
 
 The review changed acceptance by making ladder behavior an explicit gate and
 clarifying why terminal swimming velocity is insufficient evidence.
+
+## Implementation and bounded acceptance
+
+Production changes are eight added lines and one replaced initializer in
+`sv_phys.c`. The existing retained context captures one immutable identity bit;
+the existing standard builtin copies it for its exact actor. No solver, protocol,
+classification, admission, replay permission, menu or locomotion setting changed.
+
+Linux SDL3 production build passes. The actual prepared-QC fixture passes
+one-call selected, one-call native and two-call selected VR-input cases. With
+one standard call, same-start submerged jump displacement is2.625 units for VR
+and1.48749 for private/public desktop; both finish at velocity100. With two
+half-duration calls it is2.5625 versus1.99377. Prepared ladder movement is
+identical at pitch0/65 in VR; desktop pitch changes it, and private/public
+desktop controls match. The full parser's owner position matches the body
+within coordinate quantization for swim and ladder. The observed target actor
+executes exactly the configured call count; foreign PM_NONE nested QC never
+inherits its VR identity. Existing raw input/scratch restoration, QC input
+transform and roomscale-once assertions remain active.
+
+An isolated copy clearing only the borrowed identity fails the swim gate with
+all three displacements1.48749 (exit134), without editing production. The
+preimplementation backend also failed. Zero-call and existing accepted10/15/50ms,
+duplicate, quiet maintenance and retained-head regressions pass. See
+[reproduction and proof limits](../tests/README.md#cooperative-standard-physics-vr-identity).
+
+Final local Astra Max source review found no production blocker and requested
+two fixture corrections: include the wrapper flag in the recipe (adopted), and
+count exact target calls plus compare decoded ladder position (adopted). Main
+spot-checked the calls and owner indices and reran the affected three modes.
+All three strengthened cases pass; Astra's bounded correction recheck has no
+new finding. No additional production change was needed after final review.
+Nested builtin scratch/identity is tested; recursive native-frame context
+installation remains source-supported rather than a new fixture claim.
+
+Prepared starts/ladder state/QC/input clocks and captured sign-on/transport are
+explicit seams. This is not authored ladder traversal, connected multiplayer,
+complete admission/replay or physical headset qualification. Those remaining
+implementation requirements stay in scope; excluded locomotion stays excluded.

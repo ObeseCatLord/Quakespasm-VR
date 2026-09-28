@@ -182,7 +182,9 @@ calls have a mechanical null outcome argument; GDB was not run. Reproduction
 and prepared bank/carry/axes/resources/transport limits are recorded in
 [tests/README.md](../tests/README.md#cooperative-quakec-accepted-commands).
 
-Remaining: ordinary VR command metadata, full state/local/load admission
+The [ordinary VR identity adapter](predictive-cooperative-vr-input-2.0-plan.md)
+now preserves the existing swim/ladder consumer rules with bounded software proof.
+Remaining: full state/local/load admission
 and compatible cooperative client replay. This checkpoint implements accepted
 command execution, not the whole migration or arbitrary cooperative prediction.
 
