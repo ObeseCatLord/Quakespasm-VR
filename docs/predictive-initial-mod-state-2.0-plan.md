@@ -119,3 +119,19 @@ before adopting its disposition.
 Environment: this worktree only; sibling engines/assets are read-only; Linux
 SDL3 builds and captured native fixtures work. UDP/live hardware and other
 platforms are deferred. No new mod identity/name policy is authorized.
+
+## Local Astra Max disposition before production
+
+Effective `gpt-6-astra` / `max` was verified locally. Main spot-checked the
+classifier, validation body, private stats export/drop and native publication
+guard before adopting the following recommendations.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Factor the observational validator rather than remove gates alone. | Adopted. One internal pre-begin context and current frame wrapper, plus a narrow begin API. Preserve knowntoqc/live/profile and terminal/rejected checks without forged state. |
+| NATIVE eligibility alone does not prove private stats publication. | Adopted acceptance expansion. Parse the first empty-queue snapshot before any QC/world update or return to WALK; verify the native classification, selected-owner metadata and denied replay, then execute the command/body path. Reuse validation if an actual exporter incompatibility is found. |
+| Keep native world time distinct from cooperative accepted time and preserve the return frame's native fence. | Adopted. Prove current queue completion/retirement, custom replacement precedence and next accepted owner with ordinary packet flows; do not add another scheduler or enable replay on a native return frame. |
+
+The review identified missing initial publication evidence and the risk of
+selecting stale-reference/scheduled-Think owners. The new first snapshot gate
+and shared validator address these directly; no new protocol or identity policy.
