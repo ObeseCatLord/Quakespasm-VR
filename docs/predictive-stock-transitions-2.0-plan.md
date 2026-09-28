@@ -1,8 +1,8 @@
 # Selected stock movement: native state transitions
 
-Status: preimplementation plan reviewed by local Astra Max for the first
-frame-boundary slice. No production changes are part of this planning checkpoint.
-This is a
+Status: first frame-boundary slice implemented with passing Linux/software
+checks and local Astra Max implementation review. The plan preceded production
+edits (`2011abaa`, reviewed revision `66da8b6b`). This is a
 bounded implementation plan, not a declaration that prediction or the migration
 is complete. The parent [predictive movement plan](predictive-movement-2.0-plan.md)
 retains mod support and the full desktop/VR acceptance matrix.
@@ -43,6 +43,10 @@ ordering across a native frame, and production replay reset behavior across both
 authority changes. These require software evidence. This plan does not assume
 that arbitrary customphysics, altered hulls, AD abilities, loadgame, or a changed
 QC program are compatible with the stock contract.
+
+These were preimplementation unknowns. The bounded dispatcher and mixed
+component checks below now supply evidence for the first stock slice; they do
+not establish connected reliability or all stage-2/mod contracts.
 
 ## Smallest design versus alternatives
 
@@ -185,4 +189,73 @@ records the initial scope. No human decision is required.
 
 The review changed the implementation boundaries and identified concrete VR
 movement/recoil regressions that a mechanical terminal-adapter generalization
-would have introduced. Production edits may begin against this revised plan.
+would have introduced. Production edits proceeded against this revised plan.
+
+## Implemented first slice and evidence
+
+The terminal coalescer is adapted in place as
+`SV_Physics_ClientSelectedNativeFrame`; it still invokes the existing native
+dispatcher. `SV_PrivateWalkTrialClassifyState` is an observational enum result,
+not new persistent state. Shared frame validation and strict WALK execution
+validation have distinct permissions. Initial stock admission, selected default
+off, private/public framing, command queue, completion cursor and mode epoch
+owners remain in place.
+
+Implementation and fixtures are committed as `f128efd3` on `2.0`.
+
+Consolidated checks after coherent implementation:
+
+- Native Linux SDL3 build passed.
+- Actual native dispatcher/QC/hull comparisons passed both noclip modes, FLY
+  and FLY/raw hands with zero/two/eight commands and a subsequent no-packet frame.
+  Origin/velocity/recoil match the existing native chain; callback order/count,
+  clocks, once-only recoil/roomscale/impulse, completion/retirement and latest
+  levels are checked. These callbacks are diagnostic QC, not stock gameplay.
+- Real stock-QC mixed component run passed actual private admission, synthetic
+  client command production/receipt, engine cheat handlers, authoritative physics,
+  complete stats/ACK/entity message parsing, and actual client replay after both
+  WALK returns. Four authority changes advance the existing mode epoch, native
+  authority is observed before physics, and stale replay propagation is cleared.
+  The simultaneous public desktop peer stays native and moves/fires. Unselected
+  mixed native behavior passes separately.
+- Negotiation defaults/public fallbacks and demo header/entity checks passed.
+  The staged selected demo producer now supplies the stock hull expected by
+  current classification; it still does not prove admission.
+- Existing selected pause/resume fixture and real installed q30 movement
+  comparison passed. Pause qualification uses its stated physics seam; q30
+  selection remains injected in that comparison and unadmitted in production.
+- The selected mixed run also passes with AddressSanitizer/UBSan instrumentation
+  on its included production parser/server-writer sources. The other linked
+  engine objects use the normal build; this is not whole-engine sanitizer proof.
+- Pure qualification/strict WALK negative cases passed non-finite state,
+  unsupported hull/customphysics, and invalid integer ground offsets. The
+  stored water category is not mutated by the new observational path.
+
+The mixed fixture initially exposed a headless-only skin upload crash when full
+message parsing used prepared client resources. It now explicitly captures
+`R_TranslateNewPlayerSkin`, since dedicated model loading supplies no renderer
+textures. Real physics, movement stats, message parsing and replay remain the
+executed owners. UDP and ptrace are unavailable in this sandbox; connected
+signon/reliability, actual XR device input and graphical output are not claimed.
+Fixture commands and evidence limits are in [tests/README.md](../tests/README.md).
+
+The local Astra implementation pass used fresh, explicitly selected
+`gpt-6-astra`/`max`, verified effective settings. A resumed reviewer whose runtime
+changed settings was stopped and its result was not credited as review.
+The completed pass found no blocking defect in the bounded production adapter;
+main spot-checked the ownership lifetime, strict WALK guard, completion tail
+and pre-physics snapshot claims.
+
+| Implementation-review recommendation or limit | Disposition |
+| --- | --- |
+| Native ownership is established before input and cleared at WALK execution entry. | Verified and retained; the Gorilla exclusions use this existing discriminator. |
+| Coalescing, native clock and successful completion retain existing owners. | Verified and retained; the dispatcher comparisons also execute empty-queue maintenance. |
+| Observational frame validation must not authorize native types inside PMove. | Verified and retained; strict WALK negative checks pass. |
+| Snapshot classification plus retained frame discriminator conservatively handles both transitions. | Verified and retained; real engine command/complete-message checks cover pre-physics and WALK return. |
+| Static review cannot establish runtime equivalence or complete-message replay. | Addressed with the bounded native and mixed checks above; connected/hardware/graphics claims remain excluded. |
+
+Remaining parent stage-2 work: normal long-gap recovery, complete dry/wet/jump,
+pause/death/respawn/teleport/pusher integration and callback-phase contracts before
+automatic selected movement. Broader AD-family/cooperative mod contracts and
+the full migration matrix remain required by the parent plan. This first slice
+does not complete predictive movement or the full migration goal.

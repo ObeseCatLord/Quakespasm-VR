@@ -42,3 +42,25 @@ Not-list: no graphics/foveation/platform review, new protocols, whole-QSS-M port
 release qualification veto based only on deferred headset playtesting, generic
 security review, or implementation. You are not alone in the codebase; main may
 write planning docs while your source review is read-only.
+
+## Implementation follow-up
+
+Main now implements the reviewed first slice in `server.h`, `sv_phys.c`,
+`sv_user.c` and `sv_main.c`; inspect the current diff, not the draft alone.
+`SV_PrivateWalkTrialClassifyState` is observational. The common frame validator
+accepts qualified states while strict `StateError` remains WALK-only and keeps
+execution-time water categorization. Initial admission stays dry stock WALK.
+The terminal coalescer is adapted in place with living roomscale accumulation,
+exactly one `SV_ClientThink`, existing native dispatcher, dead-only cursor/drain/
+resume behavior, and frame-end release of living native latches. Gorilla gates
+use selection plus `private_move_native_frame`. Snapshot authority also checks
+current classification before physics.
+
+Review these production changes read-only for one concrete question: does the
+adapter preserve input/callback/clock/completion ownership and invalid-state
+rejection without introducing a second mode owner? In particular check the
+Gorilla discriminator's lifetime, native no-new-command behavior, strict WALK
+callback checks and snapshot timing. Main is running the fixtures and owns test
+triage; do not run builds or duplicate test work. Required output <=700 words,
+prioritized defects with file:line evidence and bounded fixes, or no blockers
+with precise unverified limits. Do not widen to mod contracts or activation.

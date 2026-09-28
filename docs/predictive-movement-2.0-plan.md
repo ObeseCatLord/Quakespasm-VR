@@ -176,6 +176,14 @@ The concrete first state-transition slice is planned in
 Its plan and Astra disposition precede production edits and retain the rest of
 this stage's acceptance, including replay and normal arrival-gap handling.
 
+First stock state-transition slice: `f128efd3` implements living NOCLIP/FLY
+through the existing native dispatcher while keeping selected WALK strict.
+Native equivalence and real-admission/complete-message/replay component checks
+pass; details and Astra implementation disposition are in the linked slice
+plan. This does not activate production selected movement or close the remaining
+stock/mod contracts. Normal arrival-gap recovery is the next bounded change to
+plan before implementation.
+
 Owners: `sv_main.c`, `sv_user.c`, `sv_phys.c`, `pmove.c`, `cl_main.c` and existing
 movement fixtures. Scope: dry/wet WALK, jumping, command batching/credit,
 pause/resume, death/respawn, teleport and pusher boundaries already implemented.

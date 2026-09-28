@@ -57,7 +57,8 @@ identical live body must invoke the resume handler and clear the marker.
 the real server `spawn`/`begin` commands for public and private stock-QC owners,
 then executes the production baseline codec, both client move senders, server
 packet receipt, native physics and snapshot/entity decoding in one world.
-Only unreliable transport is captured. The fixture explicitly enables private
+Unreliable transport and player-skin uploads are captured; the dedicated
+bootstrap has no renderer textures. The fixture explicitly enables private
 transport; the separate default assertion above proves the production choice.
 
 ```sh
@@ -65,7 +66,7 @@ make -C Quake -f ../tests/negotiation_native.make \
   negotiation-native-fixture USE_SDL3=1 -j4 \
   NEGOTIATION_FIXTURE=/tmp/qsvr-mixed-native-fixture \
   NEGOTIATION_SOURCE=../tests/mixed_native_fixture.c \
-  NEGOTIATION_EXTRA_LDFLAGS=-Wl,--wrap=NET_SendUnreliableMessage
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin'
 timeout --signal=TERM 25s /tmp/qsvr-mixed-native-fixture \
   -dedicated 3 -noudp -nosound -basedir /tmp/qsvr-negotiation-native \
   -userdir /tmp/qsvr-negotiation-native
@@ -80,9 +81,31 @@ roomscale. Selected PMove/replay remain off. Client signon/resource state is
 prepared by the fixture: this is a component chain, not connected signon,
 the upstream client, OpenXR action production, or full mixed gameplay.
 QC `frametime` follows the production host frame. The captured transport does
-not advance socket sequences, and the fixture calls entity decoding directly;
-it does not qualify reliability or full message dispatch. Impulse `2` checks
+not advance socket sequences. Stats and entities now pass through the production
+server-message parser, including end-of-message movement snapshot commitment;
+this does not qualify connected reliability or graphics. Impulse `2` checks
 retention/clearing without proving a change from the already selected shotgun.
+
+Run the same executable with `-selected` in a separate isolated profile to
+exercise the reviewed stock native-state adapter:
+
+```sh
+timeout --signal=TERM 25s /tmp/qsvr-mixed-native-fixture -selected \
+  -dedicated 3 -noudp -nosound -basedir /tmp/qsvr-negotiation-native \
+  -userdir /tmp/qsvr-negotiation-native
+```
+
+Require `MIXED_SELECTED_NATIVE_PASSED`. Only this fixture option enables the
+existing selected cvar before actual private `spawn`/`begin`; no selected bit
+is injected. A public desktop peer remains native in the same real stock-QC
+world while private VR commands use WALK, `fly 1`/`fly 0`, and `noclip 1`/
+`noclip 0`. Native authority and prediction withholding are checked before
+physics as well as afterward. Completed ACKs, mandatory owner snapshots,
+complete private movement stats, actual client replay after both returns,
+mode epochs, stale propagation clearing and redundant roomscale receipt are
+checked through existing producers/consumers. Movement prediction remains off
+by default. Command production is synthetic and client signon/resources are
+prepared; this is neither connected signon nor physical XR input evidence.
 
 ## Opaque alias instancing
 
@@ -216,6 +239,22 @@ The same run must also report `NATIVE_ZERO_FRICTION_PASSED`: real native
 input processing preserves finite momentum at 99, 100 and 101 units/second
 with zero friction. The shared offline bootstrap is
 `native_engine_fixture.h`; it can select co-op before spawning a mod fixture.
+
+Require `SELECTED_NATIVE_EQUIVALENCE_PASSED` and
+`SELECTED_NATIVE_GUARDS_PASSED` for the stock native-state adapter. Identical
+loaded player/QC/client checkpoints compare the ordinary native chain with
+selected native execution for both noclip acceleration modes, FLY, and FLY
+with raw Gorilla hands, using empty/two/eight-command queues. Diagnostic QC
+checks PreThink/Think/PostThink order/count and world clocks, recoil decays
+exactly once, and brief attack/jump/impulse plus head translation are consumed
+once. A subsequent no-packet frame also matches native origin/velocity/recoil.
+Checks cover completion/retirement, latest button levels, no corpse resume
+exemption, and rejection of non-finite state, unsupported hull/customphysics,
+and negative/misaligned/out-of-range ground offsets. `groundentity` is an integer
+QC entity slot. Pure native qualification preserves the stored water category;
+strict WALK execution cannot continue into `PM_NORMAL` after a native state
+change. Admission is staged in this dispatcher fixture; the mixed fixture
+above owns the real selection and actual stock-QC integration proof.
 
 ## Exact q30 movement comparison
 
