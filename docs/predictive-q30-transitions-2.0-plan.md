@@ -102,6 +102,11 @@ Exact production write set: `Quake/sv_phys.c`, `sv_user.c`, `sv_main.c`,
 `cl_main.c` boundary only after recording it. No new wire layout is planned.
 Verification uses `tests/q30_movement_native_fixture.c`, existing negotiation/
 mixed native and owner/replay fixtures, their current make owners and README.
+Share the existing stock liquid-position finder in a small
+`tests/native_liquid_fixture.h` between the stock and q30 drivers rather than
+copying a new map search. Update those existing make dependencies. This is a
+fixture helper only, with the same actual hull/content lookup and restoration;
+it does not add a bootstrap, collision owner or transport simulation.
 Do not add a replacement bootstrap or network simulator. Main owns integration;
 coding delegation must use available user-requested routes and disjoint writes.
 The unrelated user-edited migration document remains outside all write sets.
