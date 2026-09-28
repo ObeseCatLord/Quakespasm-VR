@@ -171,6 +171,11 @@ prediction.
 
 ### 2. Finish the selected stock movement vertical slice
 
+The concrete first state-transition slice is planned in
+[Selected stock movement: native state transitions](predictive-stock-transitions-2.0-plan.md).
+Its plan and Astra disposition precede production edits and retain the rest of
+this stage's acceptance, including replay and normal arrival-gap handling.
+
 Owners: `sv_main.c`, `sv_user.c`, `sv_phys.c`, `pmove.c`, `cl_main.c` and existing
 movement fixtures. Scope: dry/wet WALK, jumping, command batching/credit,
 pause/resume, death/respawn, teleport and pusher boundaries already implemented.
