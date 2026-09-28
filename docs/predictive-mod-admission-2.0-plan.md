@@ -140,6 +140,32 @@ Main owns design/integration. Any coding worker receives a subset of the exact
 write set, a concrete behavior contract and non-overlap instructions. No agent
 may broaden scope to a new owner or change the user-dirty migration document.
 
+## First bounded comparison checkpoint
+
+Implemented in the existing q30 native fixture after plan commit `355fa8cd`;
+Linux SDL3/-Werror linkage and the consolidated ordinary run exit0 with all old
+and new markers. This is component-chain decision evidence, with injected
+selection/input and prepared QC clock; no ordinary q30 admission or client
+replay is implemented by the fixture.
+
+| Executed case | Result / limit |
+| --- | --- |
+| Initialized dry hold, actual landing, release and re-jump | Forty-eight 8ms commands execute real q30 QC and map hulls. Native and selected take off twice and match velocity/release/ground flags each command. Peak position difference0.659554, landing reconverges. One-unit local survey bound; no identical integrator or general map-traversal claim. Four native warm-up commands exclude startup from this comparison. |
+| Two/eight 5ms command attack batches versus a native single-world frame | Actual shotgun QC/impulse2 spends one shell in both owners; shells, weapon, currentammo, consumed impulse and cooldown match. Native comparison uses the existing coalesced adapter and the same world duration, not eight falsely equivalent native world callbacks. |
+| Quiet maintenance and impulse | Before cooldown, no extra shell; after the prepared clock crosses the authored deadline, held attack spends another shell without command duration/ACK. Impulse1 selects axe once and maintenance keeps that selection. Zero-time callbacks have required gameplay effects. |
+| Authored hold under fresh native ownership | Staged `pausetime` activates actual QC: two forward commands finish with no movement/credit, then two later commands move after expiry. Direct adapter call/clock staging, not a real teleporter or native-to-predictive return test. |
+| Cooldown controls | Exact binary independently has returns in `W_WeaponFrame` at70999–71002 and `W_FireShotgun` at69399–69402. Test-only bypass of the frame guard still exits0; bypass of both guards fails the first selected batch's one-shell assertion (exit134). The extra weapon guard was discovered because the first negative-control hypothesis failed. Assets/production code remain unchanged. |
+
+The dry results do not demonstrate a need for a once-world QC wrapper. Keep
+the reviewed command owner; quiet QC effects remain owned by maintenance.
+Ordinary replay still needs the matching pre-solver jump/support/latch consumer
+and compatibility gate described in the
+[next verified brief](predictive-q30-replay-astra-brief.md). Ability/real-trigger
+transitions, shared production classification, full snapshot/replay,
+native-to-predictive return and actual begin admission remain required before
+this major feature is complete. These checks are decision evidence for the
+user's uncertain-change exception, not repeated tests of unchanged features.
+
 ## Stages and ownership
 
 1. **Resolve complete first-program ownership.** Main prepares a bounded verified

@@ -333,8 +333,43 @@ contact and misses the next jump, while selected retains support. The survey's
 completion marker does not qualify that case. See
 `docs/migration-mod-movement-review.md` for the measured results and decision.
 A passing short sequence is not general q30 admission:
-water, grapple, real trigger cadence, longer trajectories and connected
+water, grapple, real trigger cadence, trajectories beyond these bounded cases and connected
 snapshot/replay still need their own comparisons.
+
+The ordinary-dry cadence follow-up also requires:
+
+- `Q30_DRY_HELD_LANDING_PASSED`: 48 actual-QC 8 ms commands hold through a
+  real hull landing, release and re-jump. Both owners take off twice and have
+  matching velocity/release/ground flags at each command. The measured peak
+  position difference is 0.659554 units and landing reconverges. The one-unit
+  local displacement bound is a survey limit, not identical native integration
+  or a client/server replay qualification. Native startup QC is warmed before
+  the checkpoint; startup is not qualified by this case.
+- Two `Q30_DRY_FIRE_BATCH_PASSED` markers (counts2/8): actual `W_WeaponFrame`
+  and impulse2 consume one spawned-inventory shotgun shell. Compare selected
+  command callbacks with the existing native coalesced **single-world** adapter,
+  checking shells, weapon, currentammo, impulse consumption and cooldown.
+  Eight sequential native worlds are not treated as the same QC clock.
+- `Q30_DRY_QUIET_FIRE_IMPULSE_PASSED`: before the authored deadline, selected
+  maintenance spends no additional shell. Advancing the fixture QC clock past
+  the deadline permits another held-attack shot without command duration or
+  another ACK. A later impulse1 selects axe once; subsequent maintenance keeps
+  the weapon and shells. Zero-time QC is not assumed to be effect-free.
+- `Q30_NATIVE_AUTHORED_HOLD_RELEASE_PASSED`: a staged `pausetime` predicate
+  invokes actual q30 PreThink via the existing fresh native adapter. Two queued
+  forward commands complete with no movement/credit; two later commands move
+  after expiry. This is direct adapter/input and clock staging, not production
+  classification, a real teleport trigger or native-to-predictive return proof.
+
+Two explicit controls mutate **only the test VM's memory** after the earlier
+cases, resolving named functions and checking their pinned branch/return shape.
+`-negative-frame-cooldown` bypasses `W_WeaponFrame`'s return and should still
+exit0: `W_FireShotgun` independently guards its own cooldown. `-negative-cooldown`
+bypasses both returns and must exit nonzero at the first batch's one-shell
+assertion, because repeated selected callbacks then spend multiple shells.
+Licensed assets and production code remain unchanged. The ordinary run must
+exit0 and print all markers. These controls isolate the observed shot-count
+guarding; they do not certify arbitrary QC cadence or all weapon/ability effects.
 
 ## Avatar identity and protocol parser
 

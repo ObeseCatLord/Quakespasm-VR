@@ -11,6 +11,7 @@ typedef struct
 	int flags;
 	float health, deadflag;
 	float boots_left, ladder;
+	float shells, weapon, ammo, impulse, attack_finished;
 	int completed;
 } movement_sample_t;
 
@@ -84,12 +85,17 @@ static movement_sample_t sample_player (edict_t *player, client_t *client)
 	sample.deadflag = player->v.deadflag;
 	sample.boots_left = player_float (player, "jumpboots_airlvl")->_float;
 	sample.ladder = player_float (player, "onladder")->_float;
+	sample.shells = player->v.ammo_shells;
+	sample.weapon = player->v.weapon;
+	sample.ammo = player->v.currentammo;
+	sample.impulse = player->v.impulse;
+	sample.attack_finished = player_float (player, "attack_finished")->_float;
 	sample.completed = client->private_completed_move;
 	return sample;
 }
 
-static movement_sample_t step_player (edict_t *player, client_t *client,
-	qboolean selected, int sequence, unsigned buttons, int msec)
+static movement_sample_t step_command (edict_t *player, client_t *client,
+	qboolean selected, int sequence, unsigned buttons, int impulse, int msec)
 {
 	usercmd_t command = {0};
 	command.sequence = sequence;
@@ -97,12 +103,13 @@ static movement_sample_t step_player (edict_t *player, client_t *client,
 	command.seconds = msec * .001f;
 	command.servertime = qcvm->time;
 	command.buttons = buttons;
+	command.impulse = impulse;
 	client->cmd = command;
 	client->lastmovemessage = sequence;
 	VectorCopy (command.viewangles, player->v.v_angle);
-	player->v.button0 = 0;
+	player->v.button0 = (buttons & BUTTON_ATTACK) != 0;
 	player->v.button2 = (buttons & BUTTON_JUMP) != 0;
-	player->v.impulse = 0;
+	player->v.impulse = impulse;
 	host_frametime = msec * .001;
 	pr_global_struct->frametime = command.seconds;
 	if (selected)
@@ -123,6 +130,12 @@ static movement_sample_t step_player (edict_t *player, client_t *client,
 	movement_sample_t sample = sample_player (player, client);
 	qcvm->time += host_frametime;
 	return sample;
+}
+
+static movement_sample_t step_player (edict_t *player, client_t *client,
+	qboolean selected, int sequence, unsigned buttons, int msec)
+{
+	return step_command (player, client, selected, sequence, buttons, 0, msec);
 }
 
 static void selected_maintenance (edict_t *player, client_t *client)
@@ -154,6 +167,181 @@ static void restore_player (edict_t *player, client_t *client,
 	client->private_completed_move = client->lastmovemessage = 0;
 	SZ_Clear (&client->message);
 	SV_LinkEdict (player, false);
+}
+
+/* Commands share a world opportunity; QC time does not advance within the
+ * batch. The native single-world comparison below deliberately uses the
+ * existing coalesced adapter, rather than pretending eight native frames
+ * have the same callback clock as one selected batch. */
+static movement_sample_t batch_commands (edict_t *player, client_t *client,
+	qboolean native_frame, int count, unsigned buttons, int impulse, float forwardmove)
+{
+	const int first = client->private_completed_move + 1;
+	assert (count > 0 && count <= 8);
+	client->private_pmove_walk_selected = true; // component seam, not admission
+	client->private_cmd_queue_head = 0;
+	client->private_cmd_queue_count = count;
+	client->private_cmd_queue_msec = count * 5;
+	client->lastmovemessage = first + count - 1;
+	for (int i = 0; i < count; ++i)
+	{
+		usercmd_t *command = &client->private_cmd_queue[i];
+		memset (command, 0, sizeof (*command));
+		command->sequence = first + i;
+		command->msec = 5;
+		command->seconds = .005f;
+		command->servertime = qcvm->time + i * .005;
+		command->buttons = buttons;
+		command->impulse = i ? 0 : impulse;
+		command->forwardmove = forwardmove;
+	}
+	host_frametime = count * .005;
+	pr_global_struct->frametime = host_frametime;
+	if (native_frame)
+		SV_Physics_ClientSelectedNativeFrame (player, 1, client, false);
+	else
+		SV_Physics_Client (player, 1);
+	assert (client->active && !player->free && client->private_completed_move == first + count - 1);
+	SV_FinishPrivateUsercmds ();
+	assert (!client->private_cmd_queue_count && !client->private_cmd_queue_msec);
+	return sample_player (player, client);
+}
+
+static void ordinary_dry_cases (edict_t *player, client_t *client,
+	void *vars, size_t vars_size, void *globals, size_t globals_size, double time)
+{
+	movement_sample_t trajectory[2][48];
+	qcvm->time = time;
+	initialize_player (player, client);
+	/* Warm actual QC once without movement before checkpointing. This is a
+	 * comparison of initialized ordinary play, not a qualification of startup. */
+	for (int i = 0; i < 4; ++i)
+		step_player (player, client, false, i + 1, 0, 5);
+	const double dry_time = qcvm->time;
+	memcpy (vars, &player->v, vars_size);
+	memcpy (globals, qcvm->globals, globals_size);
+	assert (global_float ("chaoscount") > 2);
+	for (int selected = 0; selected < 2; ++selected)
+	{
+		restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+		int takeoffs = 0;
+		for (int i = 0; i < 48; ++i)
+		{
+			/* Hold through an actual landing, release, then re-jump. */
+			unsigned buttons = i == 40 ? 0 : BUTTON_JUMP;
+			qboolean supported = ((int)player->v.flags & FL_ONGROUND) != 0;
+			trajectory[selected][i] = step_player (player, client, selected,
+				i + 1, buttons, 8);
+			movement_sample_t *sample = &trajectory[selected][i];
+			if (supported && sample->velocity[2] > 0)
+				++takeoffs;
+			assert (sample->health > 0 && !sample->deadflag);
+			if (i == 39)
+				assert ((sample->flags & FL_ONGROUND) && takeoffs == 1 &&
+					!(sample->flags & FL_JUMPRELEASED));
+			if (i == 40)
+				assert (sample->flags & FL_JUMPRELEASED);
+		}
+		assert (takeoffs == 2);
+	}
+	float max_position_error = 0;
+	for (int i = 0; i < 48; ++i)
+	{
+		assert (trajectory[0][i].flags == trajectory[1][i].flags);
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			float error = fabsf (trajectory[0][i].origin[axis] - trajectory[1][i].origin[axis]);
+			max_position_error = fmaxf (max_position_error, error);
+			/* The 48-command native/PMove survey reaches 0.660 units
+			 * before landing reconverges. This one-unit local bound catches
+			 * larger displacement; it does not claim identical integration. */
+			assert (isfinite (error) && error < 1.f);
+			assert (fabsf (trajectory[0][i].velocity[axis] - trajectory[1][i].velocity[axis]) < .01f);
+		}
+	}
+	printf ("Q30_DRY_HELD_LANDING_PASSED commands=48 takeoffs=2 max_position_error=%.6f\n",
+		max_position_error);
+
+	if (COM_CheckParm ("-negative-cooldown") || COM_CheckParm ("-negative-frame-cooldown"))
+	{
+		/* Shotgun QC has its own cooldown return. Frame-only bypass must
+		 * still pass; bypassing both returns must fail the one-shell check.
+		 * Mutate only the test VM, never licensed files or production code. */
+		const char *functions[] = {"W_WeaponFrame", "W_FireShotgun"};
+		const int offsets[] = {3, 2};
+		int count = COM_CheckParm ("-negative-cooldown") ? 2 : 1;
+		for (int i = 0; i < count; ++i)
+		{
+			dfunction_t *function = ED_FindFunction (functions[i]);
+			assert (function && function->first_statement > 0 &&
+				function->first_statement + offsets[i] + 1 < qcvm->progs->numstatements);
+			dstatement_t *guard = &qcvm->statements[function->first_statement + offsets[i]];
+			assert (guard->op == OP_IFNOT && guard->b == 2 && guard[1].op == OP_RETURN);
+			guard->op = OP_GOTO;
+			guard->a = 2;
+			guard->b = guard->c = 0;
+		}
+		fprintf (stderr, "Q30_COOLDOWN_CONTROL bypass=%s\n",
+			count == 1 ? "frame-only" : "frame-and-shotgun");
+	}
+
+	for (int count = 2; count <= 8; count += 6)
+	{
+		movement_sample_t fire[2];
+		for (int native_frame = 0; native_frame < 2; ++native_frame)
+		{
+			restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+			/* The fixture uses the actual spawned shotgun inventory and QC
+			 * impulse selection, not a replacement weapon callback. */
+			float initial_shells = player->v.ammo_shells;
+			fire[native_frame] = batch_commands (player, client, native_frame,
+				count, BUTTON_ATTACK, 2, 0);
+			assert (fire[native_frame].shells == initial_shells - 1);
+			assert (fire[native_frame].weapon == global_float ("IT_SHOTGUN"));
+			assert (fire[native_frame].impulse == 0 &&
+				fire[native_frame].attack_finished > dry_time);
+		}
+		assert (fire[0].shells == fire[1].shells && fire[0].weapon == fire[1].weapon &&
+			fire[0].ammo == fire[1].ammo && fire[0].attack_finished == fire[1].attack_finished);
+		printf ("Q30_DRY_FIRE_BATCH_PASSED count=%d shells=%.0f cooldown=%.6f\n",
+			count, fire[0].shells, fire[0].attack_finished);
+	}
+
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	movement_sample_t fired = batch_commands (player, client, false, 8, BUTTON_ATTACK, 2, 0);
+	/* Quiet maintenance retains held levels and world QC effects. Before the
+	 * deadline no second shell is spent; at the actual deadline QC can fire
+	 * without inventing command duration or another completion ACK. */
+	selected_maintenance (player, client);
+	assert (player->v.ammo_shells == fired.shells);
+	qcvm->time = fired.attack_finished + .001;
+	selected_maintenance (player, client);
+	assert (player->v.ammo_shells == fired.shells - 1 && client->private_completed_move == 8);
+	float switched_shells = player->v.ammo_shells;
+	step_command (player, client, true, 9, 0, 1, 5);
+	assert (player->v.weapon == global_float ("IT_AXE") && player->v.impulse == 0 &&
+		player->v.ammo_shells == switched_shells);
+	selected_maintenance (player, client);
+	assert (player->v.weapon == global_float ("IT_AXE") &&
+		player->v.ammo_shells == switched_shells && client->private_completed_move == 9);
+	puts ("Q30_DRY_QUIET_FIRE_IMPULSE_PASSED");
+
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	vec3_t hold_origin;
+	VectorCopy (player->v.origin, hold_origin);
+	player_float (player, "pausetime")->_float = dry_time + 1;
+	movement_sample_t held = batch_commands (player, client, true, 2, 0, 0, 200);
+	assert (VectorCompare (held.origin, hold_origin) &&
+		VectorCompare (held.velocity, vec3_origin) && held.completed == 2);
+	assert (client->private_move_native_frame && client->private_pmove_credit_msec == 0);
+	qcvm->time = dry_time + 1.001;
+	movement_sample_t released = batch_commands (player, client, true, 2, 0, 0, 200);
+	/* Spawn fixangle may retain its native yaw until a real client consumes
+	 * setangle. Input must resume along that orientation, not fixture +X. */
+	assert (hypotf (released.velocity[0], released.velocity[1]) > 0 &&
+		hypotf (released.origin[0] - held.origin[0], released.origin[1] - held.origin[1]) > 0 &&
+		released.completed == 4 && client->private_pmove_credit_msec == 0);
+	puts ("Q30_NATIVE_AUTHORED_HOLD_RELEASE_PASSED");
 }
 
 int main (int argc, char **argv)
@@ -334,6 +522,8 @@ int main (int argc, char **argv)
 	assert (native.flags == paired.flags && paired.velocity[2] == 112);
 	selected_maintenance (player, client);
 	puts ("Q30_PAIRED_RELEASE_PASSED");
+	ordinary_dry_cases (player, client, vars_checkpoint, vars_size,
+		globals_checkpoint, globals_size, baseline_time);
 	Mem_Free (vars_checkpoint);
 	Mem_Free (globals_checkpoint);
 	puts ("Q30_MOVEMENT_NATIVE_PASSED");
