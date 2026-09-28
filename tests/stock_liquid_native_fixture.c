@@ -22,12 +22,44 @@ static vec3_t liquid_think_velocity;
 /* Optional composition seam after real QC, used by the moving-brush driver
  * to change a newly acquired surface before the existing publication tail. */
 static void (*liquid_after_qc_composition) (func_t function);
+static edict_t *shared_qc_observed_player;
+static int shared_qc_pre, shared_qc_post, shared_qc_impulse;
+static unsigned shared_qc_buttons;
+static double shared_qc_pre_seconds, shared_qc_post_seconds;
+static unsigned shared_qc_pre_sequence, shared_qc_post_sequence;
+static vec3_t shared_qc_pre_angles, shared_qc_post_angles;
+static int shared_qc_post_impulse;
+static int shared_qc_composition;
+static edict_t *shared_qc_rotation_trigger;
+static int shared_qc_rotation_calls;
+static qboolean liquid_defer_delivery;
 static edict_t *liquid_late_entity, *liquid_late_player, *liquid_late_trigger;
 static int liquid_late_calls;
 static float liquid_late_deadline;
 void __real_PR_ExecuteProgram (func_t function);
 void __wrap_PR_ExecuteProgram (func_t function)
 {
+	if (shared_qc_observed_player &&
+		pr_global_struct->self == EDICT_TO_PROG (shared_qc_observed_player))
+	{
+		if (function == pr_global_struct->PlayerPreThink)
+		{
+			++shared_qc_pre;
+			shared_qc_pre_seconds += pr_global_struct->frametime;
+			shared_qc_impulse = shared_qc_observed_player->v.impulse;
+			shared_qc_buttons = host_client->cmd.buttons;
+			shared_qc_pre_sequence = host_client->cmd.sequence;
+			VectorCopy (host_client->cmd.viewangles, shared_qc_pre_angles);
+		}
+		else if (function == pr_global_struct->PlayerPostThink)
+		{
+			++shared_qc_post;
+			shared_qc_post_seconds += pr_global_struct->frametime;
+			shared_qc_post_sequence = host_client->cmd.sequence;
+			shared_qc_post_impulse = shared_qc_observed_player->v.impulse;
+			VectorCopy (host_client->cmd.viewangles, shared_qc_post_angles);
+		}
+	}
 	qboolean late = liquid_late_entity &&
 		pr_global_struct->self == EDICT_TO_PROG (liquid_late_entity);
 	qboolean late_touch = liquid_late_trigger && liquid_late_player &&
@@ -47,6 +79,31 @@ void __wrap_PR_ExecuteProgram (func_t function)
 	float before_damage_time = damage_time ? damage_time->_float : 0;
 	if (liquid_trace_player) VectorCopy (liquid_trace_player->v.velocity, before);
 	__real_PR_ExecuteProgram (function);
+	/* Explicit callback-composition seams, after actual QC/trigger dispatch.
+	 * They demonstrate lifecycle preservation, not authored mod/map behavior. */
+	if (shared_qc_observed_player &&
+		pr_global_struct->self == EDICT_TO_PROG (shared_qc_observed_player))
+	{
+		if (function == pr_global_struct->PlayerPreThink)
+		{
+			if (shared_qc_composition == 1) shared_qc_observed_player->v.impulse = 0;
+			if (shared_qc_composition == 2) shared_qc_observed_player->v.movetype = MOVETYPE_FLY;
+		}
+		if (function == pr_global_struct->PlayerPostThink && shared_qc_composition == 4)
+		{
+			shared_qc_observed_player->v.angles[YAW] += 5;
+			shared_qc_observed_player->v.v_angle[YAW] += 5;
+		}
+	}
+	if (shared_qc_composition == 4 && shared_qc_rotation_trigger &&
+		pr_global_struct->self == EDICT_TO_PROG (shared_qc_rotation_trigger) &&
+		!shared_qc_rotation_calls)
+	{
+		++shared_qc_rotation_calls;
+		shared_qc_observed_player->v.angles[YAW] = 90;
+		shared_qc_observed_player->v.v_angle[YAW] = 90;
+		shared_qc_observed_player->v.fixangle = 0; // explicit unfixed-rotation counterexample
+	}
 	if (liquid_after_qc_composition)
 		liquid_after_qc_composition (function);
 	if (late_touch)
@@ -147,8 +204,8 @@ static qboolean FindLiquidJumpPosition (edict_t *player, int contents, vec3_t fo
 	return located;
 }
 
-static void LiquidSend (client_t *peer, client_state_t *state, unsigned buttons,
-	float forward, float up, qboolean vr, float roomscale)
+static void LiquidSendInput (client_t *peer, client_state_t *state, unsigned buttons,
+	float forward, float up, qboolean vr, float roomscale, int impulse)
 {
 	usercmd_t command = {0};
 	cl = *state;
@@ -159,6 +216,7 @@ static void LiquidSend (client_t *peer, client_state_t *state, unsigned buttons,
 	command.forwardmove = forward;
 	command.upmove = up;
 	command.buttons = buttons;
+	command.impulse = impulse;
 	if (vr)
 	{
 		command.vr_active = command.vr_handpos_relative = true;
@@ -170,7 +228,13 @@ static void LiquidSend (client_t *peer, client_state_t *state, unsigned buttons,
 	captured_length = 0;
 	CL_SendMove (&command);
 	*state = cl;
-	if (captured_length) GapDeliver (peer, captured, captured_length);
+	if (captured_length && !liquid_defer_delivery) GapDeliver (peer, captured, captured_length);
+}
+
+static void LiquidSend (client_t *peer, client_state_t *state, unsigned buttons,
+	float forward, float up, qboolean vr, float roomscale)
+{
+	LiquidSendInput (peer, state, buttons, forward, up, vr, roomscale, 0);
 }
 
 static void PrepareLiquidCase (client_t *peer, client_state_t *state,
@@ -219,12 +283,27 @@ static void StartLiquidPeers (int argc, char **argv, const char *map,
 	char public_offer[1024];
 	srand (1); // identical initialized runs, including stock QC random effects
 	Fixture_InitNativeEngine (argc, argv, map, true);
-	if (COM_CheckParm ("-q30boots"))
+	if (COM_CheckParm ("-genericboots") || COM_CheckParm ("-sharedqcboundary"))
+	{
+		/* Test identity only: mount shipped older AD, not identical pak2. */
+		const byte sha256[] = {0xf3,0xc4,0x21,0x82,0x16,0xea,0x0d,0x3b,
+			0x00,0xdb,0x35,0xee,0xf9,0xe7,0x29,0x45,0xee,0x66,0x87,0x00,0x6b,
+			0x3e,0x82,0xc3,0x7e,0xa2,0xae,0x33,0xa0,0xee,0xa9,0x22};
+		assert (!SV_PrivateWalkTrialQ30Program () && !SV_PrivateWalkTrialStockProgram () &&
+			qcvm->progssize == 2345354 && !memcmp (qcvm->progssha256, sha256, sizeof (sha256)));
+	}
+	if (COM_CheckParm ("-q30boots") || COM_CheckParm ("-genericboots"))
 	{
 		/* Prepared artifact, actual installed spawn QC and assets, before
 		 * the existing client resource copy. Setup/contacts run in the world. */
 		dfunction_t *spawn = ED_FindFunction ("item_artifact_jumpboots");
-		assert (SV_PrivateWalkTrialQ30Program () && spawn);
+		if (COM_CheckParm ("-genericboots"))
+		{
+			extern void IN_JumpDown (void);
+			Cmd_AddCommand ("+jump", IN_JumpDown); // dedicated bootstrap lacks client input registration
+		}
+		else assert (SV_PrivateWalkTrialQ30Program ());
+		assert (spawn);
 		q30_boots_item = ED_Alloc ();
 		q30_boots_item->v.classname = PR_SetEngineString ("item_artifact_jumpboots");
 		GetEdictFieldValue (q30_boots_item, ED_FindFieldOffset ("cnt"))->_float = 2;
@@ -333,6 +412,37 @@ static void LiquidDisposablePreview (client_state_t *state, qboolean forward)
 	*state = cl;
 }
 
+static void SharedQCJumpPreview (client_state_t *state)
+{
+	cl = *state;
+	assert (cl.move_ack_prediction_allowed && cl.stats[STAT_HEALTH] > 0 &&
+		cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT);
+	const usercmd_t pending = cl.pendingcmd;
+	const entity_state_t baseline = cl.entities[cl.viewentity].netstate;
+	const int ack = cl.ackedmovemessages;
+	extern kbutton_t in_jump;
+	const kbutton_t saved_jump = in_jump;
+	Cmd_ExecuteString ("+jump", src_command); // real preview reads key levels
+	const double clock = realtime;
+	/* Existing NQ-style PMove applies jump after the first movement substep;
+	 * use enough forecast time to observe actual upward displacement too. */
+	realtime += .030;
+	vec3_t origin = {0};
+	usercmd_t preview;
+	CL_PrepareReplayPreview (&preview, true);
+	const qboolean replayed = CL_ReplayPlayerMovement (&cl.entities[cl.viewentity], origin);
+	printf ("SHARED_QC_JUMP_PREVIEW_SAMPLE replay=%d buttons=%u msec=%u seconds=%g baseline=%g origin=%g ground=%d held=%d jump=%g flags=%d\n",
+		replayed, preview.buttons, preview.msec, preview.seconds, baseline.origin[2], origin[2],
+		pmove.onground, pmove.jump_held, movevars.jumpspeed, baseline.pmovetype);
+	assert (replayed &&
+		origin[2] > baseline.origin[2] && cl.ackedmovemessages == ack &&
+		!memcmp (&baseline, &cl.entities[cl.viewentity].netstate, sizeof (baseline)));
+	realtime = clock;
+	in_jump = saved_jump;
+	cl.pendingcmd = pending;
+	*state = cl;
+}
+
 #ifndef STOCK_LIQUID_FIXTURE_ENTRY
 #define STOCK_LIQUID_FIXTURE_ENTRY main
 #endif
@@ -353,11 +463,270 @@ static float Q30BootsField (edict_t *player, const char *name)
 	return GetEdictFieldValue (player, field->ofs)->_float;
 }
 
+static void SharedQCPrefix (client_t *peer, client_state_t *state)
+{
+	edict_t *player = peer->edict;
+	const int completed = peer->private_completed_move;
+	assert (peer->private_pmove_walk_selected && !peer->private_cmd_queue_count &&
+		SV_PrivateWalkTrialClassifyState (peer) == SV_PRIVATE_MOVE_WALK);
+	shared_qc_observed_player = player;
+	shared_qc_pre = shared_qc_post = 0;
+	shared_qc_pre_seconds = shared_qc_post_seconds = 0;
+	/* Arrival gap: real world callbacks retain world duration without ACK or
+	 * accepted movement duration. Hold delivery, not the producer clock, so
+	 * the redundant packet contains three actual25ms accepted commands. */
+	byte packet[NET_MAXMESSAGE];
+	int packet_length = 0;
+	liquid_defer_delivery = true;
+	for (int frame = 0; frame < 4; ++frame)
+	{
+		realtime += host_frametime;
+		if (frame < 3)
+		{
+			if (frame) state->viewangles[YAW] += 30;
+			LiquidSendInput (peer, state, frame == 2 ? BUTTON_JUMP : 0,
+				0, 0, true, frame == 2 ? .75f : .25f,
+				frame == 0 ? 1 : frame == 2 ? 2 : 0);
+			assert (captured_length > 0 && captured_length < sizeof (packet));
+			packet_length = captured_length;
+			memcpy (packet, captured, packet_length);
+		}
+		GapWorldFrame ();
+		GapSnapshot (peer, state);
+		assert (peer->private_completed_move == completed &&
+			state->ackedmovemessages == completed && !peer->private_cmd_queue_count);
+	}
+	assert (shared_qc_pre == 4 && shared_qc_post == 4 &&
+		fabs (shared_qc_pre_seconds - 4 * host_frametime) < .000001 &&
+		fabs (shared_qc_post_seconds - 4 * host_frametime) < .000001);
+	liquid_defer_delivery = false;
+	GapDeliver (peer, packet, packet_length);
+	assert (peer->private_cmd_queue_count == 3);
+	const usercmd_t first = peer->private_cmd_queue[peer->private_cmd_queue_head];
+	const usercmd_t second = peer->private_cmd_queue[(peer->private_cmd_queue_head + 1) % SV_PRIVATE_CMD_QUEUE_SIZE];
+	const usercmd_t suffix = peer->private_cmd_queue[(peer->private_cmd_queue_head + 2) % SV_PRIVATE_CMD_QUEUE_SIZE];
+	assert (first.impulse == 1 && !second.impulse && suffix.impulse == 2 &&
+		!first.buttons && !second.buttons && suffix.buttons == BUTTON_JUMP);
+	vec3_t before, after;
+	VectorCopy (player->v.origin, before);
+	GapWorldFrame ();
+	VectorCopy (player->v.origin, after);
+	printf ("SHARED_QC_PREFIX_SAMPLE pre=%d post=%d impulse=%d buttons=%u completed=%d expected=%u contact=%d queued=%u credit=%g room=%.6f weapon=%g worlddt=%.6f,%.6f native=%d\n",
+		shared_qc_pre, shared_qc_post, shared_qc_impulse, shared_qc_buttons,
+		peer->private_completed_move, second.sequence, peer->private_vr_contact_last_sequence,
+		peer->private_cmd_queue_count, peer->private_pmove_credit_msec,
+		after[1] - before[1], player->v.weapon, shared_qc_pre_seconds,
+		shared_qc_post_seconds, peer->private_move_native_frame);
+	assert (peer->active && shared_qc_pre == 5 && shared_qc_post == 5 &&
+		shared_qc_impulse == 1 && !shared_qc_buttons &&
+		shared_qc_pre_sequence == first.sequence && shared_qc_post_sequence == first.sequence &&
+		VectorCompare (shared_qc_pre_angles, first.viewangles) &&
+		VectorCompare (shared_qc_post_angles, first.viewangles) &&
+		fabs (shared_qc_pre_seconds - 5 * host_frametime) < .000001 &&
+		fabs (shared_qc_post_seconds - 5 * host_frametime) < .000001 &&
+		peer->private_completed_move == (int)second.sequence &&
+		peer->private_vr_contact_last_sequence == (int)second.sequence &&
+		peer->private_cmd_queue_count == 1 &&
+		!memcmp (&suffix, &peer->private_cmd_queue[peer->private_cmd_queue_head], sizeof (suffix)) &&
+		fabsf (after[1] - before[1] - .5f) < .001f &&
+		player->v.weapon == IT_AXE && player->v.impulse == 0);
+	GapSnapshot (peer, state);
+	assert (state->ackedmovemessages == (int)second.sequence &&
+		state->move_ack_prediction_allowed);
+	vec3_t replay;
+	assert (LiquidPendingReplay (state, replay, (vec3_t){0}) &&
+		replay[2] > player->v.origin[2]); // actual pending jump is positively forecast
+	/* Duplicate delivery cannot apply prefix motion/impulse again. */
+	GapDeliver (peer, packet, packet_length);
+	assert (peer->private_cmd_queue_count == 1 && VectorCompare (after, player->v.origin));
+	realtime += host_frametime;
+	GapWorldFrame ();
+	assert (peer->active && shared_qc_pre == 6 && shared_qc_post == 6 &&
+		shared_qc_impulse == 2 && shared_qc_buttons == BUTTON_JUMP &&
+		peer->private_completed_move == (int)suffix.sequence &&
+		peer->private_vr_contact_last_sequence == (int)suffix.sequence &&
+		!peer->private_cmd_queue_count && player->v.weapon == IT_SHOTGUN &&
+		player->v.velocity[2] > 0 && fabsf (player->v.origin[1] - after[1] - .75f) < .001f);
+	GapSnapshot (peer, state);
+	assert (state->ackedmovemessages == (int)suffix.sequence && state->move_ack_prediction_allowed);
+	assert (LiquidPendingReplay (state, replay, (vec3_t){0}));
+	shared_qc_observed_player = NULL;
+	puts ("SHARED_QC_PREFIX_PASSED actual world maintenance/batch/unsampled impulse-button suffix/single roomscale/empty contact cursor/full-send/pending jump/correction; captured delivery and prepared axes/VR samples");
+}
+
+static void SharedQCDeferredRoomScale (client_t *peer, client_state_t *state)
+{
+	edict_t *player = peer->edict;
+	usercmd_t crossing;
+	vec3_t dry;
+	/* Actual private receipt accepts at most16 horizontal units per sample. */
+	assert (FindRoomScaleLiquidEntryBounded (player, peer, &crossing, dry, 16));
+	host_client = peer;
+	sv_player = player;
+	char relocation[128];
+	q_snprintf (relocation, sizeof (relocation), "setpos %.6f %.6f %.6f", dry[0], dry[1], dry[2]);
+	Cmd_ExecuteString (relocation, src_client);
+	Cmd_ExecuteString ("noclip 0", src_client); // setpos enables noclip
+	/* Match the shared finder/reference's prepared airborne resting body. */
+	VectorClear (player->v.velocity);
+	player->v.flags = ((int)player->v.flags | FL_JUMPRELEASED) & ~(FL_ONGROUND | FL_WATERJUMP);
+	player->v.groundentity = 0;
+	SV_CheckWater (player);
+	SV_LinkEdict (player, false);
+	GapSnapshot (peer, state); // actual discontinuity/resume observer resets producer clock
+	assert (!player->v.waterlevel && SV_PrivateWalkTrialClassifyState (peer) == SV_PRIVATE_MOVE_WALK);
+	shared_qc_observed_player = player;
+	shared_qc_pre = shared_qc_post = 0;
+	shared_qc_pre_seconds = shared_qc_post_seconds = 0;
+	realtime += .008;
+	LiquidSendInput (peer, state, 0, 0, 0, true, 0, 1);
+	const usercmd_t first = peer->private_cmd_queue[peer->private_cmd_queue_head];
+	/* Actual producer with distinct pose and the real-sweep finder sample. */
+	cl = *state; cls.netcon = peer->netconnection; cl.time = qcvm->time;
+	crossing.viewangles[YAW] = first.viewangles[YAW] + 45;
+	crossing.vr_handpos[1] = 16; crossing.vr_handpos[2] = 22;
+	VectorCopy (crossing.viewangles, crossing.vr_handrot);
+	realtime += .008;
+	captured_length = 0; CL_SendMove (&crossing); *state = cl;
+	assert (captured_length); GapDeliver (peer, captured, captured_length);
+	assert (peer->private_cmd_queue_count == 2);
+	const usercmd_t suffix = peer->private_cmd_queue[(peer->private_cmd_queue_head + 1) % SV_PRIVATE_CMD_QUEUE_SIZE];
+	GapWorldFrame ();
+	assert (peer->active && shared_qc_pre == 1 && shared_qc_post == 1 &&
+		shared_qc_pre_sequence == first.sequence && shared_qc_post_sequence == first.sequence &&
+		VectorCompare (shared_qc_pre_angles, first.viewangles) && VectorCompare (shared_qc_post_angles, first.viewangles) &&
+		fabs (shared_qc_pre_seconds - host_frametime) < .000001 &&
+		fabs (shared_qc_post_seconds - host_frametime) < .000001 &&
+		player->v.weapon == IT_AXE && !player->v.impulse && !player->v.waterlevel &&
+		peer->private_move_native_frame && peer->private_pmove_credit_msec == 0 &&
+		peer->private_completed_move == (int)first.sequence &&
+		peer->private_vr_contact_last_sequence == (int)first.sequence &&
+		peer->private_cmd_queue_count == 1 &&
+		!memcmp (&suffix, &peer->private_cmd_queue[peer->private_cmd_queue_head], sizeof (suffix)));
+	GapSnapshot (peer, state);
+	assert (state->ackedmovemessages == (int)first.sequence && !state->move_ack_prediction_allowed);
+	realtime += host_frametime;
+	GapWorldFrame ();
+	GapSnapshot (peer, state);
+	assert (peer->active && shared_qc_pre == 2 && shared_qc_post == 2 &&
+		peer->private_completed_move == (int)suffix.sequence && !peer->private_cmd_queue_count &&
+		player->v.waterlevel > 0 && peer->private_move_native_frame &&
+		state->ackedmovemessages == (int)suffix.sequence && !state->move_ack_prediction_allowed);
+	shared_qc_observed_player = NULL;
+	puts ("SHARED_QC_DEFERRED_ROOM_PASSED actual first-head weapon/one world tail/originating pose/untouched later-roomscale/ACK/next-native crossing; prepared airborne start and captured delivery");
+}
+
+static void SharedQCCompositions (client_t *peer, client_state_t *state, const vec3_t home)
+{
+	edict_t *player = peer->edict;
+	for (int scenario = 0; scenario < 3; ++scenario)
+	{
+		host_client = peer; sv_player = player;
+		Cmd_ExecuteString ("fly 0", src_client);
+		char relocation[128];
+		q_snprintf (relocation, sizeof (relocation), "setpos %.6f %.6f %.6f", home[0], home[1], home[2]);
+		Cmd_ExecuteString (relocation, src_client);
+		Cmd_ExecuteString ("noclip 0", src_client);
+		VectorClear (player->v.velocity);
+		player->v.flags = FL_CLIENT | FL_JUMPRELEASED | FL_ONGROUND;
+		player->v.groundentity = 0;
+		SV_CheckWater (player); SV_LinkEdict (player, false);
+		GapSnapshot (peer, state);
+		assert (SV_PrivateWalkTrialClassifyState (peer) == SV_PRIVATE_MOVE_WALK);
+		/* Establish a discriminating weapon through actual QC, not a field
+		 * assignment: clearing impulse2 must leave this axe selected. */
+		realtime += host_frametime;
+		LiquidSendInput (peer, state, 0, 0, 0, scenario != 1, 0, 1);
+		GapWorldFrame (); GapSnapshot (peer, state);
+		assert (player->v.weapon == IT_AXE && !peer->private_cmd_queue_count);
+		shared_qc_observed_player = player;
+		shared_qc_pre = shared_qc_post = 0;
+		shared_qc_pre_seconds = shared_qc_post_seconds = 0;
+		shared_qc_composition = scenario == 0 ? 1 : scenario == 1 ? 4 : 2;
+		state->viewangles[YAW] = 0;
+		if (scenario == 1)
+		{
+			dfunction_t *null_touch = ED_FindFunction ("SUB_Null");
+			assert (null_touch);
+			shared_qc_rotation_trigger = ED_Alloc ();
+			shared_qc_rotation_trigger->v.classname = PR_SetEngineString ("trigger_multiple");
+			shared_qc_rotation_trigger->v.movetype = MOVETYPE_NONE;
+			shared_qc_rotation_trigger->v.solid = SOLID_TRIGGER;
+			shared_qc_rotation_trigger->v.touch = null_touch - qcvm->functions;
+			VectorCopy (player->v.origin, shared_qc_rotation_trigger->v.origin);
+			VectorSet (shared_qc_rotation_trigger->v.mins, -64, -64, -64);
+			VectorSet (shared_qc_rotation_trigger->v.maxs, 64, 64, 64);
+			SV_LinkEdict (shared_qc_rotation_trigger, false);
+			shared_qc_rotation_calls = 0;
+		}
+		realtime += .008;
+		LiquidSendInput (peer, state, 0, 0, 0, scenario != 1, 0, scenario == 1 ? 0 : 2);
+		assert (peer->private_cmd_queue_count == 1);
+		const unsigned first = peer->private_cmd_queue[peer->private_cmd_queue_head].sequence;
+		state->viewangles[YAW] = 30;
+		realtime += .008;
+		LiquidSendInput (peer, state, 0, 0, 0, scenario != 1, 0, 0);
+		assert (peer->private_cmd_queue_count == 2);
+		const usercmd_t suffix = peer->private_cmd_queue[(peer->private_cmd_queue_head + 1) % SV_PRIVATE_CMD_QUEUE_SIZE];
+		GapWorldFrame ();
+		assert (peer->active && shared_qc_pre == 1 && shared_qc_post == 1 &&
+			shared_qc_pre_sequence == first && shared_qc_post_sequence == first);
+		if (scenario == 0)
+			assert (shared_qc_impulse == 2 && shared_qc_post_impulse == 0 && player->v.weapon == IT_AXE &&
+				peer->private_completed_move == (int)suffix.sequence && !peer->private_cmd_queue_count);
+		else if (scenario == 1)
+		{
+			printf ("SHARED_QC_ROTATION_SAMPLE calls=%d body=%g view=%g completed=%d expected=%u queue=%u post=%g fix=%g\n",
+				shared_qc_rotation_calls, player->v.angles[YAW], player->v.v_angle[YAW],
+				peer->private_completed_move, suffix.sequence, peer->private_cmd_queue_count, shared_qc_post_angles[YAW], player->v.fixangle);
+			assert (shared_qc_rotation_calls == 1 && player->v.angles[YAW] == 95 && player->v.v_angle[YAW] == 95 &&
+				peer->private_completed_move == (int)suffix.sequence && !peer->private_cmd_queue_count);
+			ED_Free (shared_qc_rotation_trigger); shared_qc_rotation_trigger = NULL;
+		}
+		else
+		{
+			assert (peer->private_completed_move == (int)first && peer->private_cmd_queue_count == 1 &&
+				peer->private_vr_contact_last_sequence == (int)first && player->v.weapon == IT_SHOTGUN &&
+				!memcmp (&suffix, &peer->private_cmd_queue[peer->private_cmd_queue_head], sizeof (suffix)));
+			shared_qc_composition = 0;
+			realtime += host_frametime; GapWorldFrame ();
+			assert (shared_qc_pre == 2 && shared_qc_post == 2 &&
+				peer->private_completed_move == (int)suffix.sequence && !peer->private_cmd_queue_count);
+		}
+		GapSnapshot (peer, state);
+		shared_qc_composition = 0;
+	}
+	/* Actual pause recovery invalidates last input while retaining a positive
+	 * completed cursor. A prepared living transition in maintenance must not
+	 * invent sequence0 completion or finish a resume marker. */
+	host_client = peer; sv_player = player;
+	Cmd_ExecuteString ("fly 0", src_client);
+	StartupPauseCommand (peer, state);
+	assert (sv.paused);
+	SV_RunClients (); // real host skips SV_Physics while paused
+	StartupPauseCommand (peer, state);
+	assert (!sv.paused && !peer->private_pmove_last_cmd_valid);
+	const int completed = peer->private_completed_move, retired = peer->private_retired_move;
+	const private_input_phase_t phase = peer->private_input_phase;
+	assert (completed > 0 && !peer->private_cmd_queue_count);
+	shared_qc_pre = shared_qc_post = 0;
+	shared_qc_composition = 2;
+	realtime += host_frametime; GapWorldFrame ();
+	assert (peer->active && shared_qc_pre == 1 && shared_qc_post == 1 &&
+		peer->private_completed_move == completed && peer->private_retired_move == retired &&
+		peer->private_input_phase == phase && !peer->private_cmd_queue_count);
+	GapSnapshot (peer, state);
+	assert (state->ackedmovemessages == completed);
+	shared_qc_composition = 0; shared_qc_observed_player = NULL;
+	puts ("SHARED_QC_COMPOSITIONS_PASSED actual QC plus prepared clear/contact rotation/Post read-modify/living continuation; actual pause maintenance keeps completed ACK/resume cursor");
+}
+
 static void Q30Boots (client_t *peers[2], client_state_t *states[2], qboolean vr)
 {
 	client_t *peer = peers[0];
 	edict_t *player = peer->edict;
 	const qboolean selected = peer->private_pmove_walk_selected;
+	const qboolean generic = COM_CheckParm ("-genericboots") != 0;
 	const int boots = 1048576; // actual pinned constant, not a decompiler alias
 	assert (q30_boots_item && !Q30BootsField (player, "moditems"));
 	liquid_after_qc_composition = Q30BootsObserveQC; // observation only
@@ -403,7 +772,7 @@ static void Q30Boots (client_t *peers[2], client_state_t *states[2], qboolean vr
 		const qboolean airborne = !((int)player->v.flags & FL_ONGROUND);
 		realtime += host_frametime;
 		LiquidSend (peer, states[0], frame == 2 || frame == 4 ? BUTTON_JUMP : 0,
-			0, 0, vr, 0);
+			generic ? 20 : 0, 0, vr, 0);
 		LiquidSend (peers[1], states[1], 0, -40, 0, false, 0);
 		const int sequence = peer->lastmovemessage;
 		GapWorldFrame ();
@@ -433,15 +802,27 @@ static void Q30Boots (client_t *peers[2], client_state_t *states[2], qboolean vr
 				!peer->private_cmd_queue_msec && states[0]->move_snapshot_valid &&
 				states[0]->move_ack_selected_owner && states[0]->ackedmovemessages == sequence);
 			if (owned)
-				assert (peer->private_move_native_frame &&
-					states[0]->move_ack_authority == MOVE_AUTHORITY_LEGACY_FRAME && !replayed);
+			{
+				if (generic)
+					assert (!peer->private_move_native_frame && replayed &&
+						states[0]->move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT);
+				else
+					assert (peer->private_move_native_frame &&
+						states[0]->move_ack_authority == MOVE_AUTHORITY_LEGACY_FRAME && !replayed);
+			}
 			else if (saw_expiry && replayed) saw_return = true;
 		}
 		else assert (!replayed && !states[0]->move_ack_selected_owner);
-		printf ("Q30_BOOTS_SAMPLE frame=%d owned=%d charge=%g deadline=%.6f origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f flags=%d\n",
+		if (generic && selected && frame == 40)
+		{
+			SharedQCJumpPreview (states[0]);
+			puts ("SHARED_QC_ABILITY_PREVIEW_PASSED positive ordinary jump forecast while boots owned; unknown airborne QC still corrected by snapshots");
+		}
+		printf ("Q30_BOOTS_SAMPLE frame=%d owned=%d charge=%g deadline=%.6f origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f flags=%d health=%g\n",
 			frame, owned != 0, charge, Q30BootsField (player, "jumpboots_finished"),
 			player->v.origin[0], player->v.origin[1], player->v.origin[2],
-			player->v.velocity[0], player->v.velocity[1], player->v.velocity[2], (int)player->v.flags);
+			player->v.velocity[0], player->v.velocity[1], player->v.velocity[2], (int)player->v.flags,
+			player->v.health);
 	}
 	assert (saw_boots && saw_airjump && saw_expiry && saw_public && (!selected || saw_return) &&
 		hypotf (peers[1]->edict->v.origin[0] - public_start[0],
@@ -450,6 +831,13 @@ static void Q30Boots (client_t *peers[2], client_state_t *states[2], qboolean vr
 	{
 		LiquidDisposablePreview (states[0], true);
 		puts ("Q30_BOOTS_POSITIVE_PREVIEW_PASSED after expiry; positive duration/horizontal motion/history preserved");
+	}
+	if (selected && generic)
+	{
+		vec3_t home;
+		VectorCopy (player->v.origin, home);
+		SharedQCPrefix (peer, states[0]);
+		SharedQCCompositions (peer, states[0], home);
 	}
 	printf ("Q30_BOOTS_PASSED selected=%d vr=%d actual spawn/setup/contact/airjump/expiry/full-send/replay-return/public peer; prepared artifact placement and captured resources/delivery\n", selected, vr);
 	liquid_after_qc_composition = NULL;
@@ -577,7 +965,17 @@ int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 	contents = !strcmp (liquid, "water") ? CONTENTS_WATER :
 		!strcmp (liquid, "slime") ? CONTENTS_SLIME : CONTENTS_LAVA;
 	StartLiquidPeers (argc, argv, map, command_msec, peers, states);
-	if (COM_CheckParm ("-q30boots"))
+	if (COM_CheckParm ("-sharedqcboundary"))
+	{
+		/* Older AD QC on explicitly selected real shoreline geometry. e1m1
+		 * supplies no dry neighbor to the bounded horizontal sample finder. */
+		assert (!SV_PrivateWalkTrialStockProgram () && !SV_PrivateWalkTrialQ30Program () &&
+			peers[0]->private_pmove_walk_selected);
+		SharedQCDeferredRoomScale (peers[0], states[0]);
+		puts ("SHARED_QC_BOUNDARY_PASSED prepared real-BSP shoreline with generic QC; actual admission/input/world/send/parser");
+		return 0;
+	}
+	if (COM_CheckParm ("-q30boots") || COM_CheckParm ("-genericboots"))
 	{
 		Q30Boots (peers, states, COM_CheckParm ("-vr") != 0);
 		return 0;

@@ -654,6 +654,72 @@ added. This qualifies e1m1 under the installed AD program; actual AD maps, older
 program variants and Mjolnir remain separate scope. See the
 [AD identity/reuse record](../docs/predictive-ad-identical-program-2.0-plan.md).
 
+The shared-QC vertical reuses the stock-liquid binary above. Create a separate
+isolated root `/tmp/qsvr-ad-pak0-shared-native` with read-only links to licensed
+`id1/pak0.pak` and `ad/pak0.pak,pak1.pak`; **omit AD pak2**, whose mounted program
+is identical to q30. Both new modes assert the actually loaded older AD program:
+2345354 bytes, SHA256
+`f3c4218216ea0d3b00db35eef9e72945ee6687006b3e82c37ea2ae33a0eea922`.
+The assertion is test-only; production general admission has no new whitelist.
+
+```sh
+timeout --signal=TERM 30s /tmp/qsvr-q30-publication \
+  -genericboots -defaultselection -vr -dedicated 3 -noudp -nosound \
+  -game ad -basedir /tmp/qsvr-ad-pak0-shared-native \
+  -userdir /tmp/qsvr-ad-shared-vr-selected
+```
+
+Repeat in separate user directories with `-vr` omitted, then both modes with
+`-defaultselection` omitted for native references. Require exit0 and
+`Q30_BOOTS_PASSED` in all four runs; the inherited marker name is shared with the
+earlier driver. Selected runs also require `SHARED_QC_ABILITY_PREVIEW_PASSED`,
+`SHARED_QC_PREFIX_PASSED` and `SHARED_QC_COMPOSITIONS_PASSED`. Actual QC owns
+pickup, ground/air boots jumps, charge and expiry. Selected owned-state snapshots
+retain ENGINE_COMPAT replay instead of a boots-specific native gate. A positive
+30ms ordinary jump forecast observes upward displacement under the existing NQ
+substep order; arbitrary server-QC airborne forces still require correction.
+
+For each112-frame run, ownership, charge, deadline and health match the native
+reference. The native1-unit position/velocity comparison **fails**: maximum axis
+position difference3.23645 and velocity difference320, with a one-frame landing
+flag difference. Modern PMove and native acceleration/gravity/snap integration
+are different. These are recorded differences, not a native trajectory parity
+pass or permission to widen tolerances silently. Health remains100 in this
+benign case; damaging landings and sounds are not qualified.
+
+The actual producer/receipt batch checks one world-clock QC lifecycle, actual
+first axe selection, first pose at the sole PostThink, a retained later jump/
+shotgun impulse, advancing completed ACKs, duplicate rejection and single
+roomscale consumption. Explicit compositions after real QC/trigger dispatch
+check an actual impulse clear, unfixed90-degree rotation plus5-degree PostThink
+increment, living FLY continuation and positive-ACK maintenance after actual
+pause/unpause. The rotation/clear/FLY writes are prepared counterexamples, not
+authored map abilities. Empty physical-contact cursors do not prove physical
+button callbacks.
+
+For the separate later-roomscale boundary, link licensed q30's `maps` directory
+under that isolated root's `ad/maps`, preserving older AD QC. The stock e1m1
+search has no reachable dry neighbor for this bounded horizontal sweep.
+
+```sh
+timeout --signal=TERM 30s /tmp/qsvr-q30-publication \
+  -sharedqcboundary -fixturemap 1024_tango -defaultselection -vr \
+  -dedicated 3 -noudp -nosound -game ad \
+  -basedir /tmp/qsvr-ad-pak0-shared-native \
+  -userdir /tmp/qsvr-ad-shared-boundary
+```
+
+Require exit0, `SHARED_QC_DEFERRED_ROOM_PASSED` and
+`SHARED_QC_BOUNDARY_PASSED`. The shared real-BSP finder constrains the sweep to
+the16-unit actual receipt limit; the original q30 reference keeps its64-unit
+search. Prepared airborne relocation is followed by two actually sent commands.
+The first completes its actual weapon effect, originating pose and single world
+tail; the later crossing stays byte-identical in the queue, fenced with native
+authority. The next native world consumes it and crosses real water once.
+Captured transport, prepared signon/resources/body/item and synthetic VR input
+are explicit limits; this does not qualify all older AD maps or hardware.
+See the [shared-QC checkpoint](../docs/predictive-movement-reuse-reassessment-2.0-plan.md).
+
 The mixed native fixture's `-velocityseeds` option checks actual serialized
 signed-short velocity boundaries through the full parser and replay gate.
 Use its existing selected run with `-defaultselection -earlypause -arrivalgap

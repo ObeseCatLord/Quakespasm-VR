@@ -1,15 +1,16 @@
 # Reopened movement reuse and mod-special-case decision
 
-Status: architecture reopened, reviewed by local Astra Max and resolved for the
-next shared-adapter vertical. This plan/disposition precedes production changes;
-the vertical below is not implemented yet.
+Status: the bounded shared-QC adapter is implemented and passes the Linux
+software checks recorded below. Local Astra Max approved the production source
+after the integration fixes. This plan/disposition preceded production changes;
+broader cooperative, wet, local/load and mod compatibility remain unfinished.
 Keep the full migration goal: QSS-M-style modern predictive desktop/VR crossplay,
 QC/mod abilities, inherited VR contacts/roomscale and deliberate QBJ3 ladder fix.
 Working boots/AD pickup behavior is reference evidence, not permission to write
 a new ability implementation. Main/code only on2.0; user-dirty migration doc stays
 untouched. Hardware/performance/Windows/ARM checks remain deferred.
 
-## Verified evidence and unknowns
+## Evidence and unknowns at the architecture reopening
 
 | Claim | Evidence / significance |
 | --- | --- |
@@ -249,3 +250,50 @@ the latter's existing real-sweep airborne liquid-entry finder into the shared
 header, with no algorithm change, and reuse it from both drivers. This avoids
 another map-search implementation. These are prepared airborne starts, not
 authored grounded shoreline traversal or a hardware input claim.
+
+## Shared-QC implementation checkpoint
+
+General dry WALK admission now uses the existing selected movement owner without
+a new program whitelist. Stock and the exact-q30 reference paths remain intact
+for this incremental slice. Unaware QC runs one PreThink/PostThink lifecycle on
+the world clock; the existing PMove solver consumes eligible command time.
+Executable prefixes stop before a second impulse or button transition, retaining
+the unstarted suffix. Actual QC velocity and jump/release writes survive. No
+new boots arithmetic, ability state, client policy, transport, queue or PMove
+implementation was introduced. Cooperative hooks and native states still use
+the existing native boundary pending the next planned extension.
+
+Local Astra Max's final source recheck found no remaining blocker in this slice.
+Main verified the effective reviewer model/effort. Additional dispositions:
+
+| Finding | Resolution / evidence |
+| --- | --- |
+| Maintenance after pause could complete sequence0 over a positive ACK. | Continue with the existing completed cursor when the disposable command has zero msec. Actual pause/unpause followed by a prepared living PreThink transition preserves completion, retirement and resume phase. |
+| Movement contacts can author a rotation before a later command replaces input angles. | Capture actual callback changes into the existing frame-local QC pose. The prepared unfixed90-degree trigger rotation plus real PostThink and a prepared5-degree increment ends at95 in both angle fields. No persistent pose owner. |
+| The reused shoreline finder allowed larger samples than actual receipt. | Keep the original64-unit reference search unchanged; its shared helper accepts an optional bound. The actual-send proof requests16, matching private receipt. Stock e1m1 supplies no dry neighbor to this search; the separate boundary run uses shipped1024_tango geometry under older AD QC, with explicitly prepared airborne placement. |
+
+Consolidated checks pass: Linux SDL3 production build; actual older AD pak0 QC
+boots lifecycle in selected/native desktop and VR modes; originating input and
+weapon effects across batching; pending positive jump forecast; retained later
+roomscale head and next native water crossing; prepared impulse clear, rotation
+and living continuation; actual pause maintenance; stock default/early-pause/
+arrival-gap mixed session; q30 normal session, boots and publication-water check;
+the extracted q30 movement reference; scoped diff whitespace checks.
+
+Each older-AD lifecycle has112 samples. Ownership, charge, expiry deadline and
+health match native in every sample. The deliberately retained failed native1/1
+numerical comparison has maximum axis position difference3.23645 and velocity
+difference320, with a one-frame landing/ground-flag difference, in both desktop
+and VR. Those results do not establish native trajectory parity. The existing
+modern PMove solver remains the movement reference; actual QC gameplay and
+world cadence are the compatibility reference. This benign landing retains
+health100, but damaging landings and landing sounds remain unqualified.
+
+Fixtures use actual loaded QC, normal admission, actual command producer/receipt,
+world physics, production send/parser and replay. Prepared item placement,
+signon/resource state, captured transport and synthetic VR input remain explicit
+seams. Prepared callback compositions prove ownership interactions; they are
+not authored map abilities or physical-button gameplay proof. Headset, gaze and
+performance trials remain deferred. General mod wet replay, cooperative ABI,
+single-player/load support, deliberate QBJ3 behavior and full feature parity
+remain part of the active migration goal.

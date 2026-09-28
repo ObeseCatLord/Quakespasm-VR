@@ -872,8 +872,6 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 		return "loadgame state is outside the trial";
 	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 		return "requires the pinned private profile";
-	if (!SV_PrivateWalkTrialStockProgram () && !q30)
-		return "requires a qualified pinned progs identity";
 	if (q30 && !(client->offered_pmove_policies & QSVR_PMOVE_CAP_Q30_JUMP))
 		return "requires the q30 ordinary jump policy";
 	if (!SV_PrivateWalkStatsDisjoint ())
@@ -891,14 +889,14 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 		client->edict->v.solid != SOLID_SLIDEBOX ||
 		client->edict->v.waterlevel != 0)
 		return "requires a stock WALK/SOLID_SLIDEBOX owner, dry at selection";
-	if (q30)
+	if (!SV_PrivateWalkTrialStockProgram ())
 	{
-		/* Actual q30 startup may need native QC before ordinary WALK is
-		 * ready. Observe the existing pre-begin owner without manufacturing
+		/* Startup may need native QC before ordinary WALK is ready.
+		 * Observe the existing pre-begin owner without manufacturing
 		 * spawned/selected state; native dispatch retains its input clock. */
 		const sv_private_move_state_t state = SV_PrivateWalkTrialBeginState (client);
 		if (state == SV_PRIVATE_MOVE_REJECTED || state == SV_PRIVATE_MOVE_TERMINAL)
-			return "q30 owner is not valid at begin";
+			return "owner is not valid at begin";
 	}
 	if (client->cmd.vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
@@ -938,7 +936,8 @@ void SV_PrivateWalkTrialSelectAtBegin (client_t *client)
 	client->lastmovetime = 0;
 	client->private_pmove_walk_selected = true;
 	Sys_Printf ("%s: selected %s predictive movement\n", client->name,
-		SV_PrivateWalkTrialQ30Program () ? "q30" : "stock");
+		SV_PrivateWalkTrialStockProgram () ? "stock" :
+		SV_PrivateWalkTrialQ30Program () ? "q30" : "shared QC");
 }
 
 /*
@@ -4206,7 +4205,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 			/* q30 preserves cached water until native WALK refreshes it
 			 * after PreThink. Admission already performed its observational
 			 * frame validation; the extra categorizing check is stock-only. */
-			if (!trial_failure && !sv.paused && !SV_PrivateWalkTrialQ30Program () &&
+			if (!trial_failure && !sv.paused && SV_PrivateWalkTrialStockProgram () &&
 				SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK)
 				trial_failure = SV_PrivateWalkTrialStateError (client->edict, client,
 					&client->cmd);
