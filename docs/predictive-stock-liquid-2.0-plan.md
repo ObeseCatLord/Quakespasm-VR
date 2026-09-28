@@ -1,6 +1,6 @@
 # Stock liquid movement and predictive replay
 
-Status: preimplementation draft. Baseline `81318dc3` on `2.0`; this is another
+Status: design reviewed; real-map qualification in progress. Baseline `81318dc3` on `2.0`; this is another
 bounded stage of the [predictive movement plan](predictive-movement-2.0-plan.md),
 not ordinary selected activation or a complete migration claim.
 
@@ -123,4 +123,23 @@ nonoverlapping ownership; unavailable routes are not silently substituted.
 
 ## Senior disposition and completed evidence
 
-Pending; fill from verified review and actual checks, not from intention.
+Fresh local Astra (`gpt-6-astra`, effort `max`, verified from model/effort fields)
+reviewed draft `b752b20b` and bounded source. It supports retaining the command,
+QC, PMove and snapshot owners. Production permission changes remain gated on
+real-map evidence; the following dispositions precede those changes.
+
+| Review finding | Disposition / concrete next step |
+| --- | --- |
+| Existing engine-compatible authority and permission suffice for this release. | Accept. No new moveflag, protocol field, wet state machine or timer journal. Reopen only for demonstrated old-private-release interoperability requirements. |
+| Stock QC may overwrite vertical swim-button velocity before PMove's later assignment. | Accept as a coverage gap, not a proved mismatch. Trace actual pinned PreThink and pending replay at depth 2/3 with press, hold and release before altering the narrow adapter. Preserve scheduled weapon-Think precedence and authored residual forces. |
+| Active waterjump uses `teleport_time`; completion currently captures solver timers before callbacks. | Accept. Qualify actual ledge startup/termination and callback overlap. Authorize active jump only if final flag/timer/deadline retain the solver-owned contract; retain real teleport/callback holds. Do not overwrite callback deadlines or add a persistent timer. |
+| The current fluid latch covers water, slime and lava, including substep crossings. | Accept. Qualify every released type or retain rejection for unproved crossings; final depth/type is insufficient. Do not remove the aggregate gate solely from water evidence. |
+| Empty-history or diagnostic shadow success cannot prove live wet enablement. | Accept. Add pending history and preview checks through the actual replay function after coherent server/client policy changes. Diagnostic comparisons before permission are explicitly qualification evidence only. |
+
+The first admitted `e1m1` component run locates real depth 1/2/3 geometry and
+executes dry jump, shallow/surface/deep sink/up and prepared VR-roomscale cases
+through real command receipt, QC, completion and full snapshots. Wet permission
+is still off; this initial run does not qualify ledges, transitions, hazardous
+liquids or wet replay. The fixture reuses the existing captured mixed-driver
+bootstrap and compiles the actual physics owner to inspect its internal helpers;
+no production test API or copied contents classifier is introduced.
