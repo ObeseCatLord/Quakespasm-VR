@@ -5208,7 +5208,8 @@ static qboolean SV_VRContactOwnerLive (client_t *client, edict_t *ent)
 	return client && ent && client->active && client->spawned &&
 		client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		client->edict == ent && !ent->free && isfinite (ent->v.health) &&
-		ent->v.health > 0 && !ent->v.deadflag;
+		ent->v.health > 0 && !ent->v.deadflag &&
+		!SV_PrivateWalkTrialMotionHeld (client);
 }
 
 static qboolean SV_VRContactWeaponIdentity (edict_t *ent,
@@ -7502,22 +7503,277 @@ static qboolean SV_PrivateWalkTrialNativeBoundary (client_t *client)
 		SV_PrivateWalkTrialStockFrozenState (client);
 }
 
+/* Dispatch-only lookahead. Reuse the real horizontal auxiliary sweep, with
+ * no QC/impact/trigger callbacks, before choosing a native input phase. Water
+ * is evidence for that choice, never a new native QC-visible observation. */
+static qboolean SV_PrivateWalkTrialQ30NeedsNative (edict_t *ent, client_t *client,
+	const usercmd_t *command)
+{
+	usercmd_t saved_cmd = client->cmd;
+	vec3_t origin, velocity, v_angle, absmin, absmax;
+	int leaves[MAX_ENT_LEAFS];
+	unsigned int num_leafs = ent->num_leafs;
+	float flags = ent->v.flags, waterlevel = ent->v.waterlevel;
+	float watertype = ent->v.watertype;
+	int groundentity = ent->v.groundentity;
+	double frame_time = host_frametime;
+	qboolean sweep = command && command->vr_active && command->msec >= 1 &&
+		command->msec <= 125 &&
+		(command->vr_roomscalemove[0] || command->vr_roomscalemove[1]);
+	link_t *area_next = ent->area.next;
+	qboolean linked = ent->area.prev != NULL;
+	qboolean native;
+
+	assert_always (qcvm == &sv.qcvm && !sv_vr_weapon_pose_scope);
+	VectorCopy (ent->v.origin, origin);
+	VectorCopy (ent->v.velocity, velocity);
+	VectorCopy (ent->v.v_angle, v_angle);
+	VectorCopy (ent->v.absmin, absmin);
+	VectorCopy (ent->v.absmax, absmax);
+	memcpy (leaves, ent->leafnums, sizeof (leaves));
+	SV_CheckWater (ent);
+	native = ent->v.waterlevel != 0;
+	/* Preserve the actual pre-room water value used by WalkMove's step rule. */
+	ent->v.waterlevel = waterlevel;
+	ent->v.watertype = watertype;
+	if (sweep && !native)
+	{
+		client->cmd = *command;
+		host_frametime = command->msec * .001f;
+		VectorCopy (command->viewangles, ent->v.v_angle);
+		SV_ApplyPrivateRoomScaleMove (ent, client);
+		SV_CheckWater (ent);
+		native = ent->v.waterlevel != 0;
+		VectorCopy (origin, ent->v.origin);
+		VectorCopy (velocity, ent->v.velocity);
+		VectorCopy (v_angle, ent->v.v_angle);
+		ent->v.flags = flags;
+		ent->v.groundentity = groundentity;
+		/* Recompute bounds/leaves at the restored origin, then restore the
+		 * exact area-list position. Appending can change equal-fraction hits.
+		 * The callback-free sweep cannot invalidate the saved neighbor. */
+		SV_LinkEdict (ent, false);
+		SV_UnlinkEdict (ent);
+		if (linked)
+			InsertLinkBefore (&ent->area, area_next);
+		VectorCopy (absmin, ent->v.absmin);
+		VectorCopy (absmax, ent->v.absmax);
+		ent->num_leafs = num_leafs;
+		memcpy (ent->leafnums, leaves, sizeof (leaves));
+	}
+	ent->v.waterlevel = waterlevel;
+	ent->v.watertype = watertype;
+	client->cmd = saved_cmd;
+	host_frametime = frame_time;
+	return native;
+}
+
+/* Once movement has run, qualification loss is sticky for the frame even if
+ * PostThink subsequently returns the body to ordinary WALK. No extra interval. */
+static qboolean SV_PrivateWalkTrialPostMoveNative (edict_t *ent, client_t *client)
+{
+	sv_private_move_state_t state = SV_PrivateWalkTrialClassifyState (client);
+	return SV_PrivateWalkTrialNativeBoundary (client) ||
+		(SV_PrivateWalkTrialQ30Program () &&
+		 (state == SV_PRIVATE_MOVE_NATIVE ||
+		  (state == SV_PRIVATE_MOVE_WALK &&
+		   SV_PrivateWalkTrialQ30NeedsNative (ent, client, NULL))));
+}
+
+/* Discard anchors without reviving samples already fenced by a relocation. */
+static void SV_PrivateWalkTrialResetGorilla (client_t *client, int through_sequence)
+{
+	if (client->vr_gorilla_cursor_valid)
+		through_sequence = q_max (through_sequence, client->vr_gorilla_last_sequence);
+	SV_ResetGorillaClient (client);
+	client->vr_gorilla_last_sequence = through_sequence;
+	client->vr_gorilla_cursor_valid = true;
+}
+
+/* Earlier commands consumed their intervals; the next head has not started.
+ * Break continuity only through completed work, retaining its raw samples. */
+static void SV_PrivateWalkTrialDeferNativeHead (client_t *client)
+{
+	client->private_move_native_frame = true;
+	client->private_pmove_credit_msec = 0;
+	client->private_pmove_jump_secs = 0;
+	client->private_pmove_waterjump_secs = 0;
+	SV_PrivateWalkTrialResetGorilla (client, client->private_completed_move);
+}
+
+/* Resolve against the current VM's existing definition maps. Offsets from a
+ * definition are still checked here: GetEdictFieldValue only rejects < 0. */
+static eval_t *SV_PrivateWalkTrialQ30Field (edict_t *ent, const char *name,
+	etype_t type)
+{
+	ddef_t *field = ED_FindField (name);
+	if (!field || (field->type & ~DEF_SAVEGLOBAL) != type ||
+		field->ofs >= qcvm->progs->entityfields)
+		return NULL;
+	return GetEdictFieldValue (ent, field->ofs);
+}
+
+static qboolean SV_PrivateWalkTrialQ30Float (edict_t *ent, const char *name,
+	float *out)
+{
+	eval_t *value;
+	if (ent)
+		value = SV_PrivateWalkTrialQ30Field (ent, name, ev_float);
+	else
+	{
+		ddef_t *global = ED_FindGlobal (name);
+		if (!global || (global->type & ~DEF_SAVEGLOBAL) != ev_float ||
+			global->ofs >= qcvm->progs->numglobals)
+			return false;
+		value = (eval_t *)(qcvm->globals + global->ofs);
+	}
+	if (!value || !isfinite (value->_float))
+		return false;
+	*out = value->_float;
+	return true;
+}
+
+/* Entity fields are integer byte offsets, not float values. A freed but
+ * structurally valid hook can remain under QC's native cleanup owner. */
+static qboolean SV_PrivateWalkTrialQ30Entity (edict_t *ent, const char *name,
+	int *out)
+{
+	eval_t *value = SV_PrivateWalkTrialQ30Field (ent, name, ev_entity);
+	int offset;
+	if (!value || qcvm->edict_size <= 0)
+		return false;
+	offset = value->edict;
+	if (offset < 0 || offset % qcvm->edict_size ||
+		offset / qcvm->edict_size >= qcvm->num_edicts)
+		return false;
+	*out = offset;
+	return true;
+}
+
+static qboolean SV_PrivateWalkTrialQ30Hold (edict_t *ent, qboolean *held)
+{
+	const char *camera_globals[] = {"intermission_running", "secloc_running",
+		"cinematic_running", "cam_active"};
+	float value;
+	*held = false;
+	for (int i = 0; i < countof (camera_globals); ++i)
+	{
+		if (!SV_PrivateWalkTrialQ30Float (NULL, camera_globals[i], &value))
+			return false;
+		*held |= value > 0;
+	}
+	if (!SV_PrivateWalkTrialQ30Float (ent, "pausetime", &value))
+		return false;
+	*held |= qcvm->time < value;
+	return true;
+}
+
+/* The native input/contact owners must not append hand motion or physical
+ * attacks after a mod-authored hold/camera zero. No persistent hold lifetime. */
+qboolean SV_PrivateWalkTrialMotionHeld (client_t *client)
+{
+	qboolean held;
+	if (!SV_PrivateWalkTrialQ30Program () || !client || !client->edict ||
+		client->edict->free)
+		return false;
+	return !SV_PrivateWalkTrialQ30Hold (client->edict, &held) || held;
+}
+
+static sv_private_move_state_t SV_PrivateWalkTrialQ30State (edict_t *ent)
+{
+	float prethink, postthink, chaoscount, skill, oskill;
+	float ladder, items, oldgravity, gravity;
+	int hook, ladderent;
+	qboolean held;
+	eval_t *target;
+	const char *targetname;
+
+	if (!SV_PrivateWalkTrialQ30Hold (ent, &held) ||
+		!SV_PrivateWalkTrialQ30Float (NULL, "prethink", &prethink) ||
+		!SV_PrivateWalkTrialQ30Float (NULL, "postthink", &postthink) ||
+		!SV_PrivateWalkTrialQ30Float (NULL, "chaoscount", &chaoscount) ||
+		!SV_PrivateWalkTrialQ30Float (NULL, "skill", &skill) ||
+		!SV_PrivateWalkTrialQ30Float (NULL, "oskill", &oskill) ||
+		!SV_PrivateWalkTrialQ30Float (ent, "onladder", &ladder) ||
+		!SV_PrivateWalkTrialQ30Float (ent, "moditems", &items) ||
+		!SV_PrivateWalkTrialQ30Float (ent, "oldgravity", &oldgravity) ||
+		!SV_PrivateWalkTrialQ30Float (ent, "gravity", &gravity) ||
+		!SV_PrivateWalkTrialQ30Entity (ent, "hookent", &hook) ||
+		(ladder != 0 &&
+		 !SV_PrivateWalkTrialQ30Entity (ent, "entladder", &ladderent)) ||
+		(double)items < INT_MIN || (double)items > INT_MAX ||
+		!isfinite (ent->v.flags) || (double)ent->v.flags < INT_MIN ||
+		(double)ent->v.flags > INT_MAX || !isfinite (ent->v.weapon) ||
+		!isfinite (ent->v.teleport_time) || !isfinite (ent->v.waterlevel))
+		return SV_PRIVATE_MOVE_REJECTED;
+
+	target = SV_PrivateWalkTrialQ30Field (ent, "target2", ev_string);
+	if (!target ||
+		(target->string >= 0 && target->string >= qcvm->progs->numstrings) ||
+		(target->string < 0 &&
+		 (-(int64_t)target->string - 1 >= qcvm->numknownstrings ||
+		  !qcvm->knownstrings[-(int64_t)target->string - 1])))
+		return SV_PRIVATE_MOVE_REJECTED;
+	targetname = PR_GetString (target->string);
+	if (!targetname)
+		return SV_PRIVATE_MOVE_REJECTED;
+
+	/* Values are from the pinned program's actual constant globals, not
+	 * aliases assigned by source-like decompilation: boots1048576, hook128,
+	 * super shotgun2. Qualify eligibility before any authored force runs. */
+	if (held || prethink == 0 || postthink == 0 || chaoscount <= 2 ||
+		skill != oskill || ladder != 0 || hook != 0 || *targetname ||
+		((int)items & (1048576 | 128)) || ent->v.weapon == 2 ||
+		ent->v.waterlevel != 0 || ((int)ent->v.flags & FL_WATERJUMP) ||
+		(oldgravity > 0 ? oldgravity : 1) != (gravity > 0 ? gravity : 1))
+		return SV_PRIVATE_MOVE_NATIVE;
+	if (ent->v.movetype != MOVETYPE_WALK || !SV_PrivateWalkTrialStockHull (ent))
+		return SV_PRIVATE_MOVE_NATIVE;
+	return SV_PRIVATE_MOVE_WALK;
+}
+
 /* Classification observes the current owner, not the previous frame's
  * dispatcher. Callers still choose which states their execution permits. */
-sv_private_move_state_t SV_PrivateWalkTrialClassifyState (client_t *client)
+static sv_private_move_state_t SV_PrivateWalkTrialClassifyOwner (client_t *client,
+	qboolean require_spawned)
 {
 	edict_t *ent;
-	if (!client || !client->active || !client->spawned ||
+	if (!client || !client->active ||
+		(require_spawned ? !client->spawned : !client->knowntoqc) ||
 		!client->edict || client->edict->free)
 		return SV_PRIVATE_MOVE_REJECTED;
 	ent = client->edict;
 	if (!isfinite (ent->v.health) || !isfinite (ent->v.deadflag) ||
 		!isfinite (ent->v.movetype))
 		return SV_PRIVATE_MOVE_REJECTED;
-	if (SV_PrivateWalkTrialTerminalState (client))
-		return SV_PRIVATE_MOVE_TERMINAL;
+	if (ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
+		return ent->v.movetype == MOVETYPE_NONE || ent->v.movetype == MOVETYPE_WALK ||
+			ent->v.movetype == MOVETYPE_FLY || ent->v.movetype == MOVETYPE_NOCLIP ||
+			ent->v.movetype == MOVETYPE_TOSS || ent->v.movetype == MOVETYPE_BOUNCE ||
+			ent->v.movetype == MOVETYPE_GIB ? SV_PRIVATE_MOVE_TERMINAL :
+			SV_PRIVATE_MOVE_REJECTED;
 	if (SV_PrivateWalkTrialStockFrozenState (client))
 		return SV_PRIVATE_MOVE_NATIVE;
+	if (SV_PrivateWalkTrialQ30Program ())
+	{
+		if (ent->v.movetype != MOVETYPE_NONE && ent->v.movetype != MOVETYPE_WALK &&
+			ent->v.movetype != MOVETYPE_FLY && ent->v.movetype != MOVETYPE_NOCLIP &&
+			ent->v.movetype != MOVETYPE_TOSS && ent->v.movetype != MOVETYPE_BOUNCE &&
+			ent->v.movetype != MOVETYPE_GIB)
+			return SV_PRIVATE_MOVE_REJECTED;
+		if (!isfinite (ent->v.solid) || ent->v.solid < SOLID_NOT ||
+			ent->v.solid > SOLID_BSP || floorf (ent->v.solid) != ent->v.solid)
+			return SV_PRIVATE_MOVE_REJECTED;
+		for (int i = 0; i < 3; ++i)
+			if (!isfinite (ent->v.mins[i]) || !isfinite (ent->v.maxs[i]) ||
+				!isfinite (ent->v.view_ofs[i]) ||
+				!isfinite (ent->v.origin[i]) || !isfinite (ent->v.velocity[i]) ||
+				ent->v.mins[i] > ent->v.maxs[i])
+				return SV_PRIVATE_MOVE_REJECTED;
+		if (!isfinite (ent->v.watertype))
+			return SV_PRIVATE_MOVE_REJECTED;
+		return SV_PrivateWalkTrialQ30State (ent);
+	}
 	if (!SV_PrivateWalkTrialStockHull (ent))
 		return SV_PRIVATE_MOVE_REJECTED;
 	if (ent->v.movetype == MOVETYPE_WALK)
@@ -7525,6 +7781,16 @@ sv_private_move_state_t SV_PrivateWalkTrialClassifyState (client_t *client)
 	if (ent->v.movetype == MOVETYPE_NOCLIP || ent->v.movetype == MOVETYPE_FLY)
 		return SV_PRIVATE_MOVE_NATIVE;
 	return SV_PRIVATE_MOVE_REJECTED;
+}
+
+sv_private_move_state_t SV_PrivateWalkTrialClassifyState (client_t *client)
+{
+	return SV_PrivateWalkTrialClassifyOwner (client, true);
+}
+
+sv_private_move_state_t SV_PrivateWalkTrialBeginState (client_t *client)
+{
+	return SV_PrivateWalkTrialClassifyOwner (client, false);
 }
 
 /* Receipt and snapshots admit qualified native states as well as WALK.
@@ -7547,7 +7813,7 @@ const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
 		return "private profile selection changed";
 	state = SV_PrivateWalkTrialClassifyState (client);
 	if (state == SV_PRIVATE_MOVE_REJECTED)
-		return "owner left supported stock movement state";
+		return "owner left supported movement state";
 	if (cmd && cmd->vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
 	if (cmd && cmd->vr_gorilla.flags &&
@@ -7560,10 +7826,12 @@ const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
 		if (!isfinite (ent->v.velocity[i]))
 			return "owner has a non-finite velocity";
 	}
-	/* Native tossed/gibbed corpses use point contents (-1/-2) outside water,
-	 * while living selected movement requires the ordinary depth 0..3. */
+	/* Native tossed/gibbed bodies use point contents (-1/-2) outside water. */
 	if (!isfinite (ent->v.waterlevel) ||
-		ent->v.waterlevel < (state == SV_PRIVATE_MOVE_TERMINAL ? CONTENTS_SOLID : 0) ||
+		ent->v.waterlevel < (state == SV_PRIVATE_MOVE_TERMINAL ||
+			(state == SV_PRIVATE_MOVE_NATIVE && SV_PrivateWalkTrialQ30Program () &&
+			 (ent->v.movetype == MOVETYPE_TOSS || ent->v.movetype == MOVETYPE_BOUNCE ||
+			  ent->v.movetype == MOVETYPE_GIB)) ? CONTENTS_SOLID : 0) ||
 		ent->v.waterlevel > 3)
 		return "invalid owner water level";
 	if (state == SV_PRIVATE_MOVE_TERMINAL)
@@ -7788,6 +8056,8 @@ static void SV_PrivateWalkTrialWaterjumpCallbacks (edict_t *ent, client_t *clien
 	int expected_flags, float expected_deadline, unsigned short expected_epoch,
 	float *jump_secs, float *waterjump_secs)
 {
+	if (SV_PrivateWalkTrialQ30Program ())
+		return; // the native mod, not the stock private timer, owns these writes
 	if (client->private_move_discontinuity_epoch != expected_epoch)
 	{
 		*jump_secs = *waterjump_secs = 0.0f;
@@ -8119,6 +8389,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			failure = "player removed during maintenance trigger callbacks";
 			goto cleanup;
 		}
+		if (SV_PrivateWalkTrialPostMoveNative (ent, client))
+			client->private_move_native_frame = true;
 		pr_global_struct->time = qcvm->time;
 		pr_global_struct->frametime = 0;
 		pr_global_struct->self = EDICT_TO_PROG (ent);
@@ -8139,13 +8411,18 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			failure = "player removed during maintenance PostThink";
 			goto cleanup;
 		}
+		if (SV_PrivateWalkTrialQ30Program () &&
+			(failure = SV_PrivateWalkTrialFrameStateError (ent, client, &command)) != NULL)
+			goto cleanup;
 		SV_CoopSharedObserveClientDeath (ent, NUM_FOR_EDICT (ent));
 		SV_PrivateWalkTrialWaterjumpCallbacks (ent, client, solver_flags,
 			solver_deadline, solver_epoch, &client->private_pmove_jump_secs,
 			&client->private_pmove_waterjump_secs);
-		if (SV_PrivateWalkTrialStockFrozenState (client))
+		if (client->private_move_native_frame ||
+			SV_PrivateWalkTrialPostMoveNative (ent, client))
 		{
 			client->private_move_native_frame = true;
+			client->private_pmove_credit_msec = 0;
 			client->private_pmove_jump_secs = client->private_pmove_waterjump_secs = 0;
 			SV_GorillaInvalidateAccepted (client);
 		}
@@ -8531,7 +8808,13 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	/* Movement, impacts, triggers and physical contacts have already run.
 	 * A death/freeze still receives this command's PostThink exactly once;
 	 * the fresh native frame starts on the next world tick. */
-	if (!SV_PrivateWalkTrialNativeBoundary (client) &&
+	native_boundary_completed = SV_PrivateWalkTrialPostMoveNative (ent, client);
+	if (native_boundary_completed)
+		client->private_move_native_frame = true;
+	if (q30_program &&
+		(failure = SV_PrivateWalkTrialFrameStateError (ent, client, &command)) != NULL)
+		goto cleanup;
+	if (!native_boundary_completed &&
 		(failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	pr_global_struct->time = qcvm->time;
@@ -8557,9 +8840,12 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	SV_CoopSharedObserveClientDeath (ent, NUM_FOR_EDICT (ent));
 	SV_PrivateWalkTrialWaterjumpCallbacks (ent, client, solver_flags,
 		solver_deadline, solver_epoch, &result_jump_secs, &result_waterjump_secs);
-	native_boundary_completed = SV_PrivateWalkTrialNativeBoundary (client);
-	if (SV_PrivateWalkTrialStockFrozenState (client))
+	native_boundary_completed |= SV_PrivateWalkTrialPostMoveNative (ent, client);
+	if (native_boundary_completed)
 		client->private_move_native_frame = true;
+	if (q30_program &&
+		(failure = SV_PrivateWalkTrialFrameStateError (ent, client, &command)) != NULL)
+		goto cleanup;
 	if (!native_boundary_completed &&
 		(failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
@@ -8598,9 +8884,14 @@ complete_native_command:
 	client->private_pmove_jump_secs = native_boundary_completed ? 0.0f : result_jump_secs;
 	client->private_pmove_waterjump_secs = native_boundary_completed ? 0.0f : result_waterjump_secs;
 	if (native_boundary_completed && !native_continuation_completed)
-		SV_ResetGorillaClient (client);
+	{
+		if (q30_program)
+			SV_PrivateWalkTrialResetGorilla (client, (int)command.sequence);
+		else
+			SV_ResetGorillaClient (client);
+	}
 	client->private_pmove_credit_msec -= command.msec;
-	if (native_continuation_completed || client->private_pmove_credit_msec < 0.000001)
+	if (native_boundary_completed || client->private_pmove_credit_msec < 0.000001)
 		client->private_pmove_credit_msec = 0;
 	client->cmd = command;
 	client->cmd.impulse = 0;
@@ -9249,6 +9540,35 @@ static void SV_Physics_Client (edict_t *ent, int num)
 		/* Bound catch-up work while preserving each command's QC lifecycle. */
 		for (queue_offset = 0; queue_offset < 8; queue_offset++)
 		{
+			if (SV_PrivateWalkTrialQ30Program () && client->active &&
+				SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK &&
+				client->private_cmd_queue_head < SV_PRIVATE_CMD_QUEUE_SIZE &&
+				client->private_cmd_queue_count <= SV_PRIVATE_CMD_QUEUE_SIZE)
+			{
+				const usercmd_t *head = NULL;
+				const char *failure;
+				if (queue_offset < client->private_cmd_queue_count)
+					head = &client->private_cmd_queue[
+						(client->private_cmd_queue_head + queue_offset) %
+						SV_PRIVATE_CMD_QUEUE_SIZE];
+				if ((failure = SV_PrivateWalkTrialFrameStateError (ent, client, head)) != NULL)
+				{
+					SV_PrivateWalkTrialDrop (client, failure);
+					break;
+				}
+				if (SV_PrivateWalkTrialQ30NeedsNative (ent, client, head))
+				{
+					if (queue_offset == 0)
+						SV_Physics_ClientSelectedNativeFrame (ent, num, client, false);
+					else
+					{
+						/* Earlier heads already moved. Preserve this unstarted
+						 * head for a fresh native frame on the next world tick. */
+						SV_PrivateWalkTrialDeferNativeHead (client);
+					}
+					break;
+				}
+			}
 			if (!client->active || !SV_PrivateWalkTrialSelected (client) ||
 				!SV_Physics_ClientPrivateWalkTrial (ent, client,
 					queue_offset, queue_offset == 0, &think_window))

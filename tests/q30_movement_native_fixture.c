@@ -1,9 +1,10 @@
-/* Exact installed q30 QC and real world hulls. Selection is injected only
- * here; production admission stays stock-only. Compare native and selected
- * dry takeoff/release using the same inputs and initial player state. */
+/* Exact installed q30 QC and real world hulls. Selection remains injected
+ * here, with admission closed. Exercise current-state/native dispatch and
+ * compare native or qualified selected movement from the same player state. */
 #include "../Quake/sv_phys.c"
 #include <assert.h>
 #include "native_engine_fixture.h"
+#include "native_liquid_fixture.h"
 
 typedef struct
 {
@@ -446,6 +447,271 @@ static void ordinary_replay_cases (edict_t *player, client_t *client, double tim
 	Cvar_SetQuick (&vr_movement_instant_stop, "0");
 }
 
+static void native_state_cases (edict_t *player, client_t *client, double time,
+	void *vars, size_t vars_size, void *globals, size_t globals_size)
+{
+	qcvm->time = time;
+	initialize_player (player, client);
+	/* Prepared lifecycle values exercise pre-begin classification without
+	 * changing the production admission gate or running QC in the predicate. */
+	set_global_float ("prethink", 0);
+	set_global_float ("postthink", 0);
+	set_global_float ("chaoscount", 0);
+	client->spawned = false;
+	assert (SV_PrivateWalkTrialBeginState (client) == SV_PRIVATE_MOVE_NATIVE);
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	assert (!client->spawned && global_float ("chaoscount") == 0);
+	client->spawned = true;
+	/* Real fresh native startup consumes actual QC once per world frame. */
+	for (int i = 0; i < 4; ++i)
+	{
+		step_player (player, client, true, i + 1, 0, 5);
+		if (i < 3)
+			assert (client->private_move_native_frame &&
+				client->private_pmove_credit_msec == 0);
+	}
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	puts ("Q30_NATIVE_STARTUP_CLASSIFICATION_PASSED");
+	const double dry_time = qcvm->time;
+	memcpy (vars, &player->v, vars_size);
+	memcpy (globals, qcvm->globals, globals_size);
+	const char *cameras[] = {"intermission_running", "secloc_running",
+		"cinematic_running", "cam_active"};
+	for (int i = 0; i < countof (cameras); ++i)
+	{
+		set_global_float (cameras[i], 1);
+		assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+		assert (SV_PrivateWalkTrialMotionHeld (client));
+		assert (!SV_PrivateWalkTrialFrameStateError (player, client, NULL));
+		set_global_float (cameras[i], 0);
+	}
+	const char *abilities[] = {"IT_ARTJUMPBOOTS", "IT_UPGRADE_GHOOK"};
+	for (int i = 0; i < countof (abilities); ++i)
+	{
+		player_float (player, "moditems")->_float = global_float (abilities[i]);
+		assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+		assert (!SV_PrivateWalkTrialFrameStateError (player, client, NULL));
+	}
+	player_float (player, "moditems")->_float = 0;
+	player->v.weapon = global_float ("IT_SUPER_SHOTGUN");
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	player_float (player, "oldgravity")->_float = .5f;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+	step_player (player, client, true, 1, 0, 5);
+	assert (player_float (player, "gravity")->_float == .5f &&
+		SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	const int types[] = {MOVETYPE_NONE, MOVETYPE_FLY, MOVETYPE_NOCLIP,
+		MOVETYPE_TOSS, MOVETYPE_BOUNCE, MOVETYPE_GIB};
+	for (int i = 0; i < countof (types); ++i)
+	{
+		player->v.movetype = types[i];
+		assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+	}
+	player->v.movetype = MOVETYPE_WALK;
+	player->v.maxs[2] = 16;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+	player->v.maxs[2] = NAN;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	/* Typed-definition and reference failures are component seams, not
+	 * mod-authored invalid-state claims. Check the real predicate's bounds. */
+	ddef_t *field = ED_FindField ("hookent");
+	const unsigned short oldtype = field->type, oldofs = field->ofs;
+	field->type = ev_float;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	field->type = oldtype;
+	field->ofs = qcvm->progs->entityfields;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	field->ofs = oldofs;
+	eval_t *hook = GetEdictFieldValue (player, field->ofs);
+	hook->edict = qcvm->edict_size - 1;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	hook->edict = -1;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	hook->edict = 0;
+	set_global_float ("prethink", NAN);
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_REJECTED);
+	set_global_float ("prethink", 1);
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	client->private_pmove_walk_selected = true;
+	player->v.groundentity = 1;
+	assert (SV_PrivateWalkTrialFrameStateError (player, client, NULL));
+	player->v.groundentity = 0;
+	client->private_move_native_frame = true;
+	player->v.movetype = 1234;
+	assert (SV_PrivateWalkTrialFrameStateError (player, client, NULL));
+	player->v.movetype = MOVETYPE_WALK;
+	assert (!SV_PrivateWalkTrialFrameStateError (player, client, NULL));
+	puts ("Q30_TYPED_NATIVE_STATE_PASSED");
+
+	/* Real native input can defer before QC. Actual q30 PreThink then zeros
+	 * velocity for a newly activated hold; resume must not add analog input. */
+	Cvar_SetQuick (&sv_gorilla, "1");
+	client->private_move_native_frame = true;
+	client->vr_gorilla_capable = true;
+	client->cmd.forwardmove = 200;
+	client->cmd.vr_gorilla.flags = VR_GORILLA_HANDS;
+	assert (SV_GorillaEligible (client));
+	SV_ClientThink ();
+	assert (client->vr_gorilla_move_deferred);
+	player_float (player, "pausetime")->_float = qcvm->time + 1;
+	pr_global_struct->self = EDICT_TO_PROG (player);
+	pr_global_struct->time = qcvm->time;
+	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
+	assert (VectorCompare (player->v.velocity, vec3_origin));
+	SV_GorillaResumeDeferredMove (client);
+	assert (!client->vr_gorilla_move_deferred &&
+		VectorCompare (player->v.velocity, vec3_origin) && !SV_GorillaEligible (client));
+	usercmd_t contact = {0};
+	contact.sequence = 20;
+	contact.msec = 5;
+	contact.vr_active = contact.vr_handpos_relative = true;
+	contact.vr_contact.flags = VR_WEAPON_CONTACT_LEFT_VALID;
+	contact.vr_contact.weapon = player->v.weapon;
+	for (int i = 1; i < MAX_MODELS; ++i)
+		if (sv.model_precache[i] &&
+			!strcmp (sv.model_precache[i], PR_GetString (player->v.weaponmodel)))
+		{
+			contact.vr_contact.modelindex = i;
+			break;
+		}
+	assert (contact.vr_contact.modelindex);
+	const double saved_realtime = realtime, saved_arrival = client->lastmovetime;
+	realtime = 100;
+	client->lastmovetime = contact.vr_contact_received = realtime;
+	Cvar_Set ("sv_weapon_collision", "1");
+	player_float (player, "pausetime")->_float = 0;
+	assert (SV_VRContactSampleValid (client, player, &contact));
+	player_float (player, "pausetime")->_float = qcvm->time + 1;
+	assert (!SV_VRContactSampleValid (client, player, &contact));
+	client->private_vr_contact_previous_valid = true;
+	assert (SV_VRContactProcessCommand (client, player, &contact));
+	assert (client->private_vr_contact_cursor_valid &&
+		client->private_vr_contact_last_sequence == 20 &&
+		!client->private_vr_contact_previous_valid);
+	player_float (player, "pausetime")->_float = 0;
+	assert (SV_GorillaEligible (client));
+	Cvar_Set ("sv_weapon_collision", "-1");
+	realtime = saved_realtime;
+	client->lastmovetime = saved_arrival;
+	client->vr_gorilla_capable = false;
+	Cvar_SetQuick (&sv_gorilla, "0");
+	puts ("Q30_QC_HOLD_DEFERRED_INPUT_PASSED");
+
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	usercmd_t room = {0}, saved_command = client->cmd;
+	room.vr_active = true;
+	room.sequence = 30;
+	room.msec = 5;
+	room.vr_roomscalemove[0] = 4;
+	link_t *prev = player->area.prev, *next = player->area.next;
+	vec3_t before;
+	VectorCopy (player->v.origin, before);
+	memcpy (vars, &player->v, vars_size);
+	const unsigned num_leafs = player->num_leafs;
+	int leaves[MAX_ENT_LEAFS];
+	memcpy (leaves, player->leafnums, sizeof (leaves));
+	const double frame_time = host_frametime;
+	assert (!SV_PrivateWalkTrialQ30NeedsNative (player, client, &room));
+	assert (player->area.prev == prev && player->area.next == next);
+	assert (!memcmp (&player->v, vars, vars_size));
+	assert (player->num_leafs == num_leafs &&
+		!memcmp (leaves, player->leafnums, sizeof (leaves)));
+	assert (!memcmp (&client->cmd, &saved_command, sizeof (saved_command)) &&
+		host_frametime == frame_time && VectorCompare (player->v.origin, before));
+	/* An originally unlinked owner must remain unlinked after probing. */
+	SV_UnlinkEdict (player);
+	assert (!SV_PrivateWalkTrialQ30NeedsNative (player, client, &room));
+	assert (!player->area.prev && !player->area.next);
+	SV_LinkEdict (player, false);
+	puts ("Q30_ROOMSCALE_PROBE_RESTORATION_PASSED");
+
+	/* Prepared wet position and stale QC-visible dry state, using the actual
+	 * BSP/hull lookup shared with stock. Compare fresh native dispatch order;
+	 * this is not an authored dry-to-wet map/roomscale traversal. */
+	vec3_t wet = {0};
+	assert (FindLiquidPosition (player, CONTENTS_WATER, 2, wet));
+	VectorCopy (wet, player->v.origin);
+	player->v.waterlevel = 0;
+	player->v.watertype = CONTENTS_EMPTY;
+	VectorClear (player->v.velocity);
+	SV_LinkEdict (player, false);
+	memcpy (vars, &player->v, vars_size);
+	memcpy (globals, qcvm->globals, globals_size);
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	assert (SV_PrivateWalkTrialQ30NeedsNative (player, client, NULL));
+	assert (player->v.waterlevel == 0 && player->v.watertype == CONTENTS_EMPTY &&
+		!memcmp (&player->v, vars, vars_size));
+	movement_sample_t native = step_player (player, client, false, 1, 0, 5);
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	movement_sample_t selected = step_player (player, client, true, 1, 0, 5);
+	assert (client->private_move_native_frame && client->private_pmove_credit_msec == 0);
+	assert (VectorCompare (native.origin, selected.origin) &&
+		VectorCompare (native.velocity, selected.velocity) && native.flags == selected.flags);
+	assert (player->v.waterlevel == 2 &&
+		SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+	puts ("Q30_FRESH_WATER_DISPATCH_ORDER_PASSED");
+
+	/* Prepared after-first-head boundary, not a real horizontal water entry.
+	 * Actual native QC/physics must consume the retained raw sample on the next
+	 * shorter world frame despite zero credit and a longer command duration. */
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	client->private_pmove_walk_selected = true;
+	client->private_completed_move = 1;
+	client->lastmovemessage = 2;
+	client->private_cmd_queue_count = 1;
+	client->private_cmd_queue_msec = 30;
+	usercmd_t pending = {0};
+	pending.sequence = 2;
+	pending.msec = 30;
+	pending.seconds = .030f;
+	pending.vr_active = true;
+	pending.vr_gorilla.flags = VR_GORILLA_HANDS;
+	client->private_cmd_queue[0] = pending;
+	client->private_pmove_credit_msec = 100;
+	SV_PrivateWalkTrialDeferNativeHead (client);
+	assert (!memcmp (&client->private_cmd_queue[0], &pending, sizeof (pending)) &&
+		client->private_cmd_queue_count == 1 && client->private_completed_move == 1 &&
+		client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence == 1);
+	client->vr_gorilla_capable = true;
+	Cvar_SetQuick (&sv_gorilla, "1");
+	host_frametime = .010;
+	pr_global_struct->frametime = .010f;
+	SV_Physics_Client (player, 1);
+	assert (client->active && client->private_completed_move == 2 &&
+		client->private_move_native_frame && client->private_pmove_credit_msec == 0 &&
+		client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence == 2 &&
+		client->vr_gorilla_state.initialized);
+	SV_FinishPrivateUsercmds ();
+	assert (!client->private_cmd_queue_count);
+	/* The same handoff must retain a pre-existing relocation cutoff, rather
+	 * than revive a pose accepted at the old origin. Selection/QC are still
+	 * component-prepared; raw sample consumption is the actual native owner. */
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	client->private_pmove_walk_selected = true;
+	client->private_completed_move = 1;
+	client->lastmovemessage = 2;
+	client->private_cmd_queue_count = 1;
+	client->private_cmd_queue_msec = 30;
+	client->private_cmd_queue[0] = pending;
+	client->vr_gorilla_last_sequence = 2;
+	client->vr_gorilla_cursor_valid = true;
+	SV_PrivateWalkTrialDeferNativeHead (client);
+	assert (client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence == 2);
+	host_frametime = .010;
+	pr_global_struct->frametime = .010f;
+	SV_Physics_Client (player, 1);
+	assert (client->active && client->private_completed_move == 2 &&
+		client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence == 2 &&
+		!client->vr_gorilla_state.initialized);
+	SV_FinishPrivateUsercmds ();
+	assert (!client->private_cmd_queue_count);
+	client->vr_gorilla_capable = false;
+	Cvar_SetQuick (&sv_gorilla, "0");
+	puts ("Q30_RETAINED_NATIVE_HEAD_GORILLA_PASSED pending consumed / invalidated skipped");
+}
+
 int main (int argc, char **argv)
 {
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
@@ -463,6 +729,8 @@ int main (int argc, char **argv)
 	const size_t globals_size = qcvm->progs->numglobals * sizeof (float);
 	void *vars_checkpoint = Mem_Alloc (vars_size);
 	void *globals_checkpoint = Mem_Alloc (globals_size);
+	native_state_cases (player, client, baseline_time, vars_checkpoint,
+		vars_size, globals_checkpoint, globals_size);
 	const char *cases[] = {"low-release", "boots", "ladder-release", "ladder-rejump"};
 	for (int scenario = 0; scenario < countof (cases); ++scenario)
 	{
@@ -508,7 +776,8 @@ int main (int argc, char **argv)
 					assert (sample->velocity[2] > 0 && !(sample->flags & FL_ONGROUND));
 				else
 					assert (sample->ladder == 0);
-				if (selected && scenario < 2 && frame == 0)
+				if (selected && scenario < 2 && frame == 0 &&
+					SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK)
 					selected_maintenance (player, client);
 			}
 		}
@@ -563,7 +832,8 @@ int main (int argc, char **argv)
 				for (int axis = 0; axis < 3; ++axis)
 					assert (isfinite (sample->origin[axis]) && isfinite (sample->velocity[axis]));
 				assert (sample->health > 0 && !sample->deadflag && sample->completed == frame + 1);
-				if (selected && !frame)
+				if (selected && !frame &&
+					SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK)
 					selected_maintenance (player, client);
 			}
 		}
@@ -589,12 +859,15 @@ int main (int argc, char **argv)
 	qcvm->time = baseline_time;
 	Cvar_SetQuick (&sv_friction, "4");
 	initialize_player (player, client);
+	for (int i = 0; i < 4; ++i)
+		step_player (player, client, false, i + 1, 0, 5);
+	const double paired_time = qcvm->time;
 	memcpy (vars_checkpoint, &player->v, vars_size);
 	memcpy (globals_checkpoint, qcvm->globals, globals_size);
 	step_player (player, client, false, 1, BUTTON_JUMP, 5);
 	movement_sample_t native = step_player (player, client, false, 2, 0, 5);
 	restore_player (player, client, vars_checkpoint, vars_size,
-		globals_checkpoint, globals_size, baseline_time);
+		globals_checkpoint, globals_size, paired_time);
 	client->private_pmove_walk_selected = true;
 	client->private_cmd_queue_count = 2;
 	client->private_cmd_queue_msec = 10;
@@ -606,7 +879,7 @@ int main (int argc, char **argv)
 		command->sequence = i + 1;
 		command->msec = 5;
 		command->seconds = .005f;
-		command->servertime = baseline_time + i * .005;
+		command->servertime = paired_time + i * .005;
 		command->buttons = i ? 0 : BUTTON_JUMP;
 	}
 	host_frametime = .01;

@@ -70,11 +70,14 @@ inputs, pre-QC VR ordering, exact write set and end-to-end acceptance before
 production edits. Its Astra review changed the ordering contract; ordinary
 q30 policy transport, complete movement inputs and the actual replay consumer
 are now implemented and pass local component checks. Ordinary q30 admission and
-complete native transitions remain unimplemented; the plan records the exact
+complete native transitions remain incomplete; the plan records the exact
 remaining vertical and traversal requirements.
 
 The next [q30 native-state and admission plan](predictive-q30-transitions-2.0-plan.md)
 records the actual state inventory, fresh-native reuse, bounded write set and
-normal-session acceptance before production edits. Typed classification comes
-first; the roomscale/callback phase decision is under local Astra review before
-its implementation. Normal admission stays closed until that contract works.
+normal-session acceptance before production edits. Typed classification and
+bounded native dispatch are implemented and locally reviewed by Astra; the
+[checkpoint review](predictive-q30-transition-implementation-review.md) records
+software evidence and limits, including a reproduced preexisting stock-liquid
+assertion. Callback closure, actual traversal and normal admission remain open.
+Revise the plan before implementing any newly expanded phase contract.

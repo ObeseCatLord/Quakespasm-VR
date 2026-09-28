@@ -1,6 +1,7 @@
 # q30 native states, transitions and normal admission
 
-Status: preimplementation plan for the remaining stages of
+Status: implementation in progress. This plan preceded the typed-classification
+and bounded-dispatch checkpoint of
 [ordinary q30 replay](predictive-q30-replay-2.0-plan.md). Policy transport and
 the replay consumer are committed at `8a0871c1`; normal q30 admission remains
 closed. This plan retains the full [AD-family outcome](predictive-mod-admission-2.0-plan.md).
@@ -164,7 +165,33 @@ still uses only completed levels and receives no uncompleted head. This is
 smaller than a second pending-native scheduler/latch. Verify that distinction
 in the final code review and retained-head checks.
 
-The review changed the restoration and deferred-input contracts; it was not
-just editorial approval. Final implementation review and consolidated acceptance
-are still required. The current classifier/probe checkpoint will retain closed
-q30 admission rather than claim that those components complete the feature.
+The review changed the restoration and deferred-input contracts. The bounded
+checkpoint has since passed final local Astra implementation review and focused
+Linux acceptance, with a separately reproduced stock-liquid failure recorded
+in the [implementation review](predictive-q30-transition-implementation-review.md).
+The broader feature still requires callback closure, traversal and normal
+admission acceptance plus final review of those stages.
+
+## Implemented checkpoint and next work
+
+Typed current-state and pre-begin predicates, native hold/contact boundaries,
+dispatch-only water/roomscale lookahead, later-head deferral and sticky
+after-movement completion are implemented in the existing owners. The hand
+reset preserves an existing relocation cutoff while retaining unstarted raw
+samples. Normal q30 admission and replay permission remain closed.
+
+The exact-q30 fixture passes actual native startup/ordinary return, staged typed
+ability/reference cases, actual QC hold cancellation, valid-versus-held contact,
+real-BSP probe restoration, native water observation order and paired retained/
+invalidated raw samples. The seven existing ordinary replay comparisons pass.
+Linux production build, stock/q30 negotiation and stock mixed-session checks
+pass. Stock water/VR at 25 ms passes; its 10 ms ledge assertion reproduces with the
+pre-checkpoint physics/input sources and remains unresolved. Component fixtures
+do not establish actual horizontal water entry or normal q30 admission.
+
+Next, resolve living qualification loss first created by PreThink or scheduled
+Think using the existing remaining-phase owners. Prove ordinary callback
+closure and actual roomscale/trigger traversal before enabling the normal
+offer/spawn/begin/serialization/parser/replay vertical. Revise and commit this
+plan before expanding that contract; do not introduce generic late ClientThink,
+another world interval or a second movement scheduler.

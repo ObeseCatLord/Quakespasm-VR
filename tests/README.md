@@ -382,6 +382,38 @@ collection reach uses the actual pre-solver velocity limit. Server physent colle
 the replay input seam; these cases do not execute normal signon or snapshot
 serialization and do not qualify steps, ledges, abilities or arbitrary triggers.
 
+The native-classification/dispatch follow-up uses the same build/run and requires
+`Q30_NATIVE_STARTUP_CLASSIFICATION_PASSED`, `Q30_TYPED_NATIVE_STATE_PASSED`,
+`Q30_QC_HOLD_DEFERRED_INPUT_PASSED`, `Q30_ROOMSCALE_PROBE_RESTORATION_PASSED`,
+`Q30_FRESH_WATER_DISPATCH_ORDER_PASSED` and
+`Q30_RETAINED_NATIVE_HEAD_GORILLA_PASSED`. Prepared pre-begin globals exercise the
+shared observational predicate; actual q30 QC then completes three native
+startup frames and reaches ordinary WALK. Ability/camera/mode/hull/definition/
+reference probes are explicitly staged state checks. Existing boots/ladder
+cases now use fresh native dispatch when classified incompatible; they no longer
+claim that those branches execute ordinary selected PMove. Maintenance assertions
+apply to qualified ordinary states.
+
+Actual PreThink zeros velocity for a staged hold after native input defers;
+resume cancels that input. A contact sample first qualifies with no hold, then
+fails specifically under the hold while the actual contact cursor advances and
+continuity resets. The probe check preserves exact linked-list neighbors,
+body/command/duration/PVS and originally unlinked membership on real BSP hulls.
+The unchanged stock liquid-position finder is shared via
+`native_liquid_fixture.h`. A prepared real wet position with stale dry QC values
+compares selected fresh-native dispatch against actual native movement exactly,
+including restored water-observation order.
+
+An additional prepared after-first-head seam retains a 30 ms raw command, clears
+credit and executes the actual native owner on the next 10 ms world frame. An
+ordinary pending Gorilla sample initializes the hand solver; a paired sample
+with a pre-existing relocation cutoff stays skipped while movement completes.
+This qualifies cutoff/retained-sample composition, **not actual later-head
+horizontal dry-to-wet traversal**. Invalid ground/current-body tests qualify the
+observational validator, not a composed malformed PostThink execution. Real
+roomscale/trigger traversal, before-movement callback closure and normal q30
+spawn/begin/full-parser/replay remain required before admission.
+
 The existing negotiation fixture can also run against this isolated q30 root:
 
 ```sh
@@ -402,6 +434,9 @@ consumer, preserving height120/0/4000/1e30 and velocity limit. Normal q30
 admission stays stock-only and server replay permission stays false. This
 fixture explicitly verifies that refusal; it does not manufacture a successful
 ordinary q30 replay session. Existing stock negotiation/demo checks still run.
+Its ordinary writer seam explicitly prepares initialized QC lifecycle and
+matching skill state for the shared classifier; those assignments are not a
+startup/admission claim.
 
 The mixed native fixture's `-velocityseeds` option checks actual serialized
 signed-short velocity boundaries through the full parser and replay gate.

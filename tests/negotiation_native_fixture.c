@@ -299,6 +299,22 @@ static void DemoEntityPackets (qboolean selected)
 	VectorSet (client->edict->v.maxs, 16, 16, 32);
 	client->edict->v.waterlevel = 0;
 	client->edict->v.teleport_time = 0;
+	/* Prepared ordinary QC lifecycle for the existing injected writer seam.
+	 * Native startup/admission belongs to the actual-QC/session fixtures. */
+	const char *lifecycle_names[] = {"prethink", "postthink", "chaoscount", "oskill"};
+	float lifecycle_values[countof (lifecycle_names)] = {0};
+	if (selected && SV_PrivateWalkTrialQ30Program ())
+	{
+		for (int i = 0; i < countof (lifecycle_names); ++i)
+		{
+			ddef_t *global = ED_FindGlobal (lifecycle_names[i]);
+			assert (global && (global->type & ~DEF_SAVEGLOBAL) == ev_float);
+			lifecycle_values[i] = G_FLOAT (global->ofs);
+			G_FLOAT (global->ofs) = i == 2 ? 3 :
+				i == 3 ? G_FLOAT (ED_FindGlobal ("skill")->ofs) : 1;
+		}
+		assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	}
 	client->vr_gorilla_capable = true;
 	client->vr_gorilla_cursor_valid = true;
 	client->vr_gorilla_last_sequence = 19;
@@ -356,7 +372,11 @@ static void DemoEntityPackets (qboolean selected)
 	cls.demofile = NULL;
 	cls.demoplayback = false;
 	if (selected && SV_PrivateWalkTrialQ30Program ())
+	{
 		Q30PolicySnapshots (client, bytes, sizeof (bytes));
+		for (int i = 0; i < countof (lifecycle_names); ++i)
+			G_FLOAT (ED_FindGlobal (lifecycle_names[i])->ofs) = lifecycle_values[i];
+	}
 	Mem_Free (cl.entities);
 	cl.entities = NULL;
 	cl.num_entities = cl.max_edicts = 0;

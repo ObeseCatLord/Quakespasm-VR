@@ -509,6 +509,7 @@ qboolean SV_GorillaEligible (client_t *client)
 	if (customphysics && customphysics->function)
 		return false;
 	return ent->v.health > 0 && !ent->v.deadflag &&
+		!SV_PrivateWalkTrialMotionHeld (client) &&
 		((int)ent->v.movetype == MOVETYPE_WALK ||
 		 (int)ent->v.movetype == MOVETYPE_FLY) &&
 		!client->vr_gorilla_ladder_frame && !SV_GorillaNativeLadder (ent);
@@ -548,7 +549,7 @@ static void SV_GorillaConsumeDeferredMove (client_t *client,
 		(client->edict->v.movetype != MOVETYPE_WALK &&
 		 client->edict->v.movetype != MOVETYPE_FLY &&
 		 client->edict->v.movetype != MOVETYPE_NOCLIP) ||
-		client->edict->v.health <= 0)
+		client->edict->v.health <= 0 || SV_PrivateWalkTrialMotionHeld (client))
 	{
 		client->vr_gorilla_move_deferred = false;
 		return;

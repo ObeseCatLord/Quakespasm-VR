@@ -1,8 +1,9 @@
 # Ordinary q30 command prediction and replay
 
-Status: planned implementation in progress following exact-QC decision proof `489dfe5e`.
-No production q30 admission, policy negotiation or replay consumer is implemented
-by that proof. This is the next coherent slice of the
+Status: implementation in progress following exact-QC decision proof `489dfe5e`.
+Policy negotiation and replay consumption are implemented at `8a0871c1`;
+the native-state checkpoint below follows them. Normal q30 admission remains
+closed. This is a coherent slice of the
 [AD-family plan](predictive-mod-admission-2.0-plan.md); it retains that plan's
 complete native-state/session requirements and later AD/Mjolnir/cooperative-QC
 scope. It does not replace the migration's movement or protocol owners.
@@ -173,10 +174,12 @@ Stock/public mixed checks cover actual receipt/QC/physics/full-parser/replay,
 startup pause, arrival gaps, native return and staged encoded velocity edges.
 Authored physics remains unchanged when the presentation seed saturates.
 
-This is a component-stage checkpoint, **not ordinary q30 activation**. Shared
-native classification, startup/ability/hold/camera and phase-aware transitions,
-raw Gorilla qualification, real step/ledge/trigger traversals and the smallest
-normal offer/spawn/begin/session vertical below remain required. q30 admission
+This is a component-stage checkpoint, **not ordinary q30 activation**. The
+subsequent [native-transition checkpoint](predictive-q30-transition-implementation-review.md)
+implements shared typed classification, startup/ability/hold/camera predicates,
+bounded dispatch and raw Gorilla hold qualification. Complete callback-phase
+transitions, real step/ledge/trigger traversals and the smallest normal
+offer/spawn/begin/session vertical below remain required. q30 admission
 and prediction permission are still closed. Wider AD/Mjolnir and cooperative-QC
 compatibility remain in the parent plan; they are not retired by these checks.
 
