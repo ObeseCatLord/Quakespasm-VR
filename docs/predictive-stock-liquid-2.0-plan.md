@@ -289,3 +289,54 @@ event frames/times, with native depth 2 receiving 20 damage and selected depth
 this depth-dependent gameplay difference; health tolerance was not widened,
 damage was not suppressed and no coordinates were forced. This is a PreThink
 health/depth/deadline observation, not a count of nested `T_Damage` calls.
+
+### Ownership implementation review
+
+Fresh local Astra (`gpt-6-astra` / `max`, verified effective model/effort)
+reviewed the [bounded implementation brief](predictive-stock-liquid-ownership-implementation-astra-brief.md)
+against the production diff. Main spot-checked the QC interpreter's float
+addition and both provisional normalization branches before integrating advice.
+
+| Finding | Disposition |
+| --- | --- |
+| Double-clock addition then float conversion does not reproduce QC's float-clock addition. | Adopted. The witness now adds `2.0f` after converting the supplied clock to float, matching actual QC. Add actual pinned quiet and command ledge probes at rounding-boundary clocks; nominal command durations alone are insufficient. |
+| Quiet velocity/deadline normalization incorrectly couples independent Think outputs. | Adopted. Correct untouched velocity independently. Release an untouched provisional deadline even when Think clears its flag; preserve a changed deadline or semantic epoch. Command normalization gets the same independent deadline treatment. Composition probes use actual scheduled Think followed by explicit prepared field outputs, not a claim those writes occur in ordinary stock QC. |
+| Final command reconciliation does not observe every later entity callback. | Accepted bounded limitation. The existing identified semantic hook cancels timers immediately, including later world teleports and equal-value authored deadlines. Prove that hook with a later-world callback composition/full snapshot; do not add a generic journal or callback framework for an unproven stock writer. Arbitrary unsupported later flag/deadline writers remain unqualified. |
+| Existing ownership architecture is sufficient. | Adopted. Keep the command/QC/PMove owners, transient witnesses and existing semantic epoch; no extra persistent policy or duplicated state. |
+
+A final fresh Astra Max correction review verified the float-first addition
+and independent quiet/command normalization, finding no remaining blocker in
+that narrow diff. It confirmed the prepared callback/link/time coverage claims
+are appropriately bounded. Complete independent-field qualification still
+needs command-time Think counterparts and a velocity-only takeover case;
+quiet composition alone must not be described as full callback coverage.
+That gap does not authorize a broader state owner or wet release.
+
+Software evidence after coherent correction: Linux SDL3 `-Werror` build;
+focused water/callback and pause/semantic-relocation ASan/UBSan fixtures;
+admitted 10/25/100-ms ownership contracts; actual pinned rounding-boundary
+quiet/command acquisition; independent quiet Think composition; active/quiet
+teleports, wet-destination hold and no reacquisition, no-hold setpos and later
+identified equal-deadline snapshot commitment. Final normal selected water,
+slime, lava, VR duplicate-roomscale and 100-ms `e1m2` ledge runs retain the
+existing wire-derived pending-shadow checks. Mixed startup pause, arrival-gap,
+lost traffic, wrap, native flight and death/respawn acceptance also passes.
+
+The final admitted contract passes partial ASan/UBSan at both nominal 25 ms
+and rounding-boundary clocks, with leak detection disabled. Combined
+physics/replay/snapshot/parser/demo sources are instrumented, other engine
+objects normal; the inherited fixture-only format warning exception remains.
+This does not imply whole-engine sanitizer coverage or live wet prediction.
+An initial nominal late-callback fixture counted non-target trigger touches;
+its supplied-time override/count now explicitly matches the target player as
+well as the trigger/function, without changing production or loosening the
+single-target assertion.
+
+A read-only direct-address/store scan of the actual installed stock program
+finds `teleport_time` writes in `CheckWaterJump` and `teleport_touch`, and
+`dmgtime` writes in `WaterMove`. This supports keeping the existing semantic
+hook; it is not alias/interprocedural exhaustiveness or arbitrary-mod evidence.
+Broader wet boundary/replay, drowning, batching and command-time independent
+Think combinations remain the next qualification stage. Public/native and
+selected defaults, authority/capability profile and both live fluid gates are
+unchanged by this correction.

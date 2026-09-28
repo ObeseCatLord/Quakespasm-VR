@@ -1150,7 +1150,7 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 /* Semantic relocation is narrower than contact invalidation: QuakeC may
  * adjust a player with setorigin without intending a teleport. The explicit
  * server relocation owners call this after committing a new location. */
-void SV_PrivatePlayerTeleported (edict_t *ent)
+void SV_PrivatePlayerTeleported (edict_t *ent, qboolean preserve_deadline)
 {
 	if (!ent)
 		return;
@@ -1163,6 +1163,17 @@ void SV_PrivatePlayerTeleported (edict_t *ent)
 		client->private_move_discontinuity_epoch++;
 		client->private_move_discontinuity_reason =
 			MOVEACK_DISCONTINUITY_RESET_TELEPORT;
+		if (SV_PrivateWalkTrialSelected (client))
+		{
+			client->private_pmove_jump_secs = 0.0f;
+			client->private_pmove_waterjump_secs = 0.0f;
+			ent->v.flags = (int)ent->v.flags & ~FL_WATERJUMP;
+			/* Explicit setpos/recovery/co-op relocation has no new hold.
+			 * Identified QC teleport_touch owns its authored deadline, even
+			 * when numerically equal to an in-flight solver deadline. */
+			if (!preserve_deadline)
+				ent->v.teleport_time = 0.0f;
+		}
 		SV_GorillaInvalidateAccepted (client);
 		return;
 	}

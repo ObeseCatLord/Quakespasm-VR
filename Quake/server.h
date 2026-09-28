@@ -597,7 +597,7 @@ qboolean SV_ClientInstantStopEnabled (const client_t *client);
 void SV_GorillaLatchLadder (client_t *client, qboolean begin_frame);
 void SV_GorillaResumeDeferredMove (client_t *client);
 void SV_GorillaConsumeWater (client_t *client, qboolean swim_intent);
-void SV_PrivatePlayerTeleported (edict_t *ent);
+void SV_PrivatePlayerTeleported (edict_t *ent, qboolean preserve_deadline);
 void SV_ResetPrivateVRContactState (client_t *client);
 void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin);
 void SV_VRContactPlayerRelocated (edict_t *ent);

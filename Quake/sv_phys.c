@@ -5112,7 +5112,7 @@ static void SV_CoopRespawnRelocate (edict_t *ent, edict_t *anchor,
 	VectorCopy (angles, ent->v.v_angle);
 	ent->v.fixangle = true;
 	SV_LinkEdict (ent, false);
-	SV_PrivatePlayerTeleported (ent);
+	SV_PrivatePlayerTeleported (ent, false);
 }
 
 qboolean SV_CoopRespawnTeleportToPlayer (edict_t *ent, edict_t *target)
@@ -7685,7 +7685,7 @@ static void SV_PrivateWalkTrialDrop (client_t *client, const char *reason)
  * A zeroed velocity may be an intentional teleport pause and stays zero. */
 static void SV_PrivateWalkTrialReconcileQCWater (edict_t *ent,
 	const vec3_t before, int before_flags, int before_waterlevel,
-	float before_health, float before_teleport_time, float seconds)
+	float before_health, float before_teleport_time, float seconds, vec3_t corrected)
 {
 	vec3_t delta, stock_drag;
 	const int after_flags = (int)ent->v.flags;
@@ -7697,7 +7697,10 @@ static void SV_PrivateWalkTrialReconcileQCWater (edict_t *ent,
 		 fabsf (ent->v.velocity[2] - 225.0f) < MOVE_EPSILON);
 
 	if (VectorCompare (ent->v.velocity, vec3_origin))
+	{
+		VectorClear (corrected);
 		return;
+	}
 	VectorSubtract (ent->v.velocity, before, delta);
 	VectorClear (stock_drag);
 	if (before_waterlevel > 0 && !(before_flags & FL_WATERJUMP) &&
@@ -7718,7 +7721,45 @@ static void SV_PrivateWalkTrialReconcileQCWater (edict_t *ent,
 	}
 	else if (qc_waterjump)
 		delta[2] -= 225.0f - (before[2] + stock_drag[2]);
-	VectorAdd (before, delta, ent->v.velocity);
+	VectorAdd (before, delta, corrected);
+}
+
+/* Only this witnessed stock PreThink write is provisional. A flag/deadline
+ * alone is not a private waterjump seed, and a relocation is never adapted
+ * as stock movement. Weapon Think still sees the original QC result. */
+static qboolean SV_PrivateWalkTrialProvisionalWaterjump (edict_t *ent,
+	client_t *client, int before_flags, int before_waterlevel,
+	unsigned short before_epoch)
+{
+	return !SV_PrivateWalkTrialQ30Program () &&
+		client->private_pmove_waterjump_secs == 0.0f &&
+		client->private_move_discontinuity_epoch == before_epoch &&
+		before_waterlevel == 2 && !(before_flags & FL_WATERJUMP) &&
+		((int)ent->v.flags & FL_WATERJUMP) &&
+		ent->v.teleport_time == (float)qcvm->time + 2.0f &&
+		fabsf (ent->v.velocity[2] - 225.0f) < MOVE_EPSILON;
+}
+
+/* Observe the existing callback boundary, not another persistent movement
+ * owner. Explicit teleport owners already decide whether their deadline is
+ * authored or released. Never restore a captured timer over their epoch. */
+static void SV_PrivateWalkTrialWaterjumpCallbacks (edict_t *ent, client_t *client,
+	int expected_flags, float expected_deadline, unsigned short expected_epoch,
+	float *jump_secs, float *waterjump_secs)
+{
+	if (client->private_move_discontinuity_epoch != expected_epoch)
+	{
+		*jump_secs = *waterjump_secs = 0.0f;
+		ent->v.flags = (int)ent->v.flags & ~FL_WATERJUMP;
+	}
+	else if ((((int)ent->v.flags ^ expected_flags) & FL_WATERJUMP) ||
+		ent->v.teleport_time != expected_deadline)
+	{
+		if (*waterjump_secs > 0.0f && ent->v.teleport_time == expected_deadline)
+			ent->v.teleport_time = 0.0f; // flag-only cancellation of the owned deadline
+		*waterjump_secs = 0.0f;
+		ent->v.flags = (int)ent->v.flags & ~FL_WATERJUMP;
+	}
 }
 
 typedef enum
@@ -7804,10 +7845,14 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	usercmd_t command, ownership_command, *queued = NULL;
 	double saved_host_frametime = host_frametime;
 	float saved_qc_frametime = pr_global_struct->frametime;
-	vec3_t bounds[2], prethink_velocity, preweapon_velocity;
+	vec3_t bounds[2], prethink_velocity, preweapon_velocity, corrected_velocity;
 	float seconds, prethink_health, prethink_teleport_time, postthink_teleport_time;
 	float premove_teleport_time;
+	float premove_waterjump_secs;
 	int prethink_flags, prethink_groundentity, prethink_waterlevel;
+	int postthink_flags, solver_flags;
+	float solver_deadline;
+	unsigned short prethink_epoch, solver_epoch;
 	qboolean qc_waterjump_started;
 	qboolean run_command = false, was_grounded = false, weapon_alive;
 	qboolean q30_program = false;
@@ -7930,6 +7975,12 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		host_frametime = 0;
 		pr_global_struct->frametime = 0;
 		SV_ClientUpdateAnglesForClient (client);
+		VectorCopy (ent->v.velocity, prethink_velocity);
+		prethink_flags = (int)ent->v.flags;
+		prethink_waterlevel = (int)ent->v.waterlevel;
+		prethink_health = ent->v.health;
+		prethink_teleport_time = ent->v.teleport_time;
+		prethink_epoch = client->private_move_discontinuity_epoch;
 		pr_global_struct->time = qcvm->time;
 		pr_global_struct->self = EDICT_TO_PROG (ent);
 		SV_CoopRespawnRefreshClientInventory (ent);
@@ -7947,6 +7998,15 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 				failure = "terminal maintenance PreThink continuation failed";
 			goto cleanup;
 		}
+		qc_waterjump_started = SV_PrivateWalkTrialProvisionalWaterjump (ent,
+			client, prethink_flags, prethink_waterlevel, prethink_epoch);
+		postthink_flags = (int)ent->v.flags;
+		postthink_teleport_time = ent->v.teleport_time;
+		VectorCopy (ent->v.velocity, preweapon_velocity);
+		if (qc_waterjump_started)
+			SV_PrivateWalkTrialReconcileQCWater (ent, prethink_velocity,
+				prethink_flags, prethink_waterlevel, prethink_health,
+				prethink_teleport_time, 0.0f, corrected_velocity);
 		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 			goto cleanup;
 		/* Scheduled Think follows the host clock even without a move command. */
@@ -7970,6 +8030,23 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 				failure = "terminal maintenance weapon Think continuation failed";
 			goto cleanup;
 		}
+		/* A new QC-only ledge write cannot acquire command-time ownership.
+		 * Ordinary active/idle quiet behavior remains untouched. */
+		if (qc_waterjump_started &&
+			client->private_move_discontinuity_epoch == prethink_epoch)
+		{
+			if (VectorCompare (ent->v.velocity, preweapon_velocity))
+				VectorCopy (corrected_velocity, ent->v.velocity);
+			ent->v.flags = (int)ent->v.flags & ~FL_WATERJUMP;
+			if (ent->v.teleport_time == postthink_teleport_time)
+				ent->v.teleport_time = prethink_teleport_time;
+		}
+		SV_PrivateWalkTrialWaterjumpCallbacks (ent, client, prethink_flags,
+			prethink_teleport_time, prethink_epoch,
+			&client->private_pmove_jump_secs, &client->private_pmove_waterjump_secs);
+		solver_flags = (int)ent->v.flags;
+		solver_deadline = ent->v.teleport_time;
+		solver_epoch = client->private_move_discontinuity_epoch;
 		if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 			goto cleanup;
 		SV_LinkEdict (ent, true);
@@ -7999,6 +8076,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			goto cleanup;
 		}
 		SV_CoopSharedObserveClientDeath (ent, NUM_FOR_EDICT (ent));
+		SV_PrivateWalkTrialWaterjumpCallbacks (ent, client, solver_flags,
+			solver_deadline, solver_epoch, &client->private_pmove_jump_secs,
+			&client->private_pmove_waterjump_secs);
 		if (client->spawned && client->edict == ent)
 			SV_CoopRespawnRefreshClientInventory (ent);
 		ent->v.impulse = 0;
@@ -8036,6 +8116,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	prethink_waterlevel = (int)ent->v.waterlevel;
 	prethink_health = ent->v.health;
 	prethink_teleport_time = ent->v.teleport_time;
+	prethink_epoch = client->private_move_discontinuity_epoch;
 	was_grounded = (prethink_flags & FL_ONGROUND) != 0;
 	q30_program = SV_PrivateWalkTrialQ30Program ();
 	/* Exact q30 QuakeC owns both press and release. A short, low takeoff can
@@ -8069,13 +8150,31 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		terminal_completed = terminal_native_completed = true;
 		goto complete_terminal_command;
 	}
-	qc_waterjump_started = !(prethink_flags & FL_WATERJUMP) &&
-		((int)ent->v.flags & FL_WATERJUMP);
+	qc_waterjump_started = SV_PrivateWalkTrialProvisionalWaterjump (ent,
+		client, prethink_flags, prethink_waterlevel, prethink_epoch);
+	postthink_flags = (int)ent->v.flags;
 	postthink_teleport_time = ent->v.teleport_time;
 	/* Weapon Think must see native QC's velocity. PMove-only drag/jump
 	 * reconciliation runs only if that callback survives and leaves velocity
 	 * alone; a callback velocity write remains authoritative. */
 	SV_CheckVelocity (ent);
+	VectorCopy (ent->v.velocity, corrected_velocity);
+	if (!q30_program && client->private_move_discontinuity_epoch == prethink_epoch)
+	{
+		if (prethink_waterlevel > 0 || (postthink_flags & FL_WATERJUMP))
+			SV_PrivateWalkTrialReconcileQCWater (ent, prethink_velocity,
+				prethink_flags, prethink_waterlevel, prethink_health,
+				prethink_teleport_time, seconds, corrected_velocity);
+		/* Capture dry impulse eligibility before water recategorization or
+		 * Think changes flags/buttons/deadlines. Exact q30 owns its impulse. */
+		if (prethink_waterlevel < 2 && was_grounded && (command.buttons & 2) &&
+			postthink_teleport_time <= qcvm->time &&
+			(prethink_teleport_time <= qcvm->time ||
+			 postthink_teleport_time == prethink_teleport_time) &&
+			!(VectorCompare (corrected_velocity, vec3_origin) &&
+			  !VectorCompare (prethink_velocity, vec3_origin)))
+			VectorCopy (prethink_velocity, corrected_velocity);
+	}
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
 	/* Weapon Think is scheduled against the world frame, not the packet's
@@ -8111,24 +8210,19 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		terminal_completed = terminal_native_completed = true;
 		goto complete_terminal_command;
 	}
-	if (VectorCompare (ent->v.velocity, preweapon_velocity))
+	if (client->private_move_discontinuity_epoch == prethink_epoch &&
+		VectorCompare (ent->v.velocity, preweapon_velocity))
+		VectorCopy (corrected_velocity, ent->v.velocity);
+	if (qc_waterjump_started &&
+		client->private_move_discontinuity_epoch == prethink_epoch)
 	{
-		if (!q30_program &&
-			(prethink_waterlevel > 0 || ((int)ent->v.flags & FL_WATERJUMP)))
-			SV_PrivateWalkTrialReconcileQCWater (ent, prethink_velocity,
-				prethink_flags, prethink_waterlevel, prethink_health,
-				prethink_teleport_time, seconds);
-		/* Stock QC owns jump sounds and flags; PMove owns its dry impulse.
-		 * Exact q30 QuakeC owns its own impulse. Preserve a teleporter's
-		 * deliberate pause at zero velocity. */
-		if (!q30_program && prethink_waterlevel < 2 && was_grounded && (command.buttons & 2) &&
-			ent->v.teleport_time <= qcvm->time &&
-			(prethink_teleport_time <= qcvm->time ||
-			 ent->v.teleport_time == prethink_teleport_time) &&
-			!(VectorCompare (ent->v.velocity, vec3_origin) &&
-			  !VectorCompare (prethink_velocity, vec3_origin)))
-			VectorCopy (prethink_velocity, ent->v.velocity);
+		ent->v.flags = (int)ent->v.flags & ~FL_WATERJUMP;
+		if (ent->v.teleport_time == postthink_teleport_time)
+			ent->v.teleport_time = prethink_teleport_time;
 	}
+	SV_PrivateWalkTrialWaterjumpCallbacks (ent, client, prethink_flags,
+		prethink_teleport_time, prethink_epoch,
+		&client->private_pmove_jump_secs, &client->private_pmove_waterjump_secs);
 	SV_CheckVelocity (ent);
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
@@ -8148,7 +8242,6 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	/* SV_AirMove ignores backward input during the stock teleporter's
 	 * teleport_time window. Waterjump is a separate native movement path. */
 	pmove.block_teleport_backmove =
-		!((int)ent->v.flags & FL_WATERJUMP) &&
 		client->private_pmove_waterjump_secs == 0.0f &&
 		qcvm->time < ent->v.teleport_time;
 	pmove.cmd = client->cmd;
@@ -8194,6 +8287,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	 * restore an earlier deadline over that callback when PMove clears a
 	 * waterjump timer. */
 	premove_teleport_time = ent->v.teleport_time;
+	premove_waterjump_secs = client->private_pmove_waterjump_secs;
 	if (was_grounded || ((int)ent->v.flags & FL_ONGROUND))
 	{
 		int groundprog = (int)ent->v.groundentity;
@@ -8311,12 +8405,11 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	else
 	{
 		ent->v.flags = (int)ent->v.flags & ~FL_WATERJUMP;
-		if (premove_teleport_time == postthink_teleport_time)
-			ent->v.teleport_time = (prethink_flags & FL_WATERJUMP) ? 0.0f :
-				(qc_waterjump_started ? prethink_teleport_time : postthink_teleport_time);
-		else
-			ent->v.teleport_time = premove_teleport_time;
+		ent->v.teleport_time = premove_waterjump_secs > 0.0f ? 0.0f : premove_teleport_time;
 	}
+	solver_flags = (int)ent->v.flags;
+	solver_deadline = ent->v.teleport_time;
+	solver_epoch = client->private_move_discontinuity_epoch;
 	ent->v.waterlevel = pmove.waterlevel;
 	ent->v.watertype = CONTENTS_EMPTY;
 	if (pmove.watertype & CONTENTBIT_LAVA)
@@ -8385,6 +8478,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		goto cleanup;
 	}
 	SV_CoopSharedObserveClientDeath (ent, NUM_FOR_EDICT (ent));
+	SV_PrivateWalkTrialWaterjumpCallbacks (ent, client, solver_flags,
+		solver_deadline, solver_epoch, &result_jump_secs, &result_waterjump_secs);
 	terminal_completed = SV_PrivateWalkTrialTerminalState (client);
 	if (!terminal_completed &&
 		(failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)

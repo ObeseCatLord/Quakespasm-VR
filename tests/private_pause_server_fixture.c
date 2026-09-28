@@ -167,7 +167,7 @@ static void test_arrival_gap (void)
 		client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER);
 	/* Teleport then another recovery retains the semantic snap reason. */
 	svs.clients = &client;
-	SV_PrivatePlayerTeleported (&owner);
+	SV_PrivatePlayerTeleported (&owner, true);
 	client.private_input_phase = PRIVATE_INPUT_RUNNING;
 	SV_PrivateSyncPauseState (&client);
 	assert (client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER &&
@@ -181,6 +181,33 @@ int main (void)
 	edict_t owner = {0};
 	qcvm = &sv.qcvm;
 	host_client = &client;
+	client.edict = &owner;
+	client.active = true;
+	/* Semantic relocation cancels selected timer ownership immediately, also
+	 * when a late world callback follows command completion. */
+	client.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	client.private_pmove_walk_selected = true;
+	svs.clients = &client;
+	svs.maxclients = 1;
+	client.private_pmove_jump_secs = .2f;
+	client.private_pmove_waterjump_secs = .7f;
+	owner.v.flags = FL_CLIENT | FL_WATERJUMP;
+	owner.v.teleport_time = 10;
+	SV_PrivatePlayerTeleported (&owner, true);
+	assert (!client.private_pmove_jump_secs && !client.private_pmove_waterjump_secs &&
+		owner.v.teleport_time == 10 && (int)owner.v.flags == FL_CLIENT);
+	client.private_pmove_waterjump_secs = .7f;
+	SV_PrivatePlayerTeleported (&owner, false);
+	assert (!client.private_pmove_waterjump_secs && owner.v.teleport_time == 0);
+	client.private_pmove_walk_selected = false;
+	client.private_pmove_waterjump_secs = .7f;
+	owner.v.flags = FL_CLIENT | FL_WATERJUMP;
+	owner.v.teleport_time = 11;
+	SV_PrivatePlayerTeleported (&owner, false);
+	assert (client.private_pmove_waterjump_secs == .7f && owner.v.teleport_time == 11 &&
+		((int)owner.v.flags & FL_WATERJUMP)); // native fields remain native-owned
+	memset (&client, 0, sizeof (client));
+	memset (&owner, 0, sizeof (owner));
 	client.edict = &owner;
 	client.active = true;
 	client.protocol_qsvr = QSVR_PROTOCOL_PINNED;
@@ -257,7 +284,7 @@ int main (void)
 	 * snapshot's separate RESUME_PENDING flag keeps the handshake alive. */
 	svs.clients = &client;
 	svs.maxclients = 1;
-	SV_PrivatePlayerTeleported (&owner);
+	SV_PrivatePlayerTeleported (&owner, true);
 	svs.maxclients = 2;
 	assert (client.private_move_discontinuity_epoch == 3 &&
 		client.private_move_discontinuity_reason ==

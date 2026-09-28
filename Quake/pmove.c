@@ -1607,7 +1607,7 @@ static void PM_CheckWaterJump (void)
 	trace_t tr;
 	vec3_t oldmin, oldmax;
 
-	if (pmove.waterjumptime>0)
+	if (pmove.waterjumptime>0 || pmove.block_teleport_backmove)
 		return;
 	if (pmove.pm_type == PM_DEAD)
 		return;

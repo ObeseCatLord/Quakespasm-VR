@@ -502,7 +502,7 @@ static void SV_RecordRecentTeleportTrigger (edict_t *touch, edict_t *ent,
 	/* This callback is an identified teleport and actually relocated the
 	 * player. Tell private snapshot/replay ownership at this exact boundary;
 	 * unrelated QuakeC setorigin adjustments must not become discontinuities. */
-	SV_PrivatePlayerTeleported (ent);
+	SV_PrivatePlayerTeleported (ent, true);
 	/* A one-shot trigger can remove itself in its callback. The relocation is
 	 * still real, but there is no surviving source to suppress on re-entry. */
 	if (touch->free)

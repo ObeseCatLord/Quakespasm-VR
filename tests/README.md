@@ -1905,6 +1905,14 @@ The existing mixed driver now has `-selected -earlypause` for actual host
 pause/`svc_setpause`/reserved-command/recovery/completion/replay proof; it can be
 combined with `-arrivalgap`.
 
+`-fixtureliquid slime -fixturemap e1m1` and `-fixtureliquid lava -fixturemap e1m6`
+reuse the same real-BSP depth/swim/health driver; `-skipledge` omits ledge search
+when only the liquid cases are required. The default is water. PreThink health
+events include actual type/depth, time and damage deadline; they are not a
+counter of nested `T_Damage` calls. Slime/native health matches the current
+96-sample matrix. Lava's late deep-button difference is traced to equal event
+times but depth 2/20 damage versus depth 3/30 damage under the two integrators.
+
 The liquid driver runs actual stock admission, command codecs, QC/world physics,
 completion and full snapshots. It checks selected ACK/owner/timer commitment,
 press/hold/release, three depths, sink/up, duplicate roomscale and ledge
@@ -1924,6 +1932,46 @@ player-skin texture uploads do not prove connected signon, upstream client,
 physical XR actions, combat/hazard prediction or performance. The plan retains
 the unqualified crossings, callback/deadline, hazard and live wet history/preview
 cases.
+
+The separately invoked `stock_liquid_contract_fixture.c` reuses this admitted
+driver and checks command-time timer/callback ownership:
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make negotiation-native-fixture \
+  USE_SDL3=1 -j4 NEGOTIATION_FIXTURE=/tmp/qsvr-stock-liquid-contract \
+  NEGOTIATION_SOURCE=../tests/stock_liquid_contract_fixture.c \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o cl_main.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram'
+/tmp/qsvr-stock-liquid-contract -selected -requirecontract -roundingboundary \
+  -dedicated 3 -noudp -nosound -basedir "$SERVER_PROFILE" -userdir "$SERVER_PROFILE"
+```
+
+`-requirecontract` asserts correction rather than only printing the probe.
+Nominal 10/25/100-ms runs check new quiet ledge normalization, unchanged active
+quiet movement/timers/ACK, real pinned teleports during active commands and
+quiet frames, a wet destination's preserved hold/no reacquisition, and actual
+setpos release without fake ACK progress. `-roundingboundary` prepares double
+clocks at which QC float addition differs from double addition then conversion,
+through actual pinned quiet and command PreThink.
+
+Deadline-only/flag-only composition executes actual scheduled pinned Think,
+then injects explicitly prepared callback field outputs without a velocity
+write. A later-world scheduled Think composition links the player through the
+actual trigger dispatcher; supplied QC time makes the real pinned teleport's
+deadline numerically equal to the solver deadline. It checks immediate semantic
+timer cancellation and a complete equal-ACK snapshot without another command.
+Those callback/link/time contexts are fixture seams, not proof of natural
+stock callback reachability. Geometry, QC, relocation recognition and snapshot
+commitment are actual; no production test hook or transport is added.
+
+The callback helper fixture additionally checks unchanged ownership,
+deadline-only/flag-only takeover, same-value semantic relocation, preservation
+of unrelated flags and that a flag cannot manufacture a private timer. The
+pause fixture checks immediate semantic cancellation/preserved QC hold,
+explicit no-hold release and untouched native-owned timer/flag/deadline fields.
+Wet **live** history/preview, arbitrary crossings, drowning and the complete
+released-fluid boundary/batching domain remain qualification work. The
+ownership fix does not enable wet replay or default selection.
 
 For combined-fixture sanitizer coverage, build the ordinary Linux objects first,
 use a fresh `NEGOTIATION_FIXTURE` output name, add

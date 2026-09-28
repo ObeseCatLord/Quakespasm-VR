@@ -12,16 +12,66 @@
 static edict_t *liquid_trace_player;
 static const char *liquid_trace_case;
 static int liquid_trace_frame;
+/* Composition probes only: actual pinned Think/QC still executes first.
+ * These prepared callback outputs are not claimed as ordinary stock writers. */
+static edict_t *liquid_think_player;
+static func_t liquid_think_function;
+static int liquid_think_override, liquid_think_override_calls;
+static float liquid_think_deadline;
+static edict_t *liquid_late_entity, *liquid_late_player, *liquid_late_trigger;
+static int liquid_late_calls;
+static float liquid_late_deadline;
 void __real_PR_ExecuteProgram (func_t function);
 void __wrap_PR_ExecuteProgram (func_t function)
 {
+	qboolean late = liquid_late_entity &&
+		pr_global_struct->self == EDICT_TO_PROG (liquid_late_entity);
+	qboolean late_touch = liquid_late_trigger && liquid_late_player &&
+		pr_global_struct->self == EDICT_TO_PROG (liquid_late_trigger) &&
+		pr_global_struct->other == EDICT_TO_PROG (liquid_late_player) &&
+		function == liquid_late_trigger->v.touch;
+	float saved_time = pr_global_struct->time;
+	if (late_touch)
+		pr_global_struct->time = liquid_late_deadline - .7f;
 	const qboolean record = liquid_trace_player &&
 		pr_global_struct->self == EDICT_TO_PROG (liquid_trace_player) &&
 		function == pr_global_struct->PlayerPreThink;
 	vec3_t before;
 	float before_health = liquid_trace_player ? liquid_trace_player->v.health : 0;
+	float before_level = liquid_trace_player ? liquid_trace_player->v.waterlevel : 0;
+	eval_t *damage_time = liquid_trace_player ? GetEdictFieldValue (liquid_trace_player, ED_FindFieldOffset ("dmgtime")) : NULL;
+	float before_damage_time = damage_time ? damage_time->_float : 0;
 	if (liquid_trace_player) VectorCopy (liquid_trace_player->v.velocity, before);
 	__real_PR_ExecuteProgram (function);
+	if (late_touch)
+	{
+		assert (liquid_late_player->v.teleport_time == liquid_late_deadline);
+		pr_global_struct->time = saved_time;
+		liquid_late_calls++;
+	}
+	if (liquid_think_override && liquid_think_player &&
+		pr_global_struct->self == EDICT_TO_PROG (liquid_think_player) &&
+		function == liquid_think_function)
+	{
+		if (liquid_think_override == 1)
+			liquid_think_player->v.teleport_time = liquid_think_deadline;
+		else
+			liquid_think_player->v.flags = (int)liquid_think_player->v.flags & ~FL_WATERJUMP;
+		liquid_think_override_calls++;
+	}
+	if (late)
+	{
+		/* Prepared callback composition after a real later-world Think. The
+		 * world trigger dispatcher and identified pinned teleport_touch run
+		 * unchanged; its supplied QC time forces an equal-value deadline. */
+		int saved_self = pr_global_struct->self, saved_other = pr_global_struct->other;
+		liquid_late_entity = NULL;
+		liquid_late_trigger->v.solid = SOLID_TRIGGER;
+		SV_LinkEdict (liquid_late_trigger, false);
+		SV_LinkEdict (liquid_late_player, true);
+		pr_global_struct->self = saved_self;
+		pr_global_struct->other = saved_other;
+	}
 	if (liquid_trace_player && !record &&
 		(!VectorCompare (before, liquid_trace_player->v.velocity) || before_health != liquid_trace_player->v.health))
 		fprintf (stderr, "STOCK_QC_EXTERNAL_FORCE case=%s frame=%d function=%s health=%g->%g velocity=%.6f,%.6f,%.6f->%.6f,%.6f,%.6f\n",
@@ -29,14 +79,22 @@ void __wrap_PR_ExecuteProgram (func_t function)
 			liquid_trace_player->v.health, before[0], before[1], before[2], liquid_trace_player->v.velocity[0],
 			liquid_trace_player->v.velocity[1], liquid_trace_player->v.velocity[2]);
 	if (record)
+	{
+		if (before_health != liquid_trace_player->v.health)
+			printf ("STOCK_QC_DAMAGE case=%s frame=%d time=%.6f liquid=%g depth=%g->%g health=%g->%g amount=%g dmgtime=%.6f->%.6f\n",
+				liquid_trace_case, liquid_trace_frame, qcvm->time, liquid_trace_player->v.watertype,
+				before_level, liquid_trace_player->v.waterlevel, before_health,
+				liquid_trace_player->v.health, before_health - liquid_trace_player->v.health,
+				before_damage_time, damage_time ? damage_time->_float : 0);
 		printf ("STOCK_QC_FORCE case=%s frame=%d water=%g button=%g before=%.6f,%.6f,%.6f after=%.6f,%.6f,%.6f deadline=%.6f time=%.6f\n",
 			liquid_trace_case, liquid_trace_frame, liquid_trace_player->v.waterlevel,
 			liquid_trace_player->v.button2, before[0], before[1], before[2],
 			liquid_trace_player->v.velocity[0], liquid_trace_player->v.velocity[1],
 			liquid_trace_player->v.velocity[2], liquid_trace_player->v.teleport_time, qcvm->time);
+	}
 }
 
-static qboolean FindWaterPosition (edict_t *player, int depth, vec3_t found)
+static qboolean FindLiquidPosition (edict_t *player, int contents, int depth, vec3_t found)
 {
 	qmodel_t *world = qcvm->worldmodel;
 	vec3_t saved_origin;
@@ -46,7 +104,7 @@ static qboolean FindWaterPosition (edict_t *player, int depth, vec3_t found)
 	for (int leafnum = 1; leafnum <= world->numleafs && !located; ++leafnum)
 	{
 		mleaf_t *leaf = &world->leafs[leafnum];
-		if (leaf->contents != CONTENTS_WATER) continue;
+		if (leaf->contents != contents) continue;
 		for (int z = 0; z < 9 && !located; ++z)
 			for (int x = 1; x < 4 && !located; ++x)
 				for (int y = 1; y < 4 && !located; ++y)
@@ -57,7 +115,7 @@ static qboolean FindWaterPosition (edict_t *player, int depth, vec3_t found)
 						leaf->minmaxs[5] + 16.0f - z * 8.0f};
 					VectorCopy (position, player->v.origin);
 					SV_CheckWater (player);
-					if (player->v.waterlevel != depth || SV_TestEntityPosition (player))
+					if (player->v.waterlevel != depth || player->v.watertype != contents || SV_TestEntityPosition (player))
 						continue;
 					VectorCopy (position, found);
 					located = true;
@@ -69,7 +127,7 @@ static qboolean FindWaterPosition (edict_t *player, int depth, vec3_t found)
 	return located;
 }
 
-static qboolean FindWaterJumpPosition (edict_t *player, vec3_t found, float *yaw)
+static qboolean FindLiquidJumpPosition (edict_t *player, int contents, vec3_t found, float *yaw)
 {
 	/* Invoke the pinned QC geometry helper while searching, then require the
 	 * same start to produce a ledge jump through admitted command execution. */
@@ -83,7 +141,7 @@ static qboolean FindWaterJumpPosition (edict_t *player, vec3_t found, float *yaw
 	for (int leafnum = 1; leafnum <= qcvm->worldmodel->numleafs && !located; ++leafnum)
 	{
 		mleaf_t *leaf = &qcvm->worldmodel->leafs[leafnum];
-		if (leaf->contents != CONTENTS_WATER) continue;
+		if (leaf->contents != contents) continue;
 		for (int z = 0; z < 32 && !located; ++z)
 			for (int x = 0; x <= 16 && !located; ++x)
 				for (int y = 0; y <= 16 && !located; ++y)
@@ -94,7 +152,7 @@ static qboolean FindWaterJumpPosition (edict_t *player, vec3_t found, float *yaw
 						leaf->minmaxs[1] + (leaf->minmaxs[4] - leaf->minmaxs[1]) * y / 16.0f,
 						leaf->minmaxs[5] + 16.0f - z * 2.0f);
 					SV_CheckWater (player);
-					if (player->v.waterlevel != 2 || SV_TestEntityPosition (player)) continue;
+					if (player->v.waterlevel != 2 || player->v.watertype != contents || SV_TestEntityPosition (player)) continue;
 					for (int direction = 0; direction < 4 && !located; ++direction)
 					{
 						player->v.flags = FL_CLIENT | FL_JUMPRELEASED;
@@ -176,23 +234,10 @@ static void PrepareLiquidCase (client_t *peer, client_state_t *state,
 	state->viewangles[YAW] = yaw;
 }
 
-int main (int argc, char **argv)
+static void StartLiquidPeers (int argc, char **argv, const char *map,
+	int command_msec, client_t *peers[2], client_state_t *states[2])
 {
 	char public_offer[1024];
-	client_t *peers[2];
-	client_state_t *states[2];
-	vec3_t water[3], dry, ledge = {0};
-	float ledge_yaw = 0;
-	const char *map = "e1m1";
-	const char *only_case = NULL;
-	int command_msec = 25;
-	for (int arg = 1; arg + 1 < argc; ++arg)
-	{
-		if (!strcmp (argv[arg], "-fixturemap")) map = argv[arg + 1];
-		if (!strcmp (argv[arg], "-fixturemsec")) command_msec = atoi (argv[arg + 1]);
-		if (!strcmp (argv[arg], "-fixturecase")) only_case = argv[arg + 1];
-	}
-	assert (command_msec >= 1 && command_msec <= 125);
 	srand (1); // identical initialized runs, including stock QC random effects
 	Fixture_InitNativeEngine (argc, argv, map, true);
 	const qboolean selected = COM_CheckParm ("-selected") != 0;
@@ -225,11 +270,41 @@ int main (int argc, char **argv)
 		GapWorldFrame ();
 		GapSnapshot (peers[0], states[0]);
 	}
+}
+
+#ifndef STOCK_LIQUID_FIXTURE_ENTRY
+#define STOCK_LIQUID_FIXTURE_ENTRY main
+#endif
+int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
+{
+	client_t *peers[2];
+	client_state_t *states[2];
+	vec3_t water[3], dry, ledge = {0};
+	float ledge_yaw = 0;
+	const char *map = "e1m1";
+	const char *only_case = NULL;
+	const char *liquid = "water";
+	int contents;
+	int command_msec = 25;
+	for (int arg = 1; arg + 1 < argc; ++arg)
+	{
+		if (!strcmp (argv[arg], "-fixturemap")) map = argv[arg + 1];
+		if (!strcmp (argv[arg], "-fixturemsec")) command_msec = atoi (argv[arg + 1]);
+		if (!strcmp (argv[arg], "-fixturecase")) only_case = argv[arg + 1];
+		if (!strcmp (argv[arg], "-fixtureliquid")) liquid = argv[arg + 1];
+	}
+	assert (command_msec >= 1 && command_msec <= 125);
+	assert (!strcmp (liquid, "water") || !strcmp (liquid, "slime") || !strcmp (liquid, "lava"));
+	contents = !strcmp (liquid, "water") ? CONTENTS_WATER :
+		!strcmp (liquid, "slime") ? CONTENTS_SLIME : CONTENTS_LAVA;
+	StartLiquidPeers (argc, argv, map, command_msec, peers, states);
+	const qboolean selected = COM_CheckParm ("-selected") != 0;
+	const qboolean vr = COM_CheckParm ("-vr") != 0;
 	for (int depth = 1; depth <= 3; ++depth)
 	{
-		assert (FindWaterPosition (peers[0]->edict, depth, water[depth - 1]));
-		printf ("STOCK_WATER_GEOMETRY depth=%d origin=%.3f,%.3f,%.3f\n",
-			depth, water[depth - 1][0], water[depth - 1][1], water[depth - 1][2]);
+		assert (FindLiquidPosition (peers[0]->edict, contents, depth, water[depth - 1]));
+		printf ("STOCK_LIQUID_GEOMETRY liquid=%s depth=%d origin=%.3f,%.3f,%.3f\n",
+			liquid, depth, water[depth - 1][0], water[depth - 1][1], water[depth - 1][2]);
 	}
 	trace_t floor = SV_Move (peers[0]->edict->v.origin, peers[0]->edict->v.mins,
 		peers[0]->edict->v.maxs, (vec3_t){peers[0]->edict->v.origin[0],
@@ -237,7 +312,8 @@ int main (int argc, char **argv)
 		MOVE_NORMAL, peers[0]->edict);
 	assert (!floor.startsolid && !floor.allsolid && floor.fraction < 1);
 	VectorCopy (floor.endpos, dry);
-	qboolean found_ledge = FindWaterJumpPosition (peers[0]->edict, ledge, &ledge_yaw);
+	qboolean found_ledge = !COM_CheckParm ("-skipledge") &&
+		FindLiquidJumpPosition (peers[0]->edict, contents, ledge, &ledge_yaw);
 	if (COM_CheckParm ("-requireledge")) assert (found_ledge);
 	if (found_ledge)
 		printf ("STOCK_WATER_LEDGE map=%s origin=%.3f,%.3f,%.3f yaw=%.3f\n", map, ledge[0], ledge[1], ledge[2], ledge_yaw);
@@ -321,8 +397,8 @@ int main (int argc, char **argv)
 					assert (!cl.move_ack_prediction_allowed && !replayed);
 			}
 			*states[0] = cl;
-			printf ("STOCK_LIQUID_SAMPLE selected=%d vr=%d case=%s frame=%d origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f flags=%d water=%g health=%g jump=%.6f waterjump=%.6f ack=%d prediction=%d replay=%d\n",
-				selected, vr, cases[scenario], frame,
+			printf ("STOCK_LIQUID_SAMPLE selected=%d vr=%d liquid=%s case=%s frame=%d origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f flags=%d water=%g health=%g jump=%.6f waterjump=%.6f ack=%d prediction=%d replay=%d\n",
+				selected, vr, liquid, cases[scenario], frame,
 				peers[0]->edict->v.origin[0], peers[0]->edict->v.origin[1], peers[0]->edict->v.origin[2],
 				peers[0]->edict->v.velocity[0], peers[0]->edict->v.velocity[1], peers[0]->edict->v.velocity[2],
 				(int)peers[0]->edict->v.flags, peers[0]->edict->v.waterlevel, peers[0]->edict->v.health,
@@ -332,7 +408,7 @@ int main (int argc, char **argv)
 		if (scenario == 8) assert (saw_ledge && saw_ledge_end);
 		liquid_trace_player = NULL;
 	}
-	puts ("STOCK_LIQUID_COMPONENT_PASSED actual admission/geometry/command receipt/QC/world/full snapshots/replay invocation; liquid permission not qualified");
+	printf ("STOCK_LIQUID_COMPONENT_PASSED liquid=%s actual admission/geometry/command receipt/QC/world/full snapshots/replay invocation; liquid permission not qualified\n", liquid);
 	for (int slot = 0; slot < 2; ++slot)
 	{
 		Mem_Free (states[slot]->entities);
