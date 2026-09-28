@@ -1,7 +1,9 @@
 # AD-family predictive movement: admission and ownership plan
 
-Status: Astra-reviewed architecture and preimplementation plan; q30 admission
-and ordinary client replay remain unimplemented. The stock default activation
+Status: Astra-reviewed architecture and implementation in progress; ordinary
+q30 policy transport and client replay are implemented at `8a0871c1`, with
+qualified component evidence. Normal q30 admission and complete native
+transitions remain unimplemented. The stock default activation
 slice does not admit q30 or finish mod prediction. This plan expands stages 3–4
 of the [parent movement plan](predictive-movement-2.0-plan.md). The disposition
 below chooses the existing command owner; the next bounded proof and matching
@@ -105,7 +107,10 @@ unknowns concern code behavior and replay consumers and stay implementation work
 
 The table defines an intended contract, not proof that every row is implemented.
 In particular, today's stock-only phase helpers do not yet qualify living q30
-holds/cameras, and its ordinary replay remains denied.
+holds/cameras. The ordinary replay consumer exists, while production q30
+selection and server prediction permission remain closed. The
+[native-state/admission plan](predictive-q30-transitions-2.0-plan.md) defines
+the remaining implementation and normal-session acceptance.
 
 ## Next bounded slice and exact ownership
 

@@ -72,3 +72,9 @@ q30 policy transport, complete movement inputs and the actual replay consumer
 are now implemented and pass local component checks. Ordinary q30 admission and
 complete native transitions remain unimplemented; the plan records the exact
 remaining vertical and traversal requirements.
+
+The next [q30 native-state and admission plan](predictive-q30-transitions-2.0-plan.md)
+records the actual state inventory, fresh-native reuse, bounded write set and
+normal-session acceptance before production edits. Typed classification comes
+first; the roomscale/callback phase decision is under local Astra review before
+its implementation. Normal admission stays closed until that contract works.
