@@ -27,7 +27,7 @@ legacy offer generation, incompatible base protocol/coordinate flags,
 simultaneous private/public peer isolation, and serverinfo refresh. Negotiating
 private transport never selects PMove by itself. Defaults are reported
 separately. Require `NEGOTIATION_NATIVE_DEFAULT_PASSED`: before any override,
-the fixture checks registered/effective `private=1 pmove=0`, then an ordinary
+the fixture checks registered/effective `private=1 pmove=1`, then an ordinary
 modern offer must select private transport with movement prediction unselected.
 The subsequent matrix explicitly sets both choices. None of this closes the
 connected mixed-play gate.
@@ -370,6 +370,46 @@ assertion, because repeated selected callbacks then spend multiple shells.
 Licensed assets and production code remain unchanged. The ordinary run must
 exit0 and print all markers. These controls isolate the observed shot-count
 guarding; they do not certify arbitrary QC cadence or all weapon/ability effects.
+
+The ordinary replay consumer follow-up requires seven
+`Q30_ORDINARY_REPLAY_PASSED` markers. It compares actual server QC + selected
+PMove with `PM_PlayerMoveQCReplay` using the same real hulls: held landing,
+zero/changed/clamped/huge-finite height, airborne press, 5 ms low release with
+repeated horizontal roomscale and initial grounded instant-stop, and 125 ms
+substeps. Each command matches position/velocity within .01 units and exact
+ground/release flags. The huge height remains an authored value of `1e30`, while
+collection reach uses the actual pre-solver velocity limit. Server physent collection is
+the replay input seam; these cases do not execute normal signon or snapshot
+serialization and do not qualify steps, ledges, abilities or arbitrary triggers.
+
+The existing negotiation fixture can also run against this isolated q30 root:
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make negotiation-native-fixture \
+  USE_SDL3=1 -j4 NEGOTIATION_FIXTURE=/tmp/qsvr-q30-policy-negotiation-fixture
+timeout --signal=TERM 30s /tmp/qsvr-q30-policy-negotiation-fixture \
+  -dedicated 3 -noudp -nosound -game q30a1024 \
+  -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-movement-native
+```
+
+Require `Q30_POLICY_SNAPSHOT_PASSED`. Actual client pext/server mask handling
+covers missing/unknown policy offers, reconnect clearing and serverinfo
+preservation. The loaded q30 registry has nine customstats disjoint from223; staged
+scalar/two-slot/vector collisions reject. An injected selected owner writes
+complete stats and owner bytes through the production full parser/movevar
+consumer, preserving height120/0/4000/1e30 and velocity limit. Normal q30
+admission stays stock-only and server replay permission stays false. This
+fixture explicitly verifies that refusal; it does not manufacture a successful
+ordinary q30 replay session. Existing stock negotiation/demo checks still run.
+
+The mixed native fixture's `-velocityseeds` option checks actual serialized
+signed-short velocity boundaries through the full parser and replay gate.
+Use its existing selected run with `-defaultselection -earlypause -arrivalgap
+-velocityseeds`. Require `PRIVATE_VELOCITY_SNAPSHOT_PASSED`: both encoded range
+endpoints replay, out-of-range authoritative seeds suppress replay, and
+presentation saturation leaves authored velocity untouched. The velocities
+are staged snapshots; this is not an authored high-jump traversal proof.
 
 ## Avatar identity and protocol parser
 
@@ -1435,14 +1475,19 @@ reset, owner changes, nonfinite state and logical
 truncation prefixes. Its packet-loss case
 seeds stale prior state and applies a repeated reset; it does not simulate a
 socket or loss scheduling. Rendering/network/QC boundaries are test-only stand-ins.
+The ordinary QC policy also requires stat223 in the current message; a cached
+limit cannot replace its receipt. Zero/large finite limits remain usable,
+missing/negative/NaN/both infinities reject, and large finite height/limit floats
+retain defined integer companions. Explicit float-cast-overflow instrumentation
+checks conversion before admission.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
-  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined,float-cast-overflow \
   -fno-sanitize-recover=all -fno-omit-frame-pointer \
   tests/private_owner_snapshot_fixture.c Quake/common.c -Wl,--gc-sections \
   $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-private-owner-asan
-/tmp/qsvr-private-owner-asan
+ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-private-owner-asan
 ```
 
 `private_owner_snapshot_smoke.gdb` calls the actual `CL_ParseServerMessage`
@@ -1603,12 +1648,17 @@ raw command with no reconstructible baseline suppresses prediction.
 The selected private PMove-engine contract permits fluid crossings in both
 the journal and unsent preview when the received server permission allows
 replay. Withheld permission still prevents solver/preview execution. Public
-replay and the separate QC-command authority retain their behavior. These
+replay remains unchanged. QC-command authority now requires the matching
+negotiated jump policy and dispatches both history and preview to its consumer;
+unsupported QC policy and native liquid crossings suppress that replay. These
 PM probes complement the admitted real-map liquid driver below.
 `client_replay_solver_fixture.c`
 instead uses the actual shared PM solver
 and donor collision functions to check empty-history, zero-duration underwater
-categorization. Its input preview and world-entity collection are fixture seams;
+categorization. It also checks ordinary QC repeated/zero-duration preview on
+a synthetic floor, with unchanged journal, pending input and authoritative
+entity baseline. A held preview after a committed jump cannot add another
+impulse. Its input preview and world-entity collection are fixture seams;
 it does not replace the separate live gameplay check.
 
 ```sh
@@ -1624,7 +1674,7 @@ for fixture in client_input_preview client_replay client_replay_solver; do
     -fno-sanitize-recover=all -fno-omit-frame-pointer \
     "tests/${fixture}_fixture.c" $sources -Wl,--gc-sections \
     $(pkg-config --cflags --libs sdl3) -lm -o "/tmp/qsvr-${fixture}-asan"
-  "/tmp/qsvr-${fixture}-asan" || exit 1
+  ASAN_OPTIONS=detect_leaks=0 "/tmp/qsvr-${fixture}-asan" || exit 1
 done
 ```
 

@@ -129,29 +129,40 @@ static void reset_client (void)
 	CL_InvalidateMoveSnapshot ();
 }
 
-static void parse_private_update_with_timers (const byte *bytes, int length,
+static void parse_private_update_with_policy (const byte *bytes, int length,
 	qboolean include_jump_secs, float jump_secs,
-	qboolean include_waterjump_secs, float waterjump_secs)
+	qboolean include_waterjump_secs, float waterjump_secs,
+	unsigned moveflags, qboolean include_qc_limit, float qc_limit, float height)
 {
 	/* Model the complete movement-stat group preceding each private owner
 	 * update. This fixture calls the entity reader directly, so it supplies
 	 * the stat receipts through the production numeric parser. */
 	cl_move_stat_receipts = 0;
-	CL_ParseStatInt (STAT_MOVEFLAGS, MOVEFLAG_VALID);
+	CL_ParseStatInt (STAT_MOVEFLAGS, moveflags);
 	for (int stat = STAT_MOVEVARS_WATERSINKSPEED; stat <= STAT_MOVEVARS_KTJUMP; stat++)
 		CL_ParseStatFloat (stat, 0);
 	for (int stat = STAT_MOVEVARS_FRICTION; stat <= STAT_MOVEVARS_WATERFRICTION; stat++)
 		CL_ParseStatFloat (stat, 0);
 	for (int stat = STAT_MOVEVARS_TIMESCALE; stat <= STAT_MOVEVARS_STEPHEIGHT; stat++)
-		CL_ParseStatFloat (stat, 0);
+		CL_ParseStatFloat (stat, stat == STAT_MOVEVARS_JUMPVELOCITY ? height : 0);
 	if (include_jump_secs)
 		CL_ParseStatFloat (STAT_PRIVATE_JUMP_SECS, jump_secs);
 	if (include_waterjump_secs)
 		CL_ParseStatFloat (STAT_PRIVATE_WATERJUMP_SECS, waterjump_secs);
+	if (include_qc_limit)
+		CL_ParseStatFloat (STAT_PRIVATE_QC_MAXVELOCITY, qc_limit);
 	net_message.data = (byte *)bytes;
 	net_message.cursize = length;
 	MSG_BeginReading ();
 	CLFTE_ParseEntitiesUpdate ();
+}
+
+static void parse_private_update_with_timers (const byte *bytes, int length,
+	qboolean include_jump_secs, float jump_secs,
+	qboolean include_waterjump_secs, float waterjump_secs)
+{
+	parse_private_update_with_policy (bytes, length, include_jump_secs, jump_secs,
+		include_waterjump_secs, waterjump_secs, MOVEFLAG_VALID, false, 0, 0);
 }
 
 static void parse_private_update_with_jump_secs (const byte *bytes, int length,
@@ -184,10 +195,48 @@ static int make_standalone_ack (byte *bytes, unsigned ack, unsigned epoch)
 	return length;
 }
 
+static void check_qc_policy_receipts (void)
+{
+	byte packet[64];
+	const float limits[] = {0, 2000, -1, NAN, INFINITY, -INFINITY, 1e30f};
+	for (int i = -1; i < (int)countof (limits); ++i)
+	{
+		reset_client ();
+		int length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+		packet[3] = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+		/* A valid cached limit cannot replace this message's missing receipt. */
+		cl.statsf[STAT_PRIVATE_QC_MAXVELOCITY] = 2000;
+		parse_private_update_with_policy (packet, length, true, 0, true, 0,
+			MOVEFLAG_VALID | MOVEFLAG_QC_JUMP_ORDINARY, i >= 0,
+			i >= 0 ? limits[i] : 0, 0);
+		finish_message_if_complete (length);
+		assert (cl.move_snapshot_valid == (i == 0 || i == 1 || i == 6));
+		if (cl.move_snapshot_valid)
+			assert (cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND &&
+				cl.statsf[STAT_PRIVATE_QC_MAXVELOCITY] == limits[i]);
+	}
+	const float heights[] = {NAN, INFINITY, -INFINITY, 1e30f};
+	for (int i = 0; i < (int)countof (heights); ++i)
+	{
+		reset_client ();
+		int length = private_snapshot (packet, 10, 4, 1, true, false, 3.0f);
+		packet[3] = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+		parse_private_update_with_policy (packet, length, true, 0, true, 0,
+			MOVEFLAG_VALID | MOVEFLAG_QC_JUMP_ORDINARY, true, 2000, heights[i]);
+		finish_message_if_complete (length);
+		assert (cl.move_snapshot_valid == (i == 3));
+		assert (cl.stats[STAT_MOVEVARS_JUMPVELOCITY] == 0);
+		if (i == 3)
+			assert (cl.statsf[STAT_MOVEVARS_JUMPVELOCITY] == heights[i]);
+	}
+	puts ("private QC policy: current-message limit required; zero valid, stale/negative/nonfinite rejected");
+}
+
 int main (void)
 {
 	byte packet[64];
 	int length;
+	check_qc_policy_receipts ();
 
 	reset_client ();
 	cl.movemessages = 10;

@@ -94,23 +94,16 @@ static movement_sample_t sample_player (edict_t *player, client_t *client)
 	return sample;
 }
 
-static movement_sample_t step_command (edict_t *player, client_t *client,
-	qboolean selected, int sequence, unsigned buttons, int impulse, int msec)
+static movement_sample_t step_authored_command (edict_t *player, client_t *client,
+	qboolean selected, usercmd_t command)
 {
-	usercmd_t command = {0};
-	command.sequence = sequence;
-	command.msec = msec;
-	command.seconds = msec * .001f;
-	command.servertime = qcvm->time;
-	command.buttons = buttons;
-	command.impulse = impulse;
 	client->cmd = command;
-	client->lastmovemessage = sequence;
+	client->lastmovemessage = command.sequence;
 	VectorCopy (command.viewangles, player->v.v_angle);
-	player->v.button0 = (buttons & BUTTON_ATTACK) != 0;
-	player->v.button2 = (buttons & BUTTON_JUMP) != 0;
-	player->v.impulse = impulse;
-	host_frametime = msec * .001;
+	player->v.button0 = (command.buttons & BUTTON_ATTACK) != 0;
+	player->v.button2 = (command.buttons & BUTTON_JUMP) != 0;
+	player->v.impulse = command.impulse;
+	host_frametime = command.seconds;
 	pr_global_struct->frametime = command.seconds;
 	if (selected)
 	{
@@ -124,12 +117,25 @@ static movement_sample_t step_command (edict_t *player, client_t *client,
 		SV_ClientThink ();
 	SV_Physics_Client (player, 1);
 	assert (client->active && !player->free);
-	assert (client->private_completed_move == sequence);
+	assert (client->private_completed_move == (int)command.sequence);
 	if (selected)
 		SV_FinishPrivateUsercmds ();
 	movement_sample_t sample = sample_player (player, client);
 	qcvm->time += host_frametime;
 	return sample;
+}
+
+static movement_sample_t step_command (edict_t *player, client_t *client,
+	qboolean selected, int sequence, unsigned buttons, int impulse, int msec)
+{
+	usercmd_t command = {0};
+	command.sequence = sequence;
+	command.msec = msec;
+	command.seconds = msec * .001f;
+	command.servertime = qcvm->time;
+	command.buttons = buttons;
+	command.impulse = impulse;
+	return step_authored_command (player, client, selected, command);
 }
 
 static movement_sample_t step_player (edict_t *player, client_t *client,
@@ -344,6 +350,102 @@ static void ordinary_dry_cases (edict_t *player, client_t *client,
 	puts ("Q30_NATIVE_AUTHORED_HOLD_RELEASE_PASSED");
 }
 
+/* Compare the real client policy adapter with actual server QC + selected
+ * PMove in the same world. Physent collection is a test seam using the server
+ * collector: this does not claim serialization, normal admission or signon. */
+static void ordinary_replay_cases (edict_t *player, client_t *client, double time)
+{
+	extern cvar_t vr_movement_instant_stop;
+	const char *names[] = {"held-landing", "zero-height", "clamped-height",
+		"airborne-press", "roomscale-stop-jump", "substepped-jump", "huge-finite-height"};
+	for (int scenario = 0; scenario < countof (names); ++scenario)
+	{
+		qcvm->time = time;
+		initialize_player (player, client);
+		for (int i = 0; i < 4; ++i)
+			step_player (player, client, false, i + 1, 0, 5);
+		SV_ResetPrivateCommandQueue (client);
+		client->private_completed_move = client->lastmovemessage = 0;
+		client->private_pmove_walk_selected = true; // component seam, not admission
+		client->offered_pmove_policies = QSVR_PMOVE_CAP_Q30_JUMP;
+		client->vr_instant_stop_offered = client->vr_instant_stop_capable = scenario == 4;
+		Cvar_SetQuick (&vr_movement_instant_stop, scenario == 4 ? "1" : "0");
+		set_global_float ("map_jumpheight", scenario == 1 ? 0 :
+			scenario == 2 ? 4000 : scenario == 6 ? 1e30f : 120);
+		player->v.fixangle = 0;
+		if (scenario == 3)
+		{
+			player->v.origin[2] += 64;
+			player->v.flags = (int)player->v.flags & ~FL_ONGROUND;
+			SV_LinkEdict (player, false);
+		}
+		if (scenario == 4)
+			player->v.velocity[0] = 100;
+		const int frames = scenario < 2 ? 48 : 4;
+		for (int i = 0; i < frames; ++i)
+		{
+			usercmd_t command = {0};
+			vec3_t bounds[2], predicted_origin, predicted_velocity;
+			command.sequence = i + 1;
+			command.msec = scenario == 5 ? 125 : scenario == 4 ? 5 : 8;
+			command.seconds = command.msec * .001f;
+			command.servertime = qcvm->time;
+			command.buttons = i == 40 || (scenario >= 2 && i == 1) ? 0 : BUTTON_JUMP;
+			command.vr_active = scenario == 4;
+			if (scenario == 4)
+				command.vr_roomscalemove[0] = .25f;
+			if (scenario == 0 && i == 41)
+			{
+				assert (((int)player->v.flags & FL_ONGROUND) &&
+					((int)player->v.flags & FL_JUMPRELEASED));
+				set_global_float ("map_jumpheight", 70); // consumed by this released, supported re-jump
+			}
+			memset (&pmove, 0, sizeof (pmove));
+			assert (SV_PrivateWalkTrialBuildMoveVars (client, &movevars));
+			assert ((movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY) &&
+				movevars.jumpspeed == global_float ("map_jumpheight") &&
+				movevars.qc_maxvelocity == sv_maxvelocity.value);
+			assert (SV_PrivateWalkTrialCollect (player, &movevars,
+				command.seconds, &command, bounds));
+			if (scenario == 6)
+				assert (bounds[1][2] - player->v.origin[2] < 128); // clamped reach, authored height retained
+			pmove.pm_type = PM_NORMAL;
+			pmove.cmd = command;
+			VectorCopy (player->v.origin, pmove.origin);
+			VectorCopy (player->v.velocity, pmove.velocity);
+			VectorCopy (player->v.mins, pmove.player_mins);
+			VectorCopy (player->v.maxs, pmove.player_maxs);
+			VectorSet (pmove.gravitydir, 0, 0, -1);
+			pmove.onground = ((int)player->v.flags & FL_ONGROUND) != 0;
+			pmove.jump_held = ((int)player->v.flags & FL_JUMPRELEASED) == 0;
+			pmove.qc_jump_owner = true;
+			assert (PM_PlayerMoveQCReplay (1));
+			assert (memcmp (&pmove.cmd, &command, sizeof (command)) == 0);
+			assert (pmove.jump_secs == 0);
+			VectorCopy (pmove.origin, predicted_origin);
+			VectorCopy (pmove.velocity, predicted_velocity);
+			qboolean predicted_ground = pmove.onground, predicted_held = pmove.jump_held;
+			movement_sample_t actual = step_authored_command (player, client, true, command);
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				if (fabsf (actual.origin[axis] - predicted_origin[axis]) >= .01f ||
+					fabsf (actual.velocity[axis] - predicted_velocity[axis]) >= .01f)
+					printf ("Q30_REPLAY_DIFFERENCE case=%s frame=%d axis=%d server=(%.6f,%.6f) replay=(%.6f,%.6f)\n",
+						names[scenario], i + 1, axis, actual.origin[axis], actual.velocity[axis],
+						predicted_origin[axis], predicted_velocity[axis]);
+				assert (fabsf (actual.origin[axis] - predicted_origin[axis]) < .01f);
+				assert (fabsf (actual.velocity[axis] - predicted_velocity[axis]) < .01f);
+			}
+			assert (((actual.flags & FL_ONGROUND) != 0) == predicted_ground);
+			assert (((actual.flags & FL_JUMPRELEASED) == 0) == predicted_held);
+		}
+		printf ("Q30_ORDINARY_REPLAY_PASSED %s frames=%d\n", names[scenario], frames);
+	}
+	client->offered_pmove_policies = 0;
+	client->vr_instant_stop_offered = client->vr_instant_stop_capable = false;
+	Cvar_SetQuick (&vr_movement_instant_stop, "0");
+}
+
 int main (int argc, char **argv)
 {
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
@@ -524,6 +626,7 @@ int main (int argc, char **argv)
 	puts ("Q30_PAIRED_RELEASE_PASSED");
 	ordinary_dry_cases (player, client, vars_checkpoint, vars_size,
 		globals_checkpoint, globals_size, baseline_time);
+	ordinary_replay_cases (player, client, baseline_time);
 	Mem_Free (vars_checkpoint);
 	Mem_Free (globals_checkpoint);
 	puts ("Q30_MOVEMENT_NATIVE_PASSED");

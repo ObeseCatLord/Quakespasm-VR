@@ -2270,6 +2270,71 @@ void PM_PlayerMove (float gamespeed)
 	pmove.cmd = cmd;
 }
 
+/* Client consumer of the negotiated ordinary QC branch. Server actual QC
+ * continues owning its impulse. Compose existing pre-QC input and PMove once;
+ * a substep must not run another press/release or pre-solver clamp. */
+qboolean PM_PlayerMoveQCReplay (float gamespeed)
+{
+	usercmd_t command = pmove.cmd;
+	vec3_t swept_origin;
+	qboolean supported = pmove.onground;
+	qboolean saved_stop = pmove.vr_instant_stop_preapplied;
+	int support = pmove.groundent;
+	qboolean stop;
+
+	if (!(movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY) ||
+		pmove.pm_type != PM_NORMAL || !isfinite (movevars.jumpspeed) ||
+		!isfinite (movevars.qc_maxvelocity) || movevars.qc_maxvelocity < 0)
+		return false;
+	PM_EnsureInitialized ();
+	/* The native roomscale sweep retains the QC ground flag. Its instant-stop
+	 * probe instead uses ordinary 180-unit rising exclusion, before QC jump. */
+	pmove.qc_jump_owner = true;
+	if (command.vr_active && command.seconds > 0 &&
+		(command.vr_roomscalemove[0] || command.vr_roomscalemove[1]))
+		PM_ApplyPreThinkRoomScale ();
+	VectorClear (pmove.cmd.vr_roomscalemove);
+	VectorCopy (pmove.origin, swept_origin);
+	pmove.qc_jump_owner = false; // ordinary exclusion belongs only to the stop probe
+	PM_CategorizePosition ();
+	stop = PM_VRInstantStopEligible ();
+	VectorCopy (swept_origin, pmove.origin); // the stop probe must not snap the body
+	pmove.onground = supported;
+	pmove.groundent = support;
+	pmove.qc_jump_owner = true;
+	if (pmove.waterlevel || pmove.onladder || pmove.waterjumptime)
+	{
+		pmove.cmd = command;
+		return false; // no ordinary-QC client consumer for these native states
+	}
+	if (stop)
+		pmove.velocity[0] = pmove.velocity[1] = 0;
+	pmove.vr_instant_stop_preapplied = true;
+	pmove.jump_secs = 0;
+	if (!(command.buttons & BUTTON_JUMP))
+		pmove.jump_held = false;
+	else if (supported && !pmove.jump_held)
+	{
+		pmove.onground = false;
+		pmove.jump_held = true;
+		pmove.velocity[2] += movevars.jumpspeed;
+	}
+	for (int i = 0; i < 3; ++i)
+	{
+		/* Match SV_CheckVelocity, including overflow of a legal float height. */
+		if (IS_NAN (pmove.velocity[i]))
+			pmove.velocity[i] = 0;
+		if (pmove.velocity[i] > movevars.qc_maxvelocity)
+			pmove.velocity[i] = movevars.qc_maxvelocity;
+		else if (pmove.velocity[i] < -movevars.qc_maxvelocity)
+			pmove.velocity[i] = -movevars.qc_maxvelocity;
+	}
+	PM_PlayerMove (gamespeed);
+	pmove.cmd = command;
+	pmove.vr_instant_stop_preapplied = saved_stop;
+	return !pmove.fluid_contacted && !pmove.waterlevel && !pmove.onladder;
+}
+
 static void PM_DecodeSolidSize (unsigned int solidsize, vec3_t mins, vec3_t maxs)
 {
 	maxs[0] = maxs[1] = solidsize & 255;
@@ -2658,6 +2723,15 @@ qboolean PMCL_SetMoveVars (void)
 
 		movevars.stepheight = cl.statsf[STAT_MOVEVARS_STEPHEIGHT];
 		movevars.flags = cl.stats[STAT_MOVEFLAGS];
+		if (!private_move)
+			movevars.flags &= ~MOVEFLAG_QC_JUMP_ORDINARY;
+		movevars.qc_maxvelocity = 0;
+		if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
+		{
+			movevars.qc_maxvelocity = cl.statsf[STAT_PRIVATE_QC_MAXVELOCITY];
+			if (!isfinite (movevars.qc_maxvelocity) || movevars.qc_maxvelocity < 0)
+				return false;
+		}
 		if (!private_move || !cl.vr_instant_stop_supported ||
 			!cl.vr_instant_stop_cap_sent)
 			movevars.flags &= ~MOVEFLAG_VR_INSTANT_STOP;
@@ -2764,7 +2838,9 @@ static qboolean PM_MoveVarsFinite (const movevars_t *mv)
 		isfinite (mv->flyfriction) && isfinite (mv->entgravity) &&
 		isfinite (mv->bunnyspeedcap) && isfinite (mv->watersinkspeed) &&
 		isfinite (mv->ktjump) && isfinite (mv->edgefriction) &&
-		isfinite (mv->jumpspeed);
+		isfinite (mv->jumpspeed) &&
+		(!(mv->flags & MOVEFLAG_QC_JUMP_ORDINARY) ||
+		 (isfinite (mv->qc_maxvelocity) && mv->qc_maxvelocity >= 0));
 }
 
 qboolean PMSV_BuildMoveVars (movevars_t *out, edict_t *player, unsigned int protocolflags)
@@ -2847,6 +2923,8 @@ qboolean PMSV_ExportMoveStats (const movevars_t *vars, float *fstat, int *istat)
 	fstat[STAT_MOVEVARS_ENTGRAVITY] = vars->entgravity;
 	fstat[STAT_MOVEVARS_TIMESCALE] = 1.0f;
 	fstat[STAT_MOVEVARS_JUMPVELOCITY] = vars->jumpspeed;
+	if (vars->flags & MOVEFLAG_QC_JUMP_ORDINARY)
+		fstat[STAT_PRIVATE_QC_MAXVELOCITY] = vars->qc_maxvelocity;
 	fstat[STAT_MOVEVARS_MAXAIRSPEED] = vars->maxairspeed;
 	fstat[STAT_MOVEVARS_WATERSINKSPEED] = vars->watersinkspeed;
 	fstat[STAT_MOVEVARS_FLYFRICTION] = vars->flyfriction;

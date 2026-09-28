@@ -1604,7 +1604,8 @@ static const int sv_private_move_float_stats[] = {
 
 static qboolean SV_IsPrivateMoveStat (int stat)
 {
-	return stat == STAT_MOVEFLAGS ||
+	return (stat == STAT_PRIVATE_QC_MAXVELOCITY && SV_PrivateWalkTrialQ30Program ()) ||
+		stat == STAT_MOVEFLAGS ||
 		stat == STAT_PRIVATE_JUMP_SECS ||
 		stat == STAT_PRIVATE_WATERJUMP_SECS ||
 		(stat >= STAT_MOVEVARS_WATERSINKSPEED && stat <= STAT_MOVEVARS_KTJUMP) ||
@@ -1643,6 +1644,31 @@ qboolean SV_PrivateWalkTrialQ30Program (void)
 		!memcmp (qcvm->progssha256, q30_sha256, sizeof (q30_sha256));
 }
 
+/* One selected-policy producer for solver setup and complete owner snapshots.
+ * Actual QC still owns the server impulse; this height also feeds its client
+ * consumer. An older peer never gains the policy from program identity alone. */
+qboolean SV_PrivateWalkTrialBuildMoveVars (client_t *client, movevars_t *out)
+{
+	extern cvar_t sv_maxvelocity;
+	ddef_t *height;
+	if (!client || !PMSV_BuildMoveVars (out, client->edict, sv.protocolflags))
+		return false;
+	if (SV_ClientInstantStopEnabled (client))
+		out->flags |= MOVEFLAG_VR_INSTANT_STOP;
+	if (!SV_PrivateWalkTrialQ30Program () ||
+		!(client->offered_pmove_policies & QSVR_PMOVE_CAP_Q30_JUMP))
+		return true;
+	height = ED_FindGlobal ("map_jumpheight");
+	if (!height || (height->type & ~DEF_SAVEGLOBAL) != ev_float ||
+		height->ofs >= qcvm->progs->numglobals || !isfinite (G_FLOAT (height->ofs)) ||
+		!isfinite (sv_maxvelocity.value) || sv_maxvelocity.value < 0)
+		return false;
+	out->jumpspeed = G_FLOAT (height->ofs);
+	out->qc_maxvelocity = sv_maxvelocity.value;
+	out->flags |= MOVEFLAG_QC_JUMP_ORDINARY;
+	return true;
+}
+
 static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 {
 	movevars_t movevars;
@@ -1659,10 +1685,10 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 		return false;
 	if (!SV_PrivateWalkStatsDisjoint ())
 		return false;
-	if (!PMSV_BuildMoveVars (&movevars, client->edict, sv.protocolflags))
+	if (!SV_PrivateWalkTrialBuildMoveVars (client, &movevars))
 		return false;
-	if (SV_ClientInstantStopEnabled (client))
-		movevars.flags |= MOVEFLAG_VR_INSTANT_STOP;
+	if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
+		required += 1 + 1 + 4;
 	if (!PMSV_ExportMoveStats (&movevars, statsf, statsi))
 		return false;
 	statsf[STAT_PRIVATE_JUMP_SECS] = client->private_pmove_jump_secs;
@@ -1680,6 +1706,12 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 		MSG_WriteByte (msg, svcfte_updatestatfloat);
 		MSG_WriteByte (msg, stat);
 		MSG_WriteFloat (msg, statsf[stat]);
+	}
+	if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
+	{
+		MSG_WriteByte (msg, svcfte_updatestatfloat);
+		MSG_WriteByte (msg, STAT_PRIVATE_QC_MAXVELOCITY);
+		MSG_WriteFloat (msg, movevars.qc_maxvelocity);
 	}
 	return true;
 }
@@ -1947,6 +1979,30 @@ static void SV_WriteGorillaAckState (client_t *client, sizebuf_t *msg)
 		MSG_WriteLong (msg, client->vr_gorilla_state.surface_model[hand]);
 }
 
+static qboolean SVFTE_PredictionVelocityRepresentable (const vec3_t velocity)
+{
+	for (int i = 0; i < 3; ++i)
+		if (!isfinite (velocity[i]) || velocity[i] < SHRT_MIN * .125f ||
+			velocity[i] > SHRT_MAX * .125f)
+			return false;
+	return true;
+}
+
+static short SVFTE_EncodeVelocity (float velocity)
+{
+	/* This is a presentation seed, never a physics clamp. Private replay is
+	 * withheld when the actual owner cannot fit the existing eighth-unit wire
+	 * field. In-range conversion retains the existing truncation behavior. */
+	if (!isfinite (velocity))
+		return 0;
+	const double encoded = (double)velocity * 8;
+	if (encoded < SHRT_MIN)
+		return SHRT_MIN;
+	if (encoded > SHRT_MAX)
+		return SHRT_MAX;
+	return (short)encoded;
+}
+
 static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	size_t overflowsize, qboolean continuation)
 {
@@ -1979,7 +2035,10 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
 		move_authority_t authority = selected_engine ?
-			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT : MOVE_AUTHORITY_LEGACY_FRAME;
+			(SV_PrivateWalkTrialQ30Program () &&
+			 (client->offered_pmove_policies & QSVR_PMOVE_CAP_Q30_JUMP) ?
+			 MOVE_AUTHORITY_PMOVE_QC_COMMAND : MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT) :
+			MOVE_AUTHORITY_LEGACY_FRAME;
 		if (selected)
 			ack_flags |= MOVEACK_FLAG_SELECTED;
 		if (selected && client->private_input_phase == PRIVATE_INPUT_AWAIT_MARKER)
@@ -2013,6 +2072,7 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			 * deadline remains a QC teleport hold, never a replay seed. */
 			if (!SV_PrivateWalkTrialQ30Program () &&
 				client->edict && !client->edict->free &&
+				SVFTE_PredictionVelocityRepresentable (client->edict->v.velocity) &&
 				client->edict->v.health > 0 &&
 				client->edict->v.deadflag == DEAD_NO &&
 				client->edict->v.movetype == MOVETYPE_WALK &&
@@ -2366,9 +2426,8 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 			}
 			if ((int)ent->v.flags & FL_ONGROUND)
 				eflags |= EFLAGS_ONGROUND;
-			ents[numents].state.velocity[0] = ent->v.velocity[0] * 8;
-			ents[numents].state.velocity[1] = ent->v.velocity[1] * 8;
-			ents[numents].state.velocity[2] = ent->v.velocity[2] * 8;
+			for (int axis = 0; axis < 3; ++axis)
+				ents[numents].state.velocity[axis] = SVFTE_EncodeVelocity (ent->v.velocity[axis]);
 		}
 		else if (ents[numents].state.alpha == ENTALPHA_ZERO && !ent->v.effects) // don't send invisible entities unless they have effects
 			continue;
@@ -2900,6 +2959,7 @@ void SV_SendServerinfo (client_t *client)
 		// make sure we try reenabling it again on the next map though.
 		client->pextknown = false;
 		client->offered_qsvr = 0;
+		client->offered_pmove_policies = 0;
 		client->offered_pext2 = 0;
 	}
 	else if (client->pextknown)
@@ -3192,6 +3252,8 @@ void SV_Pext_f (void)
 				host_client->offered_pext2 = value;
 			else if (key == PROTOCOL_QSVR_PROFILE && value == QSVR_PROTOCOL_PINNED)
 				host_client->offered_qsvr = value;
+			else if (key == PROTOCOL_QSVR_PMOVE_POLICIES)
+				host_client->offered_pmove_policies = value & QSVR_PMOVE_CAP_SUPPORTED;
 			// else some other extension that we don't know
 		}
 
@@ -3261,6 +3323,7 @@ void SV_ConnectClient (int clientnum)
 
 	client->pextknown = false;
 	client->offered_qsvr = 0;
+	client->offered_pmove_policies = 0;
 	client->offered_pext2 = 0;
 	client->protocol_qsvr = 0;
 	client->protocol_pext2 = 0;

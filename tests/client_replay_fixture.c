@@ -13,7 +13,7 @@ cvar_t r_lerpturn = {"r_lerpturn", "1", CVAR_NONE};
 
 static qboolean selector_result = true;
 static qboolean selector_mutates_movevars;
-static int selector_calls, collector_calls, move_calls, preview_calls;
+static int selector_calls, collector_calls, move_calls, preview_calls, qc_move_calls;
 static int fluid_contact_call = -1;
 static usercmd_t preview_cmd;
 static usercmd_t observed_cmds[66];
@@ -67,6 +67,17 @@ void PM_PlayerMove (float gamespeed)
 	move_calls++;
 }
 
+/* Entry-point probe only; exact QC jumping is checked with the real solver
+ * and installed QC in q30_movement_native_fixture.c. */
+qboolean PM_PlayerMoveQCReplay (float gamespeed)
+{
+	assert (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY);
+	assert (pmove.qc_jump_owner);
+	qc_move_calls++;
+	PM_PlayerMove (gamespeed);
+	return !pmove.fluid_contacted && !pmove.waterlevel && !pmove.onladder;
+}
+
 static qmodel_t worldmodel;
 static entity_t entities[5];
 
@@ -75,6 +86,7 @@ static void reset_probes (void)
 	selector_result = true;
 	selector_mutates_movevars = false;
 	selector_calls = collector_calls = move_calls = preview_calls = 0;
+	qc_move_calls = 0;
 	fluid_contact_call = -1;
 	memset (&preview_cmd, 0, sizeof(preview_cmd));
 	memset (observed_cmds, 0, sizeof(observed_cmds));
@@ -207,7 +219,11 @@ static void check_private_snapshot_and_metadata_gates (void)
 	cl.move_ack_authority = MOVE_AUTHORITY_LEGACY_FRAME;
 	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
 	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (!move_calls && !preview_calls); // authority alone has no matching consumer
+	movevars.flags |= MOVEFLAG_QC_JUMP_ORDINARY;
 	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (qc_move_calls == 2); // journal plus disposable preview
 	assert (origin[0] == 102); /* private baseline plus history and preview */
 	assert (observed_cmds[0].msec == 100);
 	assert (observed_cmds[0].vr_active);
@@ -319,6 +335,8 @@ static void check_private_walk_shadow (void)
 	cl.move_snapshot_owner = cl.viewentity;
 	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
 	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
+	assert (selector_calls == 1 && !collector_calls && !move_calls && !preview_calls);
+	reset_probes ();
 	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
 	entities[1].netstate.pmovetype = MOVETYPE_TOSS;
 	assert (!CL_ComputeReplayPlayerMovement (&entities[1], &result, true, 3));
@@ -522,8 +540,10 @@ static void check_private_replay_allows_qualified_fluid_crossing (void)
 	reset_client ();
 	admit_private_snapshot ();
 	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+	movevars.flags |= MOVEFLAG_QC_JUMP_ORDINARY;
 	fluid_contact_call = 0;
-	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (!CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (qc_move_calls == 1 && move_calls == 1 && !preview_calls);
 }
 
 static void check_trusted_gorilla_generation (void)

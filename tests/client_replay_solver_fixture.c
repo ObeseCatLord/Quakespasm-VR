@@ -21,6 +21,8 @@ extern cvar_t sv_fte_recursivehullckeck;
 double realtime;
 
 static int preview_calls;
+static qboolean qc_policy;
+static usercmd_t qc_preview;
 static qmodel_t water_model;
 static mplane_t water_plane;
 static mclipnode_t water_node;
@@ -41,6 +43,8 @@ void CL_PreviewMove (usercmd_t *cmd)
 {
 	preview_calls++;
 	memset (cmd, 0, sizeof(*cmd));
+	if (qc_policy)
+		*cmd = qc_preview;
 }
 
 qboolean PMCL_SetMoveVars (void)
@@ -59,11 +63,16 @@ qboolean PMCL_SetMoveVars (void)
 	movevars.stopspeed = 100;
 	movevars.edgefriction = 2;
 	movevars.stepheight = 18;
-	movevars.jumpspeed = 270;
+	movevars.jumpspeed = qc_policy ? 120 : 270;
 	movevars.watersinkspeed = 60;
 	movevars.bunnyfriction = true;
 	movevars.slidefix = true;
 	movevars.flags = MOVEFLAG_VALID | MOVEFLAG_NOGRAVITYONGROUND;
+	if (qc_policy)
+	{
+		movevars.flags |= MOVEFLAG_QC_JUMP_ORDINARY;
+		movevars.qc_maxvelocity = 2000;
+	}
 	return true;
 }
 
@@ -96,6 +105,52 @@ static void setup_water_world (void)
 		water_model.hulls[i].firstclipnode = 0;
 		water_model.hulls[i].lastclipnode = 0;
 	}
+}
+
+static void check_qc_preview (void)
+{
+	vec3_t origin, first_origin;
+	usercmd_t saved_commands[countof (cl.movecmds)], saved_pending;
+	entity_state_t baseline;
+	qc_policy = true;
+	qc_preview.buttons = BUTTON_JUMP;
+	water_node.children[0] = CONTENTS_EMPTY;
+	water_node.children[1] = CONTENTS_SOLID;
+	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	cl.protocol_pext2 = QSVR_PEXT2_REQUIRED;
+	cl.move_snapshot_valid = true;
+	cl.move_snapshot_ack = cl.ackedmovemessages;
+	cl.move_snapshot_owner = cl.viewentity;
+	cl.move_ack_authority = MOVE_AUTHORITY_PMOVE_QC_COMMAND;
+	cl.move_ack_prediction_allowed = true;
+	entities[1].netstate.pmovetype = MOVETYPE_WALK | 0x80;
+	entities[1].netstate.solidsize = 16 | (24 << 8) | ((32768u + 32) << 16);
+	VectorSet (entities[1].netstate.origin, 0, 0, 24);
+	baseline = entities[1].netstate;
+	cl.pendingcmd.servertime = cl.time; // empty journal, zero-duration preview
+	saved_pending = cl.pendingcmd;
+	memcpy (saved_commands, cl.movecmds, sizeof (saved_commands));
+	assert (CL_ReplayPlayerMovement (&entities[1], first_origin));
+	assert (cl.velocity[2] == 120 && !cl.onground);
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (VectorCompare (origin, first_origin) && cl.velocity[2] == 120);
+	assert (memcmp (&entities[1].netstate, &baseline, sizeof (baseline)) == 0);
+	assert (memcmp (cl.movecmds, saved_commands, sizeof (saved_commands)) == 0);
+	assert (memcmp (&cl.pendingcmd, &saved_pending, sizeof (saved_pending)) == 0);
+	/* A committed journal press owns the takeoff; the held preview cannot
+	 * produce a second impulse. Repeated presentation starts from the ACK. */
+	cl.movemessages = 5;
+	cl.movecmds[4] = (usercmd_t){.sequence = 4, .msec = 5,
+		.seconds = .005f, .buttons = BUTTON_JUMP};
+	memcpy (saved_commands, cl.movecmds, sizeof (saved_commands));
+	assert (CL_ReplayPlayerMovement (&entities[1], first_origin));
+	assert (fabsf (cl.velocity[2] - 116) < .001f && first_origin[2] > 24);
+	assert (CL_ReplayPlayerMovement (&entities[1], origin));
+	assert (VectorCompare (origin, first_origin) && fabsf (cl.velocity[2] - 116) < .001f);
+	assert (memcmp (&entities[1].netstate, &baseline, sizeof (baseline)) == 0);
+	assert (memcmp (cl.movecmds, saved_commands, sizeof (saved_commands)) == 0);
+	assert (memcmp (&cl.pendingcmd, &saved_pending, sizeof (saved_pending)) == 0);
+	puts ("client QC replay real PMove: repeated/zero preview preserves journal/baseline; no second held impulse");
 }
 
 int main (void)
@@ -134,5 +189,6 @@ int main (void)
 	assert (cl.inwater);
 
 	puts ("client replay real PMove: empty history zero-duration preview categorizes underwater");
+	check_qc_preview ();
 	return 0;
 }

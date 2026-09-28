@@ -143,6 +143,7 @@ typedef struct {
 	float ktjump;
 	float edgefriction; //default 2
 	float jumpspeed;
+	float qc_maxvelocity; // negotiated ordinary QC pre-solver clamp; otherwise unused
 	int	walljump;
 	qboolean slidefix;
 	qboolean airstep;
@@ -174,6 +175,7 @@ typedef struct {
 #define MOVEFLAG_PM_WALLJUMP_SHIFT				25
 #define MOVEFLAG_PM_WALLJUMP_MASK				0x06000000
 #define MOVEFLAG_VR_INSTANT_STOP				0x08000000 /* private QSVR movevars only */
+#define MOVEFLAG_QC_JUMP_ORDINARY			0x10000000 /* negotiated private consumer */
 #define MOVEFLAG_QWCOMPAT						(MOVEFLAG_NOGRAVITYONGROUND|MOVEFLAG_QWEDGEBOX)
 
 #define MASK_PLAYERSOLID	CONTENTMASK_ANYSOLID
@@ -191,6 +193,7 @@ extern	movevars_t		movevars;
 extern	playermove_t	pmove;
 
 void PM_PlayerMove (float gamespeed);
+qboolean PM_PlayerMoveQCReplay (float gamespeed);
 /* Zero effective WALK intent after native teleport backward suppression. */
 qboolean PM_VRInstantStopNeutralInput (const usercmd_t *cmd,
 	qboolean block_teleport_backmove);
@@ -223,6 +226,7 @@ qboolean PMCL_SetMoveVars(void);
 
 /* Build and export server movement settings without selecting them globally. */
 qboolean PMSV_BuildMoveVars(movevars_t *out, edict_t *player, unsigned int protocolflags);
+qboolean SV_PrivateWalkTrialBuildMoveVars(client_t *client, movevars_t *out);
 /* fstat and istat must each hold at least MAX_CL_STATS entries. */
 qboolean PMSV_ExportMoveStats(const movevars_t *vars, float *fstat, int *istat);
 #define VectorClear(v) ((v)[0] = (v)[1] = (v)[2] = 0)

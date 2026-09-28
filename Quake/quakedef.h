@@ -146,6 +146,7 @@ typedef enum
 } stat_t;
 
 // Inherited private stats; defining IDs does not advertise their transport.
+#define STAT_PRIVATE_QC_MAXVELOCITY 223 // required only by negotiated QC jump policy
 #define STAT_VR_WEAPONS		224
 #define STAT_MOVEFLAGS		225
 #define STAT_MOVEVARS_WATERSINKSPEED	226

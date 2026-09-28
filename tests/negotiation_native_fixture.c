@@ -73,6 +73,7 @@ static client_t *PrepareClient (int slot)
 	SV_ConnectClient (slot);
 	assert (client->active && !client->pextknown);
 	assert (!client->protocol_qsvr && !client->private_pmove_walk_selected);
+	assert (!client->offered_pmove_policies); // reconnect clears the old consumer mask
 	/* The initial writer asked for extensions; don't carry those bytes into
 	 * the post-offer serverinfo header inspected below. */
 	SZ_Clear (&client->message);
@@ -221,6 +222,64 @@ static void DemoServerdata (qboolean private_layout)
 	cls.demoplayback = false;
 }
 
+static void Q30PolicySnapshots (client_t *client, byte *bytes, size_t capacity)
+{
+	extern cvar_t sv_maxvelocity;
+	ddef_t *height = ED_FindGlobal ("map_jumpheight");
+	movevars_t vars;
+	vec3_t replay_origin;
+	assert (height && (height->type & ~DEF_SAVEGLOBAL) == ev_float);
+	float saved_height = G_FLOAT (height->ofs);
+	unsigned saved_cap = client->offered_pmove_policies;
+	assert (SV_PrivateWalkStatsDisjoint ()); // actual runtime registry, not macros alone
+	printf ("Q30_POLICY_STATS registry=%zu reserved223_disjoint=1\n", sv.numcustomstats);
+	assert (sv.numcustomstats < countof (sv.customstats));
+	const size_t slot = sv.numcustomstats;
+	struct svcustomstat_s saved_stat = sv.customstats[slot];
+	const int indices[] = {223, 222, 222};
+	const int types[] = {ev_float, ev_ext_uint64, ev_vector};
+	for (int i = 0; i < countof (indices); ++i)
+	{
+		sv.customstats[slot] = (struct svcustomstat_s){.idx = indices[i], .type = types[i]};
+		sv.numcustomstats = slot + 1;
+		assert (!SV_PrivateWalkStatsDisjoint ());
+	}
+	sv.numcustomstats = slot;
+	sv.customstats[slot] = saved_stat;
+	client->offered_pmove_policies = 0;
+	assert (SV_PrivateWalkTrialBuildMoveVars (client, &vars) &&
+		!(vars.flags & MOVEFLAG_QC_JUMP_ORDINARY));
+	client->offered_pmove_policies = QSVR_PMOVE_CAP_Q30_JUMP;
+	client->vr_gorilla_capable = false;
+	cl.worldmodel = sv.qcvm.worldmodel;
+	cl.movemessages = 20;
+	cl.ackedmovemessages = -1;
+	cls.netcon = client->netconnection;
+	cls.signon = SIGNONS;
+	cls.state = ca_connected;
+	const float heights[] = {120, 0, 4000, 1e30f};
+	for (int i = 0; i < countof (heights); ++i)
+	{
+		G_FLOAT (height->ofs) = heights[i];
+		SV_PresendClientDatagram (client);
+		net_message.data = bytes;
+		net_message.maxsize = capacity;
+		SZ_Clear (&net_message);
+		assert (SVFTE_WritePrivateMoveStats (client, &net_message));
+		assert (SVFTE_WriteEntitiesToClient (client, &net_message, capacity, false));
+		CL_ParseServerMessage ();
+		assert (msg_readcount == net_message.cursize && cl.move_snapshot_valid);
+		assert (cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND &&
+			!cl.move_ack_prediction_allowed); // q30 admission/permission stays closed
+		assert (PMCL_SetMoveVars () && (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY) &&
+			movevars.jumpspeed == heights[i] && movevars.qc_maxvelocity == sv_maxvelocity.value);
+		assert (!CL_ReplayPlayerMovement (&cl.entities[1], replay_origin));
+	}
+	G_FLOAT (height->ofs) = saved_height;
+	client->offered_pmove_policies = saved_cap;
+	puts ("Q30_POLICY_SNAPSHOT_PASSED actual stats/writer/full-parser/movevars; injected owner remains unpredicted");
+}
+
 static void DemoEntityPackets (qboolean selected)
 {
 	static byte bytes[NET_MAXMESSAGE];
@@ -296,6 +355,8 @@ static void DemoEntityPackets (qboolean selected)
 	fclose (file);
 	cls.demofile = NULL;
 	cls.demoplayback = false;
+	if (selected && SV_PrivateWalkTrialQ30Program ())
+		Q30PolicySnapshots (client, bytes, sizeof (bytes));
 	Mem_Free (cl.entities);
 	cl.entities = NULL;
 	cl.num_entities = cl.max_edicts = 0;
@@ -314,6 +375,7 @@ static client_t *Negotiate (int slot, const char *offer, unsigned expected)
 static void Cases (void)
 {
 	char legacy_offer[1024], plain_offer[1024], wrong_offer[1024], partial_offer[1024];
+	char old_private_offer[1024], unknown_policy_offer[1024];
 	client_t *private_peer, *public_peer;
 	int saved_protocol = sv.protocol;
 	unsigned saved_flags = sv.protocolflags;
@@ -342,10 +404,20 @@ static void Cases (void)
 	Cvar_SetQuick (&sv_qsvr_private, "1");
 	private_peer = Negotiate (0, modern_offer, QSVR_PROTOCOL_PINNED);
 	public_peer = Negotiate (1, legacy_offer, 0);
+	assert (private_peer->offered_pmove_policies == QSVR_PMOVE_CAP_SUPPORTED &&
+		!public_peer->offered_pmove_policies);
 	assert (private_peer->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		public_peer->protocol_qsvr == 0);
 	assert (private_peer->protocol_pext2 == QSVR_PEXT2_REQUIRED &&
 		public_peer->protocol_pext2 == (PEXT2_SUPPORTED_CLIENT & sv_protocol_pext2));
+	q_snprintf (old_private_offer, sizeof (old_private_offer), "pext %#x %#x %#x %#x",
+		PROTOCOL_FTE_PEXT2, PEXT2_SUPPORTED_CLIENT, PROTOCOL_QSVR_PROFILE,
+		QSVR_PROTOCOL_PINNED);
+	assert (!Negotiate (1, old_private_offer, QSVR_PROTOCOL_PINNED)->offered_pmove_policies);
+	q_snprintf (unknown_policy_offer, sizeof (unknown_policy_offer), "%s %#x %#x",
+		old_private_offer, PROTOCOL_QSVR_PMOVE_POLICIES, 0x80000000u | QSVR_PMOVE_CAP_SUPPORTED);
+	assert (Negotiate (1, unknown_policy_offer, QSVR_PROTOCOL_PINNED)->offered_pmove_policies ==
+		QSVR_PMOVE_CAP_SUPPORTED);
 	Negotiate (1, plain_offer, 0);
 	Negotiate (1, wrong_offer, 0);
 	Negotiate (1, partial_offer, 0);
@@ -359,10 +431,12 @@ static void Cases (void)
 	SV_SendServerinfo (private_peer);
 	Header (private_peer, 0);
 	assert (private_peer->offered_qsvr == QSVR_PROTOCOL_PINNED);
+	assert (private_peer->offered_pmove_policies == QSVR_PMOVE_CAP_SUPPORTED);
 	Cvar_SetQuick (&sv_qsvr_private, "1");
 	SZ_Clear (&private_peer->message);
 	SV_SendServerinfo (private_peer);
 	Header (private_peer, QSVR_PROTOCOL_PINNED);
+	assert (private_peer->offered_pmove_policies == QSVR_PMOVE_CAP_SUPPORTED);
 
 	sv.protocolflags = PRFL_SHORTANGLE; /* Float coordinates are required. */
 	Negotiate (1, modern_offer, 0);

@@ -68,4 +68,7 @@ The next [ordinary q30 admission/replay plan](predictive-q30-replay-2.0-plan.md)
 records the missing replay consumer, bounded compatibility and velocity-limit
 inputs, pre-QC VR ordering, exact write set and end-to-end acceptance before
 production edits. Its Astra review changed the ordering contract; ordinary
-q30 prediction and complete native transitions remain unimplemented.
+q30 policy transport, complete movement inputs and the actual replay consumer
+are now implemented and pass local component checks. Ordinary q30 admission and
+complete native transitions remain unimplemented; the plan records the exact
+remaining vertical and traversal requirements.

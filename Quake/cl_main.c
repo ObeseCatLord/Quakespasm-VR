@@ -1331,7 +1331,9 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 	if ((!cl.vr_gorilla_state_valid ||
 		cl.vr_gorilla_state_sequence != cl.ackedmovemessages) &&
 		fresh_reset && cl.move_ack_prediction_allowed &&
-		cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT)
+		(cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT ||
+		 (cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND &&
+		  (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY))))
 	{
 		memset (&pmove.gorilla, 0, sizeof (pmove.gorilla));
 		pmove.gorilla_allowed = true;
@@ -1607,7 +1609,8 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		if (!private_replay || !cl.move_snapshot_valid ||
 			cl.move_snapshot_ack != cl.ackedmovemessages ||
 			cl.move_snapshot_owner != cl.viewentity ||
-			cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT ||
+			(cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+			 cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_QC_COMMAND) ||
 			(ent->netstate.pmovetype & 63) != MOVETYPE_WALK)
 			return false;
 	}
@@ -1668,8 +1671,19 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			goto shadow_failed;
 		return false;
 	}
+	/* Authority alone is not a jump-policy consumer. An accepted older QC
+	 * owner must never fall through to generic jumping with a missing policy. */
+	if (private_replay &&
+		!!(movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY) !=
+		(cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND))
+	{
+		if (shadow)
+			goto shadow_failed;
+		return false;
+	}
 
 	memset (&pmove, 0, sizeof(pmove));
+	pmove.qc_jump_owner = (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY) != 0;
 	if (private_replay)
 		VectorCopy (ent->netstate.origin, baseline_origin);
 	else
@@ -1736,7 +1750,18 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			CL_ResetReplayPropagation ();
 			return false;
 		}
-		PM_PlayerMove (1);
+		if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
+		{
+			if (!PM_PlayerMoveQCReplay (1))
+			{
+				if (shadow)
+					goto shadow_failed;
+				CL_ResetReplayPropagation ();
+				return false;
+			}
+		}
+		else
+			PM_PlayerMove (1);
 		if (!shadow && !private_replay)
 		{
 			cl.move_replay_propagate_sequence[(seq + 1) & MOVECMDS_MASK] = seq + 1;
@@ -1759,7 +1784,9 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			preview.vr_gorilla.flags && cl.vr_gorilla_supported &&
 			cl.vr_gorilla_allowed)
 		{
-			if (cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT)
+			if (cl.move_ack_authority != MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+				!(cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND &&
+				  (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)))
 			{
 				CL_ResetReplayPropagation ();
 				return false;
@@ -1788,7 +1815,16 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			CL_ResetReplayPropagation ();
 			return false;
 		}
-		PM_PlayerMove (1);
+		if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
+		{
+			if (!PM_PlayerMoveQCReplay (1))
+			{
+				CL_ResetReplayPropagation ();
+				return false;
+			}
+		}
+		else
+			PM_PlayerMove (1);
 	}
 
 	VectorCopy (pmove.origin, result->origin);
@@ -1823,7 +1859,9 @@ qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
 			cl.protocol_qsvr == QSVR_PROTOCOL_PINNED && cl.move_snapshot_valid &&
 			cl.move_snapshot_ack == cl.ackedmovemessages &&
 			cl.move_snapshot_owner == cl.viewentity &&
-			cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT &&
+			(cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT ||
+			 (cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND &&
+			  (cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_QC_JUMP_ORDINARY))) &&
 			cl.viewentity > 0 && cl.viewentity < cl.num_entities && cl.entities &&
 			ent == &cl.entities[cl.viewentity] &&
 			(ent->netstate.pmovetype & 63) == MOVETYPE_WALK &&

@@ -140,6 +140,46 @@ the existing classification/phase boundaries. Another handshake, clock, queue,
 support journal, field cache or force scheduler exceeds this scope and reopens
 the decision before implementation proceeds.
 
+## Transport and consumer checkpoint
+
+The [implementation review](predictive-q30-policy-implementation-review.md)
+records the source findings, disposition and qualified software evidence.
+
+The bounded capability, live-input producer, complete-stat validation and actual
+replay consumer are implemented. Actual q30 QC still authors the server impulse.
+Roomscale retains QC rising geometry, with ordinary categorization confined to
+the stop probe. Numeric float companions are defined before validation; private
+replay is withheld for a velocity that the existing ACK cannot represent.
+Collection estimates respect the actual pre-solver clamp while preserving the
+authored height. Existing stock/public movement owners remain in use.
+
+Consolidated Linux build and focused checks pass. The
+[existing fixtures](../tests/README.md#exact-q30-movement-comparison) compare real
+server QC and policy replay on real hulls for held landing, zero/changed/clamped/
+huge finite height, airborne press, low release with repeated roomscale and
+initial grounded stop, and 125 ms substeps. Position/velocity differences stay
+below .01 and release/ground flags match every command in those cases. Physent
+collection is a fixture seam, not a normal client session. A separate actual
+serialized stats/owner → full parser → movevars check preserves height/limit and
+confirms that the injected q30 owner remains unpredicted. The actual registry
+has nine customstats disjoint from223; staged width/collision cases reject.
+
+Address/UB/explicit float-cast-overflow checks cover missing/stale/negative/
+nonfinite limits and huge finite height/limit values. Real solver previews
+preserve the journal, pending command and authoritative baseline; a held preview
+does not repeat the committed jump impulse. Leak detection was disabled for its
+sandbox ptrace limitation; address/UB/conversion instrumentation remained active.
+Stock/public mixed checks cover actual receipt/QC/physics/full-parser/replay,
+startup pause, arrival gaps, native return and staged encoded velocity edges.
+Authored physics remains unchanged when the presentation seed saturates.
+
+This is a component-stage checkpoint, **not ordinary q30 activation**. Shared
+native classification, startup/ability/hold/camera and phase-aware transitions,
+raw Gorilla qualification, real step/ledge/trigger traversals and the smallest
+normal offer/spawn/begin/session vertical below remain required. q30 admission
+and prediction permission are still closed. Wider AD/Mjolnir and cooperative-QC
+compatibility remain in the parent plan; they are not retired by these checks.
+
 ## Acceptance and completion
 
 Smallest usable vertical proof: ordinary capability offer → actual spawn/begin

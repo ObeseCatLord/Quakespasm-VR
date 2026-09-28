@@ -7621,7 +7621,7 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 	const movevars_t *vars, float seconds, const usercmd_t *command,
 	vec3_t bounds[2])
 {
-	float speed, reach, acceleration;
+	float speed, reach, acceleration, jump_speed;
 	int i;
 
 	if (!isfinite (seconds) || seconds <= 0 || seconds > 0.1251f)
@@ -7636,9 +7636,18 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 	}
 	acceleration = fmaxf (fabsf (vars->accelerate), fabsf (vars->airaccelerate)) *
 		fabsf (vars->maxspeed);
+	jump_speed = fabsf (vars->jumpspeed);
+	if (vars->flags & MOVEFLAG_QC_JUMP_ORDINARY)
+	{
+		/* Actual QC + SV_CheckVelocity bounds the pre-solver impulse. A legal
+		 * huge authored height must not collect the entire map when that same
+		 * impulse is clamped before movement. Keep the authored height intact. */
+		speed = fminf (speed, vars->qc_maxvelocity);
+		jump_speed = fminf (jump_speed, vars->qc_maxvelocity);
+	}
 	reach = (speed + fabsf (vars->maxspeed)) * seconds +
 		0.5f * (fabsf (vars->gravity * vars->entgravity) + acceleration) * seconds * seconds +
-	fabsf (vars->jumpspeed) * seconds + (float)vars->stepheight + 16.0f;
+	jump_speed * seconds + (float)vars->stepheight + 16.0f;
 	if (!isfinite (reach))
 		return false;
 	for (i = 0; i < 3; i++)
@@ -7990,7 +7999,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	gorilla_reset_generation = client->vr_gorilla_reset_generation;
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
-	if (run_command && (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
+	if (run_command && (!SV_PrivateWalkTrialBuildMoveVars (client, &trial_movevars) ||
 		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
 			client->vr_gorilla_capable && sv_gorilla.value ?
 				&command : NULL, bounds)))
@@ -8287,7 +8296,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	SV_CheckVelocity (ent);
 	if ((failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
-	if (!PMSV_BuildMoveVars (&trial_movevars, ent, sv.protocolflags) ||
+	if (!SV_PrivateWalkTrialBuildMoveVars (client, &trial_movevars) ||
 		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
 			client->vr_gorilla_capable && sv_gorilla.value ?
 				&command : NULL, bounds))

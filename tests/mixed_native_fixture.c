@@ -452,6 +452,33 @@ static client_state_t *CreateMixedPeerState (client_t *peer, int slot)
 #ifndef MIXED_NATIVE_FIXTURE_ENTRY
 #define MIXED_NATIVE_FIXTURE_ENTRY main
 #endif
+
+static void VelocitySnapshotChecks (client_t *peer, client_state_t *state)
+{
+	const float velocities[] = {-4096, 4095.875f, -4096.125f, 4096};
+	vec3_t saved_velocity, replay_origin;
+	static byte bytes[NET_MAXMESSAGE];
+	VectorCopy (peer->edict->v.velocity, saved_velocity);
+	for (int i = 0; i < countof (velocities); ++i)
+	{
+		VectorClear (peer->edict->v.velocity);
+		peer->edict->v.velocity[0] = velocities[i]; // staged seed, no physics clamp
+		cl = *state;
+		cls.netcon = peer->netconnection;
+		ReadPeerSnapshot (peer, bytes, sizeof (bytes));
+		assert (cl.move_snapshot_valid);
+		assert (cl.move_ack_prediction_allowed == (i < 2));
+		assert (cl.entities[1].netstate.velocity[0] ==
+			(i == 0 || i == 2 ? SHRT_MIN : SHRT_MAX));
+		assert (peer->edict->v.velocity[0] == velocities[i]);
+		cl.time = qcvm->time;
+		cl.pendingcmd.servertime = cl.time;
+		assert (CL_ReplayPlayerMovement (&cl.entities[1], replay_origin) == (i < 2));
+		*state = cl;
+	}
+	VectorCopy (saved_velocity, peer->edict->v.velocity);
+	puts ("PRIVATE_VELOCITY_SNAPSHOT_PASSED actual writer/parser/replay boundaries; authored physics retained");
+}
 int MIXED_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 {
 	char public_offer[1024];
@@ -639,6 +666,8 @@ int MIXED_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 		GapSnapshot (peers[1], states[1]);
 		assert (!states[1]->move_ack_selected_owner && !states[1]->move_ack_prediction_allowed);
 	}
+	if (selected && COM_CheckParm ("-velocityseeds"))
+		VelocitySnapshotChecks (peers[0], states[0]);
 	for (int slot = 0; slot < 2; slot++)
 	{
 		vec3_t displacement;

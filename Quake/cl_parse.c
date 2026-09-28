@@ -1373,6 +1373,8 @@ static unsigned int cl_move_stat_receipts;
 
 static int CL_MoveStatReceiptBit (int stat)
 {
+	if (stat == STAT_PRIVATE_QC_MAXVELOCITY)
+		return 22;
 	if (stat == STAT_MOVEFLAGS)
 		return 0;
 	if (stat >= STAT_MOVEVARS_WATERSINKSPEED && stat <= STAT_MOVEVARS_KTJUMP)
@@ -1413,6 +1415,10 @@ static qboolean CL_ReceivedMoveStatsUsable (void)
 	int stat;
 
 	if (!(cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_VALID))
+		return false;
+	if ((cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_QC_JUMP_ORDINARY) &&
+		(!isfinite (cl.statsf[STAT_PRIVATE_QC_MAXVELOCITY]) ||
+		 cl.statsf[STAT_PRIVATE_QC_MAXVELOCITY] < 0))
 		return false;
 	for (stat = STAT_MOVEVARS_WATERSINKSPEED; stat <= STAT_MOVEVARS_KTJUMP; stat++)
 		if (!isfinite (cl.statsf[stat]))
@@ -1488,8 +1494,10 @@ static void CLFTE_CommitMoveSnapshot (void)
 	}
 	/* A private legacy owner can still need the semantic teleport snap while
 	 * lacking the full dry-WALK stat set required for PMove replay. */
+	const unsigned int required_stats = CL_MOVE_STAT_RECEIPTS_COMPLETE |
+		((cl.stats[STAT_MOVEFLAGS] & MOVEFLAG_QC_JUMP_ORDINARY) ? 1u << 22 : 0);
 	if (!cl_move_snapshot_pending_owner_reset ||
-		cl_move_stat_receipts != CL_MOVE_STAT_RECEIPTS_COMPLETE ||
+		(cl_move_stat_receipts & required_stats) != required_stats ||
 		!CL_ReceivedMoveStatsUsable ())
 		return;
 	cl.move_snapshot_valid = true;
@@ -2908,10 +2916,12 @@ static void CL_ParseStatNumeric (int stat, int ival, float fval)
 }
 static void CL_ParseStatFloat (int stat, float fval)
 {
-	/* Keep ordinary numeric conversion for public stats 254/255. Avoid
-	 * undefined float-to-int conversion on invalid private timer seeds; the
-	 * candidate gate examines the original float and rejects it. */
-	if ((stat == STAT_PRIVATE_JUMP_SECS ||
+	/* These movement inputs are floats; their integer companions must not
+	 * invoke undefined conversions before the candidate gate sees the original
+	 * value. Large finite heights/limits remain authored floats, not guessed
+	 * integers. Other public numeric stats keep their existing conversion. */
+	if ((stat == STAT_PRIVATE_QC_MAXVELOCITY || stat == STAT_MOVEVARS_JUMPVELOCITY ||
+		stat == STAT_PRIVATE_JUMP_SECS ||
 		stat == STAT_PRIVATE_WATERJUMP_SECS) &&
 		(!isfinite (fval) || (double)fval < INT_MIN || (double)fval > INT_MAX))
 	{
