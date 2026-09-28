@@ -47,7 +47,10 @@ before dereferencing: `GetEdictFieldValue` checks a negative offset only.
 Reuse current selection, queue, credit, completion/retirement, contact cursor,
 native fresh/phase dispatcher, QC callbacks, world Think window, snapshot mode/
 discontinuity epochs and permission. Receipt and snapshot classification must
-stay observational; only the physics turn performs fresh water categorization.
+stay observational. Physics may use fresh water categorization to choose an
+owner, but must restore those speculative values before native input/QC: native
+PreThink historically sees the previous water state, with native WALK refreshing
+it later. The probe must not introduce a new QC observation order.
 Initial admission is before `spawned=true`; reuse a common internal body
 predicate with the existing active/known-to-QC lifecycle, without temporarily
 changing `spawned` or creating another session lifetime.
@@ -121,5 +124,30 @@ Wider AD/Mjolnir and cooperative-QC integration remain in the parent plan.
 
 Reopen before implementation exceeds one current-state predicate and existing
 phase adapters, requires a second scheduling policy, cannot retain native input
-order, or needs repeated repairs among new layers. The remaining phase decision
-is under Astra review; record its disposition here before coding that boundary.
+order, or needs repeated repairs among new layers. The disposition below resolves
+the roomscale decision. Reachable callback closure and normal-session
+qualification remain admission prerequisites.
+
+## Local Astra design disposition
+
+One read-only local Astra Max review verified the actual native/selected phase
+order and pinned q30 image. Main independently verified effective
+`gpt-6-astra` / `max` turn metadata, area-list insertion and equal-fraction
+collision selection, push-grid sorting/deduplication/live checks, the weapon
+scope's link-only hook, and the auxiliary call chain's lack of persistent
+pusher-support writes. No raw operational telemetry is part of this artifact.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Reuse the callback-free roomscale sweep with bounded local restore. | **Adopted.** Probe only at the synchronous physics dispatch boundary, outside QC/weapon-pose scopes. Use the candidate head's duration and existing sweep/step behavior. Restore command, duration, origin, velocity, flags, ground, water, bounds/PVS and the exact original area-list position, including initially unlinked owners. Ordinary relinking alone changes collision tie ordering. |
+| Do not add a grid, weapon-scope or pusher-record transaction framework. | **Adopted.** Existing grid entries are a conservative superset and are sorted/deduplicated/live-tested; the restored link recomputes live bounds. No active weapon scope is allowed at this boundary. The auxiliary chain does not write persistent pusher support. Reopen if a new writer is added. |
+| Choose fresh native before command staging, angles or QC. | **Adopted.** Offset0 can invoke the existing fresh native/coalesced owner once after restoring probe state. At offset>0, stop before the unstarted head, set the existing native-frame flag, clear credit and preserve it for the next world pass. Append no native world interval to earlier command movement. |
+| Preserve native QC-visible water order. | **Adopted; brief corrected.** Speculative water selects dispatch only. Restore previous water before native ClientThink/roomscale/PreThink; native WALK retains its later refresh. No new gameplay water clock. |
+| The probe does not solve arbitrary callback entry. | **Adopted.** q30 admission stays closed until ordinary PreThink/scheduled Think closure and explicit residual transitions are proved. Full ClientThink after QC and unconditional PM_NORMAL are not valid fallbacks. Whole-world continuation is not a generic living-q30 escape hatch. Maintenance has the same proof requirement without new input/time. |
+| Keep native qualification loss sticky after movement. | **Adopted.** Observe at movement/contact boundaries, retain the existing frame-native flag even if PostThink returns to WALK, complete the current head once, clear credit and stop batching. |
+| Cancel deferred Gorilla movement on holds/cameras. | **Adopted.** False eligibility alone makes the deferred consumer fall through to ordinary input. Cancel at its existing early-return boundary; physical contacts invalidate continuity while advancing the existing cursor. Keep stock waterjump clearing away from q30 ownership. |
+
+The review changed the restoration and deferred-input contracts; it was not
+just editorial approval. Final implementation review and consolidated acceptance
+are still required. The current classifier/probe checkpoint will retain closed
+q30 admission rather than claim that those components complete the feature.
