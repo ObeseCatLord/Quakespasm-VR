@@ -92,7 +92,11 @@ An actual native-QC last-nail sequence demonstrates that gap; the
 conditional existing-boundary fix and selected/native proof before production.
 The implemented gate and all20 roots plus ordinary fallback pass Linux component
 checks. Actual traversal and complete normal admission still remain open.
-The next [real-BSP traversal plan](predictive-q30-traversal-2.0-plan.md) commits
-the shared-finder/actual-sweep/retained-head qualification stages before edits,
-while a separate local Astra audit checks remaining client Think scheduling.
+The [real-BSP traversal plan](predictive-q30-traversal-2.0-plan.md) was committed
+before shared-finder/actual-sweep/retained-head edits. Its prepared airborne
+crossing on shipped1024_tango, actual dry prefix and next native consumption
+pass Linux checks and final local Astra review. A separate local Astra audit
+closes normally initialized client/target scheduling without another gate;
+arbitrary save/command mutations and full normal admission remain outside that
+bounded closure. Production is unchanged by this traversal slice.
 Revise the plan before implementing any newly expanded phase contract.

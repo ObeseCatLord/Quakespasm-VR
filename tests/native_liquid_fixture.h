@@ -3,7 +3,8 @@
 #ifndef QSVR_NATIVE_LIQUID_FIXTURE_H
 #define QSVR_NATIVE_LIQUID_FIXTURE_H
 
-static qboolean FindLiquidPosition (edict_t *player, int contents, int depth, vec3_t found)
+static qboolean FindLiquidPositionAtOrdinal (edict_t *player, int contents, int depth,
+	unsigned ordinal, vec3_t found)
 {
 	qmodel_t *world = qcvm->worldmodel;
 	vec3_t saved_origin;
@@ -26,6 +27,11 @@ static qboolean FindLiquidPosition (edict_t *player, int contents, int depth, ve
 					SV_CheckWater (player);
 					if (player->v.waterlevel != depth || player->v.watertype != contents || SV_TestEntityPosition (player))
 						continue;
+					if (ordinal)
+					{
+						--ordinal;
+						continue;
+					}
 					VectorCopy (position, found);
 					located = true;
 				}
@@ -34,6 +40,11 @@ static qboolean FindLiquidPosition (edict_t *player, int contents, int depth, ve
 	player->v.waterlevel = saved_level;
 	player->v.watertype = saved_type;
 	return located;
+}
+
+static qboolean FindLiquidPosition (edict_t *player, int contents, int depth, vec3_t found)
+{
+	return FindLiquidPositionAtOrdinal (player, contents, depth, 0, found);
 }
 
 #endif

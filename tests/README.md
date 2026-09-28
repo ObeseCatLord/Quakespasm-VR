@@ -399,7 +399,7 @@ resume cancels that input. A contact sample first qualifies with no hold, then
 fails specifically under the hold while the actual contact cursor advances and
 continuity resets. The probe check preserves exact linked-list neighbors,
 body/command/duration/PVS and originally unlinked membership on real BSP hulls.
-The unchanged stock liquid-position finder is shared via
+The stock liquid-position finder's first-match algorithm is shared via
 `native_liquid_fixture.h`. A prepared real wet position with stale dry QC values
 compares selected fresh-native dispatch against actual native movement exactly,
 including restored water-observation order.
@@ -468,6 +468,41 @@ Inventory and selection are prepared. Later callback identities/deadlines and
 quiet-frame scheduling are also prepared; only the first nail2 prefix is authored
 by the preceding actual shot. These are component checks, not normal admission,
 authored pickup/map traversal, real tracked-pose/contact or headset evidence.
+
+Actual horizontal roomscale entry uses a separate mode and optional shipped map
+of the same fixture and bootstrap. The default map for existing modes remains
+e1m1. The asset root above exposes the installed q30 maps:
+
+```sh
+timeout --signal=TERM 30s /tmp/qsvr-q30-movement-native-fixture \
+  -traversal -traversal-map 1024_tango \
+  -dedicated 3 -noudp -nosound -game q30a1024 \
+  -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-traversal-user
+```
+
+Require exit0, `Q30_ROOM_ENTRY_FOUND`,
+`Q30_ROOMSCALE_LIQUID_LATER_HEAD_PASSED` and
+`Q30_ROOMSCALE_LIQUID_TRAVERSAL_PASSED`. The shared finder accepts a caller-owned
+ordinal with its exact sample/hull/content/restoration algorithm unchanged;
+the old first-match wrapper remains. Bounded neighbors must actually be dry and
+clear, and the real auxiliary sweep must enter liquid. The shipped1024_tango
+BSP SHA256 is d08fe272f025fa6c30ac87609ab6c8cb6183a0351578ea9cb17eca28612098c1.
+Its water/depth1 ordinal45 qualifies a48-unit crossing from136,-516,428 to
+136,-564,428. e1m1, e1m2 and e1m4 searches found no qualifying dry neighbor;
+failed geometry/search attempts are not suppressed or counted as passes.
+
+The test checks speculative probe restoration and compares actual fresh native
+and selected dispatch with nonzero analog input, motion/flags/health/completion,
+water entry, queue retirement and zero native credit. A real selected8ms dry
+prefix must match the single-head reference, retain the raw30ms crossing head
+unchanged, and consume it once on the next10ms native world opportunity without
+command-time credit. Final body/completion must match the reference's same QC/
+world opportunities; retired history clears room delta. Starts are prepared
+airborne bodies and selection is injected. This is real BSP traversal with
+actual QC/physics, not grounded shoreline play, normal signon/transport/replay,
+all world actors, tracked-pose validation or device qualification. Normal,
+scheduled-camera and empty-ammo modes remain independent checks.
 
 The existing negotiation fixture can also run against this isolated q30 root:
 

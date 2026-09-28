@@ -562,6 +562,194 @@ static void scheduled_empty_ammo_cases (edict_t *player, client_t *client, doubl
 	puts ("Q30_EMPTY_AMMO_HANDOFF_PASSED all20 roots / ordinary fallback / actual last-shot prefix");
 }
 
+/* Select a reachable neighbor of samples from the one shared BSP finder.
+ * Starts are explicitly prepared airborne bodies, not grounded shoreline play.
+ * The real auxiliary sweep must actually cross; a wet point alone is not proof. */
+static qboolean find_roomscale_liquid_entry (edict_t *player, client_t *client,
+	usercmd_t *command, vec3_t dry)
+{
+	const size_t vars_size = qcvm->progs->entityfields * sizeof (float);
+	void *vars = Mem_Alloc (vars_size);
+	memcpy (vars, &player->v, vars_size);
+	const usercmd_t saved = client->cmd;
+	const double frame_time = host_frametime;
+	const int liquids[] = {CONTENTS_WATER, CONTENTS_SLIME, CONTENTS_LAVA};
+	const float distances[] = {8, 16, 32, 48, 64};
+	qboolean located = false;
+	unsigned wet_count = 0, dry_count = 0;
+	for (int content = 0; content < countof (liquids) && !located; ++content)
+		for (int depth = 1; depth <= 2 && !located; ++depth)
+			for (unsigned ordinal = 0; ordinal < 2048 && !located; ++ordinal)
+			{
+				vec3_t wet;
+				if (!FindLiquidPositionAtOrdinal (player, liquids[content], depth, ordinal, wet))
+					break;
+				++wet_count;
+				for (int direction = 0; direction < 8 && !located; ++direction)
+					for (int distance = 0; distance < countof (distances) && !located; ++distance)
+					{
+						vec3_t axis, right, up;
+						AngleVectors ((vec3_t){0, direction * 45.0f, 0}, axis, right, up);
+						SV_UnlinkEdict (player);
+						memcpy (&player->v, vars, vars_size);
+						VectorMA (wet, distances[distance], axis, player->v.origin);
+						VectorClear (player->v.velocity);
+						player->v.flags = ((int)player->v.flags | FL_JUMPRELEASED) & ~(FL_ONGROUND | FL_WATERJUMP);
+						player->v.groundentity = 0;
+						SV_LinkEdict (player, false);
+						SV_CheckWater (player);
+						if (player->v.waterlevel || SV_TestEntityPosition (player))
+							continue;
+						++dry_count;
+						VectorCopy (player->v.origin, dry);
+						memset (command, 0, sizeof (*command));
+						command->sequence = 1;
+						command->msec = 8;
+						command->seconds = .008f;
+						command->vr_active = command->vr_handpos_relative = true;
+						VectorCopy (player->v.v_angle, command->viewangles);
+						VectorSubtract (wet, dry, command->vr_roomscalemove);
+						client->cmd = *command;
+						host_frametime = command->seconds;
+						SV_ApplyPrivateRoomScaleMove (player, client);
+						SV_CheckWater (player);
+						if (player->v.waterlevel && player->v.watertype == liquids[content] &&
+							!SV_TestEntityPosition (player))
+						{
+							located = true;
+							printf ("Q30_ROOM_ENTRY_FOUND content=%d depth=%d ordinal=%u distance=%.0f dry=(%.1f %.1f %.1f) wet=(%.1f %.1f %.1f)\n",
+								liquids[content], depth, ordinal, distances[distance], dry[0], dry[1], dry[2],
+								player->v.origin[0], player->v.origin[1], player->v.origin[2]);
+						}
+					}
+			}
+	SV_UnlinkEdict (player);
+	memcpy (&player->v, vars, vars_size);
+	SV_LinkEdict (player, false);
+	client->cmd = saved;
+	host_frametime = frame_time;
+	Mem_Free (vars);
+	if (!located)
+		printf ("Q30_ROOM_ENTRY_NOT_FOUND wet=%u dry=%u\n", wet_count, dry_count);
+	return located;
+}
+
+static void roomscale_liquid_traversal (edict_t *player, client_t *client, double time)
+{
+	qcvm->time = time;
+	initialize_player (player, client);
+	for (int i = 0; i < 4; ++i)
+		step_player (player, client, false, i + 1, 0, 5);
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	usercmd_t crossing = {0};
+	vec3_t dry = {0};
+	assert (find_roomscale_liquid_entry (player, client, &crossing, dry));
+	VectorCopy (dry, player->v.origin);
+	VectorClear (player->v.velocity);
+	player->v.flags = ((int)player->v.flags | FL_JUMPRELEASED) & ~(FL_ONGROUND | FL_WATERJUMP);
+	player->v.groundentity = 0;
+	SV_LinkEdict (player, false);
+	SV_CheckWater (player);
+	assert (!player->v.waterlevel && !SV_TestEntityPosition (player) &&
+		SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	crossing.forwardmove = 100;
+	const double dry_time = qcvm->time;
+	const size_t vars_size = qcvm->progs->entityfields * sizeof (float);
+	const size_t globals_size = qcvm->progs->numglobals * sizeof (float);
+	void *vars = Mem_Alloc (vars_size), *globals = Mem_Alloc (globals_size);
+	memcpy (vars, &player->v, vars_size);
+	memcpy (globals, qcvm->globals, globals_size);
+	link_t *prev = player->area.prev, *next = player->area.next;
+	const unsigned num_leafs = player->num_leafs;
+	int leaves[MAX_ENT_LEAFS];
+	memcpy (leaves, player->leafnums, sizeof (leaves));
+	usercmd_t saved_cmd = client->cmd;
+	const double frame_time = host_frametime;
+	assert (SV_PrivateWalkTrialQ30NeedsNative (player, client, &crossing));
+	assert (!memcmp (&player->v, vars, vars_size) && player->area.prev == prev && player->area.next == next &&
+		player->num_leafs == num_leafs && !memcmp (leaves, player->leafnums, sizeof (leaves)) &&
+		!memcmp (&client->cmd, &saved_cmd, sizeof (saved_cmd)) && host_frametime == frame_time);
+	movement_sample_t samples[2];
+	for (int selected = 0; selected < 2; ++selected)
+	{
+		restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+		samples[selected] = step_authored_command (player, client, selected, crossing);
+		assert (player->v.waterlevel > 0);
+		if (selected)
+			assert (client->private_move_native_frame && !client->private_cmd_queue_count &&
+				client->private_pmove_credit_msec == 0);
+	}
+	assert (VectorCompare (samples[0].origin, samples[1].origin) &&
+		VectorCompare (samples[0].velocity, samples[1].velocity) &&
+		samples[0].flags == samples[1].flags && samples[0].health == samples[1].health &&
+		samples[0].completed == samples[1].completed);
+	/* Reference: one actual selected dry head, then a fresh native crossing.
+	 * The pending command lasts 30ms, but its native world interval is 10ms.
+	 * Match the same QC/world opportunities when both heads arrive together. */
+	usercmd_t first = crossing, pending = crossing;
+	VectorClear (first.vr_roomscalemove);
+	first.forwardmove = 0;
+	pending.sequence = 2;
+	pending.msec = 30;
+	pending.seconds = .030f;
+	pending.servertime = dry_time + first.seconds;
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	movement_sample_t prefix = step_authored_command (player, client, true, first);
+	assert (!player->v.waterlevel && !client->private_move_native_frame &&
+		client->private_pmove_last_cmd_valid && !client->private_cmd_queue_count);
+	usercmd_t reference = pending;
+	reference.seconds = .010f; // native owns world time, not the queued 30ms
+	client->private_pmove_walk_selected = false; // ordinary native reference
+	movement_sample_t next_native = step_authored_command (player, client, false, reference);
+	assert (player->v.waterlevel > 0);
+
+	restore_player (player, client, vars, vars_size, globals, globals_size, dry_time);
+	client->private_pmove_walk_selected = true; // component seam, not admission
+	client->cmd = first;
+	client->lastmovemessage = 2;
+	client->private_cmd_queue_head = 0;
+	client->private_cmd_queue_count = 2;
+	client->private_cmd_queue_msec = first.msec + pending.msec;
+	client->private_cmd_queue[0] = first;
+	client->private_cmd_queue[1] = pending;
+	host_frametime = first.seconds;
+	pr_global_struct->frametime = first.seconds;
+	SV_Physics_Client (player, 1);
+	assert (client->active && !player->free && client->private_completed_move == 1 &&
+		client->private_move_native_frame && client->private_pmove_credit_msec == 0 &&
+		client->private_pmove_last_cmd_valid &&
+		client->private_pmove_last_cmd.sequence == 1 &&
+		client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence == 1 &&
+		!memcmp (&client->private_cmd_queue[1], &pending, sizeof (pending)));
+	movement_sample_t deferred = sample_player (player, client);
+	assert (!player->v.waterlevel && VectorCompare (prefix.origin, deferred.origin) &&
+		VectorCompare (prefix.velocity, deferred.velocity) && prefix.flags == deferred.flags &&
+		prefix.health == deferred.health && prefix.completed == deferred.completed);
+	SV_FinishPrivateUsercmds ();
+	assert (client->private_cmd_queue_count == 1 && client->private_cmd_queue_msec == pending.msec &&
+		!memcmp (&client->private_cmd_queue[client->private_cmd_queue_head], &pending, sizeof (pending)));
+	qcvm->time += host_frametime;
+	host_frametime = reference.seconds;
+	pr_global_struct->frametime = reference.seconds;
+	SV_Physics_Client (player, 1);
+	assert (client->active && !player->free && client->private_completed_move == 2 &&
+		client->private_move_native_frame && client->private_pmove_credit_msec == 0 &&
+		player->v.waterlevel > 0 &&
+		client->private_pmove_last_cmd.sequence == 2 &&
+		VectorCompare (client->private_pmove_last_cmd.vr_roomscalemove, vec3_origin));
+	movement_sample_t consumed = sample_player (player, client);
+	assert (VectorCompare (next_native.origin, consumed.origin) &&
+		VectorCompare (next_native.velocity, consumed.velocity) &&
+		next_native.flags == consumed.flags && next_native.health == consumed.health &&
+		next_native.completed == consumed.completed);
+	SV_FinishPrivateUsercmds ();
+	assert (!client->private_cmd_queue_count && !client->private_cmd_queue_msec);
+	puts ("Q30_ROOMSCALE_LIQUID_LATER_HEAD_PASSED real dry prefix / raw pending / next native once without credit");
+	Mem_Free (globals);
+	Mem_Free (vars);
+	puts ("Q30_ROOMSCALE_LIQUID_TRAVERSAL_PASSED actual sweep/native/QC/completion; prepared airborne start");
+}
+
 /* Commands share a world opportunity; QC time does not advance within the
  * batch. The native single-world comparison below deliberately uses the
  * existing coalesced adapter, rather than pretending eight native frames
@@ -1100,7 +1288,11 @@ static void native_state_cases (edict_t *player, client_t *client, double time,
 
 int main (int argc, char **argv)
 {
-	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
+	const char *map = "e1m1";
+	for (int i = 1; i + 1 < argc; ++i)
+		if (!strcmp (argv[i], "-traversal-map"))
+			map = argv[i + 1];
+	Fixture_InitNativeEngine (argc, argv, map, true);
 	assert (SV_PrivateWalkTrialQ30Program ());
 	/* The stock comparison map has no boots item spawn to precache them. */
 	sv.state = ss_loading;
@@ -1115,6 +1307,13 @@ int main (int argc, char **argv)
 	const size_t globals_size = qcvm->progs->numglobals * sizeof (float);
 	void *vars_checkpoint = Mem_Alloc (vars_size);
 	void *globals_checkpoint = Mem_Alloc (globals_size);
+	if (COM_CheckParm ("-traversal"))
+	{
+		roomscale_liquid_traversal (player, client, baseline_time);
+		Mem_Free (vars_checkpoint);
+		Mem_Free (globals_checkpoint);
+		return EXIT_SUCCESS;
+	}
 	native_state_cases (player, client, baseline_time, vars_checkpoint,
 		vars_size, globals_checkpoint, globals_size);
 	if (COM_CheckParm ("-emptyammo"))

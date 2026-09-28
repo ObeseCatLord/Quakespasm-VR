@@ -1,6 +1,7 @@
 # q30 real-BSP roomscale/liquid traversal
 
-Status: plan before implementation. This completes the actual-traversal stage of
+Status: plan committed before implementation; bounded airborne fixture stages
+pass Linux checks and final local Astra review. This addresses the actual-traversal stage of
 the [q30 transition plan](predictive-q30-transitions-2.0-plan.md), retaining normal
 admission/full serialization/parser/replay and wider AD-family requirements.
 
@@ -66,3 +67,38 @@ planning/review records. Existing makefiles already depend on the shared header.
 Expected production changes: none. Reopen and commit the contract before a
 demonstrated production fix or another geometry/movement owner is required.
 Hardware, performance measurement and Windows/ARM qualification stay deferred.
+
+## Qualification and final review
+
+The shared ordinal finder and optional-map traversal mode are implemented.
+The shipped1024_tango BSP (SHA256
+d08fe272f025fa6c30ac87609ab6c8cb6183a0351578ea9cb17eca28612098c1) qualifies
+water/depth1 ordinal45 with a48-unit horizontal sweep from136,-516,428 to
+136,-564,428. Actual dry start, clear hull, swept water observation and exact
+probe body/link/PVS/command/duration restoration pass. Nonzero analog input
+retains fresh native/selected motion, flags, health and completion agreement.
+
+The actual selected8ms dry prefix matches the single-head reference. Its raw
+30ms crossing head remains queued unchanged; the next10ms native world interval
+consumes it once with zero credit and matching final body/completion, and clears
+room delta in retired history. e1m1/e1m2/e1m4 searches found no qualifying dry
+neighbor; those failures remain geometry/search limits rather than passes.
+
+A fresh read-only local Astra Max reviewer found no blocking issue. Main
+independently verified final effective `gpt-6-astra` / `max` settings, the
+unchanged first-wrapper algorithm and the timing/selection/completion assertions.
+The reviewer inspected supplied artifacts without running checks.
+
+| Final review finding | Disposition |
+| --- | --- |
+| Ordinal enumeration preserves sampling/restoration and first-match behavior. | **Verified/adopted.** Retain the single shared finder; no parallel sampler or cached lifecycle. |
+| Native reference and retained-head case use equivalent QC/world opportunities. | **Verified/adopted.** Reference explicitly disables selection after its actual selected prefix. Pending duration30ms does not add native command time to the next10ms world interval. |
+| Proof is the prepared airborne component case on1024_tango. | **Adopted.** Grounded shoreline, all-world actor restoration, general callback multiplicity, normal admission/wire/replay and wider mods remain outside this evidence. |
+
+Linux assertion-enabled SDL3/Werror fixture build and traversal exit0; normal
+q30 movement/replay, scheduled-camera and empty-ammo modes also exit0 with their
+aggregate markers. Production remains unchanged by this slice. The separate
+[scheduling audit](predictive-q30-callback-closure-review.md) closes its bounded
+normally initialized client/target scope without another production gate.
+Normal session admission/full publication/parser/replay and the wider AD-family
+goal remain incomplete; this record is not a migration completion certificate.
