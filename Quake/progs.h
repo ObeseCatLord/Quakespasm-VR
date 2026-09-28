@@ -323,6 +323,7 @@ struct pr_extfields_s
 #define QCEXTFIELDS_GAME                               \
 	/*stuff used by csqc+ssqc, but not menu*/          \
 	QCEXTFIELD (customphysics, ".void()") /*function*/ \
+	QCEXTFIELD (pmove_flags, ".float")                 \
 	QCEXTFIELD (gravity, ".float")		  /*float*/    \
 										  // end of list
 #define QCEXTFIELDS_SS                                                              \

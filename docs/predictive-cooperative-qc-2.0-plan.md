@@ -1,6 +1,6 @@
 # Cooperative QuakeC movement through existing owners
 
-Status: verified implementation plan, before production edits. Extends the
+Status: stage1 implemented and software-checked; stages2–3 remain open. Extends the
 shared-QC checkpoint `be57cdfe`, retaining the complete predictive desktop/VR
 goal and all existing native/public behavior. Main owns integration on `2.0`;
 the user's modified migration status document stays untouched.
@@ -132,3 +132,53 @@ client state or a scheduler. Main will implement and consolidate the prepared
 loader/public/private/world/send proof, then request a bounded source recheck.
 Gorilla mapping, selected per-command callbacks, arbitrary QC prediction and
 broader mod/local/load compatibility remain mandatory later stages.
+
+## Stage1 implementation checkpoint
+
+Builtin347 now resolves through the normal server loader. The native owner
+publishes actual decoded inputs, calls the cooperative hook after its existing
+Think opportunity, and lets QC own movement without an additional native move.
+Public desktop and private VR players execute the same program. Ordinary
+programs and independent customphysics retain their existing owners. The
+builtin uses a fresh shared solver/collector state, materializes results before
+contacts and restores borrowed scratch/context. Input globals restore raw bits,
+including all three vector words and integer aliases.
+
+The first runtime check exposed float/double interval rounding: a QC25ms float
+exceeded the corresponding double world interval. The bound now compares at QC
+float precision while retaining the engine-owned interval. Zero time remains a
+no-op; two authored12.5ms calls intentionally need not match one25ms call under
+the existing NQ friction order.
+
+Local Astra Max performed bounded production-source reviews, with effective
+`gpt-6-astra`/`max` settings verified from local metadata. Main checked the
+load-bearing findings and owns fixture review and execution.
+
+| Implementation finding | Disposition |
+| --- | --- |
+| A standard-call marker could suppress triggers in a later movement phase. | Fixed: reset/capture only around replacement customphysics; suppress its epilogue only at the last actually dispatched position. Ordinary Think/PreThink calls cannot suppress later native links. |
+| A non-solid builtin call could mark a trigger dispatch that never happened. | Fixed: record the marker inside the solid dispatch immediately before the actual touching link. The final Astra recheck found no remaining issue in this delta. |
+| Public/native impulse conversions preceded validation. | Fixed: retain the raw public wire impulse; validate the native latched QC impulse before converting it for input projection. |
+| Airborne results retained an old ground entity. | Fixed: clear it when the solver clears on-ground. |
+| Gorilla metadata is absent from this standard solver adapter. | Still open: stage1 gates native forces and does not qualify cooperative Gorilla locomotion. Complete it at the selected command/sample boundary rather than claim inherited parity. |
+
+The final Linux SDL3 production build and scoped whitespace check pass. Four
+cooperative cases pass: zero/one/two builtin calls in the native owner, plus
+one call on the ordinary default selected-native path. They execute the real
+loaded QC input transform, public/private command receipt, world physics,
+single roomscale application and full server-message parser. A prepared actual
+trigger nests another loaded hook/builtin; enclosing solver scratch and the
+third cursor-vector component remain intact. Invalid scalar, excessive duration
+and zero-time probes exercise the same builtin backend before VM error reporting.
+
+Consolidated existing stock pause/arrival/native-return, q30 normal-session
+replay, q30 water publication, older AD shared-QC boots/composition and native
+customphysics/Think checks also pass. Exact reproduction is in
+[tests/README.md](../tests/README.md#cooperative-quakec-native-movement).
+
+Limits: the hook is assembled over licensed stock QC; starts, nested callback
+composition, resources and delivery are prepared/captured. This is real
+loader/VM/collision/send/parser evidence, not arbitrary authored-mod, socket,
+headset or client-side cooperative prediction proof. The selected-native case
+retains authoritative correction and explicitly denies predictive replay.
+Stages2–3 and the full migration scope remain required.

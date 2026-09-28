@@ -626,6 +626,10 @@ void SV_ClientThink (void)
 	SV_ClientUpdateAnglesForClient (host_client);
 	if (sv_player->v.health <= 0)
 		return;
+	/* Cooperative QC replaces input acceleration as well as body physics.
+	 * Angle/recoil ownership stays above; do not erase later authored forces. */
+	if (qcvm->extfuncs.SV_RunClientCommand)
+		return;
 	cmd = host_client->cmd;
 	if (SV_GorillaEligible (host_client))
 	{
@@ -1019,7 +1023,8 @@ void SV_ReadClientMove (usercmd_t *move)
 		sequence = 0;
 
 	// read ping time
-	host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] = qcvm->time - MSG_ReadFloat ();
+	float timestamp = MSG_ReadFloat ();
+	host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] = qcvm->time - timestamp;
 	host_client->num_pings++;
 
 	for (i = 0; i < 3; i++)
@@ -1056,6 +1061,17 @@ void SV_ReadClientMove (usercmd_t *move)
 
 	if (newimpulse)
 		host_client->edict->v.impulse = newimpulse;
+	if (qcvm->extfuncs.SV_RunClientCommand)
+	{
+		/* Public wire input previously lived partly on the edict. Retain its
+		 * decoded metadata for the existing cooperative input bridge, keeping
+		 * native impulse latching across a later zero-impulse packet. */
+		move->sequence = sequence;
+		move->servertime = isfinite (timestamp) ? timestamp : qcvm->time;
+		VectorCopy (angle, move->viewangles);
+		move->buttons = buttonbits;
+		move->impulse = newimpulse; // wire value; native projection owns QC latching
+	}
 }
 
 /* QSS-M's optional QuakeC button3..8 fields use the remaining bits of the

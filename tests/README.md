@@ -2875,6 +2875,63 @@ ACK for each target. Default limits are 0.05 units for position, 0.25 units/s
 for velocity and 0.001 seconds for the jump timer. A stock-WALK desktop
 loopback does not qualify latency correction, moving colliders or VR roomscale.
 
+## Cooperative QuakeC native movement
+
+`cooperative_qc_program.py` appends a prepared `SV_RunClientCommand` consumer and
+standard-physics builtin declaration to licensed stock QC. Original QC code is
+unchanged. All extracted/generated program data stays in a temporary asset
+root; the repository includes neither the game program nor its assets. Prepare
+an isolated root with `id1/pak0.pak` linked to the installed read-only asset, then
+generate `cooperative/progs.dat` beneath that root:
+
+```sh
+python3 tests/cooperative_qc_program.py \
+  --source-pack /path/to/licensed/id1/pak0.pak \
+  --output /tmp/qsvr-cooperative-qc-calls1/cooperative/progs.dat --calls 1
+make -C Quake -f ../tests/negotiation_native.make USE_SDL3=1 -j4 \
+  NEGOTIATION_SOURCE=../tests/cooperative_qc_native_fixture.c \
+  NEGOTIATION_FIXTURE=/tmp/qsvr-cooperative-qc-native-fixture \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram' \
+  negotiation-native-fixture
+timeout --signal=TERM 30s /tmp/qsvr-cooperative-qc-native-fixture \
+  -dedicated 3 -noudp -nosound -game cooperative \
+  -basedir /tmp/qsvr-cooperative-qc-calls1 \
+  -userdir /tmp/qsvr-cooperative-qc-user-1
+```
+
+Require exit0 and `COOPERATIVE_QC_NATIVE_PASSED calls_per_hook=1`. Repeat with
+`--calls 0` and `--calls 2` in distinct roots/userdirs, and with
+`-defaultselection` for the one-call program. All four pass on Linux SDL3. The
+normal loader maps the named standard builtin to347; the preimplementation
+loader assertion failed. The fixture runs actual client offers/spawn/begin,
+command producer/receiver, world QC/physics, both peer datagrams and the full
+client parser. The prepared hook halves wish speed100→50. Resting starts use
+real BSP floor traces: one25ms call gives speed12.5 and displacement0.3125;
+two12.5ms calls give speed7.5 and displacement0.171875 under existing NQ friction.
+Zero calls give no ordinary fallback body move. Private roomscale contributes
+exactly0.5 units on its separate axis; public roomscale contributes0.
+
+A prepared trigger dispatches actual loaded `SUB_Null`, then the wrapper nests
+another loaded hook/builtin for a prepared nonmoving entity. This checks real
+builtin reentrancy and exact enclosing PMove/movevars restoration; it does not
+claim authored nested-mod gameplay. The trigger count equals the number of
+standard calls, detecting duplicate native epilogue dispatch. The hook changes
+the cursor-screen third word, and the native input scope must restore it exactly.
+Direct backend probes check zero-time no-op and rejection of NaN duration,
+excessive duration and infinite sequence without body/scratch mutation; they do
+not exercise the VM fatal-error path.
+
+Both peers remain visible. Default selection deliberately retains the native
+owner and authoritative correction, with predictive replay permission denied.
+The fixture prepares signon/resources, resting starts, VR samples and nested
+composition, and captures transport. It does not qualify arbitrary cooperative
+mods, sockets, selected per-command execution, Gorilla locomotion, headset input,
+Windows or ARM. The [plan](../docs/predictive-cooperative-qc-2.0-plan.md) keeps
+those later stages in scope. Consolidated stock mixed-peer pause/arrival/native
+return, q30 session/replay/publication, older AD shared-QC boots/composition and
+native customphysics/Think checks pass with the same production changes.
+
 ## Dwell paired-axe server runtime
 
 These Linux headless fixtures use `build-debug/vkquake`, GDB, and the installed

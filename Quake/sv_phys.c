@@ -7937,7 +7937,7 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 	float speed, reach, acceleration, jump_speed;
 	int i;
 
-	if (!isfinite (seconds) || seconds <= 0 || seconds > 0.1251f)
+	if (!isfinite (seconds) || seconds <= 0)
 		return false;
 	speed = 0;
 	for (i = 0; i < 3; i++)
@@ -7997,7 +7997,8 @@ static qboolean SV_PrivateWalkTrialCollect (edict_t *ent,
 {
 	int i;
 
-	if (!SV_PrivateWalkTrialBuildBounds (ent, vars, seconds, command, bounds) ||
+	if (seconds > 0.1251f ||
+		!SV_PrivateWalkTrialBuildBounds (ent, vars, seconds, command, bounds) ||
 		!SV_CollectPMovePhysents (ent, bounds))
 		return false;
 	/* The bounds intentionally cover the maximum reachable command sweep, not
@@ -8127,6 +8128,235 @@ typedef enum
 
 /* One scheduling opportunity for the selected client's entire world pass.
  * Command batching must not repeatedly reopen the same Think deadline. */
+/* Borrowed scopes for the existing server VM owner, never client state. */
+typedef struct
+{
+	edict_t *entity;
+	double interval;
+	qboolean standard_linked;
+	vec3_t standard_link_origin;
+} sv_qc_pmove_context_t;
+static sv_qc_pmove_context_t *sv_qc_pmove_context;
+
+typedef struct
+{
+	void *address;
+	unsigned words;
+	uint32_t saved[3];
+} sv_qc_input_word_t;
+typedef struct
+{
+	sv_qc_input_word_t fields[14];
+} sv_qc_input_scope_t;
+
+static void SV_SaveQCInputs (sv_qc_input_scope_t *scope)
+{
+	*scope = (sv_qc_input_scope_t){{
+		{qcvm->extglobals.input_sequence, 1},
+		{qcvm->extglobals.input_servertime, 1},
+		{qcvm->extglobals.input_timelength, 1},
+		{qcvm->extglobals.input_angles, 3},
+		{qcvm->extglobals.input_movevalues, 3},
+		{qcvm->extglobals.input_buttons, 1},
+		{qcvm->extglobals.input_impulse, 1},
+		{qcvm->extglobals.input_weapon, 1},
+		{qcvm->extglobals.input_cursor_screen, 3},
+		{qcvm->extglobals.input_cursor_trace_start, 3},
+		{qcvm->extglobals.input_cursor_trace_endpos, 3},
+		{qcvm->extglobals.input_cursor_entitynumber, 1},
+		{qcvm->extglobals.input_cursor_entitynumber_integer, 1}
+	}};
+	for (int i = 0; i < countof (scope->fields); ++i)
+		if (scope->fields[i].address)
+			memcpy (scope->fields[i].saved, scope->fields[i].address,
+				scope->fields[i].words * sizeof (uint32_t));
+}
+
+static void SV_RestoreQCInputs (const sv_qc_input_scope_t *scope)
+{
+	for (int i = 0; i < countof (scope->fields); ++i)
+		if (scope->fields[i].address)
+			memcpy (scope->fields[i].address, scope->fields[i].saved,
+				scope->fields[i].words * sizeof (uint32_t));
+}
+
+static qboolean SV_QCInputFits (const float *value, double low, double high)
+{
+	return !value || (isfinite (*value) && *value >= low && *value <= high);
+}
+
+/* QSS-M PF_both_pmove/PF_sv_pmove adapted to the existing Vulkan-base server
+ * helpers. QC owns calls/input edits; the outer command owner owns retirement.
+ * Full scratch restoration is required because impact QC can call this again. */
+const char *SV_RunStandardPlayerPhysics (edict_t *ent)
+{
+	const double interval = sv_qc_pmove_context ? sv_qc_pmove_context->interval : host_frametime;
+	const float qc_interval = interval; // input_timelength has QC float precision
+	if (qcvm != &sv.qcvm || !ent || ent->free)
+		return "invalid server owner";
+	if (!isfinite (interval) || !isfinite (qc_interval) || interval < 0 ||
+		!SV_QCInputFits (qcvm->extglobals.input_timelength, 0, qc_interval) ||
+		!SV_QCInputFits (qcvm->extglobals.input_sequence, 0, UINT_MAX) ||
+		!SV_QCInputFits (qcvm->extglobals.input_buttons, 0, UINT_MAX) ||
+		!SV_QCInputFits (qcvm->extglobals.input_impulse, 0, UINT_MAX) ||
+		!SV_QCInputFits (qcvm->extglobals.input_cursor_entitynumber, INT_MIN, INT_MAX) ||
+		!SV_QCInputFits (qcvm->extglobals.input_servertime, -FLT_MAX, FLT_MAX))
+		return "invalid QC input scalar";
+	const float *vectors[] = {qcvm->extglobals.input_angles,
+		qcvm->extglobals.input_movevalues, qcvm->extglobals.input_cursor_screen,
+		qcvm->extglobals.input_cursor_trace_start, qcvm->extglobals.input_cursor_trace_endpos};
+	for (int i = 0; i < countof (vectors); ++i)
+		if (vectors[i])
+			for (int axis = 0; axis < 3; ++axis)
+				if (!isfinite (vectors[i][axis]))
+					return "invalid QC input vector";
+	usercmd_t input = {0};
+	PR_GetSetInputs (&input, false);
+	if (!input.seconds)
+		return NULL; // no categorization, contacts or fabricated duration
+	if (!isfinite (ent->v.flags) || (double)ent->v.flags < INT_MIN ||
+		(double)ent->v.flags > INT_MAX || !isfinite (ent->v.movetype) ||
+		(double)ent->v.movetype < INT_MIN || (double)ent->v.movetype > INT_MAX ||
+		!isfinite (ent->v.teleport_time))
+		return "invalid standard movement state";
+	eval_t *pmflags = GetEdictFieldValue (ent, qcvm->extfields.pmove_flags);
+	if (pmflags && !SV_QCInputFits (&pmflags->_float, 0, UINT_MAX))
+		return "invalid pmove_flags";
+	unsigned flags = pmflags ? (unsigned)pmflags->_float : 0;
+	movevars_t vars;
+	if (!PMSV_BuildMoveVars (&vars, ent, sv.protocolflags))
+		return "invalid standard movement settings";
+	vec3_t bounds[2];
+	if (!SV_PrivateWalkTrialBuildBounds (ent, &vars, input.seconds, NULL, bounds))
+		return "invalid standard collision bounds";
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (ent->v.oldorigin[axis]) || ent->v.mins[axis] > ent->v.maxs[axis])
+			return "invalid standard hull/safe origin";
+
+	playermove_t saved_pmove = pmove;
+	movevars_t saved_movevars = movevars;
+	client_t *saved_client = host_client;
+	edict_t *saved_player = sv_player;
+	double saved_frame = host_frametime;
+	float saved_time = pr_global_struct->time, saved_qc_frame = pr_global_struct->frametime;
+	int saved_self = pr_global_struct->self, saved_other = pr_global_struct->other;
+	const char *failure = NULL;
+	edict_t *contacts[MAX_PHYSENTS];
+	int contact_count = 0;
+	memset (&pmove, 0, sizeof (pmove));
+	movevars = vars;
+	pmove.cmd = input;
+	VectorCopy (ent->v.mins, pmove.player_mins);
+	VectorCopy (ent->v.maxs, pmove.player_maxs);
+	VectorCopy (ent->v.oldorigin, pmove.safeorigin);
+	pmove.safeorigin_known = true;
+	VectorCopy (ent->v.origin, pmove.origin);
+	VectorCopy (ent->v.velocity, pmove.velocity);
+	VectorSet (pmove.gravitydir, 0, 0, -1);
+	pmove.waterjumptime = fmaxf (0, ent->v.teleport_time - qcvm->time);
+	pmove.jump_held = (flags & PMF_JUMP_HELD) != 0;
+	pmove.onladder = (flags & PMF_LADDER) != 0;
+	pmove.onground = ((int)ent->v.flags & FL_ONGROUND) != 0;
+	switch ((int)ent->v.movetype)
+	{
+	case MOVETYPE_WALK:
+		pmove.pm_type = ent->v.deadflag != DEAD_NO || ent->v.health <= 0 ? PM_DEAD : PM_NORMAL;
+		break;
+	case MOVETYPE_TOSS: case MOVETYPE_BOUNCE: case MOVETYPE_GIB:
+		pmove.pm_type = PM_DEAD; break;
+	case MOVETYPE_FLY: pmove.pm_type = PM_FLY; break;
+	case MOVETYPE_NOCLIP: pmove.pm_type = PM_SPECTATOR; break;
+	default: pmove.pm_type = PM_NONE; break;
+	}
+	ED_Retain (ent);
+	if (!SV_CollectPMovePhysents (ent, bounds))
+	{
+		failure = "standard collision collection failed";
+		goto done;
+	}
+	PM_PlayerMove (1);
+	/* Capture and retain contacts before any trigger/impact can mutate scratch
+	 * or remove/reallocate another contact. No callback uses the live PMove list. */
+	if (pmove.numtouch < 0 || pmove.numtouch > MAX_PHYSENTS)
+	{
+		failure = "invalid standard contact count";
+		goto done;
+	}
+	for (int i = 0; i < pmove.numtouch; ++i)
+	{
+		int index = pmove.touchindex[i];
+		if (index < 0 || index >= pmove.numphysent)
+		{
+			failure = "invalid standard contact index"; goto done;
+		}
+		int number = pmove.physents[index].info;
+		if (number < 0 || number >= qcvm->num_edicts)
+		{
+			failure = "invalid standard contact entity"; goto done;
+		}
+		edict_t *other = EDICT_NUM (number);
+		if (other != ent && !other->free)
+		{
+			contacts[contact_count++] = other;
+			ED_Retain (other);
+		}
+	}
+	VectorCopy (pmove.safeorigin, ent->v.oldorigin);
+	VectorCopy (pmove.origin, ent->v.origin);
+	VectorCopy (pmove.velocity, ent->v.velocity);
+	ent->v.teleport_time = pmove.waterjumptime > 0 ? qcvm->time + pmove.waterjumptime : 0;
+	if (pmove.jump_held && movevars.autobunny)
+		ent->v.flags = (int)ent->v.flags | FL_JUMPRELEASED;
+	if (pmove.onground)
+	{
+		ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
+		ent->v.groundentity = EDICT_TO_PROG (EDICT_NUM (pmove.physents[pmove.groundent].info));
+	}
+	else
+	{
+		ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+		ent->v.groundentity = 0;
+	}
+	ent->v.waterlevel = pmove.waterlevel;
+	ent->v.watertype = CONTENTS_EMPTY;
+	if (pmove.watertype & CONTENTBIT_SOLID) ent->v.watertype = CONTENTS_SOLID;
+	else if (pmove.watertype & CONTENTBIT_SKY) ent->v.watertype = CONTENTS_SKY;
+	else if (pmove.watertype & CONTENTBIT_LAVA) ent->v.watertype = CONTENTS_LAVA;
+	else if (pmove.watertype & CONTENTBIT_SLIME) ent->v.watertype = CONTENTS_SLIME;
+	else if (pmove.watertype & CONTENTBIT_WATER) ent->v.watertype = CONTENTS_WATER;
+	if (pmflags)
+		pmflags->_float = (flags & ~(PMF_JUMP_HELD | PMF_LADDER)) |
+			(pmove.jump_held ? PMF_JUMP_HELD : 0) | (pmove.onladder ? PMF_LADDER : 0);
+	vec3_t moved_origin;
+	VectorCopy (ent->v.origin, moved_origin);
+	/* QSS-M standard physics owns its trigger dispatch. Callback writes are
+	 * final; no solver result is materialized again after this point. */
+	if (ent->v.solid)
+	{
+		if (sv_qc_pmove_context && sv_qc_pmove_context->entity == ent)
+		{
+			sv_qc_pmove_context->standard_linked = true;
+			VectorCopy (ent->v.origin, sv_qc_pmove_context->standard_link_origin);
+		}
+		SV_LinkEdict (ent, true);
+		for (int i = 0; i < contact_count; ++i)
+		{
+			if (ent->free || !VectorCompare (ent->v.origin, moved_origin)) break;
+			if (!contacts[i]->free)
+				SV_Impact (ent, contacts[i]);
+		}
+	}
+done:
+	for (int i = 0; i < contact_count; ++i) ED_Release (contacts[i]);
+	ED_Release (ent);
+	pmove = saved_pmove; movevars = saved_movevars;
+	host_client = saved_client; sv_player = saved_player;
+	host_frametime = saved_frame;
+	pr_global_struct->time = saved_time; pr_global_struct->frametime = saved_qc_frame;
+	pr_global_struct->self = saved_self; pr_global_struct->other = saved_other;
+	return failure;
+}
+
 typedef struct
 {
 	qboolean available;
@@ -9417,6 +9647,31 @@ static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
 	qboolean gorilla_dispatch, weapon_think_ran = prior_weapon_think_ran;
 	qboolean friendly_fire_scope;
 	vec3_t callback_origin, callback_delta;
+	const func_t command_hook = qcvm->extfuncs.SV_RunClientCommand;
+	sv_qc_input_scope_t input_scope;
+	sv_qc_pmove_context_t frame_context = {ent, host_frametime, false};
+	sv_qc_pmove_context_t *saved_context = sv_qc_pmove_context;
+	client_t *saved_host_client = host_client;
+	edict_t *saved_sv_player = sv_player;
+	const double saved_host_frame = host_frametime;
+	const float saved_qc_time = pr_global_struct->time;
+	const float saved_qc_frame = pr_global_struct->frametime;
+	const int saved_qc_self = pr_global_struct->self, saved_qc_other = pr_global_struct->other;
+	qboolean command_hook_ran = false;
+	qboolean custom_standard_linked = false;
+
+	if (command_hook && !SV_QCInputFits (&ent->v.impulse, 0, UINT_MAX))
+		Host_EndGame ("Invalid cooperative QC impulse");
+	sv_qc_pmove_context = &frame_context;
+	if (command_hook)
+	{
+		SV_SaveQCInputs (&input_scope);
+		usercmd_t input = client->cmd;
+		input.seconds = host_frametime; // native world time, not accepted msec
+		input.impulse = ent->v.impulse; // retain native packet impulse latching
+		PR_GetSetInputs (&input, true);
+		host_client = client; sv_player = ent;
+	}
 
 	ED_Retain (ent);
 	if (start == SV_CLIENT_NATIVE_FRESH &&
@@ -9460,6 +9715,8 @@ static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 
 after_prethink:
+	if (command_hook && (ent->free || !client->active || client->edict != ent))
+		goto done;
 	assert_always (!ent->free);
 	VectorSubtract (ent->v.origin, callback_origin, callback_delta);
 	if (VectorLength (callback_delta) > .01f)
@@ -9480,8 +9737,11 @@ after_prethink:
 
 	/* Reuse the QSS-M native callback boundary after PreThink and velocity
  * validation, before scheduled Think or any engine/Gorilla movement. */
+	frame_context.standard_linked = false; // this marker belongs to replacement movement only
 	if (SV_RunCustomPhysics (ent))
 	{
+		custom_standard_linked = frame_context.standard_linked && !ent->free &&
+			VectorCompare (ent->v.origin, frame_context.standard_link_origin);
 		SV_ResetGorillaClient (client);
 		if (ent->free || !client->active || client->edict != ent)
 			goto done;
@@ -9498,6 +9758,25 @@ after_prethink:
 	SV_VRMeleeRefreshTriggerSuppression (client, ent,
 		&client->cmd, &suppress_trigger);
 	VectorCopy (ent->v.origin, callback_origin);
+	if (command_hook)
+	{
+		/* Reuse the scheduled world opportunity for every cooperative body
+		 * type, including tossed/dead states whose native dispatcher owns Think. */
+		if (!SV_RunClientWeaponThink (ent, client, &client->cmd, think_window))
+			goto done;
+		if (!client->active || ent->free || client->edict != ent)
+			goto done;
+		pr_global_struct->time = qcvm->time;
+		pr_global_struct->frametime = saved_qc_frame;
+		pr_global_struct->self = EDICT_TO_PROG (ent);
+		friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
+		PR_ExecuteProgram (command_hook); // body origin; no temporary muzzle pose
+		if (friendly_fire_scope) SV_CoopFriendlyFireEnd ();
+		command_hook_ran = true;
+		if (!client->active || ent->free || client->edict != ent)
+			goto done;
+		goto after_native_move; // QC replaces the body move, even with no builtin
+	}
 	switch (movetype)
 	{
 	case MOVETYPE_NONE:
@@ -9571,7 +9850,7 @@ after_native_move:
 	 * Commit that baseline before callbacks, then reject callback relocations. */
 	if (client->vr_gorilla_state.initialized)
 		VectorCopy (ent->v.origin, client->vr_gorilla_state.origin);
-	SV_LinkEdict (ent, true);
+	SV_LinkEdict (ent, !command_hook_ran && !custom_standard_linked);
 
 	assert_always (!ent->free);
 
@@ -9595,6 +9874,15 @@ after_native_move:
 	frame_completed = true;
 
 done:
+	if (command_hook)
+	{
+		SV_RestoreQCInputs (&input_scope);
+		host_client = saved_host_client; sv_player = saved_sv_player;
+		host_frametime = saved_host_frame;
+		pr_global_struct->time = saved_qc_time; pr_global_struct->frametime = saved_qc_frame;
+		pr_global_struct->self = saved_qc_self; pr_global_struct->other = saved_qc_other;
+	}
+	sv_qc_pmove_context = saved_context;
 	if (suppress_trigger && !ent->free)
 		ent->v.button0 = saved_button0;
 	const qboolean owner_completed = frame_completed && client->active &&

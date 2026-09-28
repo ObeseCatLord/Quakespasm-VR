@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // Also note the set+seta features.
 
 #include "quakedef.h"
+#include "pmove.h"
 #include "q_ctype.h"
 
 extern void PF_bprint (void);
@@ -4209,6 +4210,18 @@ static void PF_randomvector (void)
 	VectorCopy (temp, G_VECTOR (OFS_RETURN));
 }
 static void PF_checkextension (void);
+
+/* QSS-M builtin347; calculation/contact ownership remains in server physics. */
+static void PF_sv_pmove (void)
+{
+	int entity = G_INT (OFS_PARM0);
+	if (qcvm != &sv.qcvm || qcvm->edict_size <= 0 || entity <= 0 ||
+		entity % qcvm->edict_size || entity / qcvm->edict_size >= qcvm->num_edicts)
+		PR_RunError ("runstandardplayerphysics: invalid server entity");
+	const char *failure = SV_RunStandardPlayerPhysics (PROG_TO_EDICT (entity));
+	if (failure)
+		PR_RunError ("runstandardplayerphysics: %s", failure);
+}
 static void PF_checkbuiltin (void);
 static void PF_builtinsupported (void);
 
@@ -5579,6 +5592,8 @@ static struct
 	{"cos",							PF_Cos,							PF_Cos,							61,		"float(float angle)"},	//61
 	{"sqrt",						PF_Sqrt,						PF_Sqrt,						62,		"float(float value)"},	//62
 	{"tracetoss",					PF_TraceToss,					PF_TraceToss,					64,		"void(entity ent, entity ignore)"},
+	{"runstandardplayerphysics", PF_sv_pmove, PF_NoCSQC, 347,
+	 D("void(entity ent)", "Run standard server player movement using input_* globals. The caller owns gameplay callbacks; each call uses at most the current engine interval.")},
 	{"etos",						PF_etos,						PF_etos,						65,		"string(entity ent)"},
 	{"etof",						PF_num_for_edict,				PF_num_for_edict,				0, 		"float(entity ent)"},
 	{"ftoe",						PF_edict_for_num,				PF_edict_for_num,				0, 		"entity(float ent)"},
