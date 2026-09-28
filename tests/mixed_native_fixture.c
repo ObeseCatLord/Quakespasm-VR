@@ -113,6 +113,71 @@ static void GapWorldFrame (void)
 	SV_FinishPrivateUsercmds ();
 }
 
+static void StartupPauseCommand (client_t *peer, client_state_t *state)
+{
+	host_client = peer;
+	sv_player = peer->edict;
+	SZ_Clear (&sv.reliable_datagram);
+	Cmd_ExecuteString ("pause", src_client);
+	cl = *state;
+	net_message = sv.reliable_datagram;
+	CL_ParseServerMessage (); // actual svc_setpause, no staged client pause bit
+	assert (msg_readcount == net_message.cursize && cl.paused == sv.paused);
+	*state = cl;
+	SZ_Clear (&sv.reliable_datagram);
+	SV_RunClients ();
+	GapSnapshot (peer, state);
+}
+
+static void RunStartupPauseChecks (client_t *peer, client_state_t *state)
+{
+	assert (peer->private_pmove_walk_selected && state->movemessages == 0 &&
+		peer->private_completed_move == 0);
+	StartupPauseCommand (peer, state);
+	assert (sv.paused && peer->private_input_phase == PRIVATE_INPUT_SUSPENDED &&
+		state->movemessages == 0 && !state->move_ack_prediction_allowed);
+	StartupPauseCommand (peer, state);
+	assert (!sv.paused && peer->private_input_phase == PRIVATE_INPUT_AWAIT_MARKER &&
+		state->move_ack_resume_pending && state->movemessages == 0);
+	/* Bootstrap offers have already been consumed by real negotiation. */
+	SZ_Clear (&cls.message);
+	for (int sequence = 0; sequence <= 2; ++sequence)
+	{
+		usercmd_t command = {0};
+		cl = *state;
+		cls.netcon = peer->netconnection;
+		cl.time = command.servertime = qcvm->time;
+		VectorCopy (cl.viewangles, command.viewangles);
+		command.forwardmove = 50;
+		realtime += host_frametime;
+		captured_length = 0;
+		CL_SendMove (&command);
+		*state = cl;
+		assert (state->move_resume_marker_first_sequence == 2);
+		if (sequence == 0)
+		{
+			assert (cls.message.cursize);
+			GapDeliver (peer, cls.message.data, cls.message.cursize);
+			SZ_Clear (&cls.message);
+			assert (peer->private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION);
+		}
+		if (captured_length) GapDeliver (peer, captured, captured_length);
+		if (sequence < 2)
+			assert (!peer->private_cmd_queue_count && peer->private_completed_move == 0);
+		GapWorldFrame ();
+		GapSnapshot (peer, state);
+		assert (peer->active && state->movemessages == sequence + 1 &&
+			peer->private_completed_move == (sequence == 2 ? 2 : 0));
+	}
+	assert (peer->private_input_phase == PRIVATE_INPUT_RUNNING &&
+		state->ackedmovemessages == 2 && state->move_ack_prediction_allowed);
+	cl = *state;
+	vec3_t replay;
+	assert (CL_ReplayPlayerMovement (&cl.entities[1], replay));
+	*state = cl;
+	puts ("MIXED_STARTUP_PAUSE_PASSED actual admission/host pause/svc_setpause/send/marker/command completion/full snapshots/replay; captured delivery");
+}
+
 /* Extends the already admitted mixed-peer session; no injected selection or
  * test-only production timeout hook. Delivery is captured, not connected. */
 static void RunArrivalGapChecks (client_t *peer, client_state_t *state)
@@ -344,7 +409,50 @@ static void RunArrivalGapChecks (client_t *peer, client_state_t *state)
 	puts ("MIXED_ARRIVAL_GAP_PASSED real admission/receipt/QC/physics/snapshots/replay; delayed input, lost commands/replies, native modes, half/full wrap, teleport orderings, death/respawn; captured delivery");
 }
 
-int main (int argc, char **argv)
+static client_state_t *CreateMixedPeerState (client_t *peer, int slot)
+{
+	static byte snapshots[NET_MAXMESSAGE];
+	client_state_t *state = Mem_Alloc (sizeof (*state));
+	state->protocol = sv.protocol;
+	state->protocolflags = sv.protocolflags;
+	state->protocol_pext2 = peer->protocol_pext2;
+	state->protocol_qsvr = peer->protocol_qsvr;
+	state->viewentity = slot + 1;
+	state->worldmodel = sv.qcvm.worldmodel;
+	state->maxclients = svs.maxclients;
+	state->scores = Mem_Alloc (svs.maxclients * sizeof (*cl.scores));
+	state->gametype = GAME_COOP;
+	state->ackedmovemessages = -1;
+	state->max_edicts = qcvm->max_edicts;
+	state->num_entities = 1;
+	state->entities = Mem_Alloc (qcvm->max_edicts * sizeof (*cl.entities));
+	for (int model = 0; model < MAX_MODELS; model++)
+		state->model_precache[model] = sv.models[model];
+	/* Reset deltas depend on signon baselines (notably player models).
+	 * Consume the actual baseline codec rather than copying server state. */
+	cl = *state;
+	net_message.data = snapshots;
+	net_message.maxsize = sizeof (snapshots);
+	for (int entity = 1; entity < qcvm->num_edicts; entity++)
+	{
+		SZ_Clear (&net_message);
+		MSG_WriteStaticOrBaseLine (&net_message, entity, &EDICT_NUM (entity)->baseline,
+			cl.protocol_pext2, cl.protocol, cl.protocolflags);
+		MSG_BeginReading ();
+		assert (MSG_ReadByte () == svcfte_spawnbaseline2);
+		assert (MSG_ReadShort () == entity);
+		CL_ParseBaseline (CL_EntityNum (entity), 6);
+		assert (!msg_badread && msg_readcount == net_message.cursize);
+	}
+	*state = cl;
+	VectorCopy (peer->edict->v.angles, state->viewangles);
+	return state;
+}
+
+#ifndef MIXED_NATIVE_FIXTURE_ENTRY
+#define MIXED_NATIVE_FIXTURE_ENTRY main
+#endif
+int MIXED_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 {
 	char public_offer[1024];
 	client_state_t *states[2];
@@ -373,44 +481,13 @@ int main (int argc, char **argv)
 	cls.legacy_qsvr = 0;
 	for (int slot = 0; slot < 2; slot++)
 	{
-		states[slot] = Mem_Alloc (sizeof (*states[slot]));
-		states[slot]->protocol = sv.protocol;
-		states[slot]->protocolflags = sv.protocolflags;
-		states[slot]->protocol_pext2 = peers[slot]->protocol_pext2;
-		states[slot]->protocol_qsvr = peers[slot]->protocol_qsvr;
-		states[slot]->viewentity = slot + 1;
-		states[slot]->worldmodel = sv.qcvm.worldmodel;
-		states[slot]->maxclients = svs.maxclients;
-		states[slot]->scores = Mem_Alloc (svs.maxclients * sizeof (*cl.scores));
-		states[slot]->gametype = GAME_COOP;
-		states[slot]->ackedmovemessages = -1;
-		states[slot]->max_edicts = qcvm->max_edicts;
-		states[slot]->num_entities = 1;
-		states[slot]->entities = Mem_Alloc (qcvm->max_edicts * sizeof (*cl.entities));
-		for (int model = 0; model < MAX_MODELS; model++)
-			states[slot]->model_precache[model] = sv.models[model];
-		/* Reset deltas depend on signon baselines (notably player models).
-		 * Consume the actual baseline codec rather than copying server state. */
-		cl = *states[slot];
-		net_message.data = snapshots;
-		net_message.maxsize = sizeof (snapshots);
-		for (int entity = 1; entity < qcvm->num_edicts; entity++)
-		{
-			SZ_Clear (&net_message);
-			MSG_WriteStaticOrBaseLine (&net_message, entity, &EDICT_NUM (entity)->baseline,
-				cl.protocol_pext2, cl.protocol, cl.protocolflags);
-			MSG_BeginReading ();
-			assert (MSG_ReadByte () == svcfte_spawnbaseline2);
-			assert (MSG_ReadShort () == entity);
-			CL_ParseBaseline (CL_EntityNum (entity), 6);
-			assert (!msg_badread && msg_readcount == net_message.cursize);
-		}
-		*states[slot] = cl;
+		states[slot] = CreateMixedPeerState (peers[slot], slot);
 		VectorCopy (peers[slot]->edict->v.origin, start[slot]);
 		VectorCopy (peers[slot]->edict->v.angles, states[slot]->viewangles);
 		initial_shells[slot] = peers[slot]->edict->v.ammo_shells;
 	}
 	host_frametime = .025;
+	if (COM_CheckParm ("-earlypause")) RunStartupPauseChecks (peers[0], states[0]);
 	for (int frame = 0; frame < 120; frame++)
 	{
 		pr_global_struct->frametime = host_frametime; /* Host_ServerFrame's QC clock. */

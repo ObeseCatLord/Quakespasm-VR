@@ -186,6 +186,12 @@ stock/mod contracts. Normal arrival-gap recovery follows its
 production edits. Its bounded adapter now passes admitted mixed-peer gap,
 wrap/lost-reply, teleport and stock death/respawn checks, with local Astra
 implementation review. Selection remains off pending the rest of stage 2.
+An [early-startup pause follow-up](predictive-startup-resume-2.0-plan.md)
+normalizes the existing recovery marker to the first legal command, retaining
+the reserved startup suppression. Its real-admission/host-pause/complete-message
+and sender-codec checks pass. The
+[stock liquid slice](predictive-stock-liquid-2.0-plan.md) separately records the
+reviewed swim handoff correction and remaining wet replay qualification.
 
 Owners: `sv_main.c`, `sv_user.c`, `sv_phys.c`, `pmove.c`, `cl_main.c` and existing
 movement fixtures. Scope: dry/wet WALK, jumping, command batching/credit,

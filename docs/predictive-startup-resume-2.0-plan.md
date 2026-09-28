@@ -1,6 +1,7 @@
 # Selected movement: pause before the first movement packet
 
-Status: preimplementation plan. Bounded follow-up to
+Status: implemented with passing bounded Linux/software checks. Plan commit
+`e0071179` preceded production edits. Bounded follow-up to
 [arrival-gap/pause recovery](predictive-arrival-gap-2.0-plan.md), before ordinary
 selected activation. Work stays on `2.0`; the user-dirty migration document is
 outside scope.
@@ -56,4 +57,12 @@ reopens prediction only from the real completed snapshot. Same-epoch reliable
 and datagram marker duplicates remain idempotent. The fixture captures transport
 and prepares client resources/signon; it is not connected signon/headset proof.
 
-Implementation/check evidence pending.
+The real sender/MSG fixture passes ASan/UBSan for cursors 0 and 1, existing
+later-sequence/wrap cases and startup packet suppression. The mixed driver
+passes `-selected -earlypause -arrivalgap`: actual stock admission, host pause
+and unpause, real `svc_setpause`, reliable marker receipt, reserved command
+suppression, sequence-2 completion, full snapshots and actual replay. Its
+existing gap/loss/wrap/teleport/death and native-state cases still pass in that
+same run. The Linux SDL3 build passes. No manual admission/ACK/recovery-state
+staging is used by this early-pause case; client resources/signon and captured
+delivery retain the established component boundaries.

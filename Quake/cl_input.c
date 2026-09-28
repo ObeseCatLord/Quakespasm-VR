@@ -991,9 +991,12 @@ static qboolean CL_QueuePrivateResumeMarker (void)
 	char command[64];
 	int length;
 	size_t required;
+	/* Remote startup reserves sequences 0/1. A pause before their sampling
+	 * must fence at the first command the server can actually consume. */
+	const int first_sequence = q_max (2, cl.movemessages);
 
 	length = q_snprintf (command, sizeof (command), "qsvr_resume %u %d",
-		(unsigned)cl.move_ack_discontinuity_epoch, cl.movemessages);
+		(unsigned)cl.move_ack_discontinuity_epoch, first_sequence);
 	if (length < 0 || length >= (int)sizeof (command))
 		return false;
 	required = 1 + (size_t)length + 1;
@@ -1006,7 +1009,7 @@ static qboolean CL_QueuePrivateResumeMarker (void)
 		MSG_WriteString (&cls.message, command);
 	}
 	cl.move_resume_marker_epoch_sent = cl.move_ack_discontinuity_epoch;
-	cl.move_resume_marker_first_sequence = cl.movemessages;
+	cl.move_resume_marker_first_sequence = first_sequence;
 	cl.move_resume_marker_epoch_valid = true;
 	return true;
 }
