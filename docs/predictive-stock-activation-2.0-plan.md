@@ -1,6 +1,7 @@
 # Ordinary stock predictive-movement activation
 
-Status: preimplementation plan, baseline `66fdea42` on `2.0`. This advances
+Status: reviewed plan reopened for stock intermission before production edits,
+baseline `66fdea42` on `2.0`. This advances
 stage 2 of the [full predictive movement plan](predictive-movement-2.0-plan.md).
 It does not replace the required AD-family/cooperative-QC and mixed-gameplay
 stages with a stock-only goal.
@@ -19,7 +20,9 @@ moving brushes and raw planted pusher palms already have explicit boundaries.
 Preserve explicit server disabling. Unsupported programs and initial states
 stay functional through their existing native admission path, with a clear
 diagnostic; do not disconnect them merely because production selection is on.
-Desktop/local-SP and loaded-world native behavior remains available. The user
+Desktop/single-slot local-SP and loaded-world native behavior remains available.
+Multi-slot listen hosts have sockets and are not excluded merely for being local.
+The user
 has not required network-style local-SP physics; mod compatibility and modern
 mod prediction still require the parent stages.
 
@@ -101,8 +104,41 @@ whole migration is done. Next major feature plan must turn the exact installed
 AD/q30 and cooperative-QC analysis into admitted gameplay, preserving authored
 forces and the existing native owner where client replay lacks a contract.
 
-## Astra design disposition
+## Astra design disposition and reopened lifecycle boundary
 
-Pending bounded review before production edits. Main's lean is to activate the
-already qualified stock owner without inventing another lifetime or weakening
-validity checks. Any remaining expensive fork is reviewed at its actual owner.
+Local `gpt-6-astra/max` read-only review; main independently verified effective
+model/effort fields and its load-bearing source/QC claims. The review found a
+real ordinary-stock blocker before the default change, not merely more missing
+tests. Main decoded the pinned installed QC's global/field/function definitions
+and exact statements: `intermission_running` is a float; `execute_changelevel`
+stores `SOLID_NOT`/`MOVETYPE_NONE` at5858/5860, `finale_1` at20878/20880.
+Living owners then fail the selected hull/classification at receipt/snapshot.
+
+| Recommendation | Disposition before production edits |
+| --- | --- |
+| Recognize actual pinned-stock living intermission/finale without broadening WALK. | Adopted. Add a pure frozen-state predicate requiring exact stock program, finite positive typed `intermission_running`, living owner and `SOLID_NOT/MOVETYPE_NONE`. Classify it as the existing native state before the living stock hull guard. Keep PMove's post-callback WALK check strict. |
+| Continue only remaining callback phases when freezing happens mid-command. | Adopted. Reuse the existing phase-aware native continuation for PreThink/weapon-Think freezes; do not rerun completed callbacks. After movement/contact/PostThink freeze, preserve completion and mark native authority without another move pass. Existing invalidation/timer cleanup handles the hand baseline. Do not redefine dead/terminal eligibility to include living frozen players. |
+| Exclude unsupported elevator modes before ordinary platform contact. | Adopted. Initial stock admission requires robust mode>=3 even on static spawn, so legacy settings remain native from the beginning. This avoids admitting a known future valid-state rejection; selected legacy platform physics is not added. |
+| “Remote” admission does not exclude multi-slot listen-host sockets. | Corrected wording. Preserve the existing single-slot/missing-socket guard; no new local exclusion is required by the user or parent plan. |
+| Cover actual map progression and finale, not only synthetic hull fields. | Adopted. Reuse the actual admitted component chain with installed exit/Think/IntermissionThink and renewed serverinfo/spawn/begin after actual queued changelevel; include quiet/batched frozen commands. Finale may use prepared actual callback activation and must label it instead of claiming natural boss progression. |
+
+Amended production write set: `sv_main.c` shared stock-identity predicate,
+admission/default/diagnostics; its declaration in `server.h`; `sv_phys.c` pure
+frozen-state classification and existing phase/publication/dispatch boundaries.
+The existing after-weapon continuation retains pre-Think WALK by default: only
+the demonstrated selected stock freeze may reselect `MOVETYPE_NONE` there,
+otherwise a desktop selected player could integrate once after being frozen.
+No new queue, protocol, callback clock, persistent intermission state or native
+solver is introduced. Main owns this tightly coupled correction and
+`tests/stock_intermission_native_fixture.c`; native admission driver gains an
+actual elevator-cvar exclusion. The web worker failed before edits and was
+closed; main owns the planned common-fixture policy delta as well.
+
+Smallest vertical proof now includes actual exit-trigger QC, living freeze,
+native authority/no replay, command and quiet-frame completion without body
+integration, actual button-driven queued next map and renewed default admission,
+plus the actual pinned finale callback with explicit activation seam. Compare
+native execution and once-only callback/clock obligations; retain negative
+unrecognized NONE states. Consolidate default/regression/build/sanitizer checks
+after this correction. If these boundaries grow into a new movement phase or
+parallel state machine, reopen the architecture instead of extending the patch.
