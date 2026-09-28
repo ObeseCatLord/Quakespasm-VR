@@ -115,3 +115,54 @@ Next: close the remaining actual scheduled weapon callbacks and add only
 source-demonstrated exceptions to this same boundary. Complete traversal and
 normal offer/spawn/begin/serialization/parser/replay before admission. The
 preexisting stock10ms liquid assertion remains separately unresolved.
+
+## Scheduled hitscan extension plan
+
+Plan before implementation, following checkpoint `2ddd6e50`. Preserve ordinary
+predicted movement, native input ordering and actual q30 target behavior in both
+desktop and VR. Normal admission is still closed until the full phase/traversal/
+session contract is qualified. This extension completes the already demonstrated
+synchronous damage-to-target family; it does not replace movement or QC owners.
+
+Verified installed bytecode extends the third-axe finding:
+
+| Scheduled root | Actual path to synchronous target invocation |
+| --- | --- |
+| player_sg1 1380, PCs71442–71453 | W_FireShotgun1330 calls FireBullets1329 at69452 when configflag bit131072 enables hitscan. FireBullets calls ApplyMultiDamage1325, which calls T_Damage926 at69211. |
+| player_light1 1412 / player_light2 1413, PCs71684–71721 | W_FireLightning1339 calls PlayerLightningDamage1338 at70258. Its damage paths call T_Damage at70122/70137; T_Damage37735 can synchronously invoke trigger_strs with the attacker. |
+
+The bitmask value comes from binary operands, not the decompiler's misleading
+constant alias. Projectile shotgun, cooldown and released-button branches may
+avoid damage, but the same due callback can reach damage from valid ordinary
+state. Qualify these three exact due identities at the existing boundary. Avoid
+duplicating config/weapon/cooldown policy in a second scheduler. Safe reset and
+animation frames, not-due callbacks and consumed Think opportunities continue
+to use the selected owner. A broader all-firing gate was rejected because
+ordinary projectile spawn-only callbacks may remain compatible.
+
+Implementation stages and ownership:
+
+1. Reuse the scheduled-camera fixture's target and actual QC path for shotgun
+   hitscan and both lightning animation roots. Prepare the real config bit,
+   ammo and attack level; prove synchronous camera activation before movement.
+   Compare native and selected body/velocity/flags/weapon/health/ammo/completion
+   with nonzero analog input and Gorilla disabled/enabled. Existing target
+   staging is a component seam, not authored traversal or normal admission.
+2. Extend only the existing identity list in `Quake/sv_phys.c`. Reuse the world
+   Think window, fresh-native frame and later-head deferral. Add no state/cache,
+   clock, movement interval, force adapter or QC replacement.
+3. Extend the same fixture's safe animation, future/consumed opportunity and
+   no-command checks. Keep the normal exact-q30 replay matrix and stock/private
+   negotiation checks as consolidated Linux acceptance. Get a local Astra final
+   review of the bounded integration and record the disposition.
+4. Independently audit dry projectile callbacks and builtin/native weapon
+   interception for synchronous effects. Record the evidence before deciding
+   whether another exact exception is necessary. Do not claim full scheduled
+   closure from these three cases or broaden production scope without a revised
+   committed contract.
+
+Exact write set: `Quake/sv_phys.c` and
+`tests/q30_movement_native_fixture.c`, with this record, the implementation-plan
+index and test README. Expected production expansion is three identities in
+the current predicate. Existing ordinary PreThink closure is a dependency;
+headset, performance and Windows/ARM checks stay deferred as instructed.

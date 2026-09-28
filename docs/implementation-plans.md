@@ -83,4 +83,6 @@ assertion. Ordinary PreThink closure is now verified by a separate local Astra
 audit; the [scheduled-axe contract](predictive-q30-callback-closure-review.md)
 records the demonstrated HP-target camera gap and its pre-staging native dispatch.
 Remaining scheduled callbacks, actual traversal and normal admission remain open.
+The same record now plans the synchronous shotgun/lightning target extension
+before its implementation, with a separate projectile closure audit.
 Revise the plan before implementing any newly expanded phase contract.
