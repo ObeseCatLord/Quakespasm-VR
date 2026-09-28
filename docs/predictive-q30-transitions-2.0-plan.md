@@ -105,8 +105,11 @@ Verification uses `tests/q30_movement_native_fixture.c`, existing negotiation/
 mixed native and owner/replay fixtures, their current make owners and README.
 Share the existing stock liquid-position finder in a small
 `tests/native_liquid_fixture.h` between the stock and q30 drivers rather than
-copying a new map search. Update those existing make dependencies. This is a
-fixture helper only, with the same actual hull/content lookup and restoration;
+copying a new map search. The horizontal-crossing fixture may enumerate later
+matches through a caller-owned ordinal: the first wet point need not have a
+reachable dry neighbor. Retain the stock first-match wrapper and its exact
+lookup/restoration algorithm; add no second geometry search. Update those
+existing make dependencies. This is a fixture helper only, with the same actual hull/content lookup and restoration;
 it does not add a bootstrap, collision owner or transport simulation.
 Do not add a replacement bootstrap or network simulator. Main owns integration;
 coding delegation must use available user-requested routes and disjoint writes.
@@ -195,3 +198,34 @@ closure and actual roomscale/trigger traversal before enabling the normal
 offer/spawn/begin/serialization/parser/replay vertical. Revise and commit this
 plan before expanding that contract; do not introduce generic late ClientThink,
 another world interval or a second movement scheduler.
+
+## Callback-phase design disposition
+
+The subsequent [mostly-worked brief](predictive-q30-callback-phase-astra-brief.md)
+was reviewed read-only by local Astra with verified `gpt-6-astra` / `max`
+settings. Main spot-checked the duration, toss scheduling, deferred-input and
+contact-processing findings against the existing sources.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Choose actual callback closure before adding a generic living residual. | **Adopted.** No living native continuation, shadow input calculation or force reconciliation is authorized by uncertainty. Preserve ordinary shared PMove and existing terminal/stock-freeze behavior. |
+| A final QC zero does not prove native input equivalence. | **Adopted.** Native friction/acceleration precedes QC; earlier observations and retained vector components matter. A class-preserving force could evade a classification-only fallback. |
+| Command-duration or zero-duration native continuation changes scheduling/physics. | **Adopted.** TOSS's Think horizon and zero-time WALK unsticking invalidate that shortcut. No maintenance native sweep merely because duration is zero. |
+| Terminal contact draining cannot be reused as living retirement. | **Adopted.** Living samples can execute attacks; deferred input survives a basic hand reset, and relocation cutoffs must stay monotonic. No new cursor/retirement owner. |
+| If a specific unsafe scheduled callback is demonstrated, qualify it before staging through the existing dispatch/defer boundary. | **Adopted conditionally.** Establish exact identity and reachable effect first; observe the existing world Think opportunity/deadline without consuming it. Prove PreThink cannot replace or newly schedule unsafe Think. Do not classify all animation/firing as native or broadly weaken StateError. |
+| Preserve native pre-Think dispatch and existing support guards. | **Adopted.** Current-mode dispatch is not a generic substitute for native type capture. A different pre-QC move-frame snapshot needs a demonstrated incompatibility, not speculation. |
+
+Main redecoded actual PreThink1143 PCs54204–54431: startup/camera/skill/boots/
+grapple/ladder paths have current-state exclusions. Ordinary calls include
+CheckRules54305, WaterMove54306 and PlayerJump54420. NextLevel1137 schedules a
+different entity; ordinary dry WaterMove returns before liquid damage. This is
+partial closure evidence: attachment and all indirect/scheduled callback paths
+still require verification. Source-like reflected-axe naming was investigated
+and rejected as a movement-force claim: actual Resist_Axe865 PCs35054–35090
+contains effects/sound/smoke, not a demonstrated player-body force.
+
+Continue with actual horizontal roomscale entry and later-head deferral proof
+using the existing dispatch implementation. Different stock BSPs may be selected
+by the existing fixture bootstrap; use an explicit map option and distinguish
+prepared airborne starts from grounded ledge or authored trigger traversal.
+No production gate is justified until an unsafe callback is demonstrated.
