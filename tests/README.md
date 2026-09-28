@@ -34,6 +34,38 @@ still uses the new vertex shader, so it cannot alone establish equivalence to
 the pre-change shader. See `docs/migration-alias-instancing-review.md` for
 the architecture decision, evidence boundaries and separate framebuffer proof.
 
+`alias_batch_vulkan_fixture.c` adds a headless real Vulkan framebuffer comparison.
+It pins the reference vertex shader before batching, compares it against the
+current shader with two immediate draws and one instanced draw, and requires
+identical nonempty pixels for MDL and MD3. A multiview-capable device also checks
+both layers with different eye matrices. Its fixed mapped allocator is a test
+boundary; this does not qualify production allocator growth, task concurrency,
+MSAA, full scenes or OpenXR submission.
+
+```sh
+p=/tmp/qsvr-alias-vulkan
+git show 62de7c26:Shaders/alias.vert > "$p-old.vert"
+glslangValidator -V --target-env vulkan1.1 -IShaders "$p-old.vert" -o "$p-old.spv"
+glslangValidator -V --target-env vulkan1.1 -IShaders Shaders/alias.vert -o "$p-new.spv"
+glslangValidator -V --target-env vulkan1.1 -IShaders Shaders/alias.frag -o "$p-frag.spv"
+glslangValidator -V --target-env vulkan1.1 -IShaders -DSTEREO=1 "$p-old.vert" -o "$p-old-stereo.spv"
+glslangValidator -V --target-env vulkan1.1 -IShaders -DSTEREO=1 Shaders/alias.vert -o "$p-new-stereo.spv"
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -O0 -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
+  -ffunction-sections -fdata-sections -IQuake \
+  tests/alias_batch_vulkan_fixture.c Quake/mathlib.c -Wl,--gc-sections \
+  -lvulkan -lm $(pkg-config --cflags --libs sdl3) -o "$p-fixture"
+"$p-fixture" "$p-old.spv" "$p-new.spv" "$p-frag.spv" \
+  "$p-old-stereo.spv" "$p-new-stereo.spv"
+```
+
+Require `ALIAS_BATCH_VULKAN_DESKTOP_PASSED` and, for stereo evidence,
+`ALIAS_BATCH_VULKAN_STEREO_PASSED`. Exit 77 means no accessible Vulkan 1.1
+graphics device; a stereo skip is not a stereo pass. On this sandbox the default
+hardware ICD has no accessible device. Running with the existing
+`VK_ICD_FILENAMES=/usr/lib/chromium/vk_swiftshader_icd.json` passes the desktop
+MDL/MD3 comparisons, but skips stereo because usable multiview is unavailable.
+
 ## Custom QuakeC physics
 
 `customphysics_fixture.c` executes the production callback adapter with the

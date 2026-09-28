@@ -82,12 +82,27 @@ does not execute the player-color texture generator. The non-alias boundary
 check invokes flush directly; renderer glue is separately inspected. It is not
 a rendered-image, driver-allocation-growth or actual worker-scheduling proof.
 
-A headless real Vulkan framebuffer comparison is being implemented separately
-using the exact pre-change shader at `62de7c26`, current batching-off and current
-batching-on variants. Its result must be recorded before treating shader/image
-equivalence as established. Headset/runtime qualification and performance
-measurements remain with the user. Existing logical alias counters count
-accepted entities, not compressed physical draws.
+`tests/alias_batch_vulkan_fixture.c` executes the production draw/batch helpers
+with real Vulkan dispatch and a fixed mapped test UBO, without a window, SDL
+initialization or OpenXR. The reference vertex shader is pinned at `62de7c26`;
+it does not follow the branch tip. Two differently transformed, lit and blended
+instances produce byte-for-byte identical 128-by-128 RGBA8 pixels with that
+shader, the current shader with two immediate draws, and the current shader
+with one two-instance draw. Both MDL and MD3 desktop cases pass on this host's
+existing Chromium SwiftShader. Each image contains distinct nonempty left/right
+objects, rather than matching empty output. The desktop, fragment and stereo
+reference/current shaders also pass SPIR-V validation.
+
+The fixture supports a separate two-layer multiview comparison, with different
+eye matrices, nonempty objects in each layer and distinct eye images. This
+host's SwiftShader does not expose usable multiview, so that check reports
+`ALIAS_BATCH_VULKAN_STEREO_SKIPPED`, not a pass. The default hardware ICD has
+no accessible device in the sandbox. Stereo framebuffer equivalence therefore
+remains unverified. The fixture does not execute the production allocator's
+growth/retirement or worker scheduler, MSAA, culling, full scenes or OpenXR
+submission. Headset/runtime qualification and performance measurements remain
+with the user. Existing logical alias counters count accepted entities, not
+compressed physical draws.
 
 ## Official and primary references
 
