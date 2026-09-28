@@ -242,3 +242,10 @@ deferred, actual QC clearing without resurrection, and living remaining-phase
 continuation. Empty contact cursor checks do not certify physical callbacks.
 Cooperative hooks, broader wet/local/load/mod behavior and all remaining full
 migration requirements stay open. Astra did source review, not runtime tests.
+
+For the deferred-roomscale proof, extend the test-only write set to
+tests/native_liquid_fixture.h and tests/q30_movement_native_fixture.c: extract
+the latter's existing real-sweep airborne liquid-entry finder into the shared
+header, with no algorithm change, and reuse it from both drivers. This avoids
+another map-search implementation. These are prepared airborne starts, not
+authored grounded shoreline traversal or a hardware input claim.
