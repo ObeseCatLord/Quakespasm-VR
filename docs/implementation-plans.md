@@ -64,6 +64,11 @@ plan. The [complete feature map](migration-feature-map.md) still defines the
 full migration scope. Optional candidates stay proposals until selected, and
 skyrooms remain outside the goal.
 
+The next [general initial-mod-state admission plan](predictive-initial-mod-state-2.0-plan.md)
+precedes changes to nonstock initial wet/native/custom admission. It reuses the
+existing pre-begin classifier and observational frame validator; complete
+local/load/state/replay compatibility remains parent scope.
+
 The [stock activation plan](predictive-stock-activation-2.0-plan.md) was committed
 before changing defaults, then reopened before the source-proven intermission
 fix. Its implementation retains existing movement/QC/completion owners.
