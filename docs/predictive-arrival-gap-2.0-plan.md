@@ -1,6 +1,7 @@
 # Selected movement: arrival-gap recovery
 
-Status: preimplementation draft, awaiting local Astra design disposition.
+Status: Astra-reviewed implementation contract; production edits follow the
+disposition below. Software acceptance and final implementation review pending.
 Baseline: `0b1718a3` on `2.0`. This is the next bounded stage of the
 [predictive movement plan](predictive-movement-2.0-plan.md), before ordinary
 selected movement is enabled by default.
@@ -64,9 +65,15 @@ if changes require an additional physics clock or persistent epoch owner.
    pause and arrival recovery at the current receipt/frame boundaries, remove
    both fatal gap paths. If the obsolete corpse exemption is removed, update
    `server.h` and its two `sv_phys.c` assignments without changing dispatch.
-3. Resolve the producer tracking boundary in `cl_input.c` using an existing
-   VR input owner if needed. Avoid reimplementing pending contact/roomscale
-   cleanup. Preserve held keyboard behavior and desktop packet bytes.
+3. Factor a continuity-only reset from `VR_InputInvalidateMotion` inside
+   `vr_input.c`, declare it in `vr_input.h`, and use it from `cl_input.c` at the
+   observed producer fence. Keep contact/Gorilla and roomscale reset in their
+   existing owner; retain held keyboard and analog levels. Full tracking/focus
+   invalidation keeps its neutral-stick behavior. Adapt `cl_parse.c` narrowly:
+   accept a validated strictly newer pending epoch without advancing its
+   ambiguous completed cursor; use the existing marker epoch latch to prevent
+   repeated clearing after same-epoch awaiting-completion metadata. No new
+   state/protocol owner or public packet change.
 4. Extend `tests/private_pause_server_fixture.c` for threshold, idempotence,
    no-packet frames, late moves, marker loss/rearming, terminal/respawn,
    teleport and epoch rollover. Extend sender coverage only for a changed
@@ -103,5 +110,21 @@ route is available. Main integrates all output. The user's dirty
 
 ## Senior disposition and implementation evidence
 
-Pending; this section must be filled from the verified review and completed
-checks rather than retrospectively claiming the draft is implemented.
+Local review: explicit `gpt-6-astra`, effective `max` verified by the reviewer
+from model/effort fields only. Read-only review of draft `0f67b51a` and the
+baseline production sources; no tests executed by the reviewer. Main verified
+the ACK expansion/update order, marker latch, teleport-specific snapshot
+commit and retained HMD baseline in the cited source owners.
+
+| Recommendation | Disposition |
+| --- | --- |
+| A new pending epoch can be invisible after lost completion replies and an ACK distance over 32768. | Adopted: validated strictly newer pending recovery metadata is independent of completion advancement. Keep the old completed cursor until an unambiguous completed marker reply. Extend parser and combined wrap/lost-reply checks. |
+| Same-epoch pending -> awaiting-completion -> delayed pending can clear fresh input twice. | Adopted: keep the existing marker epoch latch across awaiting-completion metadata and consult it before producer clearing. |
+| GAP overwrites teleport-specific reset semantics. | Adopted: preserve RESET_TELEPORT when publishing a recovery generation; otherwise use GAP. This conservatively repeats a snap once in a later recovery epoch, avoiding a parallel semantic-ACK owner. Check both event orderings. |
+| Pending-command clearing leaves the pre-fence roomscale baseline. | Adapted: factor continuity reset within the existing VR input owner; the first fresh sample establishes a baseline, while held analog levels remain usable. Network-only recovery should not invent a requirement to center sticks that held keyboard movement lacks. Full focus/tracking invalidation retains its stronger gating. |
+| Reuse the existing four phases, completion tails and idle dispatcher. | Adopted: living RUNNING/AWAIT_COMPLETION timeout fences once; terminal lifecycle remains native; remove obsolete corpse exemption. Do not add idle WALK physics. |
+| Expand acceptance to rearming, malformed fenced bodies, death/respawn, epoch/sequence wrap and production tracking sampling. | Adopted: targeted actual-code fixtures plus admitted mixed-peer execution; report remaining evidence limits explicitly. |
+
+No user decision is required for this bounded adapter. The held-stick choice
+preserves the requested VR behavior and follows the existing held-key policy.
+Implementation/check results will be recorded after the coherent slice.

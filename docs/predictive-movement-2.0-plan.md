@@ -181,8 +181,9 @@ through the existing native dispatcher while keeping selected WALK strict.
 Native equivalence and real-admission/complete-message/replay component checks
 pass; details and Astra implementation disposition are in the linked slice
 plan. This does not activate production selected movement or close the remaining
-stock/mod contracts. Normal arrival-gap recovery is the next bounded change to
-plan before implementation.
+stock/mod contracts. Normal arrival-gap recovery follows its
+[bounded, Astra-reviewed plan](predictive-arrival-gap-2.0-plan.md) before
+production edits.
 
 Owners: `sv_main.c`, `sv_user.c`, `sv_phys.c`, `pmove.c`, `cl_main.c` and existing
 movement fixtures. Scope: dry/wet WALK, jumping, command batching/credit,
