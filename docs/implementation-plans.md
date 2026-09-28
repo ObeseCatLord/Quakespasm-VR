@@ -124,3 +124,10 @@ The [installed AD identity/reuse plan](predictive-ad-identical-program-2.0-plan.
 records byte-identical pak2 program evidence before actual mounted-session
 qualification. It uses existing exact-program owners without a new production
 implementation; older AD programs and Mjolnir remain separately qualified.
+
+The user's direction to avoid mod-special-case proliferation reopens the
+[movement reuse decision](predictive-movement-reuse-reassessment-2.0-plan.md).
+It compares verified QSS-M independent/native defaults and the inherited shared
+QC wrapper against the current exact-program path. A local Astra disposition
+and bounded shared-owner contract must precede further production expansion.
+The deliberate QBJ3 ladder fix and all inherited VR behavior remain required.
