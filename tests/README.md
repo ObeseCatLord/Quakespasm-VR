@@ -3098,3 +3098,64 @@ QC, body starts, input clocks and transport/sign-on are prepared/captured; this
 is not a connected multiplayer, physical headset or arbitrary authored-mod
 qualification. Gorilla locomotion and instant stop are excluded from the goal
 and this adapter copies neither their state nor tracked displacement.
+
+
+## Initial nonstock movement states
+
+The driver reuses actual offer/spawn/begin, world/QC/body, producer/receipt and
+full datagram parsing. Use the prepared cooperative QC root from the cooperative
+fixture above (one standard call), and an isolated older AD root with read-only
+licensed id1/pak0 and older AD pak0/pak1 links. No program hash is modified to
+manufacture foreign-program eligibility. The stock BSP e1m1 supplies real water
+and collision in both roots.
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make USE_SDL3=1 -j4 \
+  NEGOTIATION_SOURCE=../tests/initial_state_native_fixture.c \
+  NEGOTIATION_FIXTURE=/tmp/qsvr-initial-mod-state-fixture \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram' \
+  negotiation-native-fixture
+timeout --signal=TERM 30s /tmp/qsvr-initial-mod-state-fixture \
+  -initialstate wet -dedicated 3 -noudp -nosound -game cooperative \
+  -basedir /tmp/qsvr-cooperative-qc-calls1 -userdir /tmp/qsvr-initial-wet-user
+```
+
+Require exit0 and `INITIAL_MOD_STATE_PASSED`. Repeat with separate userdirs for
+`fly`, `noclip`, `custom-hull`, `customphysics`, `invalid-ground`, `stale-ground`,
+`invalid-think`, `invalid-custom`, and `unsupported-type`. Run `wet` and
+`invalid-gravity` against actually loaded older AD using `-game ad` and that
+isolated basedir. All twelve pass on Linux SDL3.
+
+The first empty-queue selected NATIVE snapshot precedes every world callback and
+command receipt. It must parse all fresh private movevar receipts and usable
+settings plus actual owner coordinates. ACK0 intentionally remains stale while
+no command exists; accepted selected-owner metadata begins with real produced
+commands. Tests never inject spawned/selected/replay bits. Prepared initial
+owner state is validated without changing any native client or loaded QC actor
+fields. Positive movement, a two-head accepted batch, completed/retired cursors
+and public desktop movement are required. Repeated begin preserves live input.
+
+Loaded SUB_Null customphysics replaces movement/command hook for seven actual
+world frames; clearing it restores a positive cooperative body move without
+re-begin. Older AD wet WALK moves through native physics, then actual setpos and
+noclip0 return it to dry shared WALK/replay permission. Fresh horizontal movement
+and cursor advancement follow relocation; one no-send world pass supplies
+budget to the retained tail before asserting complete retirement. This proves
+return behavior, not just a classification bit.
+
+Negative cases refuse selection and repair only their prepared invalid values
+after native begin before exercising native gameplay. In particular malformed
+optional gravity is not normalized by production. Before the adapter initial
+wet selection failed (exit134); before the builder preflight NaN gravity wrongly
+remained eligible (exit134). The fixture diagnostics exposed two preparation
+errors: setpos deliberately enters noclip, and first svc_setangle restores
+spawn yaw. Actual noclip0 and intended synthetic sender axes correct those
+without a production movement change.
+
+Current stock/q30 defaults and cooperative command, VR swim/ladder and invalid
+PostThink regressions pass. Licensed QC/assets are external; initial fields,
+inputs/clocks, sign-on and transport are prepared/captured. This is not a live
+multiplayer, authored initial spawn, all-mod, local/load or hardware result, nor
+a claim of arbitrary cooperative client prediction. Gorilla/instant stop are
+excluded from the goal and are not added by this adapter.

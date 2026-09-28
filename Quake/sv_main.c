@@ -876,28 +876,29 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 		return "requires the q30 ordinary jump policy";
 	if (!SV_PrivateWalkStatsDisjoint ())
 		return "custom stats overlap private movement stats";
-	/* Initial selection remains dry WALK. Already admitted owners may execute
-	 * qualified native frames, with the same observational validation used at
-	 * receipt. Selection is not permission to run PMove in those states. */
+	/* Selection is not permission to run PMove. Admitted owners retain their
+	 * classified engine/cooperative/native movement and publication contracts. */
 	if (SV_PrivateWalkTrialSelected (client))
 		return SV_PrivateWalkTrialFrameStateError (client->edict, client, &client->cmd);
 	/* A legacy mode cannot handle later selected platform contacts, even if
 	 * the initial spawn is on static floor. Keep that session native. */
 	if (sv_gameplayfix_elevators.value < 3.f)
 		return "requires robust elevator physics";
+	if (!SV_PrivateWalkTrialStockProgram ())
+	{
+		const char *failure = SV_PrivateWalkTrialBeginStateError (client, &client->cmd);
+		movevars_t vars;
+		if (failure)
+			return failure;
+		/* Even native authority must publish this owner's movement stats. */
+		if (!SV_PrivateWalkTrialBuildMoveVars (client, &vars))
+			return "invalid initial movement settings";
+		return NULL;
+	}
 	if (client->edict->v.movetype != MOVETYPE_WALK ||
 		client->edict->v.solid != SOLID_SLIDEBOX ||
 		client->edict->v.waterlevel != 0)
 		return "requires a stock WALK/SOLID_SLIDEBOX owner, dry at selection";
-	if (!SV_PrivateWalkTrialStockProgram ())
-	{
-		/* Startup may need native QC before ordinary WALK is ready.
-		 * Observe the existing pre-begin owner without manufacturing
-		 * spawned/selected state; native dispatch retains its input clock. */
-		const sv_private_move_state_t state = SV_PrivateWalkTrialBeginState (client);
-		if (state == SV_PRIVATE_MOVE_REJECTED || state == SV_PRIVATE_MOVE_TERMINAL)
-			return "owner is not valid at begin";
-	}
 	if (client->cmd.vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
 	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);

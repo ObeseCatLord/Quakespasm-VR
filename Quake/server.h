@@ -630,6 +630,7 @@ sv_private_move_state_t SV_PrivateWalkTrialClassifyState (client_t *client);
 sv_private_move_state_t SV_PrivateWalkTrialBeginState (client_t *client);
 qboolean SV_PrivateWalkTrialMotionHeld (client_t *client);
 const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client, const usercmd_t *cmd);
+const char *SV_PrivateWalkTrialBeginStateError (client_t *client, const usercmd_t *cmd);
 qboolean SV_PrivateWalkTrialQ30Program (void);
 qboolean SV_PrivateWalkTrialStockProgram (void);
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client);

@@ -66,7 +66,10 @@ skyrooms remain outside the goal.
 
 The next [general initial-mod-state admission plan](predictive-initial-mod-state-2.0-plan.md)
 precedes changes to nonstock initial wet/native/custom admission. It reuses the
-existing pre-begin classifier and observational frame validator; complete
+existing pre-begin classifier and observational frame validator. Initial wet/
+FLY/NOCLIP/custom-hull/customphysics and malformed-state refusal, first native
+publication and older AD dry return pass Linux checks and final local Astra
+source review. Plans/reopening preceded the production boundary changes; complete
 local/load/state/replay compatibility remains parent scope.
 
 The [stock activation plan](predictive-stock-activation-2.0-plan.md) was committed

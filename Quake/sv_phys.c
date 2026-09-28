@@ -7849,10 +7849,11 @@ static void SV_ObserveCooperativeBoundary (client_t *client, qboolean *boundary)
 		*boundary = true; // later callback restoration cannot erase a handoff
 }
 
-/* Receipt and snapshots admit qualified native states as well as WALK.
- * This validation must not run water categorization or consume input. */
-const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
-	const usercmd_t *cmd)
+/* One observational owner validation for begin, receipt and publication.
+ * Begin observes knowntoqc before spawned/selection are committed. It must
+ * never categorize water, consume input or temporarily forge those bits. */
+static const char *SV_PrivateWalkTrialOwnerStateError (edict_t *ent, client_t *client,
+	const usercmd_t *cmd, qboolean at_begin)
 {
 	eval_t *customphysics;
 	int groundprog, groundnum, i;
@@ -7861,14 +7862,16 @@ const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
 
 	if (qcvm != &sv.qcvm)
 		return "server QC VM changed";
-	if (!client || !ent || !client->active || !client->spawned ||
+	if (!client || !ent || !client->active ||
+		(at_begin ? !client->knowntoqc : !client->spawned) ||
 		client->edict != ent || ent->free)
 		return "client owner is no longer live";
 	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
-		!SV_PrivateWalkTrialSelected (client))
+		(!at_begin && !SV_PrivateWalkTrialSelected (client)))
 		return "private profile selection changed";
-	state = SV_PrivateWalkTrialClassifyState (client);
-	if (state == SV_PRIVATE_MOVE_REJECTED)
+	state = SV_PrivateWalkTrialClassifyOwner (client, !at_begin);
+	if (state == SV_PRIVATE_MOVE_REJECTED ||
+		(at_begin && state == SV_PRIVATE_MOVE_TERMINAL))
 		return "owner left supported movement state";
 	if (!SV_PrivateWalkTrialStockProgram () &&
 		(!isfinite (ent->v.nextthink) ||
@@ -7921,6 +7924,17 @@ const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
 		}
 	}
 	return NULL;
+}
+
+const char *SV_PrivateWalkTrialBeginStateError (client_t *client, const usercmd_t *cmd)
+{
+	return SV_PrivateWalkTrialOwnerStateError (client ? client->edict : NULL, client, cmd, true);
+}
+
+const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
+	const usercmd_t *cmd)
+{
+	return SV_PrivateWalkTrialOwnerStateError (ent, client, cmd, false);
 }
 
 /* A command already executing PMove must remain WALK after each callback.

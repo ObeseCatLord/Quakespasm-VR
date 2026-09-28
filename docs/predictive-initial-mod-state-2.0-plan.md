@@ -1,6 +1,7 @@
 # Initial mod states on the existing private command owner
 
-Status: proposed, before production. Extends cooperative command/VR identity
+Status: bounded adapter implemented; Linux matrix and final local Astra source
+review pass. Extends cooperative command/VR identity
 and shared unaware-QC integration. Does not shrink the complete prediction,
 state, local/load and desktop/VR migration goal. Gorilla locomotion and instant
 stop are [excluded](migration-scope-decisions.md).
@@ -158,3 +159,59 @@ invented selected/replay metadata. Positive command snapshots later confirm
 the selected owner and completion. AD dry-return acceptance also requires
 fresh horizontal displacement and completed/retired cursor advancement after
 relocation, allowing legal time-credit tails to finish on a no-send world pass.
+
+## Implementation and software evidence
+
+The production delta is56 changed lines across the existing admission/validator
+and one declaration. Nonstock initial owners use one shared observational
+validator and the existing movevar builder preflight. Stock initial admission,
+q30/profile/stat/elevator policy, frame validation, classifier, queue, clocks,
+native/cooperative execution and replay permission owners are retained.
+
+Linux SDL3 production build passes. Twelve initial-state runs pass:
+
+- Loaded prepared cooperative QC: initial wet WALK, FLY, NOCLIP, custom hull
+  and valid customphysics select normally; positive command batches complete/
+  retire, public desktop moves in the same world and actual body positions
+  parse correctly. Real loaded SUB_Null customphysics runs seven world frames
+  with no hook/body replacement; clearing it returns to the cooperative hook
+  and positive movement without another begin.
+- Invalid/stale ground references, invalid scheduled Think/custom function and
+  unsupported type refuse selection. The fixture repairs only those prepared
+  invalid values after actual native begin, then demonstrates native gameplay
+  and repeated-begin nonselection; it does not claim invalid QC is playable.
+- Actually loaded older AD begins wet WALK, publishes usable private move stats
+  before any world/command update, moves through the native owner, then returns
+  dry through actual relocation/noclip commands to shared WALK with replay
+  permission, fresh horizontal displacement and advancing completed/retired
+  cursors. A normal no-send world pass finishes the legal time-credit tail.
+- Older AD with prepared NaN optional gravity refuses selection using the
+  existing builder. Repair after native begin permits native gameplay; the
+  original malformed value is not silently normalized by this change.
+
+Every selected initial NATIVE snapshot parses complete fresh movevar receipts
+and owner coordinates. ACK0 is correctly rejected before any client command,
+with no invented replay/selection metadata; positive later snapshots carry
+the real selected/completed owner. Validation leaves all native client storage
+and loaded QC actor fields unchanged. Repeated begin preserves queued input.
+
+Current stock mixed/default and q30 ordinary-session regressions pass, as do
+cooperative accepted-command timing/quiet/duplicate/retained-tail, VR swim/
+ladder identity and invalid-PostThink drop cases. No performance/device/Windows/
+ARM qualification is claimed. The preimplementation initial-wet assertion
+failed (exit134); before the preflight correction, the malformed-gravity
+refusal assertion also failed (exit134).
+
+Two fixture expectations were corrected during diagnosis: actual setpos enters
+noclip, so real noclip0 restores WALK for both wet preparation and dry return;
+actual initial svc_setangle restores spawn yaw, so the sender prepares its
+intended zero-yaw axes. The first returned dry head also needs its actual time
+credit. None justified a production movement rewrite.
+
+Final local Astra Max found the malformed-gravity prerequisite and requested
+fresh return displacement/cursor evidence; both were adopted after the plan
+reopening. Its source correction recheck has no remaining finding. Main
+spot-checked the builder/lifetime/return and ran the complete matrix.
+[Reproduction and prepared/captured proof limits](../tests/README.md#initial-nonstock-movement-states)
+remain explicit. Broad local/load/terminal/replay and complete migration work
+remain required parent stages; excluded locomotion stays excluded.
