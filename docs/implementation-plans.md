@@ -4,6 +4,10 @@ Before a new major feature is implemented on `2.0`, record its plan here and in
 a linked feature document. A feature inventory or a retrospective review alone
 is not an implementation plan. Plans should remain small enough to guide the
 next end-to-end change; they must retain the complete feature's intended outcome.
+Commit the plan before its production implementation. Revise and commit it
+before expanding a major feature's scope or changing its architecture. Routine
+fixes within an existing contract can use that plan; a new behavior, protocol,
+renderer algorithm or movement owner needs an explicit updated contract first.
 
 Each plan must contain:
 
@@ -29,7 +33,7 @@ commits stay on `2.0`; the product branch and unrelated user edits stay intact.
 
 | Feature | Plan | Current planning state |
 | --- | --- | --- |
-| Production predictive movement and mod support | [Predictive movement plan](predictive-movement-2.0-plan.md), [stock state-transition slice](predictive-stock-transitions-2.0-plan.md), [arrival-gap slice](predictive-arrival-gap-2.0-plan.md), [startup resume slice](predictive-startup-resume-2.0-plan.md), [stock liquid slice](predictive-stock-liquid-2.0-plan.md), [pause ordering slice](predictive-pause-ordering-2.0-plan.md), [moving-brush slice](predictive-stock-pushers-2.0-plan.md), [ordinary stock activation](predictive-stock-activation-2.0-plan.md), [AD-family admission](predictive-mod-admission-2.0-plan.md) | Stock mode/recovery, wet replay, causal pause ordering and bounded moving-brush support pass local checks and Astra review. Ordinary stock default activation, native intermission/finale and delayed-contact correction pass consolidated checks and final Astra review. Plans preceded production changes and were reopened for demonstrated lifecycle/publication findings. AD/cooperative-QC admission and wider compatibility remain parent stages under the next committed plan. |
+| Production predictive movement and mod support | [Predictive movement plan](predictive-movement-2.0-plan.md), [stock state-transition slice](predictive-stock-transitions-2.0-plan.md), [arrival-gap slice](predictive-arrival-gap-2.0-plan.md), [startup resume slice](predictive-startup-resume-2.0-plan.md), [stock liquid slice](predictive-stock-liquid-2.0-plan.md), [pause ordering slice](predictive-pause-ordering-2.0-plan.md), [moving-brush slice](predictive-stock-pushers-2.0-plan.md), [ordinary stock activation](predictive-stock-activation-2.0-plan.md), [AD-family admission](predictive-mod-admission-2.0-plan.md) | Stock mode/recovery, wet replay, causal pause ordering and bounded moving-brush support pass local checks and Astra review. Ordinary stock default activation, native intermission/finale and delayed-contact correction pass consolidated checks and final Astra review. Plans preceded production changes and were reopened for demonstrated lifecycle/publication findings. AD architecture has an Astra disposition and intended state/phase table; ordinary replay and transition proof must accompany admission. Cooperative-QC admission and wider compatibility remain open. |
 | OpenXR lifecycle and stereo renderer | [Migration architecture plan](vkquake-base-migration-plan.md), [stereo review](migration-stereo-review.md), [frame ownership review](migration-frame-boundary-review.md) | Existing architecture/reviews; write a bounded feature plan before expanding runtime or renderer ownership. |
 | VR input and locomotion | [Input review](migration-input-review.md), [locomotion review](migration-locomotion-review.md), [Gorilla review](migration-gorilla-2.0-review.md) | Existing designs/reviews; plan any new input or movement behavior before implementation. |
 | Vulkan foveation | [Existing foveation plan](vulkan-foveation-2.0-plan.md), [Steam Frame review](migration-steam-frame-foveation-review.md) | Existing plan/review; revise before another major capability or architecture expansion. |
@@ -55,5 +59,6 @@ before changing defaults, then reopened before the source-proven intermission
 fix. Its implementation retains existing movement/QC/completion owners.
 The next [AD-family admission plan](predictive-mod-admission-2.0-plan.md) records
 the complete contract and design questions before new production edits;
-its Astra disposition and state/phase table are pending. Initial wet/load/single-slot cases remain native;
+its Astra disposition, intended state/phase table and exact next-slice ownership
+are now recorded. Initial wet/load/single-slot cases remain native;
 broader mod and local/load compatibility must not disappear from the full goal.

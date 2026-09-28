@@ -1,10 +1,11 @@
 # AD-family predictive movement: admission and ownership plan
 
-Status: next major-feature plan, before new production edits. The stock default
-activation slice does not admit q30 or finish mod prediction. This plan expands
-stages 3–4 of the [parent movement plan](predictive-movement-2.0-plan.md).
-An Astra design disposition must resolve the command/callback contract before
-the first production admission change; unresolved questions below are not
+Status: Astra-reviewed architecture and preimplementation plan; q30 admission
+and ordinary client replay remain unimplemented. The stock default activation
+slice does not admit q30 or finish mod prediction. This plan expands stages 3–4
+of the [parent movement plan](predictive-movement-2.0-plan.md). The disposition
+below chooses the existing command owner; the next bounded proof and matching
+replay contract must precede production admission. Unresolved questions are not
 permission to invent a second movement owner during implementation.
 
 ## Outcome and reference
@@ -31,11 +32,11 @@ must not add multiplayer offsets.
 | --- | --- |
 | q30 already has a narrow dormant handoff | Verified source: `SV_PrivateWalkTrialQ30Program` pins loader-cached SHA-256; selected handoff retains QC-authored jump velocity/release state and shared PMove `qc_jump_owner`. Admission still requires stock identity. Reuse this code; a size/hash match alone does not qualify gameplay. |
 | Partial exact-binary evidence exists | Recorded executed evidence in [mod movement review](migration-mod-movement-review.md), `tests/q30_movement_native_fixture.c`: low/released/held jumps, staged boots/ladder, paired commands, maintenance, support correction and timing survey. Selection is injected in that driver; it is not ordinary admission. Real ladder/grapple/wet transitions and complete snapshot/replay are not proved. |
-| QC cadence is a demonstrated incompatibility | Recorded exact installed bytecode at54381–54386 scales ladder velocity by0.9 without frametime. Selected Pre/PostThink can run per command and on zero-time maintenance; native callbacks run per world frame. The existing shared world Think window only resolves scheduled Think repetition. Repeating unaware QC is not automatically safe. |
+| QC contains cadence-sensitive branches, not a proved ordinary-dry incompatibility | Exact installed bytecode at54381–54386 scales ladder velocity by0.9 without frametime, but clears `onladder` at54332–54333 first. Repeating that branch depends on intervening state/contact. Selected Pre/PostThink can run per command and on zero-time maintenance; native callbacks run per world frame. The shared Think window only resolves scheduled Think repetition. Qualify actual branch effects before changing ordinary callback placement. |
 | Stock corrections and freeze are program-specific | Verified source: stock water/jump reconciliation and exact-stock living intermission predicate. q30 authored forces and later NONE/finale/custom states require their own proved ownership. Do not simply OR q30 into stock admission and discover these cases after selection. |
-| Installed q30 has no cooperative command hook | Recorded installed-binary function-table evidence: no `SV_RunClientCommand`. Verified current branch: hook declaration exists, but there is no invocation or `PF_sv_pmove`. The QSS-M hook/builtin is reusable for programs that actually supply the contract; it does not resolve unaware q30 by itself. |
+| Installed q30 has no cooperative command hook | Installed-binary function table reverified: no `SV_RunClientCommand` and no `customphysics` field. Hook declaration and `PR_GetSetInputs` input bridge already exist in 2.0, but server hook invocation and `PF_sv_pmove` are absent. Reuse that existing ABI bridge plus QSS-M builtin semantics, rather than implement a second input bridge. This does not resolve unaware q30 by itself. |
 | Native customphysics and stats already work | Verified source: `SV_RunCustomPhysics` dispatches through the existing native owner. Custom-stat admission checks actual overlap; string key stats use existing transport. Preserve these owners rather than adding parallel callbacks or stat policy. |
-| Ownership metadata exists | Verified source: private queue, completed-command cursor, authority/replay permission, discontinuity epochs and contact/Gorilla invalidation. Native terminal/stock-frozen continuation is phase-aware, but it is not a proved living q30 fallback: selected clients skip ordinary native input acceleration. |
+| Ownership metadata and fresh native input exist | Reverified current source: private queue, completed-command cursor, authority/replay permission, discontinuity epochs and contact/Gorilla invalidation. `SV_Physics_ClientSelectedNativeFrame` now calls `SV_ClientThink` with `private_move_native_frame=true`, so the older missing-input objection is superseded for fresh frame dispatch. Reuse is materially smaller now. Mid-callback terminal/frozen continuation still does not prove a living q30 fallback or full action/clock/replay contract. |
 
 Unknowns to resolve before admission: every reachable q30 movement-state branch,
 the minimum unaware-QC callback contract, safe behavior when live abilities
@@ -62,10 +63,82 @@ world queue duplicates callbacks, Think opportunity and completion.
 Rejected without new evidence: a second continually living native queued solver,
 generic subtraction/re-addition inferred from a final velocity delta, blanket
 replay for native snapshots, or replay through unavailable server QC. Existing
-reviews identify missing native input acceleration and incomplete state/clock
-contracts in a naive living fallback. Reopen that decision only if the smallest
+reviews identified incomplete state/clock contracts in a naive living fallback;
+the later fresh-frame adapter has since supplied native input acceleration.
+Reassess against that actual current owner, not the stale missing-input finding.
+Reopen the architecture decision only if the smallest
 adapter cannot express demonstrated behavior; document the duplication and
 smallest vertical proof before any rewrite.
+
+## Astra disposition, before production changes
+
+Local Astra reviewed the [verified brief](predictive-mod-admission-astra-brief.md)
+with effective `gpt-6-astra` / `max` settings. Main independently redecoded the
+pinned program's ladder clear/damping, teleport hold, weapon cooldown and
+waterjump writes, and checked the current native input and shared solver paths.
+This is a design review, not implementation qualification.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Prefer fork B: existing per-command QC for qualified ordinary dry movement. | **Adapted.** Keep the command owner and authored QC velocity. Do not reconstruct boots/grapple/ladder forces. Admit only after the bounded dry comparison and matched client replay; use existing fresh native frames for states lacking that contract. |
+| Do not introduce fork A's once-world QC wrapper without an ordinary-dry mismatch. | **Adopted.** Ladder damping alone does not prove repeated damping because QC clears its latch; `W_WeaponFrame` checks `attack_finished` at70999–71002. Input impulses still precede that guard at70998 and require effect/completion checks. A demonstrated mismatch reopens this decision before adding a wrapper. |
+| Share classification across receipt, physics and snapshots. | **Adopted.** Supported mod states must not disconnect a selected session merely because they need native movement. Resolve typed names against the loaded VM rather than embedding q30 field/global slots. Non-finite or invalid state remains invalid. |
+| Choose native frames before QC for incompatible states. | **Adopted.** Reuse coalesced inputs, native `SV_ClientThink`, QC, contacts and completion. Native time does not accrue selected command credit. Classify startup, wet movement, boots, ladder, grapple eligibility, authored holds and camera/lifecycle states before callbacks, including states capable of starting an ability in PreThink. |
+| Treat phase transitions according to movement already consumed. | **Adopted.** After movement/contact enters a native state, finish the current PostThink/completion once, stop the batch, and leave later queue heads for the next fresh native frame. Before movement, only an explicitly proved continuation is permitted; no rerun of PreThink, late native acceleration or extra whole-world movement after command movement. Reachable unhandled transitions block admission. |
+| Ordinary replay must ship with ordinary admission. | **Adopted.** Dynamic jump height alone is insufficient. Match release/held state, low takeoff support, landing/gravity, QC-authored velocity and callback/discontinuity effects using existing stats/authority epochs. The server's `qc_jump_owner` also changes support geometry; the client currently does not reproduce that policy. Resolve that missing consumer before enabling replay. |
+| Keep the stock waterjump adapter away from authored q30 waterjumps. | **Adopted.** q30 writes `FL_WATERJUMP` and its deadline at55290–55304. The current shared callback adapter can clear that authored flag; native liquid ownership avoids the stock correction. Guard/transition correctness must be established before broadening admission. |
+| Implement cooperative QC separately through existing QSS-M ABI owners. | **Adopted.** Reuse `PR_GetSetInputs`, builtin registry, world dispatch, physent collection and PMove. q30 has no cooperative hook and is not the consumer proof for that feature. Its later bounded plan must identify an actual hook/builtin program. |
+
+No user taste or priority decision is needed for these boundaries. Remaining
+unknowns concern code behavior and replay consumers and stay implementation work.
+
+## State and phase contract
+
+| State / phase | Input and movement owner | QC clock/effects | Completion and replay |
+| --- | --- | --- | --- |
+| Qualified ordinary dry q30 WALK, fresh command | Existing selected queue and shared PMove; QC retains its authored jump impulse/release. | Pre/PostThink use command duration. Existing shared Think window grants one scheduled world opportunity. Confirm ordinary weapon/impulse effects in the exact binary comparison. | Complete after the existing lifecycle. Grant replay only after a matching ordinary client contract is implemented and checked. |
+| Quiet ordinary dry WALK or insufficient credit | Existing selected maintenance; no new movement duration or input sequence. | Existing zero-duration maintenance plus the one world Think opportunity. Prove quiet effects are compatible rather than assuming zero frametime makes all QC inert. | No command ACK or fabricated duration. |
+| Incompatible mod state detected before callbacks | Existing selected-native fresh frame: coalesced levels/latches/roomscale, then native input and physics. | Native world-duration QC/physics and ordered contact drain. Preserve authored boots, ladder, grapple, waterjump, holds and camera behavior. | Existing native completion/retirement, no replay, selected credit cleared. Existing authority/mode epoch handles reentry. |
+| Terminal/frozen transition before movement | Existing proven native phase continuation only for its qualified states. | Execute remaining phases once with restored clocks; never restart PreThink. | Existing completion; native authority and no replay. Living q30 transitions need explicit proof before using this boundary. |
+| Native transition after PMove/impact/contact | Keep already-consumed command movement; finish the current lifecycle once and stop batching. | PostThink/contact effects remain in their current owners. Do not append another native movement interval. | Complete current head once; preserve later heads for fresh native dispatch next world pass. Suppress replay for the transition. |
+| Return from native to qualified dry WALK | Existing selected owner after fresh current-state classification. | Rebuild current movevars and use current QC state; do not reuse stale native credit or support. | Existing mode/discontinuity epoch and a complete valid replay seed; no blanket permission from WALK alone. |
+
+The table defines an intended contract, not proof that every row is implemented.
+In particular, today's stock-only phase helpers do not yet qualify living q30
+holds/cameras, and its ordinary replay remains denied.
+
+## Next bounded slice and exact ownership
+
+Before admission, extend the existing exact-q30 fixture to discriminate the
+ordinary-dry per-command hypothesis from actual cadence or transition failures.
+This is a decision check allowed by the user's exception for uncertain changes;
+it is not a performance benchmark or a test after each edit.
+
+Write set for that slice: `tests/q30_movement_native_fixture.c`, its existing
+build owner `tests/customphysics_native.make`, `tests/README.md`, and this plan's evidence
+checkpoint. Reuse the current native engine bootstrap, actual q30 bytecode,
+player/world hulls, command queue and retirement; do not add a transport or
+replacement QC scheduler. Cover ordinary dry paired press/release, held/rejump,
+quiet maintenance and command batches, observing velocity/origin, release flags,
+weapon/impulse effects and completed sequences. Separate real QC transitions
+from fields deliberately staged at a component boundary. Record tolerances and
+native-reference differences rather than silently normalizing the reference.
+If additional map resources or an unhandled transition are necessary, record
+the evidence and refine this write set before adding a new harness.
+
+Production write ownership for the following coherent admission/replay slice:
+`sv_phys.c` for QC/solver and phase boundaries; `sv_main.c` for program admission,
+stats and snapshot permission; `sv_user.c` for receipt agreement; `pmove.c` /
+`pmove.h` for a demonstrated missing shared solver input; `cl_main.c` for its
+existing replay consumer. Do not change the protocol or another subsystem under
+this write set. A new replay policy bit or schema requires a separately recorded
+consumer/compatibility decision before code. Ordinary admission and matched
+replay are integrated together, followed by native-to-predictive return proof;
+another dormant q30 helper is not the completed slice.
+
+Main owns design/integration. Any coding worker receives a subset of the exact
+write set, a concrete behavior contract and non-overlap instructions. No agent
+may broaden scope to a new owner or change the user-dirty migration document.
 
 ## Stages and ownership
 
