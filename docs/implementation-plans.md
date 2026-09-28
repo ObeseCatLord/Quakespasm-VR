@@ -62,3 +62,10 @@ the complete contract and design questions before new production edits;
 its Astra disposition, intended state/phase table and exact next-slice ownership
 are now recorded. Initial wet/load/single-slot cases remain native;
 broader mod and local/load compatibility must not disappear from the full goal.
+
+The first exact-q30 dry/callback comparison is committed as `489dfe5e`.
+The next [ordinary q30 admission/replay plan](predictive-q30-replay-2.0-plan.md)
+records the missing replay consumer, bounded compatibility and velocity-limit
+inputs, pre-QC VR ordering, exact write set and end-to-end acceptance before
+production edits. Its Astra review changed the ordering contract; ordinary
+q30 prediction and complete native transitions remain unimplemented.
