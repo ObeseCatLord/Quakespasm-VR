@@ -74,6 +74,19 @@ change neither qualifies q30 nor broadens mod prediction permission. Device
 testing, Windows/ARM checks and performance measurements remain deferred by
 the user.
 
+## Native friction boundary uncovered by mod comparison
+
+The exact-q30 ladder comparison exposed a separate native vkQuake input bug:
+with `sv_friction 0`, the analytical ground-friction crossing calculation
+used `log(1)`. At stopspeed it produced `0/0`; above stopspeed it also led to
+non-finite arithmetic. Velocity validation then erased that momentum.
+`SV_UserFriction` now enters the logarithmic decay path only for `0 < r < 1`,
+using its existing classic formula for non-decaying friction as well as
+one-tick stopping values. Positive ordinary friction retains its existing
+analytic behavior. The offline native fixture directly checks unchanged,
+finite 99/100/101-unit momentum with zero friction; the earlier customphysics
+and selected Think cases still pass after the shared bootstrap extraction.
+
 | Finding / option | Disposition |
 | --- | --- |
 | Removing the stock progs identity check would immediately enable mods. | **Rejected.** The selected handoff removes presumed stock QuakeC water/jump velocity changes before PMove. Its dry jump branch can restore the entire earlier velocity, erasing a mod force. WALK hull and absent `customphysics` do not prove that a mod follows stock movement semantics. |

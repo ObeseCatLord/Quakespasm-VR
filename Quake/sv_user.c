@@ -169,9 +169,11 @@ void SV_UserFriction (void)
 		double		 r = 1.0 - friction * tau;
 		double		 ns = speed;
 
-		if (!sv_analyticphysics_frame || r <= 0)
+		if (!sv_analyticphysics_frame || r <= 0 || r >= 1)
 		{
-			// classic frame-dependent formula; also for degenerate friction values that stop within one tick
+			// The crossing calculation requires 0 < r < 1. Zero friction
+			// otherwise divides 0 by log(1) at stopspeed and creates NaNs.
+			// Use the classic formula for non-decaying or one-tick friction.
 			control = speed < sv_stopspeed.value ? sv_stopspeed.value : speed;
 			ns = speed - host_frametime * control * friction;
 		}

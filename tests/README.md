@@ -62,6 +62,10 @@ retirement, callback counts, one-shot impulse isolation and restored frame
 durations. The Loop_Init wrapper creates no UDP socket or connected peer;
 this is a dispatcher/QC/real-hull software proof, not wire, headset or exact
 q30 gameplay qualification.
+The same run must also report `NATIVE_ZERO_FRICTION_PASSED`: real native
+input processing preserves finite momentum at 99, 100 and 101 units/second
+with zero friction. The shared offline bootstrap is
+`native_engine_fixture.h`; it can select co-op before spawning a mod fixture.
 
 ## Avatar identity and protocol parser
 

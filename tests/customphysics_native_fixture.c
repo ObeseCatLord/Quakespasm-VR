@@ -3,8 +3,7 @@
  * Linker wrapping enables Loop_Init solely for offline dedicated startup. */
 #include "../Quake/sv_phys.c"
 #include <assert.h>
-
-int __wrap_Loop_Init (void) { return 0; }
+#include "native_engine_fixture.h"
 
 static int think_calls, prethink_calls, postthink_calls, kill_prethink;
 static qboolean kill_think, schedule_postthink;
@@ -123,32 +122,20 @@ static void prepare_selected (edict_t *owner, client_t *client, int commands)
 
 int main (int argc, char **argv)
 {
-	quakeparms_t parms = {0};
 	edict_t *owner;
 	client_t *client;
 	func_t null_function, remove_function;
 	float scheduled;
 
-	parms.basedir = ".";
-	parms.argc = argc;
-	parms.argv = argv;
-	host_parms = &parms;
-	COM_InitArgv (argc, argv);
-	isDedicated = COM_CheckParm ("-dedicated") != 0;
-	assert (isDedicated && COM_CheckParm ("-noudp"));
-	assert (SDL_Init (0));
-	Sys_Init ();
-	Host_Init ();
-	Cvar_SetQuick (&sv_coop_autosave, "0");
-	PR_SwitchQCVM (&sv.qcvm);
-	SV_SpawnServer ("e1m1");
-	assert (sv.active && qcvm == &sv.qcvm);
+	Fixture_InitNativeEngine (argc, argv, "e1m1", false);
 	null_function = ED_FindFunction ("SUB_Null") - qcvm->functions;
 	remove_function = ED_FindFunction ("SUB_Remove") - qcvm->functions;
 	assert (null_function && remove_function);
 	owner = EDICT_NUM (1);
 	client = &svs.clients[0];
 	client->edict = owner;
+	client->message.data = client->msgbuf;
+	client->message.maxsize = sizeof (client->msgbuf);
 	client->active = client->spawned = client->knowntoqc = true;
 	client->protocol_qsvr = QSVR_PROTOCOL_PINNED;
 	host_client = client;
@@ -173,6 +160,23 @@ int main (int argc, char **argv)
 	assert (owner->v.origin[0] == 37 && owner->v.origin[1] == 11 &&
 		owner->v.origin[2] == 24 && owner->retain_count == 0);
 	assert (client->private_completed_move == 41);
+
+	/* Real native input acceleration at and around stopspeed. The analytic
+	 * crossing formula must leave zero-friction momentum finite/intact. */
+	const float saved_friction = sv_friction.value;
+	Cvar_SetQuick (&sv_friction, "0");
+	owner->v.movetype = MOVETYPE_WALK;
+	owner->v.flags = FL_CLIENT | FL_ONGROUND;
+	memset (&client->cmd, 0, sizeof (client->cmd));
+	for (int speed = 99; speed <= 101; ++speed)
+	{
+		VectorSet (owner->v.velocity, speed, 0, 0);
+		SV_ClientThink ();
+		assert (isfinite (owner->v.velocity[0]) && owner->v.velocity[0] == speed);
+	}
+	Cvar_SetValueQuick (&sv_friction, saved_friction);
+	owner->v.movetype = 999;
+	puts ("NATIVE_ZERO_FRICTION_PASSED");
 
 	owner->v.think = remove_function;
 	pr_global_struct->PlayerPostThink = remove_function;
