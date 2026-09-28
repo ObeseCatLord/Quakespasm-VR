@@ -7,13 +7,83 @@
 
 static edict_t *fixture_trigger, *fixture_player, *fixture_nested;
 static int trigger_calls, nested_calls;
+static qboolean observe_commands;
+static int observed_pre, observed_post, observed_think, observed_hooks, observed_custom;
+static qboolean schedule_after_post, custom_handoff, invalid_post;
+static int later_due_think_waited;
+typedef struct
+{
+	float seconds, frame, sequence, buttons, impulse;
+} fixture_observed_input_t;
+static fixture_observed_input_t observed_input[8], observed_pre_input[8];
+static fixture_observed_input_t ObserveInput (void)
+{
+	return (fixture_observed_input_t){*qcvm->extglobals.input_timelength,
+		pr_global_struct->frametime, *qcvm->extglobals.input_sequence,
+		*qcvm->extglobals.input_buttons, *qcvm->extglobals.input_impulse};
+}
+static void ResetCommandObservation (void)
+{
+	observed_pre = observed_post = observed_think = observed_hooks = observed_custom = 0;
+	memset (observed_input, 0, sizeof (observed_input));
+	memset (observed_pre_input, 0, sizeof (observed_pre_input));
+}
 void __real_PR_ExecuteProgram (func_t function);
 void __wrap_PR_ExecuteProgram (func_t function)
 {
+	if (observe_commands && pr_global_struct->self == EDICT_TO_PROG (fixture_player))
+	{
+		if (function == pr_global_struct->PlayerPreThink || function == pr_global_struct->PlayerPostThink)
+			assert (pr_global_struct->frametime == *qcvm->extglobals.input_timelength);
+		if (function == pr_global_struct->PlayerPreThink)
+		{
+			assert (observed_pre < countof (observed_pre_input));
+			observed_pre_input[observed_pre++] = ObserveInput ();
+		}
+		if (function == pr_global_struct->PlayerPostThink) ++observed_post;
+		if (function == qcvm->extfuncs.SV_RunClientCommand)
+		{
+			assert (observed_hooks < countof (observed_input));
+			observed_input[observed_hooks] = ObserveInput ();
+			if (schedule_after_post && observed_hooks == 1)
+			{
+				assert (fixture_player->v.nextthink > 0 &&
+					fixture_player->v.nextthink <= qcvm->time + .025 && observed_think == 1);
+				++later_due_think_waited;
+			}
+			++observed_hooks;
+		}
+		eval_t *custom = GetEdictFieldValue (fixture_player, qcvm->extfields.customphysics);
+		if (custom && custom->function && function == custom->function)
+			++observed_custom;
+		else if (function == fixture_player->v.think)
+		{
+			++observed_think;
+			assert (fabsf (pr_global_struct->frametime - .025f) < .000001f &&
+				fabs (host_frametime - .025) < .000001);
+		}
+	}
+	const qboolean actor = observe_commands && pr_global_struct->self == EDICT_TO_PROG (fixture_player);
 	const qboolean touch = fixture_trigger && function == fixture_trigger->v.touch &&
 		pr_global_struct->self == EDICT_TO_PROG (fixture_trigger) &&
 		pr_global_struct->other == EDICT_TO_PROG (fixture_player);
 	__real_PR_ExecuteProgram (function);
+	if (actor && invalid_post && function == pr_global_struct->PlayerPostThink)
+		fixture_player->v.nextthink = NAN;
+	if (actor && schedule_after_post && function == pr_global_struct->PlayerPostThink && observed_post == 1)
+	{
+		fixture_player->v.think = ED_FindFunction ("SUB_Null") - qcvm->functions;
+		fixture_player->v.nextthink = qcvm->time + .001;
+	}
+	if (actor && custom_handoff)
+	{
+		eval_t *custom = GetEdictFieldValue (fixture_player, qcvm->extfields.customphysics);
+		assert (custom);
+		if (function == pr_global_struct->PlayerPreThink)
+			custom->function = ED_FindFunction ("SUB_Null") - qcvm->functions;
+		if (function == pr_global_struct->PlayerPostThink)
+			custom->function = 0; // restore eligibility; the engine must retain the earlier fence
+	}
 	if (!touch) return;
 	++trigger_calls;
 	if (nested_calls) return;
@@ -75,6 +145,149 @@ static void SendCooperative (client_t *peer, client_state_t *state, qboolean vr,
 	CL_SendMove (&command);
 	*state = cl;
 	if (captured_length) GapDeliver (peer, captured, captured_length);
+}
+
+static void RunCooperativeCommandChecks (client_t *peer, client_state_t *state)
+{
+	edict_t *player = peer->edict;
+	assert (peer->private_pmove_walk_selected && FixtureGlobal ("fixture_expected_calls") == 1 &&
+		!peer->private_cmd_queue_count && ((int)player->v.flags & FL_ONGROUND));
+	/* Prepared clock carry and zero bank isolate accepted10/15ms timing from
+	 * bootstrap time. Commands still use the actual sampler/writer/receiver. */
+	peer->private_pmove_credit_msec = 0;
+	state->move_msec_sample_time = realtime;
+	state->move_msec_fractional_carry = .25;
+	VectorClear (state->viewangles); // prepared axes, matching resting body assertions
+	VectorClear (player->v.velocity);
+	vec3_t start;
+	VectorCopy (player->v.origin, start);
+	player->v.think = ED_FindFunction ("SUB_Null") - qcvm->functions;
+	player->v.nextthink = qcvm->time + .01;
+	observe_commands = true;
+	schedule_after_post = true;
+	later_due_think_waited = 0;
+	ResetCommandObservation ();
+	realtime += .010;
+	GapSend (peer, state, 0, 0, .2);
+	GapDeliver (peer, captured, captured_length);
+	const int first = state->cmd.sequence;
+	assert (state->cmd.msec == 10);
+	realtime += .015;
+	GapSend (peer, state, 8, 1, .3);
+	GapDeliver (peer, captured, captured_length);
+	GapDeliver (peer, captured, captured_length); // redundant delivery must not repeat QC
+	const int second = state->cmd.sequence;
+	assert (second == first + 1 && state->cmd.msec == 15 && peer->private_cmd_queue_count == 2);
+	GapWorldFrame ();
+	schedule_after_post = false;
+	printf ("COOPERATIVE_COMMAND_BATCH pre=%d hook=%d post=%d think=%d x=%g y=%g credit=%g\n",
+		observed_pre, observed_hooks, observed_post, observed_think,
+		player->v.origin[0] - start[0], player->v.origin[1] - start[1], peer->private_pmove_credit_msec);
+	assert (observed_pre == 2 && observed_hooks == 2 && observed_post == 2 && observed_think == 1 &&
+		later_due_think_waited == 1 &&
+		fabsf (observed_input[0].seconds - .010f) < .000001f &&
+		fabsf (observed_input[1].seconds - .015f) < .000001f &&
+		observed_input[0].frame == observed_input[0].seconds &&
+		observed_input[1].frame == observed_input[1].seconds &&
+		observed_input[0].sequence == first && observed_input[1].sequence == second &&
+		observed_input[0].buttons == 0 && observed_input[1].buttons == 8 &&
+		observed_input[0].impulse == 0 && observed_input[1].impulse == 1 &&
+		peer->private_completed_move == second && peer->private_retired_move == second &&
+		!peer->private_cmd_queue_count && fabs (peer->private_pmove_credit_msec) < .000001 &&
+		fabsf (player->v.velocity[0] - 7.5f) < .001f &&
+		fabsf (player->v.origin[0] - start[0] - .1625f) < .001f &&
+		fabsf (player->v.origin[1] - start[1] - .5f) < .001f);
+	FullSnapshot (peer, state);
+	assert (state->ackedmovemessages == second && !state->move_ack_prediction_allowed);
+
+	ResetCommandObservation ();
+	VectorCopy (player->v.origin, start);
+	player->v.think = ED_FindFunction ("SUB_Null") - qcvm->functions;
+	player->v.nextthink = qcvm->time + .01;
+	realtime += .050;
+	GapSend (peer, state, 0, 2, 1);
+	GapDeliver (peer, captured, captured_length);
+	const int pending = state->cmd.sequence;
+	assert (pending == second + 1 && state->cmd.msec == 50);
+	float hook_calls = FixtureGlobal ("fixture_hook_calls");
+	GapWorldFrame (); // only25ms credit: positive head must stay invisible
+	assert (observed_pre == 1 && observed_hooks == 0 && observed_post == 1 && observed_think == 1 &&
+		FixtureGlobal ("fixture_hook_calls") == hook_calls + 1 && // public hook alone; no repeated private side effect
+		observed_pre_input[0].seconds == 0 && observed_pre_input[0].frame == 0 &&
+		observed_pre_input[0].sequence == second && observed_pre_input[0].buttons == 8 &&
+		observed_pre_input[0].impulse == 0 && VectorCompare (player->v.origin, start) &&
+		peer->private_completed_move == second && peer->private_retired_move == second &&
+		peer->private_cmd_queue_count == 1 && fabs (peer->private_pmove_credit_msec - 25) < .000001);
+	FullSnapshot (peer, state);
+	assert (state->ackedmovemessages == second && !state->move_ack_prediction_allowed);
+
+	ResetCommandObservation ();
+	GapWorldFrame (); // no new input; accumulated50ms now permits this head
+	assert (observed_pre == 1 && observed_hooks == 1 && observed_post == 1 && observed_think == 0 &&
+		fabsf (observed_input[0].seconds - .050f) < .000001f &&
+		observed_input[0].frame == observed_input[0].seconds &&
+		observed_input[0].sequence == pending && observed_input[0].buttons == 0 &&
+		observed_input[0].impulse == 2 && peer->private_completed_move == pending &&
+		peer->private_retired_move == pending && !peer->private_cmd_queue_count &&
+		fabs (peer->private_pmove_credit_msec) < .000001 &&
+		fabsf (player->v.velocity[0] - 25) < .001f &&
+		fabsf (player->v.origin[0] - start[0] - 1.25f) < .001f &&
+		fabsf (player->v.origin[1] - start[1] - 1) < .001f);
+	FullSnapshot (peer, state);
+	assert (state->ackedmovemessages == pending && !state->move_ack_prediction_allowed);
+	ResetCommandObservation ();
+	VectorCopy (player->v.origin, start);
+	const int touches = trigger_calls;
+	hook_calls = FixtureGlobal ("fixture_hook_calls");
+	GapWorldFrame (); // genuinely empty queue: no positive movement or completion
+	assert (observed_pre == 1 && observed_hooks == 0 && observed_post == 1 &&
+		FixtureGlobal ("fixture_hook_calls") == hook_calls + 1 &&
+		observed_pre_input[0].seconds == 0 && observed_pre_input[0].frame == 0 &&
+		observed_pre_input[0].sequence == pending && observed_pre_input[0].impulse == 0 &&
+		VectorCompare (player->v.origin, start) && trigger_calls == touches &&
+		peer->private_completed_move == pending && peer->private_retired_move == pending &&
+		!peer->private_cmd_queue_count && fabs (peer->private_pmove_credit_msec - 25) < .000001);
+	FullSnapshot (peer, state);
+	assert (state->ackedmovemessages == pending && !state->move_ack_prediction_allowed);
+
+	/* Prepared native customphysics during PreThink, cleared by PostThink.
+	 * Rechecking only final eligibility would wrongly execute the second head. */
+	peer->private_pmove_credit_msec = 0;
+	state->move_msec_sample_time = realtime;
+	state->move_msec_fractional_carry = .25;
+	VectorCopy (player->v.origin, start);
+	ResetCommandObservation ();
+	custom_handoff = true;
+	realtime += .010;
+	GapSend (peer, state, 0, 0, .2);
+	GapDeliver (peer, captured, captured_length);
+	const int handoff = state->cmd.sequence;
+	realtime += .015;
+	GapSend (peer, state, 8, 0, .3);
+	GapDeliver (peer, captured, captured_length);
+	const int suffix = state->cmd.sequence;
+	assert (state->cmd.msec == 15 && peer->private_cmd_queue_count == 2);
+	GapWorldFrame ();
+	custom_handoff = false;
+	assert (observed_pre == 1 && observed_post == 1 && observed_custom == 1 && observed_hooks == 0 &&
+		SV_CooperativeCommandOwner (peer) && peer->private_move_native_frame &&
+		peer->private_completed_move == handoff && peer->private_retired_move == handoff &&
+		peer->private_cmd_queue_count == 1 && peer->private_cmd_queue_msec == 15 &&
+		peer->private_cmd_queue[peer->private_cmd_queue_head].sequence == (unsigned)suffix &&
+		fabs (peer->private_pmove_credit_msec) < .000001 &&
+		fabsf (player->v.origin[0] - start[0]) < .001f &&
+		fabsf (player->v.origin[1] - start[1] - .2f) < .001f);
+	FullSnapshot (peer, state);
+	assert (state->ackedmovemessages == handoff && !state->move_ack_prediction_allowed);
+	ResetCommandObservation ();
+	GapWorldFrame ();
+	assert (observed_pre == 1 && observed_hooks == 1 && observed_post == 1 && !observed_custom &&
+		peer->private_completed_move == suffix && peer->private_retired_move == suffix &&
+		!peer->private_cmd_queue_count && fabs (peer->private_pmove_credit_msec - 10) < .000001);
+	FullSnapshot (peer, state);
+	assert (state->ackedmovemessages == suffix && !state->move_ack_prediction_allowed);
+	observe_commands = false;
+	printf ("COOPERATIVE_COMMANDS_PASSED actual accepted10/15/50ms/batch transition/duplicate/zero-time maintenance/world Think/retained credit/full-parser; prepared bank/carry/Think and captured delivery\n");
 }
 
 int main (int argc, char **argv)
@@ -188,6 +401,8 @@ int main (int argc, char **argv)
 			states[slot]->entities[1].netstate.modelindex > 0 &&
 			states[slot]->entities[2].netstate.modelindex > 0);
 	}
+	if (COM_CheckParm ("-commandchecks"))
+		RunCooperativeCommandChecks (peers[0], states[0]);
 	/* Validation probes the same builtin backend before VM error reporting;
 	 * invalid QC scalars and a zero duration must leave body/scratch intact. */
 	const playermove_t saved_move = pmove;
@@ -210,6 +425,24 @@ int main (int argc, char **argv)
 		!memcmp (&saved_vars, &movevars, sizeof (movevars)));
 	*qcvm->extglobals.input_timelength = saved_duration;
 	*qcvm->extglobals.input_sequence = saved_sequence;
+	if (COM_CheckParm ("-invalidpost"))
+	{
+		assert (selected && !peers[0]->private_cmd_queue_count);
+		/* NewQSocket was called outside a driver by the captured bootstrap.
+		 * Give this prepared endpoint real loopback close ownership for Drop. */
+		peers[0]->netconnection->driver = 0;
+		const int completed = peers[0]->private_completed_move;
+		observe_commands = invalid_post = true;
+		ResetCommandObservation ();
+		realtime += host_frametime;
+		GapWorldFrame (); // actual quiet lifecycle, with a prepared invalid PostThink write
+		assert (!peers[0]->active && peers[1]->active && observed_pre == 1 &&
+			observed_post == 1 && !observed_hooks && peers[0]->private_completed_move == completed &&
+			!peers[0]->edict->retain_count && !memcmp (&saved_move, &pmove, sizeof (pmove)) &&
+			!memcmp (&saved_vars, &movevars, sizeof (movevars)));
+		observe_commands = invalid_post = false;
+		puts ("COOPERATIVE_INVALID_POST_PASSED actual quiet PostThink/validation/drop; prepared NaN deadline and captured socket");
+	}
 	printf ("COOPERATIVE_QC_NATIVE_PASSED calls_per_hook=%d actual loader/builtin/input transform/public-private/world duration/owned body move/roomscale/full-send/raw vector restoration; prepared QC/resting starts/nested callback and captured transport\n", expected_calls);
 	return 0;
 }

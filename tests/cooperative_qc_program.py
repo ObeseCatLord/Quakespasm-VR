@@ -99,6 +99,8 @@ def assemble(program, calls_per_hook):
     struct.pack_into("<i", globals_data, hook_slot * 4, builtin + 1)
     fields.extend(struct.pack("<HHi", 2, header[14], name("pmove_flags")))
     header[14] += 1
+    fields.extend(struct.pack("<HHi", 6, header[14], name("customphysics")))
+    header[14] += 1
     strings.extend(b"\0" * (-len(strings) % 4))
     output = bytearray(60)
     for section, (slot, width) in zip(sections, ((2, 8), (4, 8), (6, 8),

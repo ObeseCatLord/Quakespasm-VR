@@ -182,3 +182,10 @@ loader/VM/collision/send/parser evidence, not arbitrary authored-mod, socket,
 headset or client-side cooperative prediction proof. The selected-native case
 retains authoritative correction and explicitly denies predictive replay.
 Stages2–3 and the full migration scope remain required.
+
+The subsequent [accepted-command adapter](predictive-cooperative-commands-2.0-plan.md)
+now executes cooperative private heads individually through the same lifecycle
+helper, keeping native snapshot classification/correction. It supersedes the
+stage1 selected coalescing behavior; public/native-world behavior remains.
+Its software/review evidence and outstanding Gorilla/replay/state work are
+recorded separately.

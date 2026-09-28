@@ -2922,8 +2922,9 @@ Direct backend probes check zero-time no-op and rejection of NaN duration,
 excessive duration and infinite sequence without body/scratch mutation; they do
 not exercise the VM fatal-error path.
 
-Both peers remain visible. Default selection deliberately retains the native
-owner and authoritative correction, with predictive replay permission denied.
+Both peers remain visible. Default selection retains native snapshot
+classification and authoritative correction, with predictive replay denied;
+the accepted-command extension below executes its heads individually.
 The fixture prepares signon/resources, resting starts, VR samples and nested
 composition, and captures transport. It does not qualify arbitrary cooperative
 mods, sockets, selected per-command execution, Gorilla locomotion, headset input,
@@ -2931,6 +2932,59 @@ Windows or ARM. The [plan](../docs/predictive-cooperative-qc-2.0-plan.md) keeps
 those later stages in scope. Consolidated stock mixed-peer pause/arrival/native
 return, q30 session/replay/publication, older AD shared-QC boots/composition and
 native customphysics/Think checks pass with the same production changes.
+
+## Cooperative QuakeC accepted commands
+
+Use the same generator/native fixture build above with the one-call program:
+
+```sh
+timeout --signal=TERM 30s /tmp/qsvr-cooperative-qc-native-fixture \
+  -defaultselection -commandchecks -dedicated 3 -noudp -nosound \
+  -game cooperative -basedir /tmp/qsvr-cooperative-qc-calls1 \
+  -userdir /tmp/qsvr-cooperative-command-user
+```
+
+Require exit0 and `COOPERATIVE_COMMANDS_PASSED` in addition to the preceding
+marker. Linux SDL3 passes. This case uses actual sampled/encoded/received10ms
+and15ms commands with distinct buttons/impulses and duplicated delivery. It
+requires two PreThink/hook/PostThink lifecycles at their own input/host/QC time,
+one world25ms scheduled Think, actual transformed displacement approximately
+0.1625, speed7.5 and summed roomscale0.5. Full snapshots retire/ack only consumed
+heads and continue denying arbitrary-hook client replay. Before the adapter,
+the actual coalescing owner executed one lifecycle and failed this assertion.
+
+The real producer then sends a50ms head. With only25ms server credit, maintenance
+sees the last completed inputs at zero time, skips the hook (its QC counter
+increments independently of duration), moves no body/roomscale and advances no
+completion. The following world frame executes the retained head at50ms: actual
+horizontal displacement1.25 and its separate roomscale1. An empty-queue control
+likewise runs no hook/body/completion. Pre/Post still execute and scheduled Think
+uses its existing once-world opportunity. A prepared PostThink schedules a due
+function after that opportunity; the later head must wait rather than reopen it.
+
+A prepared PreThink write installs actual loaded `SUB_Null` customphysics;
+PostThink clears it again. The first head alone completes, roomscale is applied
+once, credit is fenced and the second head remains queued despite restored
+eligibility. On the following frame it executes normally. The generator includes
+the real customphysics field, so this is the actual engine dispatcher/VM, not a
+mock custom callback. Writes at callback boundaries, Think deadlines, zero bank,
+fractional sampler carry and input axes are prepared diagnostic controls.
+
+Signon/resources and transport remain captured as in the parent case. This does
+not qualify arbitrary authored programs, sockets, Gorilla/instant-stop, full
+wet/local/load compatibility, cooperative client prediction, hardware or other
+platforms. Existing stock/q30/older-AD/customphysics regressions pass. See the
+[plan/review disposition](../docs/predictive-cooperative-commands-2.0-plan.md).
+
+Also run with `-defaultselection -invalidpost` (without `-commandchecks`) in a
+separate userdir; require exit0 and `COOPERATIVE_INVALID_POST_PASSED`. A prepared
+NaN deadline written after real quiet PostThink must trigger actual post-callback
+validation/drop, leave the completed cursor unchanged and release scratch/entity
+retention while the public peer remains active. The captured bootstrap allocates
+an endpoint outside any network driver; this case assigns it the real loopback
+close owner. The first attempt reached the correct drop but crashed during that
+unprepared close. The corrected fixture passes; no production network fix or
+connected socket qualification is implied.
 
 ## Dwell paired-axe server runtime
 

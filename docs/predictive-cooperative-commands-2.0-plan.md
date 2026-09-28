@@ -1,6 +1,7 @@
 # Cooperative QC on accepted command time
 
-Status: verified stage2 plan before production edits, following `a321e45b`.
+Status: stage2 adapter implemented; consolidated software checks and final
+bounded local Astra source review pass. Plan preceded production edits following `a321e45b`.
 Main owns integration on `2.0`; the user's migration document is untouched.
 This extends, rather than replaces, the full movement and migration goals.
 
@@ -87,7 +88,8 @@ Production ownership: only `Quake/sv_phys.c`, including one optional borrowed
 boundary-outcome argument at the existing native helper and its callsites.
 Test/docs ownership:
 `tests/cooperative_qc_native_fixture.c`, its generator only if required for
-callback evidence, `tests/README.md`, this plan and the plan index. Main performs
+callback evidence, mechanical null-argument updates to the existing native
+customphysics fixture/GDB callsites, `tests/README.md`, this plan and the plan index. Main performs
 edits while the requested Luna coding route is unavailable; local Astra is
 read-only design review. No concurrent writer owns these paths.
 
@@ -116,8 +118,8 @@ Challenge whether native lifecycle reuse is truly sufficient, especially Think
 duration, completed-cursor ownership and customphysics/terminal transitions.
 Prefer simplification/deletion over a new cooperative owner. Decide whether
 zero-time maintenance should invoke the hook at all, and which authored writes
-need an explicit command-time boundary. The current lean is zero-time hook
-execution with truthful native authority. Identify any coupled prerequisite
+need an explicit command-time boundary. The review below resolves quiet
+execution while retaining truthful native authority. Identify any coupled prerequisite
 that makes this stage misleading or wrong before production changes.
 
 ## Astra design disposition
@@ -137,3 +139,71 @@ guard and the donor received-command hook. Review was read-only, without tests.
 
 These source-proven corrections revise the contract before production edits;
 no human preference or approval decision is needed.
+
+## Implementation and software evidence
+
+The adapter adds approximately100 production lines in the existing physics
+file. Cooperative heads reuse the selected credit/queue/completion tail and the
+native phase helper; the only new outcome is a borrowed sticky boolean. No new
+wire mode, enum, persistent movement state, program gate or scheduler was added.
+
+The native Linux SDL3 production build passes. The actual cooperative fixture
+passes the four preceding native/default cases and an additional
+`-defaultselection -commandchecks` case. Real sampled/encoded/received10ms and
+15ms heads with a button/impulse transition now execute two complete QC
+lifecycles and one world Think opportunity. Their actual transformed horizontal
+displacement is approximately0.1625 units, roomscale0.5 and final speed7.5;
+completed and retired cursors reach only the second consumed head. Duplicate
+delivery does not repeat those lifecycles. The preimplementation negative
+control instead executed one coalesced lifecycle and failed the batch assertion.
+
+A received50ms head initially has only25ms world credit. Zero-time Pre/Post
+maintenance sees completed inputs; the movement hook's duration-independent
+counter does not advance for this player, and its body/ACK stay unchanged. The
+next world frame accumulates50ms and executes that same retained head once,
+moving the body1.25 units plus its separate1-unit roomscale sample. Empty-queue
+maintenance likewise advances no hook/body/completed cursor. Both peer full
+messages still parse; arbitrary cooperative replay permission remains denied.
+
+The prepared PostThink scheduling probe installs a due Think after the first
+opportunity is consumed. The second head does not reopen that opportunity.
+A separate prepared PreThink installs real loaded `SUB_Null` customphysics,
+which executes; PostThink clears it again. The current head completes once, the
+sticky outcome clears credit through the existing fence and preserves the
+unstarted15ms suffix. It executes on the following world frame. This is actual
+native customphysics dispatch with prepared writes at real callback boundaries,
+not an authored-mod gameplay claim.
+
+Stock pause/arrival/native return, normal q30 mixed session/replay, q30 water
+publication, older AD shared-QC boots/compositions and native customphysics/Think
+regressions all pass with these production changes. The old direct fixture/GDB
+calls have a mechanical null outcome argument; GDB was not run. Reproduction
+and prepared bank/carry/axes/resources/transport limits are recorded in
+[tests/README.md](../tests/README.md#cooperative-quakec-accepted-commands).
+
+Remaining: Gorilla/instant-stop sample mapping, full state/local/load admission
+and compatible cooperative client replay. This checkpoint implements accepted
+command execution, not the whole migration or arbitrary cooperative prediction.
+
+## Final bounded implementation review
+
+Local Astra Max accepted the queue/lifecycle reuse, transition latching, quiet
+hook exclusion and completion-before-fence ordering. It found one P2: successful
+lifetime completion alone did not validate callback-authored scheduled Think or
+ground references. Adopted: frame validation runs immediately after helper
+success, before either maintenance exit or the common completion jump; failure
+uses existing cleanup/drop. Its final read-only source recheck has no remaining
+finding in this delta. The superseded quiet-hook wording was also corrected.
+Main verified the effective model/effort and spot-checked the validation/tail.
+
+The added `-defaultselection -invalidpost` case passes: prepared quiet PostThink
+writes a NaN deadline, then real frame validation/drop disconnects only that
+peer, preserves the completed cursor and releases borrowed scratch/entity
+retention. The first attempt reached Drop but crashed when closing a synthetic
+endpoint allocated outside a driver. Assigning that prepared endpoint the real
+loopback close owner fixed the fixture; no network production change was needed.
+This is not a connected socket or arbitrary-QC error recovery claim. The final
+production build and scoped whitespace check pass; the earlier five cooperative
+cases also pass after the production validation fix. Other consolidated
+regressions predate that fix, whose branch is cooperative-only; no broader rerun
+or hardware/platform qualification is claimed.

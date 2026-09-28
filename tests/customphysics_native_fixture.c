@@ -386,7 +386,7 @@ int main (int argc, char **argv)
 	VectorSet (owner->v.velocity, 100, 0, 0);
 	host_frametime = .02;
 	assert (SV_Physics_ClientNativeFromPhase (owner, 1, 41,
-		SV_CLIENT_NATIVE_FRESH, false, NULL));
+		SV_CLIENT_NATIVE_FRESH, false, NULL, NULL));
 	assert (owner->v.movetype == 999 && owner->v.nextthink == scheduled);
 	assert (owner->v.origin[0] == 37 && owner->v.origin[1] == 11 &&
 		owner->v.origin[2] == 24 && owner->retain_count == 0);
@@ -412,7 +412,7 @@ int main (int argc, char **argv)
 	owner->v.think = remove_function;
 	pr_global_struct->PlayerPostThink = remove_function;
 	assert (!SV_Physics_ClientNativeFromPhase (owner, 1, 42,
-		SV_CLIENT_NATIVE_FRESH, false, NULL));
+		SV_CLIENT_NATIVE_FRESH, false, NULL, NULL));
 	assert (owner->free && owner->retain_count == 0);
 	assert (client->private_completed_move == 41);
 	puts ("CUSTOMPHYSICS_NATIVE_PASSED");
