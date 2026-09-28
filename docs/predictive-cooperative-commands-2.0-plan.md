@@ -107,7 +107,8 @@ Add a prepared customphysics handoff restored by PostThink to prove sticky
 suffix fencing. Document prepared QC/starts/captured transport and any direct
 diagnostic seams.
 
-Gorilla/instant-stop sample ownership, wet/ladder/custom/terminal transitions,
+Gorilla and instant stop are now [excluded by the user](migration-scope-decisions.md).
+Wet/ladder/custom/terminal transitions,
 local/load admission and compatible cooperative replay remain later required
 stages in the parent plan. No device/performance/Windows/ARM test is required
 for this implementation pass.
@@ -181,7 +182,7 @@ calls have a mechanical null outcome argument; GDB was not run. Reproduction
 and prepared bank/carry/axes/resources/transport limits are recorded in
 [tests/README.md](../tests/README.md#cooperative-quakec-accepted-commands).
 
-Remaining: Gorilla/instant-stop sample mapping, full state/local/load admission
+Remaining: ordinary VR command metadata, full state/local/load admission
 and compatible cooperative client replay. This checkpoint implements accepted
 command execution, not the whole migration or arbitrary cooperative prediction.
 

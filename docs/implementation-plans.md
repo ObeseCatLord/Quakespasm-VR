@@ -1,5 +1,9 @@
 # Major-feature implementation plans
 
+Current [user scope decisions](migration-scope-decisions.md) supersede historical
+requirements: Gorilla locomotion and instant stop are excluded from the goal.
+Ordinary VR movement, swimming, ladders and predictive mod support remain required.
+
 Before a new major feature is implemented on `2.0`, record its plan here and in
 a linked feature document. A feature inventory or a retrospective review alone
 is not an implementation plan. Plans should remain small enough to guide the
