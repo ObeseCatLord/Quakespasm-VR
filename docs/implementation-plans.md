@@ -92,4 +92,7 @@ An actual native-QC last-nail sequence demonstrates that gap; the
 conditional existing-boundary fix and selected/native proof before production.
 The implemented gate and all20 roots plus ordinary fallback pass Linux component
 checks. Actual traversal and complete normal admission still remain open.
+The next [real-BSP traversal plan](predictive-q30-traversal-2.0-plan.md) commits
+the shared-finder/actual-sweep/retained-head qualification stages before edits,
+while a separate local Astra audit checks remaining client Think scheduling.
 Revise the plan before implementing any newly expanded phase contract.
