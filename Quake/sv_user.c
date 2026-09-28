@@ -1135,7 +1135,6 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_move_published_authority = MOVE_AUTHORITY_UNKNOWN;
 	client->private_move_published_authority_valid = false;
 	client->private_move_native_frame = false;
-	client->private_move_resume_pending = false;
 	client->private_input_phase = PRIVATE_INPUT_RUNNING;
 	client->private_resume_first_sequence = 0;
 	client->private_pmove_walk_selected = false;
@@ -1241,9 +1240,49 @@ static qboolean SV_PrivateWalkTrialStateValid (client_t *client)
 	return failure ? SV_PrivateWalkTrialFail (client, failure) : true;
 }
 
-/* Selected movement has one command owner. A pause discards its pending work
- * and transient input, while the completed ACK and physical player remain
- * unchanged. The resume marker fences delayed redundant move datagrams. */
+/* Pause and arrival recovery share one transient-input and completion owner.
+ * Clearing work is not execution: preserve the completed ACK and player state. */
+static void SV_PrivateClearTransientInput (client_t *client)
+{
+	SV_DiscardPrivateCommandQueue (client, client->lastmovemessage);
+	SV_ResetPrivateVRContactState (client);
+	client->private_pmove_last_cmd_valid = false;
+	memset (&client->private_pmove_last_cmd, 0,
+		sizeof (client->private_pmove_last_cmd));
+	client->private_pmove_credit_msec = 0.0;
+	client->private_latest_buttons = 0;
+	client->private_latched_buttons = 0;
+	client->private_latched_impulse = 0;
+	client->cmd.forwardmove = 0;
+	client->cmd.sidemove = 0;
+	client->cmd.upmove = 0;
+	client->cmd.buttons = 0;
+	client->cmd.impulse = 0;
+	memset (client->cmd.vr_roomscalemove, 0,
+		sizeof (client->cmd.vr_roomscalemove));
+	memset (&client->cmd.vr_gorilla, 0, sizeof (client->cmd.vr_gorilla));
+	memset (&client->cmd.vr_gorilla_motion, 0,
+		sizeof (client->cmd.vr_gorilla_motion));
+	if (client->edict && !client->edict->free)
+	{
+		client->edict->v.button0 = 0;
+		client->edict->v.button2 = 0;
+		SV_SetClientExtraButtons (client->edict, 0);
+		client->edict->v.impulse = 0;
+	}
+	client->private_resume_first_sequence = 0;
+}
+
+static void SV_PrivatePublishRecoveryFence (client_t *client)
+{
+	client->private_move_discontinuity_epoch++;
+	/* A not-yet-observed relocation still needs the owner's teleport snap.
+	 * Keep that stronger reason without introducing a second receipt owner. */
+	if (client->private_move_discontinuity_reason != MOVEACK_DISCONTINUITY_RESET_TELEPORT)
+		client->private_move_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
+	client->private_input_phase = PRIVATE_INPUT_AWAIT_MARKER;
+}
+
 static void SV_PrivateSyncPauseState (client_t *client)
 {
 	const qboolean suspended = sv.paused ||
@@ -1255,44 +1294,24 @@ static void SV_PrivateSyncPauseState (client_t *client)
 	{
 		if (client->private_input_phase == PRIVATE_INPUT_SUSPENDED)
 			return;
-		SV_DiscardPrivateCommandQueue (client, client->lastmovemessage);
-		SV_ResetPrivateVRContactState (client);
-		client->private_pmove_last_cmd_valid = false;
-		memset (&client->private_pmove_last_cmd, 0,
-			sizeof (client->private_pmove_last_cmd));
-		client->private_pmove_credit_msec = 0.0;
-		client->private_latest_buttons = 0;
-		client->private_latched_buttons = 0;
-		client->private_latched_impulse = 0;
-		client->cmd.forwardmove = 0;
-		client->cmd.sidemove = 0;
-		client->cmd.upmove = 0;
-		client->cmd.buttons = 0;
-		client->cmd.impulse = 0;
-		memset (client->cmd.vr_roomscalemove, 0,
-			sizeof (client->cmd.vr_roomscalemove));
-		memset (&client->cmd.vr_gorilla, 0, sizeof (client->cmd.vr_gorilla));
-		memset (&client->cmd.vr_gorilla_motion, 0,
-			sizeof (client->cmd.vr_gorilla_motion));
-		if (client->edict && !client->edict->free)
-		{
-			client->edict->v.button0 = 0;
-			client->edict->v.button2 = 0;
-			SV_SetClientExtraButtons (client->edict, 0);
-			client->edict->v.impulse = 0;
-		}
-		client->private_resume_first_sequence = 0;
+		SV_PrivateClearTransientInput (client);
 		client->private_input_phase = PRIVATE_INPUT_SUSPENDED;
 		return;
 	}
 	if (client->private_input_phase == PRIVATE_INPUT_SUSPENDED)
 	{
-		/* Publish the new generation only after the server has resumed. A
-		 * command tagged at pause entry could still have been produced while
-		 * paused, then arrive after resume. */
-		client->private_move_discontinuity_epoch++;
-		client->private_move_discontinuity_reason = MOVEACK_DISCONTINUITY_GAP;
-		client->private_input_phase = PRIVATE_INPUT_AWAIT_MARKER;
+		/* Publish only after resume: an earlier marker could still refer to
+		 * commands produced while paused. */
+		SV_PrivatePublishRecoveryFence (client);
+		return;
+	}
+	if ((client->private_input_phase == PRIVATE_INPUT_RUNNING ||
+		 client->private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION) &&
+		!SV_PrivateWalkTrialTerminalState (client) && client->lastmovetime > 0 &&
+		realtime - client->lastmovetime > 1.0)
+	{
+		SV_PrivateClearTransientInput (client);
+		SV_PrivatePublishRecoveryFence (client);
 	}
 }
 
@@ -1363,12 +1382,6 @@ static qboolean SV_ReadPrivateClientMove (void)
 		if (!SV_PrivateWalkTrialTerminalState (host_client) &&
 			!SV_PrivateWalkTrialStateValid (host_client))
 			return false;
-		if (!SV_PrivateWalkTrialTerminalState (host_client) &&
-			!host_client->private_move_resume_pending &&
-			host_client->private_input_phase == PRIVATE_INPUT_RUNNING &&
-			host_client->lastmovetime > 0 &&
-			realtime - host_client->lastmovetime > 1.0)
-			return SV_PrivateWalkTrialFail (host_client, "more than one second between accepted commands");
 		if (readcmd.vr_gorilla_motion.flags)
 			return SV_PrivateWalkTrialFail (host_client,
 				"trusted Gorilla motion is outside the raw trial");
@@ -1392,8 +1405,6 @@ static qboolean SV_ReadPrivateClientMove (void)
 			memset (readcmd.vr_roomscalemove, 0, sizeof (readcmd.vr_roomscalemove));
 		if (!SV_QueuePrivateCommand (host_client, &readcmd, realtime))
 			return false;
-		if (!SV_PrivateWalkTrialTerminalState (host_client))
-			host_client->private_move_resume_pending = false;
 		host_client->lastmovemessage = sequence;
 		host_client->lastmovetime = realtime;
 		host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] =
@@ -2018,26 +2029,11 @@ void SV_RunClients (void)
 			host_client->cmd.viewangles[1] = host_client->edict->v.v_angle[1];
 			host_client->cmd.viewangles[2] = host_client->edict->v.v_angle[2];
 		}
-		if (SV_PrivateWalkTrialSelected (host_client) &&
-			host_client->private_input_phase == PRIVATE_INPUT_RUNNING &&
-			host_client->lastmovetime > 0 &&
-			realtime - host_client->lastmovetime > 1.0 &&
-			!SV_PrivateWalkTrialTerminalState (host_client) &&
-			!host_client->private_move_resume_pending)
-		{
-			SV_PrivateWalkTrialFail (host_client,
-				"more than one second between accepted commands");
-			SV_DropClient (false);
-			continue;
-		}
 		if (host_client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 			!SV_PrivateWalkTrialSelected (host_client) &&
 			(sv.paused || (svs.maxclients <= 1 && key_dest != key_game) ||
 			 (host_client->lastmovetime > 0 &&
-			  realtime - host_client->lastmovetime > 1.0 &&
-			  !(SV_PrivateWalkTrialSelected (host_client) &&
-			    (SV_PrivateWalkTrialTerminalState (host_client) ||
-			     host_client->private_move_resume_pending)))))
+			  realtime - host_client->lastmovetime > 1.0)))
 		{
 			if (!SV_ClearPrivateInput (host_client))
 			{

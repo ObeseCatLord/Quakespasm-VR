@@ -7528,7 +7528,11 @@ const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
 		if (!isfinite (ent->v.velocity[i]))
 			return "owner has a non-finite velocity";
 	}
-	if (!isfinite (ent->v.waterlevel) || ent->v.waterlevel < 0 || ent->v.waterlevel > 3)
+	/* Native tossed/gibbed corpses use point contents (-1/-2) outside water,
+	 * while living selected movement requires the ordinary depth 0..3. */
+	if (!isfinite (ent->v.waterlevel) ||
+		ent->v.waterlevel < (state == SV_PRIVATE_MOVE_TERMINAL ? CONTENTS_SOLID : 0) ||
+		ent->v.waterlevel > 3)
 		return "invalid owner water level";
 	if (state == SV_PRIVATE_MOVE_TERMINAL)
 		return NULL; // dead hull/ground references are not a living WALK contract
@@ -7771,7 +7775,6 @@ static qboolean SV_PrivateWalkTrialContinueTerminal (edict_t *ent,
 	client->vr_gorilla_last_sequence = (int)command->sequence;
 	client->vr_gorilla_cursor_valid = true;
 	client->private_move_native_frame = true;
-	client->private_move_resume_pending = true;
 	host_frametime = world_frametime;
 	pr_global_struct->frametime = world_qc_frametime;
 	return SV_Physics_ClientNativeFromPhase (ent, NUM_FOR_EDICT (ent),
@@ -9006,7 +9009,6 @@ static void SV_Physics_ClientSelectedNativeFrame (edict_t *ent, int num,
 			sv_player = saved_sv_player;
 			return;
 		}
-		client->private_move_resume_pending = true;
 		SV_ResetGorillaClient (client);
 		client->vr_gorilla_last_sequence = completed_move;
 		client->vr_gorilla_cursor_valid = true;

@@ -13,6 +13,7 @@ qcvm_t *qcvm;
 sizebuf_t net_message;
 cvar_t sv_gameplayfix_elevators;
 static int contact_resets;
+static qboolean terminal_owner;
 
 void Sys_Printf (const char *format, ...) { assert (0); }
 void Sys_Error (const char *format, ...) { assert (0); }
@@ -21,7 +22,7 @@ void Con_Printf (const char *format, ...) { assert (0); }
 
 qboolean SV_PrivateWalkTrialTerminalState (client_t *client)
 {
-	return false;
+	return terminal_owner;
 }
 
 const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
@@ -72,6 +73,106 @@ static qboolean send_move (unsigned int sequence, unsigned int buttons,
 	MSG_BeginReading ();
 	return SV_ReadPrivateClientMove () && !msg_badread &&
 		msg_readcount == net_message.cursize;
+}
+
+static void test_arrival_gap (void)
+{
+	client_t client = {0};
+	edict_t owner = {0};
+	memset (&sv, 0, sizeof (sv));
+	memset (&svs, 0, sizeof (svs));
+	qcvm = &sv.qcvm;
+	host_client = &client;
+	client.edict = &owner;
+	client.active = client.private_pmove_walk_selected = true;
+	client.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	client.private_completed_move = 100;
+	client.lastmovemessage = 104;
+	client.lastmovetime = 5;
+	client.private_move_discontinuity_epoch = 0xffff;
+	client.private_pmove_last_cmd_valid = true;
+	client.private_pmove_credit_msec = 87;
+	client.private_pmove_jump_secs = .1f;
+	client.private_pmove_waterjump_secs = .8f;
+	client.private_cmd_queue_count = 1;
+	client.private_cmd_queue_msec = 15;
+	client.cmd.forwardmove = 200;
+	client.cmd.buttons = 1;
+	client.cmd.impulse = 7;
+	client.cmd.vr_roomscalemove[0] = 4;
+	owner.v.button0 = 1;
+	owner.v.impulse = 7;
+	owner.v.origin[0] = 123;
+	owner.v.velocity[0] = 40;
+	owner.v.movetype = MOVETYPE_WALK;
+	svs.maxclients = 2;
+	key_dest = key_game;
+	contact_resets = 0;
+	terminal_owner = false;
+	realtime = 6;
+	SV_PrivateSyncPauseState (&client);
+	assert (client.private_input_phase == PRIVATE_INPUT_RUNNING && !contact_resets);
+	realtime += .001;
+	SV_PrivateSyncPauseState (&client);
+	assert (client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER &&
+		client.private_move_discontinuity_epoch == 0 && contact_resets == 1);
+	assert (client.private_completed_move == 100 && client.private_discarded_move == 104 &&
+		!client.private_cmd_queue_count && !client.private_cmd_queue_msec &&
+		!client.private_pmove_last_cmd_valid && !client.private_pmove_credit_msec &&
+		!client.cmd.forwardmove && !client.cmd.buttons && !client.cmd.impulse &&
+		!client.cmd.vr_roomscalemove[0] && !owner.v.button0 && !owner.v.impulse);
+	assert (owner.v.origin[0] == 123 && owner.v.velocity[0] == 40 &&
+		client.private_pmove_jump_secs == .1f && client.private_pmove_waterjump_secs == .8f);
+	realtime += 10;
+	SV_PrivateSyncPauseState (&client);
+	assert (client.private_move_discontinuity_epoch == 0 && contact_resets == 1);
+	assert (send_move (105, 1, 7) && !client.private_cmd_queue_count &&
+		client.private_completed_move == 100);
+	/* The existing full marker restores expansion across a movement wrap. */
+	assert (SV_HandlePrivateResumeMarker ("qsvr_resume 0 65536"));
+	assert (client.private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION &&
+		client.lastmovemessage == 65535 && client.private_completed_move == 100);
+	double marker_time = client.lastmovetime;
+	realtime += .5;
+	assert (SV_HandlePrivateResumeMarker ("qsvr_resume 0 65536") &&
+		client.lastmovetime == marker_time);
+	realtime += .501; // duplicate marker traffic must not renew the stall clock
+	SV_PrivateSyncPauseState (&client);
+	assert (client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER &&
+		client.private_move_discontinuity_epoch == 1 && contact_resets == 2);
+	assert (SV_HandlePrivateResumeMarker ("qsvr_resume 0 65536") &&
+		client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER);
+	assert (SV_HandlePrivateResumeMarker ("qsvr_resume 1 65537"));
+	assert (send_move (65537, 0, 0) && client.private_cmd_queue_count == 1 &&
+		client.private_cmd_queue[client.private_cmd_queue_head].sequence == 65537 &&
+		client.private_completed_move == 100);
+	/* A quiet corpse retains native dispatch; becoming alive is evaluated
+	 * using the same fence, without an indefinite corpse exemption. */
+	terminal_owner = true;
+	realtime += 2;
+	SV_PrivateSyncPauseState (&client);
+	assert (client.private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION &&
+		client.private_move_discontinuity_epoch == 1);
+	terminal_owner = false;
+	SV_PrivateSyncPauseState (&client);
+	assert (client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER &&
+		client.private_move_discontinuity_epoch == 2 && !client.private_cmd_queue_count &&
+		client.private_completed_move == 100);
+	byte truncated[] = {2, 0, 0};
+	net_message.data = truncated;
+	net_message.cursize = sizeof (truncated);
+	MSG_BeginReading ();
+	assert (!SV_ReadPrivateClientMove () && msg_badread &&
+		client.private_completed_move == 100 &&
+		client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER);
+	/* Teleport then another recovery retains the semantic snap reason. */
+	svs.clients = &client;
+	SV_PrivatePlayerTeleported (&owner);
+	client.private_input_phase = PRIVATE_INPUT_RUNNING;
+	SV_PrivateSyncPauseState (&client);
+	assert (client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER &&
+		client.private_move_discontinuity_reason == MOVEACK_DISCONTINUITY_RESET_TELEPORT);
+	puts ("Private selected arrival gap: threshold, stale input, lost first command, terminal recovery and epoch/sequence wrap passed");
 }
 
 int main (void)
@@ -169,5 +270,6 @@ int main (void)
 	assert (client.private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION &&
 		client.lastmovemessage == 108 && client.private_discarded_move == 108);
 	puts ("Private selected pause: discard, marker, repeat and ACK cursor checks passed");
+	test_arrival_gap ();
 	return 0;
 }

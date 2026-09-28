@@ -237,7 +237,6 @@ static void compare_native_states (edict_t *owner, client_t *client)
 				observed_impulse == expected_impulse);
 			assert (client->private_completed_move == commands);
 			assert (host_frametime == .04 && pr_global_struct->frametime == .04f);
-			assert (!client->private_move_resume_pending);
 			if (!selected)
 			{
 				VectorCopy (owner->v.origin, native_origin);
@@ -336,6 +335,19 @@ static void check_native_state_guards (edict_t *owner, client_t *client)
 	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
 	qcvm->extfields.customphysics = -1;
 	assert (!SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.waterlevel = CONTENTS_EMPTY;
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.health = -99;
+	owner->v.deadflag = DEAD_DEAD;
+	owner->v.movetype = MOVETYPE_GIB;
+	owner->v.solid = SOLID_NOT;
+	assert (!SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.waterlevel = CONTENTS_SOLID;
+	assert (!SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.waterlevel = CONTENTS_SOLID - 1;
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
+	owner->v.waterlevel = NAN;
+	assert (SV_PrivateWalkTrialFrameStateError (owner, client, &client->cmd));
 	puts ("SELECTED_NATIVE_GUARDS_PASSED strict WALK/pure classification/finite/hull/customphysics/ground");
 }
 

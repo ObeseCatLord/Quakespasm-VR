@@ -183,7 +183,9 @@ pass; details and Astra implementation disposition are in the linked slice
 plan. This does not activate production selected movement or close the remaining
 stock/mod contracts. Normal arrival-gap recovery follows its
 [bounded, Astra-reviewed plan](predictive-arrival-gap-2.0-plan.md) before
-production edits.
+production edits. Its bounded adapter now passes admitted mixed-peer gap,
+wrap/lost-reply, teleport and stock death/respawn checks, with local Astra
+implementation review. Selection remains off pending the rest of stage 2.
 
 Owners: `sv_main.c`, `sv_user.c`, `sv_phys.c`, `pmove.c`, `cl_main.c` and existing
 movement fixtures. Scope: dry/wet WALK, jumping, command batching/credit,

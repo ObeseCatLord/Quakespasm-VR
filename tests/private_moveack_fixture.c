@@ -111,6 +111,95 @@ static qboolean parse (const byte *bytes, int length)
 	return CL_ParseMoveAckPayload (&parse_ack_accepted);
 }
 
+static void test_pending_epoch_after_lost_completion (void)
+{
+	byte packet[128];
+	const int first_sequences[] = {40000, 65636, 65638};
+	for (unsigned index = 0; index < countof (first_sequences); ++index)
+	{
+		const int first = first_sequences[index];
+		int length;
+		float commandframe = 100;
+		reset_client ();
+		cl.movemessages = first + 4;
+		cl.ackedmovemessages = 100;
+		cl.qcvm.extglobals.servercommandframe = &commandframe;
+		cl.move_ack_selected_owner = true;
+		cl.move_ack_discontinuity_epoch = 4;
+		cl.move_resume_marker_epoch_valid = true;
+		cl.move_resume_marker_epoch_sent = 4;
+		cl.move_resume_marker_first_sequence = first;
+		/* The server completed first, but no completion reply arrived before
+		 * it published a second recovery generation. */
+		length = moveack (packet, first,
+			MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 5,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		assert (parse (packet, length) && parse_ack_accepted &&
+			cl.move_ack_resume_pending && cl.move_ack_discontinuity_epoch == 5 &&
+			cl.ackedmovemessages == 100 && commandframe == 100 && !cl.net_move_acks &&
+			resume_resets == 1 && !cl.move_resume_marker_epoch_valid);
+		assert (parse (packet, length) && resume_resets == 1 && cl.ackedmovemessages == 100);
+		cl.move_resume_marker_epoch_valid = true;
+		cl.move_resume_marker_epoch_sent = 5;
+		cl.move_resume_marker_first_sequence = first + 2;
+		length = moveack (packet, first, MOVEACK_FLAG_SELECTED,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 5,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		assert (parse (packet, length) && parse_ack_accepted &&
+			!cl.move_ack_resume_pending && cl.ackedmovemessages == 100 && commandframe == 100);
+		/* Pending is now false: only the existing uncompleted marker latch
+		 * protects the repeated awaiting-completion packet's forward alias. */
+		assert (parse (packet, length) && parse_ack_accepted &&
+			!cl.move_ack_resume_pending && cl.move_resume_marker_epoch_valid &&
+			cl.move_resume_marker_first_sequence == first + 2 &&
+			cl.ackedmovemessages == 100 && commandframe == 100 &&
+			!cl.net_move_acks && resume_resets == 1);
+		length = moveack (packet, first, MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 5,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		assert (parse (packet, length) && parse_ack_accepted && resume_resets == 1 &&
+			cl.move_resume_marker_epoch_valid && cl.ackedmovemessages == 100 &&
+			commandframe == 100 && !cl.net_move_acks);
+		length = moveack (packet, first + 2,
+			MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_COMPLETED,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 5,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		assert (parse (packet, length) && parse_ack_accepted &&
+			cl.ackedmovemessages == first + 2 && commandframe == first + 2 &&
+			!cl.move_ack_resume_pending && cl.net_move_acks == 1);
+		length = moveack (packet, first,
+			MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 5,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		assert (parse (packet, length) && !parse_ack_accepted && resume_resets == 1 &&
+			!cl.move_ack_resume_pending && cl.ackedmovemessages == first + 2);
+	}
+	reset_client ();
+	cl.movemessages = 500;
+	cl.ackedmovemessages = 100;
+	cl.move_ack_selected_owner = true;
+	cl.move_ack_discontinuity_epoch = 4;
+	int length = moveack (packet, 100, MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 5,
+		MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+	assert (parse (packet, length) && resume_resets == 1);
+	cl.move_resume_marker_epoch_valid = true;
+	cl.move_resume_marker_epoch_sent = 5;
+	cl.move_resume_marker_first_sequence = 102;
+	length = moveack (packet, 100, MOVEACK_FLAG_SELECTED,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 5,
+		MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+	assert (parse (packet, length) && !cl.move_ack_resume_pending);
+	length = moveack (packet, 100, MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING,
+		MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 5,
+		MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+	assert (parse (packet, length) && resume_resets == 1 &&
+		cl.move_resume_marker_epoch_valid && cl.move_resume_marker_first_sequence == 102);
+	reset_client ();
+	puts ("Private recovery metadata: lost completion over half-range/full wrap and same-epoch regression passed");
+}
+
 static void assert_rejected_unchanged (const byte *bytes, int length)
 {
 	client_state_t before = cl;
@@ -226,6 +315,7 @@ int main (void)
 	float servercommandframe = -1;
 
 	test_command_names ();
+	test_pending_epoch_after_lost_completion ();
 	test_demo_ack_consumption ();
 
 	reset_client ();
@@ -336,6 +426,14 @@ int main (void)
 	cl.protocol_qsvr = 0;
 	assert_rejected_unchanged (packet, length);
 	cl.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	for (int flag = MOVEACK_FLAG_AUTHORITATIVE; flag <= MOVEACK_FLAG_PREDICTION_ALLOWED; flag <<= 1)
+	{
+		length = moveack (packet, 1,
+			MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING | flag,
+			MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT, 1, 1,
+			MOVEACK_DISCONTINUITY_GAP, false, false, 0);
+		assert_rejected_unchanged (packet, length);
+	}
 	length = moveack (packet, 1,
 		MOVEACK_FLAG_SELECTED | MOVEACK_FLAG_RESUME_PENDING |
 		MOVEACK_FLAG_RESUME_COMPLETED,

@@ -4784,17 +4784,25 @@ void VR_InputCommitGorillaCommand (const usercmd_t *cmd)
 		vr_input_gorilla_discontinuity = false;
 }
 
-void VR_InputInvalidateMotion (void)
+/* Network recovery needs a fresh tracking baseline, while held analog input
+ * remains usable just like held keyboard levels. Full focus/tracking loss
+ * adds the stronger neutral-stick gate below. */
+void VR_InputResetMotionContinuity (void)
 {
 	VR_InputClearPendingRecord (&cl.pendingcmd);
 	vr_input_contact_discontinuity = true;
 	vr_input_gorilla_discontinuity = true;
 	VectorCopy (vec3_origin, cl.pendingcmd.vr_roomscalemove);
 	vr_input_roomscale_position_valid = false;
+	vr_input_turn180_queued = false;
+}
+
+void VR_InputInvalidateMotion (void)
+{
+	VR_InputResetMotionContinuity ();
 	vr_input_move_wait_neutral = true;
 	vr_input_turn_wait_neutral = true;
 	vr_input_last_snap = 0;
-	vr_input_turn180_queued = false;
 }
 
 void VR_InputClear (void)

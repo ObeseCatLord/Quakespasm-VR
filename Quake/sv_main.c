@@ -2305,7 +2305,7 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 			{
 				ents[numents].state.solidsize = CLAMP (0, (int)-ent->v.mins[0], 255);
 				ents[numents].state.solidsize |= CLAMP (0, (int)-ent->v.mins[2], 255) << 8;
-				ents[numents].state.solidsize |= CLAMP (0, (int)(ent->v.maxs[2] + 32768), 65535) << 16;
+				ents[numents].state.solidsize |= (uint32_t)CLAMP (0, (int)(ent->v.maxs[2] + 32768), 65535) << 16;
 				if (ents[numents].state.solidsize == 0x80000000u)
 					ents[numents].state.solidsize = ES_SOLID_NOT;
 			}

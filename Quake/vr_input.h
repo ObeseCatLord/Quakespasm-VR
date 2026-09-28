@@ -88,6 +88,7 @@ int VR_InputCrosshairAimRays (vec3_t starts[2], vec3_t forwards[2]);
 void VR_InputTriggerHaptic (int logical_role, float duration_seconds, float amplitude);
 qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd);
 void VR_InputInvalidateMotion (void);
+void VR_InputResetMotionContinuity (void);
 void VR_InputClear (void);
 qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose);
 

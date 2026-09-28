@@ -978,6 +978,7 @@ void CL_PrivateMoveResumeObserved (void)
 	for (size_t i = 0; i < countof (buttons); ++i)
 		buttons[i]->state &= 1;
 	in_impulse = 0;
+	VR_InputResetMotionContinuity ();
 	memset (&cl.pendingcmd, 0, sizeof (cl.pendingcmd));
 	cl.pendingcmd.servertime = cl.time;
 	cl.move_msec_sample_valid = true;

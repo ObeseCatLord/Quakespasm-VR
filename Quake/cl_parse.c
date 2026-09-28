@@ -2973,7 +2973,8 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 		((flags & MOVEACK_FLAG_RESUME_PENDING) &&
 		 !(flags & MOVEACK_FLAG_SELECTED)) ||
 		((flags & MOVEACK_FLAG_RESUME_PENDING) &&
-		 (flags & MOVEACK_FLAG_RESUME_COMPLETED)) ||
+		 (flags & (MOVEACK_FLAG_RESUME_COMPLETED | MOVEACK_FLAG_AUTHORITATIVE |
+			MOVEACK_FLAG_PREDICTION_ALLOWED))) ||
 		authority < MOVE_AUTHORITY_UNKNOWN || authority > MOVE_AUTHORITY_PMOVE_QC_COMMAND)
 	{
 		msg_badread = true;
@@ -3066,9 +3067,15 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 	 * Until completion, old ACKs remain anchored to the previous completion;
 	 * afterward the marker resolves even a gap spanning a 16-bit wrap. */
 	int ack_reference = cl.ackedmovemessages;
+	const unsigned short epoch_delta = (unsigned short)
+		(discontinuity_epoch - cl.move_ack_discontinuity_epoch);
+	const qboolean recovery_unresolved = (flags & MOVEACK_FLAG_SELECTED) &&
+		!(flags & MOVEACK_FLAG_RESUME_COMPLETED) &&
+		((flags & MOVEACK_FLAG_RESUME_PENDING) || cl.move_ack_resume_pending ||
+		 (cl.move_resume_marker_epoch_valid && cl.move_resume_marker_first_sequence > 0 &&
+		  cl.ackedmovemessages < cl.move_resume_marker_first_sequence));
 	if (cl.move_ack_selected_owner && (flags & MOVEACK_FLAG_SELECTED) &&
-		(unsigned short)(discontinuity_epoch -
-			cl.move_ack_discontinuity_epoch) > 0x8000)
+		epoch_delta >= 0x8000)
 		return true; /* an older selected snapshot cannot restore its epoch */
 	if ((flags & MOVEACK_FLAG_RESUME_COMPLETED) &&
 		cl.move_resume_marker_epoch_valid &&
@@ -3083,11 +3090,16 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted)
 		!(flags & MOVEACK_FLAG_RESUME_COMPLETED) &&
 		discontinuity_epoch == cl.move_resume_marker_epoch_sent)
 		return true; /* delayed pre-completion metadata from this generation */
-	if (!CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16, ack_reference)))
+	/* Recovery metadata must remain observable even if completion replies were
+	 * lost. Repeated pending/awaiting-completion ACKs are equally ambiguous:
+	 * freeze completion until the full marker's execution is confirmed. */
+	if (!recovery_unresolved && !CL_UpdateMoveAck (CL_ExpandMoveAck16 (ack16, ack_reference)))
 		return true;
 	if ((flags & MOVEACK_FLAG_SELECTED) &&
 		(flags & MOVEACK_FLAG_RESUME_PENDING) &&
-		(!cl.move_ack_resume_pending ||
+		((!cl.move_ack_resume_pending &&
+		  !(cl.move_resume_marker_epoch_valid &&
+		    cl.move_resume_marker_epoch_sent == discontinuity_epoch)) ||
 		 discontinuity_epoch != cl.move_ack_discontinuity_epoch))
 	{
 		cl.move_resume_marker_epoch_valid = false;

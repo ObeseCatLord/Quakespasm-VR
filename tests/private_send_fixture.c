@@ -11,6 +11,7 @@ sizebuf_t		net_message;
 double			realtime, host_frametime;
 static byte		packet[DATAGRAM_MTU];
 static int		packet_size, packet_count, disconnects, send_result;
+static int tracking_continuity_resets;
 /* This fixture owns the socket boundary. Optional live VR telemetry is absent,
  * so keep its producers disabled while exercising the real command codecs. */
 qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
@@ -24,6 +25,7 @@ qboolean CL_VoiceTransportAvailable (void)
 void CL_QueueGorillaCapability (void) {}
 void CL_QueueInstantStopCapability (void) {}
 void VR_InputCommitGorillaCommand (const usercmd_t *cmd) {}
+void VR_InputResetMotionContinuity (void) { tracking_continuity_resets++; }
 qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd) { return false; }
 void			Host_Error (const char *fmt, ...)
 {
@@ -63,6 +65,7 @@ static void setup (void)
 	realtime = 1;
 	host_frametime = .01;
 	packet_count = packet_size = disconnects = send_result = 0;
+	tracking_continuity_resets = 0;
 }
 static void begin_packet (void)
 {
@@ -171,7 +174,7 @@ static void test_private_resume_marker (void)
 	in_impulse = 7;
 	cl.pendingcmd.vr_roomscalemove[0] = 5;
 	CL_PrivateMoveResumeObserved ();
-	assert (!in_attack.state && !in_impulse &&
+	assert (tracking_continuity_resets == 1 && !in_attack.state && !in_impulse &&
 		!cl.pendingcmd.vr_roomscalemove[0]);
 	CL_FinishMove (&cmd);
 	assert (!(cmd.buttons & 1) && !cmd.impulse);

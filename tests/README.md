@@ -107,6 +107,29 @@ checked through existing producers/consumers. Movement prediction remains off
 by default. Command production is synthetic and client signon/resources are
 prepared; this is neither connected signon nor physical XR input evidence.
 
+Add `-arrivalgap` to the selected run for the reviewed recovery matrix:
+
+```sh
+timeout --signal=TERM 25s /tmp/qsvr-mixed-native-fixture -selected -arrivalgap \
+  -dedicated 3 -noudp -nosound -basedir /tmp/qsvr-negotiation-native \
+  -userdir /tmp/qsvr-negotiation-native
+```
+
+Require `MIXED_ARRIVAL_GAP_PASSED` and `MIXED_SELECTED_NATIVE_PASSED`. This
+extends the actually admitted session with stale queued/late commands, the real
+quiet-frame `SV_RunClients` boundary, marker-only delivery, a missing first
+command, a lost completion reply, native NOCLIP/FLY recovery and full/half-range
+sequence gaps. It repeats a pending low16 ACK that plausibly aliases forward
+and parses AWAIT_COMPLETION before executing its queued command: neither may
+advance client completion. Full sequences are seeded only in the producer;
+selection still comes from real negotiation/spawn/begin. Actual `setpos` tests
+both teleport/gap orderings. Stock world `T_Damage`, native corpse frames and
+a marked attack execute real death/respawn; no subsequent packet must leave
+an indefinite stale-input exemption. A simultaneous public peer remains native.
+Completion, full message snapshots and WALK replay are checked. This is
+captured delivery with prepared client resources, not connected reliability,
+OpenXR action sampling, graphics or a performance measurement.
+
 ## Opaque alias instancing
 
 `alias_batch_fixture.c` executes the production alias draw and batch functions
@@ -1218,7 +1241,12 @@ pacing, actual tracking producers or prediction. Those remain integration gates.
 pause transition, resume marker parser and private move reader. It
 checks that queued actions and held state are discarded without completing the
 ACK, a stale or malformed marker is ignored, first post-marker input is queued,
-and a second pause or pre-marker relocation fences that generation. It does not
+and a second pause or pre-marker relocation fences that generation. Arrival
+coverage adds exact-one-second versus greater threshold, unchanged physical
+state/timers/completion, idempotence, duplicate markers that cannot renew the
+stall clock, terminal/alive transitions, malformed fenced moves and full
+sequence/ushort epoch wrap. Terminal classification and living-state validation
+are fixture seams. It does not
 execute QuakeC physics callbacks or a live network connection.
 
 ```sh
@@ -1238,6 +1266,30 @@ duplicate/overflow handling. Smoothing reset and flush calls are fixture spies;
 the fixture does not execute the actual smoothing reset or network flush.
 Truncated prefixes retain a larger backing array, so they check logical message
 bounds rather than physically truncated allocations.
+Recovery checks include lost completion at 40000, 65636 and 65638, repeats before
+and after the marker, awaiting-completion metadata and same-epoch pending
+regression. Client and QC completion remain frozen until confirmed execution;
+contradictory pending/prediction/authoritative flags are rejected atomically.
+
+`vr_input_continuity_fixture.c` executes the actual tracking reset and roomscale
+accumulator with prepared gameplay context and mapping/UI boundaries. It checks
+the first new HMD sample becomes a baseline, subsequent displacement is kept,
+pending contact/Gorilla/turn work is dropped, analog neutral/snap latches are
+retained for network recovery, and full tracking invalidation still gates them.
+It does not execute the complete held-stick/button/contact submission pipeline
+or a headset runtime; the old broad input fixture's dependencies remain separate.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-omit-frame-pointer tests/vr_input_continuity_fixture.c Quake/mathlib.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/qsvr-vr-input-continuity
+ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-vr-input-continuity
+```
+
+Require `VR_MOTION_CONTINUITY_PASSED`. Leak scanning is disabled for this
+sandbox; address and undefined-behavior instrumentation remain enabled.
 The sender and ACK fixtures also check the selected resume marker, clearing of
 pre-observation key edges and accumulated roomscale, fresh input after that
 boundary, terminal-authority marker production, unreliable marker-before-move

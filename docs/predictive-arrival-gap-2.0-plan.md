@@ -1,7 +1,8 @@
 # Selected movement: arrival-gap recovery
 
-Status: Astra-reviewed implementation contract; production edits follow the
-disposition below. Software acceptance and final implementation review pending.
+Status: bounded arrival-gap adapter implemented with passing Linux/software
+checks and local Astra Max review/follow-up. The plan preceded production edits
+(`0f67b51a`, reviewed contract `3626036b`, terminal correction `351e2dcd`).
 Baseline: `0b1718a3` on `2.0`. This is the next bounded stage of the
 [predictive movement plan](predictive-movement-2.0-plan.md), before ordinary
 selected movement is enabled by default.
@@ -146,3 +147,74 @@ physics, QC, snapshot and completion ownership remain unchanged. Add an
 actual-code guard and rerun the real death/respawn recovery chain. This is a
 demonstrated state incompatibility within the planned terminal matrix, not a
 reason to replace water categorization or widen living replay.
+
+### Final-review completion correction
+
+The fresh Astra Max implementation pass verified the reuse, tracking helper,
+terminal-domain correction and unsigned snapshot packing, but found an ACK
+blocker: suppressing completion only on the first newer pending packet lets a
+repeat expand completed 65638 to 102 against client completion 100. The chosen
+correction freezes completion throughout unresolved selected recovery, using
+the existing pending flag and uncompleted marker latch. Recovery metadata is
+still accepted; only a completed marker response releases advancement. No new
+state owner is needed. Extend the focused parser check with 65638, repeats
+before/after marker transmission and awaiting-completion metadata; rerun the
+combined matrix and obtain a bounded Astra follow-up before committing code.
+
+## Completed slice and evidence
+
+The server's existing synchronizer now fences a living selected arrival gap
+instead of failing/disconnecting. Pause and gap share the existing transient
+clear, producer marker and executed-command completion tails. The obsolete
+corpse exemption is deleted. Teleport reset semantics survive another fence,
+and native corpse water sentinels are qualified without widening living PMove.
+The client retains held keyboard/analog input, establishes fresh tracking
+continuity, observes recovery metadata independently of ambiguous completion,
+and freezes completion for the whole unresolved recovery. Existing state is
+reused throughout. A sanitizer-discovered signed snapshot packing shift now
+casts to `uint32_t` before shifting; packet layout is unchanged.
+
+| Final review recommendation | Disposition / evidence |
+| --- | --- |
+| Freeze completion beyond the first newer pending packet; test forward alias 65638. | Adopted with `recovery_unresolved` over existing pending/marker state. Actual parser checks 40000, 65636 and 65638, repeated pending, awaiting-completion and matching executed completion. QC command frame and ACK counters stay unchanged while unresolved. |
+| Isolate the marker-latch-only branch after awaiting-completion clears pending. | Adopted: repeated selected-only awaiting-completion metadata retains cursor 100, QC frame 100, zero ACK increments and the marker/reset count. ASan/UBSan check passes. |
+| Complete terminal guards and real stock death/respawn/teleport cases. | Adopted: actual admitted mixed world executes both `setpos` orderings, stock world damage, native corpse maintenance, marked respawn and a subsequent quiet living fence. Targeted native guards preserve non-finite/living rejection. |
+| Tracking fixture does not execute the full held-stick/contact submission pipeline. | Evidence limit retained explicitly: actual roomscale accumulation and continuity/analog/snap latch behavior are checked; the full OpenXR action/contact pipeline is not inferred from that test. |
+
+Review provenance: all credited local passes were fresh explicitly selected
+`gpt-6-astra` at effective `max`, verified from model/effort fields. The final
+bounded follow-up found no blocker in the completion correction and no second
+completion owner. Main spot-checked its predicate, marker anchoring and server
+COMPLETED flag condition, then added the requested latch-only assertion. Static
+review did not run or certify the runtime matrix; those checks ran separately.
+
+Checks after coherent implementation:
+
+- Linux `make -C Quake USE_SDL3=1 -j4`: passed.
+- Actual admitted mixed-peer recovery matrix: passed normal execution and
+  an ASan/UBSan build of its included parser/server-writer sources. It covers
+  queued/late actions and roomscale, a marker-only stall, lost commands/replies,
+  native modes, repeated forward-alias metadata before physics, full/half-range
+  gaps, teleport orderings, real death/respawn, complete message commitment and
+  WALK replay. Producer sequences are seeded for long-gap cases; admission is
+  real. Other linked engine objects are normally built, not sanitizer-instrumented.
+- Native dispatcher/equivalence and terminal qualification guards: passed.
+  Unselected mixed native and negotiation default/public/demo checks: passed;
+  private transport remains default 1 and selected movement remains default 0.
+- Focused pause/marker/receipt and sender checks: passed. Actual ACK parser
+  and VR continuity/roomscale checks: passed with ASan/UBSan. Leak scanning is
+  disabled due sandbox restrictions; address/UB checks remain enabled.
+- Diff whitespace and linked plan references: passed.
+
+The combined fixture explicitly supplies the host/client writer context that
+production `SV_SendClientMessages` normally establishes; missing test context
+caused its first extended snapshot crash. Player-skin upload remains captured
+because dedicated bootstrap models have no renderer textures. Those are test
+boundaries, not production workarounds. Connected signon/reliability, headset
+input and graphical output are not claimed. Windows/ARM, live device/eye tests
+and performance measurement remain deferred as requested.
+
+This closes the bounded normal-gap adapter, not stock default activation or
+the migration. Complete the parent's dry/wet/jump, pause/pusher and callback
+contracts before enabling ordinary selected movement; AD/cooperative mod
+admission and the complete feature matrix remain required.

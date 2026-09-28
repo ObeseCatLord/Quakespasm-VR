@@ -79,6 +79,10 @@ The new living branch does not set the corpse's `private_move_resume_pending`
 exemption or suppress the existing selected arrival-gap checks. General gap
 recovery still needs its own coherent change before stage-2 activation.
 
+That first-slice restriction describes the original native adapter. The later
+[arrival-gap slice](predictive-arrival-gap-2.0-plan.md) replaces fatal gaps with
+the existing recovery fence and deletes the obsolete corpse exemption entirely.
+
 | Alternative | Disposition before review |
 | --- | --- |
 | Extend PMove to fly/noclip now. | Defer: QSS-M supports solver modes, but this changes native cheat acceleration/settings and needs a larger behavioral contract. |
@@ -254,8 +258,9 @@ and pre-physics snapshot claims.
 | Snapshot classification plus retained frame discriminator conservatively handles both transitions. | Verified and retained; real engine command/complete-message checks cover pre-physics and WALK return. |
 | Static review cannot establish runtime equivalence or complete-message replay. | Addressed with the bounded native and mixed checks above; connected/hardware/graphics claims remain excluded. |
 
-Remaining parent stage-2 work: normal long-gap recovery, complete dry/wet/jump,
-pause/death/respawn/teleport/pusher integration and callback-phase contracts before
+The later arrival-gap slice supplies bounded long-gap, teleport and actual
+death/respawn recovery evidence. Remaining parent stage-2 work: complete
+dry/wet/jump, broader pause/pusher integration and callback-phase contracts before
 automatic selected movement. Broader AD-family/cooperative mod contracts and
 the full migration matrix remain required by the parent plan. This first slice
 does not complete predictive movement or the full migration goal.
