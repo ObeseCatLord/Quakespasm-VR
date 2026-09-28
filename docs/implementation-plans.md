@@ -54,3 +54,7 @@ The [stock moving-brush plan](predictive-stock-pushers-2.0-plan.md) now records
 completed bounded qualification and palm adaptation. Before broader activation,
 write the next bounded plan against the parent movement stages: full-domain
 stock/default selection, local/load behavior and AD/cooperative-QC admission.
+
+Next planned activation: [ordinary stock predictive movement](predictive-stock-activation-2.0-plan.md).
+Its default/admission decision is reviewed before production edits; it retains
+the parent mod and local/load requirements.
