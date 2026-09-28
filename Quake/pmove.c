@@ -1306,6 +1306,7 @@ void PM_AirMove (void)
 
 
 static plane_t	groundplane;	//valid only when pmove.onground
+static qboolean ground_snap_committed;
 
 /*
 =============
@@ -1331,6 +1332,7 @@ void PM_CategorizePosition (void)
 	trace_t		trace;
 	qboolean	gorilla_airborne_brace;
 
+	ground_snap_committed = false;
 	if (pmove.gravitydir[0] == 0 && pmove.gravitydir[1] == 0 && pmove.gravitydir[2] == 0)
 	{
 		pmove.gravitydir[0] = 0;
@@ -1489,8 +1491,32 @@ void PM_CategorizePosition (void)
 	{
 		// snap to ground so that we can't jump higher than we're supposed to
 		if (!trace.startsolid && !trace.allsolid)
+		{
 			VectorCopy (trace.endpos, pmove.origin);
+			ground_snap_committed = true;
+		}
 	}
+}
+
+/* QC jump owners add their impulse before PMove, so its ordinary pre-jump
+ * ground clip is too late. Do not publish inward velocity on dry flat world
+ * support that the solver has already snapped to. Keep this bounded to that
+ * committed constraint; no correction may overwrite later QC forces. */
+static void PM_ReconcileQCJumpGroundVelocity (void)
+{
+	vec3_t clipped;
+	if (!pmove.qc_jump_owner || pmove.pm_type != PM_NORMAL || frametime <= 0 ||
+		movevars.pground || !pmove.onground || !ground_snap_committed ||
+		pmove.waterlevel != 0 || pmove.fluid_contacted || pmove.waterjumptime ||
+		pmove.onladder || pmove.gorilla_allowed || pmove.groundent != 0 ||
+		groundplane.normal[0] != 0 || groundplane.normal[1] != 0 ||
+		groundplane.normal[2] != 1 || pmove.gravitydir[0] != 0 ||
+		pmove.gravitydir[1] != 0 || pmove.gravitydir[2] != -1 ||
+		pmove.velocity[2] >= 0)
+		return;
+	PM_ClipVelocity (pmove.velocity, groundplane.normal, clipped, 1);
+	/* PM_ClipVelocity rounds small components. Preserve tangential QC forces. */
+	pmove.velocity[2] = clipped[2];
 }
 
 
@@ -2134,6 +2160,7 @@ static void PM_PlayerMoveStep (float gamespeed, qboolean apply_roomscale,
 */
 	// set onground, watertype, and waterlevel for final spot
 	PM_CategorizePosition ();
+	PM_ReconcileQCJumpGroundVelocity ();
 
 	// this is to make sure landing sound is not played twice
 	// and falling damage is calculated correctly

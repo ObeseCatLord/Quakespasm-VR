@@ -376,6 +376,89 @@ static void check_qc_takeoff_water (void)
 	assert (pmove.waterlevel == 3 && (pmove.watertype & CONTENTBIT_WATER));
 }
 
+static void prepare_qc_support (void)
+{
+	prepare ();
+	pmove.qc_jump_owner = true;
+	frametime = .005f;
+	VectorSet (pmove.velocity, .01f, 100, -4);
+	PM_CategorizePosition ();
+	assert (pmove.onground && ground_snap_committed && pmove.groundent == 0);
+}
+
+static void check_qc_support_scope (void)
+{
+	prepare_qc_support ();
+	PM_ReconcileQCJumpGroundVelocity ();
+	/* Clipping the entire vector would round away this small QC force. */
+	near_value (pmove.velocity[0], .01f, .000001f);
+	near_value (pmove.velocity[1], 100, .000001f);
+	near_value (pmove.velocity[2], 0, .000001f);
+
+	/* These states are staged AFTER real support categorization. This checks
+	 * the correction's scope, not traversal of a slope, pusher or ladder. */
+	for (int state = 0; state < 15; ++state)
+	{
+		vec3_t before;
+		prepare_qc_support ();
+		switch (state)
+		{
+		case 0: pmove.qc_jump_owner = false; break;
+		case 1: pmove.pm_type = PM_FLY; break;
+		case 2: frametime = 0; break;
+		case 3: movevars.pground = true; break;
+		case 4: pmove.onground = false; break;
+		case 5: ground_snap_committed = false; break;
+		case 6: pmove.waterlevel = 1; break;
+		case 7: pmove.fluid_contacted = true; break;
+		case 8: pmove.waterjumptime = 1; break;
+		case 9: pmove.onladder = true; break;
+		case 10: pmove.gorilla_allowed = true; break;
+		case 11: pmove.groundent = 1; break;
+		case 12: VectorSet (groundplane.normal, .6f, 0, .8f); break;
+		case 13: VectorSet (pmove.gravitydir, 0, -1, 0); break;
+		case 14: pmove.velocity[2] = 120; break;
+		}
+		VectorCopy (pmove.velocity, before);
+		PM_ReconcileQCJumpGroundVelocity ();
+		assert (VectorCompare (pmove.velocity, before));
+	}
+
+	/* A later airborne probe must not reuse a previous committed snap. */
+	prepare_qc_support ();
+	pmove.origin[2] = 128;
+	PM_CategorizePosition ();
+	assert (!pmove.onground && !ground_snap_committed);
+	PM_ReconcileQCJumpGroundVelocity ();
+	near_value (pmove.velocity[2], -4, .000001f);
+}
+
+static void check_qc_repeated_support (int msec)
+{
+	prepare ();
+	pmove.qc_jump_owner = true;
+	pmove.cmd.msec = msec;
+	pmove.cmd.seconds = msec * .001f;
+	movevars.friction = 0;
+	movevars.protocolflags = PRFL_FLOATCOORD;
+	VectorSet (pmove.velocity, 1, 100, 0);
+	/* Slightly above the physical floor: short sweeps can miss it but the
+	 * existing support snap still commits contact. It must not retain gravity
+	 * between commands. Ordinary sweep clipping still owns tangential motion. */
+	pmove.origin[2] += .03125f;
+	for (int i = 0; i < 32; ++i)
+	{
+		PM_PlayerMove (1);
+		assert (pmove.onground);
+		near_value (pmove.velocity[0], 1, .000001f);
+		near_value (pmove.velocity[1], 100, .000001f);
+		near_value (pmove.velocity[2], 0, .000001f);
+		near_value (pmove.origin[0], (i + 1) * msec * .001f, .00001f);
+		near_value (pmove.origin[1], (i + 1) * 100 * msec * .001f, .001f);
+		near_value (pmove.origin[2], 24, .04f);
+	}
+}
+
 int main (void)
 {
 	floor_model.type = mod_brush;
@@ -408,6 +491,11 @@ int main (void)
 		check_qc_takeoff_release (100);
 		check_qc_short_takeoff_then_release ();
 		check_qc_takeoff_water ();
+		check_qc_support_scope ();
+		check_qc_repeated_support (1);
+		check_qc_repeated_support (5);
+		check_qc_repeated_support (16);
+		check_qc_repeated_support (125);
 		prepare ();
 		pmove.cmd.forwardmove = 320;
 		for (int i = 0; i < 10; ++i)

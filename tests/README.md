@@ -67,6 +67,63 @@ input processing preserves finite momentum at 99, 100 and 101 units/second
 with zero friction. The shared offline bootstrap is
 `native_engine_fixture.h`; it can select co-op before spawning a mod fixture.
 
+## Exact q30 movement comparison
+
+`q30_movement_native_fixture.c` loads the installed SHA-pinned q30 QC and
+stock `e1m1` hulls, then compares native and selected dispatch from identical
+player-var/QC-global checkpoints and co-op spawn positions. Selection is
+injected solely in the fixture; production admission remains stock-only.
+The fixture stages the same angles/buttons/durations as the input parser.
+It covers a low takeoff/release with selected maintenance, ground/air boots
+and their remaining-use field, and explicitly staged ladder release/rearming
+and immediate re-jump. Ladder friction is zero to isolate QC damping from
+the two solvers' friction integration. It does not simulate a real ladder
+trigger, world entities between steps, item pickup, network peers or gaze.
+
+Create a fresh isolated asset root. `Q30_ASSET_SOURCE` is the licensed game
+root containing `id1` and the installed `q30a1024`:
+
+```sh
+export Q30_ASSET_SOURCE=/path/to/licensed/game-root
+python3 - <<'PY'
+import os
+from pathlib import Path
+source = Path(os.environ['Q30_ASSET_SOURCE'])
+root = Path('/tmp/qsvr-q30-movement-native')
+(root / 'id1').mkdir(parents=True, exist_ok=True)
+(root / 'q30a1024').mkdir(exist_ok=True)
+for asset in (source / 'id1').glob('pak*.pak'):
+    (root / 'id1' / asset.name).symlink_to(asset)
+for name in ('progs.dat', 'maps', 'progs', 'sound', 'gfx', 'textures', 'particles'):
+    asset = source / 'q30a1024' / name
+    if asset.exists():
+        (root / 'q30a1024' / name).symlink_to(asset)
+PY
+make -C Quake -f ../tests/customphysics_native.make \
+  customphysics-native-fixture USE_SDL3=1 -j4 \
+  CUSTOMPHYSICS_SOURCE=../tests/q30_movement_native_fixture.c \
+  CUSTOMPHYSICS_FIXTURE=/tmp/qsvr-q30-movement-native-fixture
+timeout --signal=TERM 30s /tmp/qsvr-q30-movement-native-fixture \
+  -dedicated 3 -noudp -nosound -game q30a1024 \
+  -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-movement-native
+```
+
+The strict gate requires exit 0 and `Q30_MOVEMENT_NATIVE_PASSED`; per-case
+traces include trajectory, release/ground flags, boots use, ladder state and
+completed command. The paired 5 ms press/release batch must also emit
+`Q30_PAIRED_RELEASE_PASSED`; maintenance preserves body, flags, boots uses and
+completion. A separate 1/5/16/125 ms survey reports native/selected differences.
+At 5 and 16 ms, velocity/flags match with position error below 0.2 units;
+the 125 ms comparison permits 0.6 units for the existing integrator difference.
+The 1 ms sequence is diagnostic, **not a parity gate**: native loses ground
+contact and misses the next jump, while selected retains support. The survey's
+completion marker does not qualify that case. See
+`docs/migration-mod-movement-review.md` for the measured results and decision.
+A passing short sequence is not general q30 admission:
+water, grapple, real trigger cadence, longer trajectories and connected
+snapshot/replay still need their own comparisons.
+
 ## Avatar identity and protocol parser
 
 `avatar_retarget_fixture.c` ports the inherited semantic profiles and CPU
@@ -737,6 +794,15 @@ The opt-in QuakeC jump-owner cases use the same donor floor hull to verify that
 single-step and explicitly timed commands; they also check a short low takeoff
 followed by button release, latch preservation, water classification, and eventual
 landing. The exact-mod server adapter is a separate integration gate.
+The QC support correction has direct scope checks after a real floor snap,
+including a small tangential force that full-vector clipping would discard.
+It excludes non-QC movement, flying, zero time, legacy ground policy, absent
+support/snap, water and transient fluid contact, waterjump, ladder, Gorilla,
+entity support, slopes, nonstandard gravity and rising velocity. Those
+exclusions are staged states, not traversal proofs. A subsequent real airborne
+probe clears the snap observation. Repeated dry support uses float coordinates
+and 1/5/16/125 ms commands to check momentum and horizontal travel over 32
+commands with each donor hull implementation.
 The optional instant-stop cases cover default-off and desktop friction, an idle
 VR stop, moving input, jump preservation, and the post-QuakeC PMove exemption.
 Both touch policies are checked through the production helper, including impact

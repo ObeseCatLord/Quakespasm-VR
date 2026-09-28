@@ -294,3 +294,87 @@ low immediate-release takeoff, held/rejump, forward motion, paired commands,
 maintenance and due Think, with origin/velocity/flags, effects, callbacks and
 completed ACK observed together. Passing that still would not admit ordinary
 q30 play until wet and ability transitions have an owner.
+
+## Exact-q30 offline comparison and committed support correction
+
+The earlier solver-only result is now supplemented by
+`tests/q30_movement_native_fixture.c`: it executes the installed SHA-pinned
+q30 program and production native/selected client dispatchers against real
+`e1m1` hulls. Both owners start from identical player fields and QC globals,
+with cooperative spawn selection, angles, buttons and command durations staged
+explicitly. The offline bootstrap reuses the existing engine initialization;
+only loopback initialization is wrapped to permit socket-free dedicated startup.
+Selected admission is injected in the fixture. Production remains stock-only,
+and q30 replay permission remains disabled.
+
+The fixture exposed a grounded selected velocity of -4 after a 5 ms ladder
+release, while native velocity was zero. q30 adds `map_jumpheight` to its
+existing Z velocity: the residue therefore reduced its next jump. The final
+PMove categorization already commits a support snap; this is the correct
+boundary to reconcile that inward velocity before later callbacks author forces.
+The correction records whether the existing valid snap actually committed,
+then reuses `PM_ClipVelocity` and copies only Z. It introduces no trace,
+movement owner, protocol state or analytic-gravity implementation.
+
+The guard requires a QC jump owner, positive-duration normal movement, accepted
+dry flat world support with ordinary downward gravity, and an actual committed
+snap. Legacy `pground`, transient fluid contact, waterjump, ladder, Gorilla,
+entity/pusher support and rising velocity are excluded. All non-QC movement
+continues through the existing solver unchanged. Later impacts and PostThink
+retain their existing opportunity to author velocity.
+
+A local Astra senior review ran with effective `gpt-6-astra` / `max` routing,
+verified the failure and q30 jump bytecode, and recommended this bounded fix.
+The main thread checked the support-copy block, native analytic sweep,
+pre-jump clipping precedent and final callback boundary.
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Correct at the final committed support snap, using existing clipping. | Adopted. The observation resets on each categorization and is set only when the existing valid trace copies its endpoint. |
+| Copy only the normal component so the helper cannot round away tiny horizontal QC forces. | Adopted. A direct check preserves X=0.01 and Y=100 while clearing inward Z. |
+| Require the same support at the start of the step. | Rejected. A newly committed flat-world landing also needs consistent velocity; the actual final snap and plane supply the boundary evidence. |
+| Delay clipping to the next PreThink. | Rejected. That could overwrite a force authored by intervening impact or PostThink callbacks. |
+| Replace the solver with native analytic gravity or add another command owner. | Rejected. The measured failure does not justify another movement implementation or lifecycle. |
+| Exercise timing extremes, paired commands and maintenance; keep admission closed. | Adopted. The survey found a native 1 ms support difference, so it explicitly does not claim broad q30 parity. |
+
+Current executable results:
+
+- At 5 ms, low jump/release has matching Z velocities 116/112; position error
+  is below 0.04 units. Boots retain forward velocity 180, the second airborne
+  impulse ends at 296, and one air use remains. Release flags, health and
+  completion are checked. These are staged abilities, not item pickup proof.
+- Staged ladder release/rearming retains native damping 90/81, and its final
+  grounded Z velocity is now zero. Immediate re-jump ends at 116 for both
+  owners. Native and selected positions differ by about 0.0023 units after
+  that jump. This executes the previously inferred re-jump result; it does
+  not execute an actual ladder trigger.
+- Two queued 5 ms press/release commands in one 10 ms world pass preserve
+  velocity 112, matching flags and completion 2. The sole retirement path
+  empties the queue. Intervening maintenance preserves origin, velocity,
+  flags, boots uses and completion; it still executes existing QC callbacks.
+- At 16 ms, the next jump ends at 107.2 for both owners, with matching flags
+  and about 0.0136 units of positional difference. At 125 ms it ends at 20
+  for both, with about 0.5556 units of positional difference from native
+  analytic sweep versus five PMove substeps. The latter comparison uses a
+  0.6-unit local bound, not an identical-trajectory claim.
+- At 1 ms, native loses its ground flag after the first release: its Z
+  velocities become -0.8/-1.6 and the next press does not jump. Selected
+  retains accepted support and jumps at 119.2. This survey case is reported
+  separately and is not a passing native-parity gate. Desktop native contact
+  policy has not been replaced to make the test match.
+- The shared solver passes ASan/UBSan with both donor hull implementations.
+  Repeated supported motion checks 32 commands at each surveyed duration with
+  float-coordinate policy. Scope exclusions are checked with staged states
+  following a real support snap; actual slope/pusher/ladder traversal is not
+  inferred from those checks. A real airborne probe clears the snap observation.
+
+The separate zero-friction fix also has a negative control: linking the native
+fixture with the old `SV_UserFriction` condition fails its finite-momentum
+assertion. Linux SDL3 engine linkage and the native customphysics/selected
+Think fixture remain required after integration.
+
+This qualifies only the bounded software cases above. q30 still uses native
+movement in ordinary play. Wet/grapple transitions, real trigger cadence,
+longer trajectories, mod-specific due-Think behavior and connected
+snapshot/replay remain open; device, Windows/ARM and performance testing remain
+outside this implementation pass at the user's request.
