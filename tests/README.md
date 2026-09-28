@@ -2238,6 +2238,70 @@ stranded slots to expire. These are local client/server checks only; they do
 not establish headset behavior, physical damage or general prediction
 correctness.
 
+## Selected stock moving-brush adapter
+
+The preimplementation plan and review disposition are in
+[`predictive-stock-pushers-2.0-plan.md`](../docs/predictive-stock-pushers-2.0-plan.md).
+This component fixture imports the liquid/mixed bootstrap, actual command
+admission and codec, pinned stock QC/BSP physics, complete snapshot parser and
+client replay. Prepare the disposable stock profile described above; its pak
+symlink must remain read-only. Build from the repository root:
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make negotiation-native-fixture \
+  USE_SDL3=1 -j4 NEGOTIATION_FIXTURE=/tmp/qsvr-stock-pusher \
+  NEGOTIATION_SOURCE=../tests/stock_pusher_native_fixture.c \
+  NEGOTIATION_EXTRA_EXCLUDE_OBJS='sv_phys.o cl_main.o' \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=PR_ExecuteProgram'
+/tmp/qsvr-stock-pusher -selected -dedicated 3 -noudp -nosound \
+  -basedir /tmp/qsvr-native-transitions/selected \
+  -userdir /tmp/qsvr-native-transitions/selected
+```
+
+Run one case per process. Omitting `-selected` selects the independently
+initialized native body reference. The basic case activates real e1m1 lift
+`*7`, checks exactly one carry during quiet and batched frames, then jump-off
+and actual replay return. `-vr` adds generated VR body input; `-commandmsec 10`
+or `100` covers shorter/longer command durations (default25ms).
+
+Additional selected cases:
+
+- `-palms`: real reliable capability exchange and raw hand codec, planted
+  hands plus body support, a deliberate subthreshold stroke, quiet/batched
+  movement, local anchor height and OFF.
+- `-palms-only` (also10/100ms): body stays on static world floor beside the
+  lift. Stationary/moving quiet frames have no frame interaction mark or new
+  completion, yet retained palm state correctly denies replay. Batched strokes
+  and OFF/replay return are checked; passive palm-only carriage is not claimed.
+- `-blocked` (also native) and `-palms-blocked`: prepared physical ceiling;
+  actual stock `plat_crush`, damage, reversal and geometric rollback. The palm
+  case additionally uses a prepared trigger/destination and actual stock
+  `teleport_touch` to fence result publication.
+- `-door` (also native): actual targeted e1m1 door`*17`, prepared invocation of
+  installed `door_go_up/down`, native non-rider push and replay recovery. No
+  mover velocity/Think fields are supplied; natural button progression is not
+  claimed.
+- `-palms-replace` and `-palms-retire`: actual registered QC `setmodel` builtin
+  or `ED_Free` invalidates an already published palm binding.
+- `-pending-replace` and `-pending-retire`: after real PlayerPostThink, a
+  prepared composition hook invokes those same actual mutation owners while
+  a fresh PMove contact is still unpublished. The publication guard must clear
+  the candidate and raw baseline; the next quiet full snapshot restores replay.
+
+Captured socket sends/skin upload and prepared client resources, registration,
+input, starting positions, physical obstacles, callback activation/builtin
+arguments and longer outer world frames are explicit component seams. They
+do not qualify connected transport, device input, arbitrary QC or full-domain
+default activation. The selected owner remains off by default.
+
+Focused ASan/UBSan builds use a fresh `NEGOTIATION_FIXTURE` path and add
+`CPPFLAGS='-fsanitize=address,undefined -fno-sanitize-recover=all -Wno-error=format-overflow'`
+plus `-fsanitize=address,undefined` to the extra linker flags; run with
+`ASAN_OPTIONS=detect_leaks=0`. These instrument the fixture and included
+selected movement/message/client owners, not every engine object. The warning
+exception is for the existing `CL_SetInfo` diagnostic; the ordinary Linux
+build still requires `-Werror`.
+
 ## Selected-private shadow replay comparison
 
 Use the separate client and server profiles prepared above. Build the trace

@@ -1,7 +1,7 @@
 # Selected stock movement on moving brushes
 
-Status: planned adapter implemented; normal software matrix passes, final
-review and consolidated sanitizer evidence follow below. Baseline `a6ce3246`
+Status: bounded adapter implemented; local software checks and final Astra
+review pass, with scope and remaining parent stages recorded below. Baseline `a6ce3246`
 on `2.0`. This is the next
 stage of [production predictive movement](predictive-movement-2.0-plan.md).
 The full outcome remains ordinary stock/mod desktop and VR gameplay, with
@@ -133,8 +133,9 @@ the bounded fixture. This operational failure does not change feature scope.
 
 ## Implementation and software evidence
 
-Production adds only the reviewed palm eligibility delta and pure snapshot
-predicate. The shared local-anchor/PMove, world pusher/support/rollback, QC,
+Production adds the reviewed palm eligibility delta, pure snapshot predicate
+and candidate validation at the existing publication tail. The shared
+local-anchor/PMove, world pusher/support/rollback, QC,
 queue/completion and wire owners remain unchanged. Current robust mode accepts
 live brush contacts and withholds replay for fresh interaction or a retained
 model-matched planted palm. Legacy-mode and invalid/freed-reference guards
@@ -217,3 +218,46 @@ then require existing reset/cutoff, no stale server/client raw baseline and
 working full-snapshot body replay after replacement/retirement. Keep prior
 relocation, carry, callback-effect and permission contracts. Astra reviews
 the final guard and this bounded seam after the correction.
+
+The bounded fresh-contact reproduction failed before that guard: server state
+remained initialized/touching with a raw baseline after actual PostThink and
+prepared actual model replacement. The reset-generation observation includes
+the preceding ordinary RESET command; it is not evidence that the mutation
+itself advanced the generation. After the guard, both replacement/retirement
+cases clear initialized/touching state and the raw baseline through the existing
+invalidation owner. The current frame's pusher mark still withholds replay;
+the subsequent quiet full snapshot restores actual replay permission.
+
+## Final Astra disposition and integration evidence
+
+Local `gpt-6-astra/max` reviewed the final production changes, actual fixture
+and publication/permission boundaries read-only. Main independently verified
+the latest model/effort fields and the load-bearing source evidence. The review
+accepts the bounded pinned-stock implementation with no remaining demonstrated
+source blocker, subject to the final build/pending sanitizer checks; main
+inspected those checks passing.
+
+| Finding | Final disposition |
+| --- | --- |
+| Fresh contact can be replaced/freed before entering accepted client state. | Resolved for the reproduced cases. Candidate liveness/solid brush/model checks at `SV_PrivateWalkTrialGorillaSurfacesValid` supplement the existing generation/relocation fence. Failed publication calls existing invalidation; command completion/credit and committed QC/body effects remain intact. Both new PostThink composition variants pass. |
+| Quiet retained palm bindings can outlive the frame interaction mark. | Resolved. Keep the pure accepted-binding snapshot predicate and transient frame mark: they answer different lifetime questions. Actual stationary/moving palm-only quiet tests exclude pause/timer/hold/body contact as alternative explanations. |
+| A new hand or platform owner would duplicate working behavior. | No new owner needed. Shared local anchors, stroke limits and native carry/rollback/QC remain unchanged. Separate small publication-validity and replay-eligibility predicates have different purposes and need no broader abstraction. |
+| Same-slot/same-model destruction and recreation during one callback is not qualified. | Retained as an explicit mod-lifetime assumption. Entity/model identity is unchanged by this slice; do not claim arbitrary-QC qualification or silently add a second surface-generation system. Reopen the narrow boundary if a supported mod demonstrates that incompatibility. |
+
+Software evidence: 16 normal component cases cover the unchanged body/native,
+generated VR, command-duration, hand, rollback/teleport, door and published
+surface-lifetime paths; two additional normal fresh-contact variants exercise
+the final publication guard. Seven focused partial-instrumentation ASan/UBSan
+cases passed before the guard; six final cases cover pending replacement/
+retirement, planted palms, blocked/teleport and published replacement/retirement
+with the guard. These are overlapping sets, not thirteen unique sanitizer cases.
+The exact final Linux SDL3 `-Werror` build passes. Existing wet/ledge/causal-pause
+and mixed selected/public startup/arrival-gap drivers pass. No broad unchanged
+matrix rerun was needed after the narrow publication correction.
+
+The [fixture instructions](../tests/README.md#selected-stock-moving-brush-adapter)
+and [review brief](predictive-stock-pushers-implementation-astra-brief.md) record
+the real owners and explicit seams. This finishes this planned adapter only.
+Full-domain stock/default selection, local/load behavior and AD/cooperative-QC
+admission remain parent implementation stages; live/device, performance and
+Windows/ARM qualification retain the user's deferral.

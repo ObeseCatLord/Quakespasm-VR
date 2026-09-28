@@ -191,7 +191,13 @@ normalizes the existing recovery marker to the first legal command, retaining
 the reserved startup suppression. Its real-admission/host-pause/complete-message
 and sender-codec checks pass. The
 [stock liquid slice](predictive-stock-liquid-2.0-plan.md) separately records the
-reviewed swim handoff correction and remaining wet replay qualification.
+reviewed swim handoff correction, bounded live wet/ledge replay and
+[causal pause correction](predictive-pause-ordering-2.0-plan.md). The next
+[stock moving-brush slice](predictive-stock-pushers-2.0-plan.md) qualifies the
+existing body-support path and adapts palm contacts using retained anchors,
+existing replay permission and the existing publication tail. Its bounded
+local software checks and final Astra review pass. Full-domain stock qualification and automatic
+selection remain ahead; these slices do not substitute for mod admission.
 
 Owners: `sv_main.c`, `sv_user.c`, `sv_phys.c`, `pmove.c`, `cl_main.c` and existing
 movement fixtures. Scope: dry/wet WALK, jumping, command batching/credit,

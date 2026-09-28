@@ -7832,6 +7832,28 @@ static qboolean SV_PrivateWalkTrialContinueTerminal (edict_t *ent,
 		start == SV_CLIENT_NATIVE_AFTER_WEAPON_THINK, think_window);
 }
 
+/* Callbacks may retire/replace a newly acquired surface before it has ever
+ * appeared in client->vr_gorilla_state. Existing invalidation hooks cannot
+ * find that local candidate yet; validate it at its single publication tail. */
+static qboolean SV_PrivateWalkTrialGorillaSurfacesValid (const vr_gorilla_state_t *state)
+{
+	for (int hand = 0; hand < 2; ++hand)
+	{
+		int number = state->surface[hand];
+		unsigned int model = state->surface_model[hand];
+		if (!number)
+			continue; // world-space anchor
+		if (number < 0 || number >= qcvm->num_edicts || !model || model >= MAX_MODELS)
+			return false;
+		edict_t *surface = EDICT_NUM (number);
+		if (surface->free || surface->v.solid != SOLID_BSP ||
+			surface->v.modelindex != (float)model ||
+			!sv.models[model] || sv.models[model]->type != mod_brush)
+			return false;
+	}
+	return true;
+}
+
 /* This owner runs only for explicitly selected private peers. Queue retirement
  * remains in SV_FinishPrivateUsercmds, after this function reports completion. */
 static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *client,
@@ -8310,9 +8332,9 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	PM_PlayerMove (1.0f);
 	result_gorilla = pmove.gorilla;
 	VectorCopy (pmove.origin, result_gorilla_origin);
-	/* Palm traces are not body touchindex entries. The stock trial cannot
-	 * predict a moving brush under a planted hand, so enforce its existing
-	 * pusher exclusion for both fresh and retained hand contacts. */
+	/* Palm traces are not body touchindex entries. The shared surface-local
+	 * anchor solver accepts brush contacts; native world pushers still own
+	 * carry/rollback. Mark both fresh and retained contact to withhold replay. */
 	for (i = 0; i < 2; i++)
 	{
 		int contacts[2] = {pmove.gorilla_contact[i], pmove.gorilla.surface[i]};
@@ -8329,12 +8351,19 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 				goto cleanup;
 			}
 			surface = EDICT_NUM (number);
-			if (surface->free ||
-				(surface->v.movetype == MOVETYPE_PUSH &&
-				 surface->v.solid == SOLID_BSP))
+			if (surface->free)
 			{
-				failure = "Gorilla palm contacted an unsupported moving pusher";
+				failure = "Gorilla contact entity is no longer live";
 				goto cleanup;
+			}
+			if (surface->v.movetype == MOVETYPE_PUSH && surface->v.solid == SOLID_BSP)
+			{
+				client->private_pmove_pusher_interaction = true;
+				if (sv_gameplayfix_elevators.value < 3.f)
+				{
+					failure = "Gorilla palm contacted an unsupported moving pusher";
+					goto cleanup;
+				}
 			}
 		}
 	}
@@ -8499,7 +8528,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	{
 		vec3_t callback_delta;
 		VectorSubtract (ent->v.origin, result_gorilla_origin, callback_delta);
-		if (VectorLength (callback_delta) <= .01f)
+		if (VectorLength (callback_delta) <= .01f &&
+			SV_PrivateWalkTrialGorillaSurfacesValid (&result_gorilla))
 		{
 			client->vr_gorilla_state = result_gorilla;
 			client->vr_gorilla_last_sequence = (int)command.sequence;

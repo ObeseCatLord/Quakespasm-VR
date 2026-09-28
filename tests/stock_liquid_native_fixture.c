@@ -19,6 +19,9 @@ static func_t liquid_think_function;
 static int liquid_think_override, liquid_think_override_calls;
 static float liquid_think_deadline;
 static vec3_t liquid_think_velocity;
+/* Optional composition seam after real QC, used by the moving-brush driver
+ * to change a newly acquired surface before the existing publication tail. */
+static void (*liquid_after_qc_composition) (func_t function);
 static edict_t *liquid_late_entity, *liquid_late_player, *liquid_late_trigger;
 static int liquid_late_calls;
 static float liquid_late_deadline;
@@ -44,6 +47,8 @@ void __wrap_PR_ExecuteProgram (func_t function)
 	float before_damage_time = damage_time ? damage_time->_float : 0;
 	if (liquid_trace_player) VectorCopy (liquid_trace_player->v.velocity, before);
 	__real_PR_ExecuteProgram (function);
+	if (liquid_after_qc_composition)
+		liquid_after_qc_composition (function);
 	if (late_touch)
 	{
 		assert (liquid_late_player->v.teleport_time == liquid_late_deadline);

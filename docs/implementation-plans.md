@@ -29,7 +29,7 @@ commits stay on `2.0`; the product branch and unrelated user edits stay intact.
 
 | Feature | Plan | Current planning state |
 | --- | --- | --- |
-| Production predictive movement and mod support | [Predictive movement plan](predictive-movement-2.0-plan.md), [stock state-transition slice](predictive-stock-transitions-2.0-plan.md), [arrival-gap slice](predictive-arrival-gap-2.0-plan.md), [startup resume slice](predictive-startup-resume-2.0-plan.md), [stock liquid slice](predictive-stock-liquid-2.0-plan.md), [pause ordering slice](predictive-pause-ordering-2.0-plan.md) | Stock noclip/fly, arrival-gap, startup-resume, swim handoff and callback/timer corrections implemented. Experimental live wet replay, bounded ledge oracle and causal pause ordering pass local checks; final Astra review found no remaining source blockers in this slice. Full-domain qualification, selected activation and mod admission remain later stages. |
+| Production predictive movement and mod support | [Predictive movement plan](predictive-movement-2.0-plan.md), [stock state-transition slice](predictive-stock-transitions-2.0-plan.md), [arrival-gap slice](predictive-arrival-gap-2.0-plan.md), [startup resume slice](predictive-startup-resume-2.0-plan.md), [stock liquid slice](predictive-stock-liquid-2.0-plan.md), [pause ordering slice](predictive-pause-ordering-2.0-plan.md), [moving-brush slice](predictive-stock-pushers-2.0-plan.md) | Stock mode/recovery, experimental wet replay, causal pause ordering and bounded moving-brush body/palm support pass local checks and final Astra review. Plans preceded the latest production changes and were reopened for quiet-binding and fresh-publication findings. Full-domain qualification, selected activation and mod admission remain later stages. |
 | OpenXR lifecycle and stereo renderer | [Migration architecture plan](vkquake-base-migration-plan.md), [stereo review](migration-stereo-review.md), [frame ownership review](migration-frame-boundary-review.md) | Existing architecture/reviews; write a bounded feature plan before expanding runtime or renderer ownership. |
 | VR input and locomotion | [Input review](migration-input-review.md), [locomotion review](migration-locomotion-review.md), [Gorilla review](migration-gorilla-2.0-review.md) | Existing designs/reviews; plan any new input or movement behavior before implementation. |
 | Vulkan foveation | [Existing foveation plan](vulkan-foveation-2.0-plan.md), [Steam Frame review](migration-steam-frame-foveation-review.md) | Existing plan/review; revise before another major capability or architecture expansion. |
@@ -50,6 +50,7 @@ plan. The [complete feature map](migration-feature-map.md) still defines the
 full migration scope. Optional candidates stay proposals until selected, and
 skyrooms remain outside the goal.
 
-Next predictive stage: [stock moving-brush plan](predictive-stock-pushers-2.0-plan.md)
-qualifies the reused body-support path and adapts the demonstrated palm-contact
-veto before broader activation.
+The [stock moving-brush plan](predictive-stock-pushers-2.0-plan.md) now records
+completed bounded qualification and palm adaptation. Before broader activation,
+write the next bounded plan against the parent movement stages: full-domain
+stock/default selection, local/load behavior and AD/cooperative-QC admission.

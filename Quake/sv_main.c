@@ -1896,6 +1896,29 @@ static qboolean SV_GorillaAckOriginMatchesOwner (const client_t *client)
 	return isfinite (distance) && distance <= .01f;
 }
 
+/* Frame interaction marks reset even when no new command is available. A
+ * palm-only binding can outlive that mark without native body carry, so check
+ * the existing accepted anchors before granting replay. This observes state;
+ * it neither advances a hand solver nor creates another support lifetime. */
+static qboolean SV_PrivateMoveHasPusherPalm (const client_t *client)
+{
+	const vr_gorilla_state_t *state = &client->vr_gorilla_state;
+	if (!sv_gorilla.value || !client->vr_gorilla_capable || !state->initialized)
+		return false;
+	for (int hand = 0; hand < 2; ++hand)
+	{
+		int number = state->surface[hand];
+		if (!(state->touching & (1 << hand)) || number <= 0 || number >= qcvm->num_edicts)
+			continue;
+		edict_t *surface = EDICT_NUM (number);
+		if (!surface->free && surface->v.movetype == MOVETYPE_PUSH &&
+			surface->v.solid == SOLID_BSP &&
+			surface->v.modelindex == (float)state->surface_model[hand])
+			return true;
+	}
+	return false;
+}
+
 static void SV_WriteGorillaAckState (client_t *client, sizebuf_t *msg)
 {
 	int hand, axis;
@@ -1998,6 +2021,7 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 				client->private_pmove_waterjump_secs >= 0.0f &&
 				client->private_pmove_waterjump_secs <= 2.0f &&
 				!client->private_pmove_pusher_interaction &&
+				!SV_PrivateMoveHasPusherPalm (client) &&
 				((client->private_pmove_waterjump_secs > 0.0f &&
 				  ((int)client->edict->v.flags & FL_WATERJUMP)) ||
 				 (client->private_pmove_waterjump_secs == 0.0f &&

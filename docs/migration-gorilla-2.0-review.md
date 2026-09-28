@@ -204,3 +204,22 @@ water and other nontrial cases. This checkpoint establishes code and local
 fixture/build coverage, not device or real-map parity. The remaining gates are
 end-to-end command/ACK comparison under loss and mode transitions, special
 QC callbacks, and the deferred live headset and multiplayer checks.
+
+## Later stock moving-brush checkpoint
+
+The [planned moving-brush adapter](predictive-stock-pushers-2.0-plan.md) supersedes
+the earlier checkpoint's unsupported-pusher rejection in the robust elevator
+mode. The inherited PMove/local anchors and native carry/rollback remain the
+owners. Fresh/retained palm contacts are accepted, while both current interaction
+and quiet retained bindings withhold replay. A pending result's brush identity
+is checked at the existing publication tail before it can become an accepted
+baseline; actual model replacement/retirement and callback relocation exercise
+the existing invalidation owner. Body support, strokes, quiet/batched commands,
+blocked QC and release/replay return have bounded stock component coverage.
+Final Linux/focused sanitizer checks and local Astra/max source review pass.
+
+This remains a default-off exact-stock stage, with documented prepared/captured
+fixture seams. The older paragraph describes its historical dry-only checkpoint;
+the linked parent plan records the subsequent wet/pause progress and remaining
+full-domain/default/local/mod implementation stages. No arbitrary-QC, device or
+performance qualification is claimed here.
