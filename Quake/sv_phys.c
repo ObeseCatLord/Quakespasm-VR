@@ -7814,6 +7814,11 @@ const char *SV_PrivateWalkTrialFrameStateError (edict_t *ent, client_t *client,
 	state = SV_PrivateWalkTrialClassifyState (client);
 	if (state == SV_PRIVATE_MOVE_REJECTED)
 		return "owner left supported movement state";
+	if (SV_PrivateWalkTrialQ30Program () &&
+		(!isfinite (ent->v.nextthink) ||
+		 (ent->v.nextthink > 0 &&
+		  (ent->v.think <= 0 || ent->v.think >= qcvm->progs->numfunctions))))
+		return "invalid q30 scheduled Think";
 	if (cmd && cmd->vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
 	if (cmd && cmd->vr_gorilla.flags &&
@@ -8097,6 +8102,26 @@ static qboolean SV_TakeClientThinkWindow (sv_client_think_window_t *window)
 		return false;
 	window->available = false;
 	return true;
+}
+
+/* These exact-q30 scheduled attacks can synchronously invoke an HP/death
+ * target before movement. Choose native input before QC instead of attempting
+ * a late acceleration or another movement interval after the callback. Safe
+ * animation and future deadlines retain the selected command owner. */
+static qboolean SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (edict_t *ent,
+	const sv_client_think_window_t *window)
+{
+	const char *attacks[] = {"player_axe3", "player_axeb3", "player_axec3",
+		"player_axed3", "player_axee3"};
+	if (!window || !window->available || !isfinite (window->world_frametime) ||
+		window->world_frametime < 0 || ent->v.nextthink <= 0 ||
+		ent->v.nextthink > qcvm->time + window->world_frametime ||
+		ent->v.think <= 0 || ent->v.think >= qcvm->progs->numfunctions)
+		return false;
+	for (int i = 0; i < countof (attacks); ++i)
+		if (ED_FindFunction (attacks[i]) == &qcvm->functions[ent->v.think])
+			return true;
+	return false;
 }
 
 static qboolean SV_RunClientWeaponThink (edict_t *ent, client_t *client,
@@ -9556,7 +9581,8 @@ static void SV_Physics_Client (edict_t *ent, int num)
 					SV_PrivateWalkTrialDrop (client, failure);
 					break;
 				}
-				if (SV_PrivateWalkTrialQ30NeedsNative (ent, client, head))
+				if (SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (ent, &think_window) ||
+					SV_PrivateWalkTrialQ30NeedsNative (ent, client, head))
 				{
 					if (queue_offset == 0)
 						SV_Physics_ClientSelectedNativeFrame (ent, num, client, false);

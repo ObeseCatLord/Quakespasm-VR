@@ -79,5 +79,8 @@ normal-session acceptance before production edits. Typed classification and
 bounded native dispatch are implemented and locally reviewed by Astra; the
 [checkpoint review](predictive-q30-transition-implementation-review.md) records
 software evidence and limits, including a reproduced preexisting stock-liquid
-assertion. Callback closure, actual traversal and normal admission remain open.
+assertion. Ordinary PreThink closure is now verified by a separate local Astra
+audit; the [scheduled-axe contract](predictive-q30-callback-closure-review.md)
+records the demonstrated HP-target camera gap and its pre-staging native dispatch.
+Remaining scheduled callbacks, actual traversal and normal admission remain open.
 Revise the plan before implementing any newly expanded phase contract.

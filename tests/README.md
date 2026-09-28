@@ -414,6 +414,28 @@ observational validator, not a composed malformed PostThink execution. Real
 roomscale/trigger traversal, before-movement callback closure and normal q30
 spawn/begin/full-parser/replay remain required before admission.
 
+The scheduled-axe follow-up uses a separate mode of the same fixture:
+
+```sh
+timeout --signal=TERM 30s /tmp/qsvr-q30-movement-native-fixture \
+  -scheduledcamera -dedicated 3 -noudp -nosound -game q30a1024 \
+  -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-movement-native
+```
+
+Require exit0 and `Q30_SCHEDULED_CAMERA_HANDOFF_PASSED`. Prepared monster HP-target
+and camera properties execute actual scheduled axe, damage, target and camera
+QC on real BSP. Native and selected dispatch compare body/velocity/flags/weapon/
+completion with nonzero analog input and Gorilla disabled/enabled. All five
+third-axe function identities, not-due and consumed-opportunity decisions are
+checked; actual safe axe2 animation stays selected. A no-command due attack uses
+native world time while retaining ACK0; malformed deadline/function bounds reject.
+The mode exits before the ordinary replay matrix, so the usual fixture run is
+still required. Selection/entities are prepared; this is not normal q30
+admission, an authored map traversal, device input or a complete scheduled-Think
+closure proof. Camera activation explicitly uses QC coop0 because the mod ignores
+that activation in co-op.
+
 The existing negotiation fixture can also run against this isolated q30 root:
 
 ```sh

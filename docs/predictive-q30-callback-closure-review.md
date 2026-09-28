@@ -1,7 +1,8 @@
 # q30 ordinary callback closure
 
-Status: ordinary PreThink closure verified; scheduled weapon Think closure is
-in progress. Normal admission remains closed. This follows the local Astra
+Status: ordinary PreThink closure verified; bounded third-axe native dispatch
+implemented, with remaining scheduled weapon Think closure in progress. Normal
+admission remains closed. This follows the local Astra
 decision in the [transition plan](predictive-q30-transitions-2.0-plan.md).
 
 ## Ordinary PreThink audit
@@ -77,3 +78,40 @@ The attempted water-crossing searches did not qualify a reachable geometry in
 the tested maps. Their new search code was removed. The existing wet-position
 and probe-restoration evidence remains bounded; actual horizontal entry is
 still open and must not be reported as passed.
+
+## Implementation review and checkpoint evidence
+
+The narrow predicate and pre-staging integration are implemented in the existing
+physics owner. A final fresh local Astra Max reviewer found no blocking issue
+in the bounded change. Main checked final effective `gpt-6-astra` / `max` metadata
+and spot-checked native Think equality/overdue clamping, the unconsumed window,
+function bounds and dispatch position. Astra did not run the software checks.
+
+| Final review finding | Disposition |
+| --- | --- |
+| Deadline uses world duration, includes overdue/equality, and leaves opportunity untouched. | **Verified/adopted.** Same existing native scheduling horizon; no new callback clock. |
+| Validate deadline/function before forming a function pointer. | **Verified/adopted.** Current q30 frame validation rejects malformed scheduling, with an independent lookup bound in the predicate. |
+| Dispatch precedes staging, credit and maintenance. | **Verified/adopted.** Fresh native retains ClientThink before QC; existing deferral remains the only later-head owner. A changed movement class is not required to choose native. |
+| Keep full admission outside the component claim. | **Adopted.** Other scheduled callbacks, actual map traversal and normal-session activation remain unqualified. |
+
+Linux SDL3 production build exits0. The normal exact-q30 fixture passes its six
+native-state markers and all seven ordinary replay comparisons. The separate
+scheduled-camera mode exits0 and compares actual body/velocity/flags/weapon/
+completion between native and selected dispatch with nonzero analog input,
+including observable movement in the desktop case, and Gorilla enabled/disabled.
+Actual safe axe2 animation remains selected; future/consumed scheduling decisions
+do not gate. A no-command due attack executes native QC with unchanged completed
+cursor. Nonfinite deadline and out-of-range scheduled function checks reject.
+Stock mixed-session pause/arrival-gap/native-return and q30 negotiation/writer/
+full-parser/refusal checks pass. No full q30 admission or device result is claimed.
+
+The safe-animation test uses an 8ms command. The original test's `.010f` converted
+to double supplies slightly less than10ms of world credit; maintenance correctly
+does not complete its10ms head. This was a fixture timing mismatch, not a reason
+to loosen production command credit. Native due-callback dispatch independently
+precedes command-time credit as required by its existing world-frame contract.
+
+Next: close the remaining actual scheduled weapon callbacks and add only
+source-demonstrated exceptions to this same boundary. Complete traversal and
+normal offer/spawn/begin/serialization/parser/replay before admission. The
+preexisting stock10ms liquid assertion remains separately unresolved.

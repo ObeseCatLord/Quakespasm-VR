@@ -118,6 +118,11 @@ static movement_sample_t step_authored_command (edict_t *player, client_t *clien
 		SV_ClientThink ();
 	SV_Physics_Client (player, 1);
 	assert (client->active && !player->free);
+	if (client->private_completed_move != (int)command.sequence)
+		fprintf (stderr, "Q30_COMPLETION_MISMATCH selected=%d gorilla=%u seq=%u completed=%d native=%d queued=%u state=%d\n",
+			selected, command.vr_gorilla.flags, command.sequence, client->private_completed_move,
+			client->private_move_native_frame, client->private_cmd_queue_count,
+			SV_PrivateWalkTrialClassifyState (client));
 	assert (client->private_completed_move == (int)command.sequence);
 	if (selected)
 		SV_FinishPrivateUsercmds ();
@@ -174,6 +179,167 @@ static void restore_player (edict_t *player, client_t *client,
 	client->private_completed_move = client->lastmovemessage = 0;
 	SZ_Clear (&client->message);
 	SV_LinkEdict (player, false);
+}
+
+/* A real scheduled weapon callback can activate a camera through a monster's
+ * authored HP target. Entities/HP target are prepared map properties; the axe
+ * trace, damage, target dispatch and camera use all execute the pinned QC. */
+static void scheduled_camera_case (edict_t *player, client_t *client, double time)
+{
+	qcvm->time = time;
+	initialize_player (player, client);
+	for (int i = 0; i < 4; ++i)
+		step_player (player, client, true, i + 1, 0, 5);
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	set_global_float ("coop", 0); // q30 intentionally ignores camera use in co-op
+	set_global_float ("cam_active", 0);
+	player->v.weapon = global_float ("IT_AXE");
+	usercmd_t command = {0};
+	command.sequence = 1;
+	command.forwardmove = 160;
+	command.msec = 8;
+	command.seconds = .008f;
+	vec3_t source, finish, direction, right, up;
+	VectorCopy (player->v.origin, source);
+	source[2] += 16;
+	qboolean clear = false;
+	for (int i = 0; i < 4; ++i)
+	{
+		command.viewangles[YAW] = i * 90;
+		AngleVectors (command.viewangles, direction, right, up);
+		VectorMA (source, 48, direction, finish);
+		trace_t ray = SV_Move (source, vec3_origin, vec3_origin,
+			finish, MOVE_NORMAL, player);
+		if (!ray.startsolid && !ray.allsolid && ray.fraction == 1)
+		{
+			clear = true;
+			break;
+		}
+	}
+	assert (clear);
+	edict_t *target = ED_Alloc (), *camera = ED_Alloc ();
+	target->v.solid = SOLID_SLIDEBOX;
+	target->v.movetype = MOVETYPE_NONE;
+	target->v.flags = FL_MONSTER;
+	target->v.takedamage = DAMAGE_AIM;
+	target->v.health = 100;
+	player_float (target, "max_health")->_float = 100;
+	player_float (target, "turrethealth")->_float = .999f;
+	GetEdictFieldValue (target, ED_FindFieldOffset ("turrettarget"))->string =
+		PR_SetEngineString ("fixture_q30_camera");
+	GetEdictFieldValue (target, ED_FindFieldOffset ("th_pain"))->function =
+		ED_FindFunction ("SUB_Null") - qcvm->functions;
+	VectorMA (player->v.origin, 32, direction, target->v.origin);
+	VectorSet (target->v.mins, -8, -8, -24);
+	VectorSet (target->v.maxs, 8, 8, 32);
+	VectorSubtract (target->v.maxs, target->v.mins, target->v.size);
+	SV_LinkEdict (target, false);
+	trace_t hit = SV_Move (source, vec3_origin, vec3_origin, finish, MOVE_NORMAL, player);
+	assert (hit.ent == target && hit.fraction < 1);
+	camera->v.targetname = PR_SetEngineString ("fixture_q30_camera");
+	camera->v.use = ED_FindFunction ("misc_camera_use") - qcvm->functions;
+	VectorCopy (command.viewangles, player->v.v_angle);
+	client->cmd = command;
+	player->v.think = ED_FindFunction ("player_axe3") - qcvm->functions;
+	player->v.nextthink = qcvm->time + .005f;
+	assert (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_WALK);
+	host_frametime = .010;
+	pr_global_struct->frametime = .010f;
+	sv_client_think_window_t window = {true, .010, .010f};
+	const char *attacks[] = {"player_axe3", "player_axeb3", "player_axec3",
+		"player_axed3", "player_axee3"};
+	for (int i = 0; i < countof (attacks); ++i)
+	{
+		player->v.think = ED_FindFunction (attacks[i]) - qcvm->functions;
+		assert (SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+	}
+	window.available = false;
+	assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+	window.available = true;
+	player->v.nextthink = qcvm->time + .020f;
+	assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+	player->v.nextthink = qcvm->time + .005f;
+	player->v.think = ED_FindFunction ("player_axe2") - qcvm->functions;
+	assert (!SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (player, &window));
+	player->v.think = ED_FindFunction ("player_axe3") - qcvm->functions;
+	const double callback_time = qcvm->time;
+	const size_t vars_size = qcvm->progs->entityfields * sizeof (float);
+	const size_t globals_size = qcvm->progs->numglobals * sizeof (float);
+	void *vars = Mem_Alloc (vars_size), *globals = Mem_Alloc (globals_size);
+	void *target_vars = Mem_Alloc (vars_size);
+	memcpy (vars, &player->v, vars_size);
+	memcpy (globals, qcvm->globals, globals_size);
+	memcpy (target_vars, &target->v, vars_size);
+	assert (SV_RunClientWeaponThink (player, client, &command, &window));
+	assert (!window.available && target->v.health < 100 &&
+		global_float ("cam_active") == 1 &&
+		SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE);
+	assert (SV_PrivateWalkTrialStateError (player, client, &command));
+	/* Actual production dispatch now chooses native input before the unsafe
+	 * Think. Compare observable movement/QC against an ordinary native frame. */
+	for (int gorilla = 0; gorilla < 2; ++gorilla)
+	{
+		movement_sample_t samples[2];
+		for (int selected = 0; selected < 2; ++selected)
+		{
+			restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
+			SV_UnlinkEdict (target);
+			memcpy (&target->v, target_vars, vars_size);
+			SV_LinkEdict (target, false);
+			client->vr_gorilla_capable = gorilla;
+			Cvar_SetQuick (&sv_gorilla, gorilla ? "1" : "0");
+			command.vr_gorilla.flags = gorilla ? VR_GORILLA_HANDS : 0;
+			samples[selected] = step_authored_command (player, client, selected, command);
+			assert (target->v.health < 100 && global_float ("cam_active") == 1);
+			if (selected)
+				assert (client->private_move_native_frame &&
+					client->private_pmove_credit_msec == 0 && !client->private_cmd_queue_count);
+		}
+		assert (VectorCompare (samples[0].origin, samples[1].origin) &&
+			VectorCompare (samples[0].velocity, samples[1].velocity) &&
+			samples[0].flags == samples[1].flags &&
+			samples[0].weapon == samples[1].weapon &&
+			samples[0].completed == samples[1].completed);
+		if (!gorilla)
+		{
+			vec3_t movement;
+			VectorSubtract (samples[0].origin, ((entvars_t *)vars)->origin, movement);
+			assert (VectorLength (movement) > .01f);
+		}
+	}
+	client->vr_gorilla_capable = false;
+	Cvar_SetQuick (&sv_gorilla, "0");
+	command.vr_gorilla.flags = 0;
+	restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
+	player->v.think = ED_FindFunction ("player_axe2") - qcvm->functions;
+	step_authored_command (player, client, true, command);
+	assert (!client->private_move_native_frame && global_float ("cam_active") == 0);
+	/* Actual selected no-command dispatch keeps the completed cursor while
+	 * native world-time input/QC handles the due attack, before maintenance. */
+	restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
+	SV_UnlinkEdict (target);
+	memcpy (&target->v, target_vars, vars_size);
+	SV_LinkEdict (target, false);
+	client->private_pmove_walk_selected = true;
+	host_frametime = .010;
+	pr_global_struct->frametime = .010f;
+	SV_Physics_Client (player, 1);
+	assert (client->active && client->private_completed_move == 0 &&
+		client->private_move_native_frame && target->v.health < 100 &&
+		global_float ("cam_active") == 1);
+	restore_player (player, client, vars, vars_size, globals, globals_size, callback_time);
+	client->private_pmove_walk_selected = true;
+	player->v.nextthink = NAN;
+	assert (SV_PrivateWalkTrialFrameStateError (player, client, &command));
+	player->v.nextthink = callback_time + .005f;
+	player->v.think = qcvm->progs->numfunctions;
+	assert (SV_PrivateWalkTrialFrameStateError (player, client, &command));
+	Mem_Free (target_vars);
+	Mem_Free (globals);
+	Mem_Free (vars);
+	ED_Free (target);
+	ED_Free (camera);
+	puts ("Q30_SCHEDULED_CAMERA_HANDOFF_PASSED actual native comparison / safe animation / no-command frame");
 }
 
 /* Commands share a world opportunity; QC time does not advance within the
@@ -731,6 +897,13 @@ int main (int argc, char **argv)
 	void *globals_checkpoint = Mem_Alloc (globals_size);
 	native_state_cases (player, client, baseline_time, vars_checkpoint,
 		vars_size, globals_checkpoint, globals_size);
+	if (COM_CheckParm ("-scheduledcamera"))
+	{
+		scheduled_camera_case (player, client, baseline_time);
+		Mem_Free (vars_checkpoint);
+		Mem_Free (globals_checkpoint);
+		return EXIT_SUCCESS;
+	}
 	const char *cases[] = {"low-release", "boots", "ladder-release", "ladder-rejump"};
 	for (int scenario = 0; scenario < countof (cases); ++scenario)
 	{
