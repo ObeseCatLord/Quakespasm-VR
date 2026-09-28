@@ -31,6 +31,11 @@ user-requested model when available and explicit, nonoverlapping file ownership.
 Unavailable model routes must not be silently replaced. Plans and implementation
 commits stay on `2.0`; the product branch and unrelated user edits stay intact.
 
+Features use shared engine behavior by default. Do not add a per-mod feature,
+program whitelist, or ability implementation merely to qualify another mod.
+Preserve inherited VR mod adapters and the demonstrated QBJ3 ladder fix;
+additional exceptions require evidence of an actual incompatible boundary.
+
 | Feature | Plan | Current planning state |
 | --- | --- | --- |
 | Production predictive movement and mod support | [Predictive movement plan](predictive-movement-2.0-plan.md), [stock state-transition slice](predictive-stock-transitions-2.0-plan.md), [arrival-gap slice](predictive-arrival-gap-2.0-plan.md), [startup resume slice](predictive-startup-resume-2.0-plan.md), [stock liquid slice](predictive-stock-liquid-2.0-plan.md), [pause ordering slice](predictive-pause-ordering-2.0-plan.md), [moving-brush slice](predictive-stock-pushers-2.0-plan.md), [ordinary stock activation](predictive-stock-activation-2.0-plan.md), [AD-family admission](predictive-mod-admission-2.0-plan.md) | Stock mode/recovery, wet replay, causal pause ordering and bounded moving-brush support pass local checks and Astra review. Ordinary stock default activation, native intermission/finale and delayed-contact correction pass consolidated checks and final Astra review. Plans preceded production changes and were reopened for demonstrated lifecycle/publication findings. AD architecture has an Astra disposition and intended state/phase table; ordinary replay and transition proof must accompany admission. Cooperative-QC admission and wider compatibility remain open. |

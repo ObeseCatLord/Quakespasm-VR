@@ -181,3 +181,35 @@ QC adapters. Preserve QBJ3's deliberate ladder fix, VR combat/aim bridges and
 existing native continuations. Wet/custom physics, all representative mods,
 cooperative ABI, local/load and remaining movement scope remain part of the full
 goal; temporary dry/native limits do not count as final compatibility completion.
+
+## First implementation evidence and reopened numerical acceptance
+
+[verified: Linux fixture/build] The uncommitted shared owner admits unchanged
+AD pak0 through normal offer/spawn/begin. Actual boots spawn/contact, grounded
+and airborne jumps, charge/expiry, public desktop peer and engine-compatible
+replay pass112 frames with forward20. No production identity or boots logic is
+added for this program. Both native/selected initialized runs complete.
+
+[verified: comparison, not accepted yet] Discrete ownership/charge/expiry match,
+but the declared1-unit/1-unit-per-second target is exceeded: maximum axis
+position error3.23645, velocity error320 at the one-frame landing difference,
+and5 horizontal velocity difference on jump/landing frames. The shared path
+lands at frame34, native at35. Do not report this comparison as a pass.
+
+[verified: source] Native SV_ClientThink accelerates before QC using the previous
+ground flag; shared PMove accelerates after actual QC takeoff. Native
+SV_AddGravity uses analytic72Hz-compatible displacement by default; PMove uses
+its existing command substeps/ground snap. These are known differing integration
+orders, not evidence that a boots solver or another program gate is needed.
+The one-frame landing difference can affect PostThink sound/damage timing;
+gameplay effects still need explicit observation.
+
+Reopen only numerical/reference acceptance for local Astra integration review:
+retain intentional QSS-M-style movement with explicit native/QC lifecycle and
+shared-solver proof, or add a demonstrated narrow shared integration boundary.
+Do not silently widen thresholds, modify PMove without a revised committed
+write-set contract, or create per-mod force arithmetic. World-QC clocks,
+executable-prefix input, suffix retirement and remaining-phase transitions remain
+the existing committed contract. Main will finish the bounded batching proof
+while Astra reviews the production owners and this decision; no broader scope
+or user permission is needed.
