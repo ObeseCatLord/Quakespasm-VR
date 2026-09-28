@@ -1,8 +1,8 @@
 # q30 ordinary callback closure
 
-Status: ordinary PreThink closure verified; bounded axe/shotgun/lightning native
-dispatch implemented, with remaining scheduled weapon Think closure in progress. Normal
-admission remains closed. This follows the local Astra
+Status: ordinary PreThink and normally initialized client/target scheduling have
+bounded static closure. Conditional axe/shotgun/lightning/projectile native
+dispatch is implemented. Normal admission remains closed. This follows the local Astra
 decision in the [transition plan](predictive-q30-transitions-2.0-plan.md).
 
 ## Ordinary PreThink audit
@@ -231,3 +231,39 @@ strict class rejection for weapon2, with ordinary fallback remaining WALK.
 Arbitrary target-installed scheduling, actual traversal and normal session
 admission/publication/replay still need their full qualification. This checkpoint
 does not close the complete migration or the AD-family goal.
+
+## Remaining client/target scheduling audit
+
+A fresh read-only local Astra Max audit inspected the pinned binary's client,
+target, trigger, camera and common-helper scheduling writers outside the already
+audited player/weapon families. Main verified final effective `gpt-6-astra` /
+`max` settings, and independently decoded the classgroup comparisons, stop/hull
+writes, delayed-use allocation and camera exit/stand-in stores below. Normal
+spawn clears player fields; ordinary allocations exclude reserved client slots.
+No additional unsafe scheduled player Think was demonstrated in this scope.
+
+| Recommendation and evidence | Disposition |
+| --- | --- |
+| Keep camera/intermission eligibility in existing state owners. StartIntermissionCamera1158 clears mode/solid/hull before SUB_Null at56127. Camera exit clears holds94617–94618, runs its end target, then installs player_stand1 at94625–94629. cam_player and cam_track are separately spawned94719–94720/94743–94744. | **Adopted.** Existing holds/mode/hull exclusions cover these lifetimes; no duplicate camera scheduler. |
+| Distinguish recipients and actual constants. trigger_velocity_fire's grenade callback77025–77029 requires classgroup225 at77019; normal player initialization53964 writes50. entity_remove calls entity_stop before its callback; stop11600–11617 clears scheduling, mode/solid and hull. Monsterkill sets deadflag before its scheduling. | **Adopted.** No ordinary-player callback exception follows from these names or misleading decompiler aliases. Existing native/terminal classification remains the owner. |
+| Target dispatch invokes the found target's use rather than installing Think on its activator. entitystate excludes client/monster flags; no scoped normal player use binding redirects dispatch into trigger scheduling. Delayed use allocates its own entity10826–10827 before DelayThink10839. | **Adopted within the audited normal initialization/caller paths.** Arbitrary authored/save mutations are outside the closure claim. |
+| The narrowed writer aid omitted eight functions. | **Corrected evidence scope.** Retain the complete binary inventory below; do not claim closure from the filter alone. |
+| Do not add another gate without a demonstrated player path. | **Adopted.** Production is unchanged by this audit. Keep the existing due-window/native dispatcher; normal session and wider-mod qualification remain required. |
+
+The audit's complete scoped inventory contains71 think and79 nextthink address
+sites in68 functions across396 source-labelled functions, without OP_STATE or
+dynamic field operands. The eight omitted functions are
+trigger_mapvar_multiple_fire1066:48742, info_teleport_destination1170:56347,
+info_teleportinstant_dest1171:56423 and ammo-stat functions1179/1180/1181/1184/
+1185:56631/56930/57399/57664/57941. Their recipients are the trigger,
+destination or separately spawned ammo controller. Grapple, fog, explosion and
+particle scheduling likewise retains its own allocated entity.
+
+This is bounded static scheduling closure for normally initialized entities,
+with the preceding player-animation/weapon audits as dependencies. It is not a
+claim about arbitrary edited/savegame callbacks, every monster animation or
+map-supplied command payload. In particular, info_command_use1174 passes its
+message to stuffcmd56488; unspecified external commands were not audited.
+Real traversal is qualified separately under the
+[traversal plan](predictive-q30-traversal-2.0-plan.md). Full normal admission,
+publication/parser/replay and wider AD-family support remain unfinished.
