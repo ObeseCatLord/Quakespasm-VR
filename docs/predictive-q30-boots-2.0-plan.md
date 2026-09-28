@@ -1,6 +1,7 @@
 # q30 jump-boots pickup, native gameplay and replay return
 
-Status: planned before implementation. Normal q30 session activation is committed
+Status: implemented with focused Linux software qualification; final local Astra
+review in progress. The plan preceded implementation. Normal q30 session activation is committed
 at `624aa154`; this closes one real-QC ability lifecycle in the broader
 [AD-family plan](predictive-mod-admission-2.0-plan.md), not all ability/trigger or
 mod compatibility. Linux software checks now; connected/headset/eye, performance
@@ -94,3 +95,51 @@ Ladder, grapple, other abilities/teleports, complete wet/ledge/map progression,
 AD/Mjolnir identities and cooperative-QC/local/load support remain required in
 the parent goal. This slice does not shrink or complete that goal. Reopen before
 new movement ownership, lifetime policy, protocol or unrelated production edits.
+
+## Implemented evidence before final review
+
+The existing driver now prepares an actual QC-spawned artifact before the normal
+client resource copy. Thirty-two generated/world warmup frames execute actual
+setup while the existing real notarget command prevents early pickup. Then real
+notarget0 and prepared artifact placement allow actual world item_touch with
+nested artifact_touch. The observation hook records top-level contact without
+modifying QC output. No player moditems, charge or expiry is assigned.
+
+Four separate initialized runs pass: native and selected private VR, and native
+and selected private desktop. At the default25ms interval all112 frame samples
+match ownership/charge/deadline, XYZ position/velocity and flags at printed1e-6
+resolution. Pickup is frame0,81 frames own the ability, second airborne jump at
+frame4 consumes charge2→1 with vertical velocity280, and actual expiry is frame81.
+This is a controlled zero-axis private jump sequence, not general motion parity
+or full-world/effect equivalence. Other command intervals are not qualified.
+
+Selected runs require real replay before and after, native/no replay while owned,
+exact received-sequence completion and empty queue. Public desktop motion and
+visibility remain native in the same world. A temporary source/physics copy with
+only boots eligibility1048576 removed from Q30State fails the actual owned-state
+native-authority assertion (exit134). That is sensitivity of this boundary, not
+an old-server or shipped-map pickup claim. Authoritative source/assets remain
+unchanged by the countercheck. Recipes/limits are in tests/README.md.
+
+No production change is required by these results. The requested Luna route was
+unavailable; one web worker failed terminally before edits, so main implemented
+the coupled fixture locally. All broader parent-goal requirements remain open.
+
+## Initial final-review disposition and strengthened replay checks
+
+Local Astra Max found no production/P1 blocker, but caught P2: replay immediately
+after every command is acknowledged can succeed with empty history and zero
+preview duration. **Adopted:** reuse LiquidDisposablePreview with an optional
+forward-axis mode; assert available authority, positive duration and horizontal
+predicted displacement greater than .01. Run it before pickup and after expiry
+outside the112-frame comparison, preserving history/baseline/ACK/timers and
+restoring pending input/clock. Selected VR/desktop and installed AD runs pass
+both positive-preview markers. All four initialized q30 runs remain sampled
+equal. This is a disposable client preview, not newly delivered server movement.
+
+Astra's deletion finding was also **adopted:** remove the vacuous warmup contact
+count conjunct whose discriminator was not assigned until afterward. No-ownership
+still discriminates premature grants. No new production ability case is added.
+The follow-up local Astra pass checks that fix alongside the user's reopened
+[shared movement reuse decision](predictive-movement-reuse-reassessment-2.0-plan.md);
+future work should converge the shared QC adapter rather than grow per-mod gates.

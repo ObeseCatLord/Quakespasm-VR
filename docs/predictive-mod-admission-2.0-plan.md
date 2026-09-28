@@ -2,9 +2,11 @@
 
 Status: Astra-reviewed architecture and implementation in progress; ordinary
 q30 policy transport and client replay are implemented at `8a0871c1`, with
-qualified component evidence. Normal q30 admission and complete native
-transitions remain unimplemented. The stock default activation
-slice does not admit q30 or finish mod prediction. This plan expands stages 3–4
+qualified component evidence. Bounded normal q30 admission/session activation
+is implemented at `624aa154` with Linux checks and final Astra review; see its
+[activation record](predictive-q30-activation-2.0-plan.md). Real ability/trigger
+traversal and wider AD/Mjolnir/cooperative-QC compatibility remain open. The stock
+default activation slice alone did not admit q30 or finish mod prediction. This plan expands stages 3–4
 of the [parent movement plan](predictive-movement-2.0-plan.md). The disposition
 below chooses the existing command owner; the next bounded proof and matching
 replay contract must precede production admission. Unresolved questions are not
@@ -105,12 +107,14 @@ unknowns concern code behavior and replay consumers and stay implementation work
 | Native transition after PMove/impact/contact | Keep already-consumed command movement; finish the current lifecycle once and stop batching. | PostThink/contact effects remain in their current owners. Do not append another native movement interval. | Complete current head once; preserve later heads for fresh native dispatch next world pass. Suppress replay for the transition. |
 | Return from native to qualified dry WALK | Existing selected owner after fresh current-state classification. | Rebuild current movevars and use current QC state; do not reuse stale native credit or support. | Existing mode/discontinuity epoch and a complete valid replay seed; no blanket permission from WALK alone. |
 
-The table defines an intended contract, not proof that every row is implemented.
-In particular, today's stock-only phase helpers do not yet qualify living q30
-holds/cameras. The ordinary replay consumer exists, while production q30
-selection and server prediction permission remain closed. The
-[native-state/admission plan](predictive-q30-transitions-2.0-plan.md) defines
-the remaining implementation and normal-session acceptance.
+The table originally defined an intended contract, not proof that every row was
+implemented. Subsequent typed-state, callback, traversal and normal-activation
+slices qualify bounded q30 holds/cameras, production selection and ordinary
+prediction permission through existing owners. Their
+[native-state/admission plan](predictive-q30-transitions-2.0-plan.md) and activation
+record preserve limits and remaining real ability/trigger requirements. The
+[next boots lifecycle plan](predictive-q30-boots-2.0-plan.md) precedes actual
+pickup/action/expiry work; ladder/grapple and wider mods remain required.
 
 ## Next bounded slice and exact ownership
 
@@ -233,3 +237,25 @@ sandbox. Actual device/eye testing, connected live playtesting, Windows/ARM
 qualification and performance measurement remain deferred by the user. Those
 limits do not excuse missing mod implementation. The full migration remains
 active until its implementation scope is finished.
+
+## Next-mod identity evidence after q30 activation
+
+Read-only installed-program inspection confirms Mjolnir's loose progs.dat is
+4416218 bytes, SHA256
+`37783b4019027d2fe24f68695a4a02ebf0d7ef248a7182cc0e9c310afc261114`, CRC5927.
+Its actual function table has no SV_RunClientCommand; relevant movement globals
+exist, but hookent is absent and customphysics is present, unlike q30. This is
+verified schema evidence, not an ordinary-QC or gameplay correspondence proof.
+Do not append its hash to q30 qualification: first plan the smallest existing
+state/QC boundary adaptation against actual bytecode and native behavior. The
+installed AD directory has no loose progs.dat. Subsequent pack inspection and
+[actual mounted-session qualification](predictive-ad-identical-program-2.0-plan.md)
+prove its pak2 program identical to q30 and reuse the existing normal admission
+without a new implementation/hash. Actual AD maps and older variants remain open.
+
+The user's direction to avoid mod-special-case proliferation reopens the
+[shared QC/movement reuse decision](predictive-movement-reuse-reassessment-2.0-plan.md)
+before further production expansion. Preserve the deliberate QBJ3 ladder fix;
+compare actual QSS-M/native defaults and the inherited generic adapter rather
+than assuming more program/ability gates are required. No inspection changes
+Mjolnir admission.

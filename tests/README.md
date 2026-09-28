@@ -591,6 +591,69 @@ of multiple packets. The checkpoint restores body/globals/client, world time and
 logical datagram append length, not every actor/effect stream. No authored
 relocation, general effect replay or full-world restoration is claimed.
 
+The actual q30 jump-boots lifecycle uses that same stock-liquid binary and
+isolated q30 root. With the publication build recipe above, run each mode in a
+separate process/user directory:
+
+```sh
+# Selected private VR input with actual normal admission.
+timeout --signal=TERM 30s /tmp/qsvr-q30-publication \
+  -q30boots -defaultselection -vr -dedicated 3 -noudp -nosound \
+  -game q30a1024 -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-boots-vr-selected > /tmp/q30-boots-vr-selected.log
+# Native private VR reference: omit -defaultselection.
+timeout --signal=TERM 30s /tmp/qsvr-q30-publication \
+  -q30boots -vr -dedicated 3 -noudp -nosound \
+  -game q30a1024 -basedir /tmp/qsvr-q30-movement-native \
+  -userdir /tmp/qsvr-q30-boots-vr-native > /tmp/q30-boots-vr-native.log
+```
+
+Repeat both with `-vr` omitted and distinct desktop user/log paths. Require exit0
+and `Q30_BOOTS_PASSED` in all four runs. Fresh native/selected processes must each
+produce112 `Q30_BOOTS_SAMPLE` rows. At the default25ms interval, compare the same
+frame's ownership, charge, deadline, XYZ position/velocity and flags to1e-6
+printed resolution. All four recorded runs match with zero sampled difference;
+this is the controlled zero-axis private jump sequence, not arbitrary movement
+or complete world/effect equivalence. Other command intervals are not qualified
+by those default results.
+
+The actual pinned `item_artifact_jumpboots` spawn precaches real assets before
+the existing client resource copy. Prepared count2/cnt2/height300 and initial map
+start placement compose the item; actual scheduled world setup makes it a
+trigger. The existing real notarget command prevents premature pickups and is
+turned off before prepared relocation of that actual artifact over the player.
+Actual world contact runs `item_touch` and its nested `artifact_touch`; an
+observation-only callback records the top-level contact. No direct touch call or
+manual player ability grant is used. The actual timed item remains owned for81
+frames, with an airborne second jump on frame4 consuming charge2→1 and producing
+vertical velocity280. Installed QC expires it on frame81 at the default interval.
+
+Selected runs require successful replay acceptance before pickup; ability
+snapshots require native completion/legacy authority/no replay; actual QC expiry
+must restore replay acceptance. Two additional disposable previews, before pickup
+and after expiry outside the112-frame comparison, require positive duration and
+more than .01 units of horizontal predicted motion. Each preserves the committed
+journal, authoritative baseline, ACK and jump timers, restoring the pending
+command and client clock. Require both `Q30_BOOTS_POSITIVE_PREVIEW_PASSED` markers
+in selected runs; an empty-history replay alone does not qualify this claim. Received command completion and empty queue are checked against
+actual generated sequences. A visible, moving public desktop peer stays native.
+Captured delivery, prepared client signon/resources, prepared item/placement,
+notarget and synthetic inputs remain explicit seams. This does not find an
+unmodified shipped-map pickup or qualify real headset input, all ability branches,
+ladder/grapple or other mods. A temporary copy with only boots eligibility removed
+from Q30State fails the actual owned-state native-authority assertion (exit134);
+production sources and assets are untouched by that countercheck.
+
+Installed AD's pak2 program is byte-identical to the pinned q30 program above.
+An isolated root with id1/pak0 and ad/pak0,pak1,pak2 read-only asset links also
+passes the same `-q30session` and selected VR `-q30boots` recipes with `-game ad`.
+The actual fixture loader/exact-program assertion checks the mounted program,
+not just the pack file. The boots result matches the112 q30 samples and includes
+both positive previews. No AD-specific movement implementation or new hash was
+added. This qualifies e1m1 under the installed AD program; actual AD maps, older
+program variants and Mjolnir remain separate scope. See the
+[AD identity/reuse record](../docs/predictive-ad-identical-program-2.0-plan.md).
+
 The mixed native fixture's `-velocityseeds` option checks actual serialized
 signed-short velocity boundaries through the full parser and replay gate.
 Use its existing selected run with `-defaultselection -earlypause -arrivalgap

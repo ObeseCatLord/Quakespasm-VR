@@ -211,12 +211,44 @@ static void PrepareLiquidCase (client_t *peer, client_state_t *state,
 	state->viewangles[YAW] = yaw;
 }
 
+static edict_t *q30_boots_item;
+
 static void StartLiquidPeers (int argc, char **argv, const char *map,
 	int command_msec, client_t *peers[2], client_state_t *states[2])
 {
 	char public_offer[1024];
 	srand (1); // identical initialized runs, including stock QC random effects
 	Fixture_InitNativeEngine (argc, argv, map, true);
+	if (COM_CheckParm ("-q30boots"))
+	{
+		/* Prepared artifact, actual installed spawn QC and assets, before
+		 * the existing client resource copy. Setup/contacts run in the world. */
+		dfunction_t *spawn = ED_FindFunction ("item_artifact_jumpboots");
+		assert (SV_PrivateWalkTrialQ30Program () && spawn);
+		q30_boots_item = ED_Alloc ();
+		q30_boots_item->v.classname = PR_SetEngineString ("item_artifact_jumpboots");
+		GetEdictFieldValue (q30_boots_item, ED_FindFieldOffset ("cnt"))->_float = 2;
+		GetEdictFieldValue (q30_boots_item, ED_FindFieldOffset ("count"))->_float = 2;
+		GetEdictFieldValue (q30_boots_item, ED_FindFieldOffset ("height"))->_float = 300;
+		for (int i = svs.maxclients + 1; i < qcvm->num_edicts; ++i)
+		{
+			edict_t *start = EDICT_NUM (i);
+			if (!start->free && !strcmp (PR_GetString (start->v.classname), "info_player_start"))
+			{
+				VectorCopy (start->v.origin, q30_boots_item->v.origin);
+				q30_boots_item->v.origin[2] += 32;
+				break;
+			}
+		}
+		const int saved_self = pr_global_struct->self;
+		pr_global_struct->self = EDICT_TO_PROG (q30_boots_item);
+		pr_global_struct->time = qcvm->time;
+		sv.state = ss_loading;
+		PR_ExecuteProgram (spawn - qcvm->functions);
+		sv.state = ss_active;
+		pr_global_struct->self = saved_self;
+		assert (!q30_boots_item->free && q30_boots_item->v.nextthink > qcvm->time);
+	}
 	const qboolean defaults = COM_CheckParm ("-defaultselection") != 0;
 	const qboolean selected = defaults || COM_CheckParm ("-selected") != 0;
 	const qboolean vr = COM_CheckParm ("-vr") != 0;
@@ -261,9 +293,11 @@ static qboolean LiquidPendingReplay (client_state_t *state, vec3_t origin,
 	return replayed;
 }
 
-static void LiquidDisposablePreview (client_state_t *state)
+static void LiquidDisposablePreview (client_state_t *state, qboolean forward)
 {
 	cl = *state;
+	if (forward)
+		assert (cl.move_ack_prediction_allowed && cl.stats[STAT_HEALTH] > 0);
 	if (!cl.move_ack_prediction_allowed || cl.stats[STAT_HEALTH] <= 0)
 		return;
 	usercmd_t *history = Mem_Alloc (sizeof (cl.movecmds));
@@ -276,13 +310,18 @@ static void LiquidDisposablePreview (client_state_t *state)
 	const double clock = realtime;
 	/* Prepared desktop axis state; the committed VR-history cases exercise
 	 * actual serialized VR fields separately. No headset input is claimed. */
-	cl.pendingcmd.upmove = 100;
+	if (forward)
+		cl.pendingcmd.forwardmove = 100;
+	else
+		cl.pendingcmd.upmove = 100;
 	realtime += host_frametime * .5;
 	usercmd_t preview;
 	CL_PrepareReplayPreview (&preview, true);
 	assert (preview.msec > 0 && preview.seconds > 0);
 	vec3_t origin;
 	assert (CL_ReplayPlayerMovement (&cl.entities[cl.viewentity], origin));
+	if (forward)
+		assert (hypotf (origin[0] - baseline.origin[0], origin[1] - baseline.origin[1]) > .01f);
 	assert (!memcmp (history, cl.movecmds, sizeof (cl.movecmds)) &&
 		cl.statsf[STAT_PRIVATE_JUMP_SECS] == jump &&
 		cl.statsf[STAT_PRIVATE_WATERJUMP_SECS] == waterjump &&
@@ -297,6 +336,130 @@ static void LiquidDisposablePreview (client_state_t *state)
 #ifndef STOCK_LIQUID_FIXTURE_ENTRY
 #define STOCK_LIQUID_FIXTURE_ENTRY main
 #endif
+
+static int q30_boots_contacts;
+static func_t q30_boots_touch;
+static void Q30BootsObserveQC (func_t function)
+{
+	if (pr_global_struct->self == EDICT_TO_PROG (q30_boots_item) &&
+		function == q30_boots_touch)
+		++q30_boots_contacts;
+}
+
+static float Q30BootsField (edict_t *player, const char *name)
+{
+	ddef_t *field = ED_FindField (name);
+	assert (field && (field->type & ~DEF_SAVEGLOBAL) == ev_float);
+	return GetEdictFieldValue (player, field->ofs)->_float;
+}
+
+static void Q30Boots (client_t *peers[2], client_state_t *states[2], qboolean vr)
+{
+	client_t *peer = peers[0];
+	edict_t *player = peer->edict;
+	const qboolean selected = peer->private_pmove_walk_selected;
+	const int boots = 1048576; // actual pinned constant, not a decompiler alias
+	assert (q30_boots_item && !Q30BootsField (player, "moditems"));
+	liquid_after_qc_composition = Q30BootsObserveQC; // observation only
+	qboolean saw_before = false, saw_boots = false, saw_expiry = false, saw_return = false;
+	qboolean saw_airjump = false, saw_public = false;
+	vec3_t public_start;
+	VectorCopy (peers[1]->edict->v.origin, public_start);
+	/* Actual scheduled setup; notarget deliberately prevents early pickup. */
+	for (int frame = 0; frame < 32; ++frame)
+	{
+		realtime += host_frametime;
+		LiquidSend (peer, states[0], 0, 0, 0, vr, 0);
+		LiquidSend (peers[1], states[1], 0, -40, 0, false, 0);
+		GapWorldFrame ();
+		GapSnapshot (peer, states[0]);
+		vec3_t replay;
+		if (selected && states[0]->move_ack_prediction_allowed)
+		{
+			assert (LiquidPendingReplay (states[0], replay, (vec3_t){0}));
+			saw_before = true;
+		}
+	}
+	assert (q30_boots_item->v.solid == SOLID_TRIGGER &&
+		!Q30BootsField (player, "moditems") &&
+		(!selected || saw_before));
+	if (selected)
+	{
+		LiquidDisposablePreview (states[0], true);
+		puts ("Q30_BOOTS_POSITIVE_PREVIEW_PASSED before pickup; positive duration/horizontal motion/history preserved");
+	}
+	q30_boots_touch = q30_boots_item->v.touch;
+	assert (q30_boots_touch > 0);
+	/* Prepared placement of an actual spawned artifact; contact dispatch
+	 * awards all player fields. Never call artifact_touch or grant bits here. */
+	VectorCopy (player->v.origin, q30_boots_item->v.origin);
+	SV_LinkEdict (q30_boots_item, false);
+	host_client = peer;
+	sv_player = player;
+	Cmd_ExecuteString ("notarget 0", src_client);
+	for (int frame = 0; frame < 112; ++frame)
+	{
+		const float before_charge = Q30BootsField (player, "jumpboots_airlvl");
+		const qboolean airborne = !((int)player->v.flags & FL_ONGROUND);
+		realtime += host_frametime;
+		LiquidSend (peer, states[0], frame == 2 || frame == 4 ? BUTTON_JUMP : 0,
+			0, 0, vr, 0);
+		LiquidSend (peers[1], states[1], 0, -40, 0, false, 0);
+		const int sequence = peer->lastmovemessage;
+		GapWorldFrame ();
+		assert (peer->active && peers[1]->active && player->v.health > 0 &&
+			peer->private_pmove_walk_selected == selected);
+		const qboolean owned = (int)Q30BootsField (player, "moditems") & boots;
+		const float charge = Q30BootsField (player, "jumpboots_airlvl");
+		if (owned)
+		{
+			assert (q30_boots_contacts > 0 && Q30BootsField (player, "jumpboots_height") == 300);
+			saw_boots = true;
+			if (frame == 4 && airborne && charge < before_charge && player->v.velocity[2] > 0)
+				saw_airjump = true;
+		}
+		else if (saw_boots) saw_expiry = true;
+		GapSnapshot (peer, states[0]);
+		GapSnapshot (peers[1], states[1]);
+		assert (!peers[1]->private_pmove_walk_selected && !states[1]->move_ack_selected_owner &&
+			!states[1]->move_ack_prediction_allowed);
+		saw_public |= states[0]->entities[2].netstate.modelindex > 0 &&
+			states[1]->entities[1].netstate.modelindex > 0;
+		vec3_t replay;
+		const qboolean replayed = LiquidPendingReplay (states[0], replay, (vec3_t){0});
+		if (selected)
+		{
+			assert (peer->private_completed_move == sequence && !peer->private_cmd_queue_count &&
+				!peer->private_cmd_queue_msec && states[0]->move_snapshot_valid &&
+				states[0]->move_ack_selected_owner && states[0]->ackedmovemessages == sequence);
+			if (owned)
+				assert (peer->private_move_native_frame &&
+					states[0]->move_ack_authority == MOVE_AUTHORITY_LEGACY_FRAME && !replayed);
+			else if (saw_expiry && replayed) saw_return = true;
+		}
+		else assert (!replayed && !states[0]->move_ack_selected_owner);
+		printf ("Q30_BOOTS_SAMPLE frame=%d owned=%d charge=%g deadline=%.6f origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f flags=%d\n",
+			frame, owned != 0, charge, Q30BootsField (player, "jumpboots_finished"),
+			player->v.origin[0], player->v.origin[1], player->v.origin[2],
+			player->v.velocity[0], player->v.velocity[1], player->v.velocity[2], (int)player->v.flags);
+	}
+	assert (saw_boots && saw_airjump && saw_expiry && saw_public && (!selected || saw_return) &&
+		hypotf (peers[1]->edict->v.origin[0] - public_start[0],
+			peers[1]->edict->v.origin[1] - public_start[1]) > 1);
+	if (selected)
+	{
+		LiquidDisposablePreview (states[0], true);
+		puts ("Q30_BOOTS_POSITIVE_PREVIEW_PASSED after expiry; positive duration/horizontal motion/history preserved");
+	}
+	printf ("Q30_BOOTS_PASSED selected=%d vr=%d actual spawn/setup/contact/airjump/expiry/full-send/replay-return/public peer; prepared artifact placement and captured resources/delivery\n", selected, vr);
+	liquid_after_qc_composition = NULL;
+	for (int slot = 0; slot < 2; ++slot)
+	{
+		Mem_Free (states[slot]->entities);
+		Mem_Free (states[slot]->scores);
+		Mem_Free (states[slot]);
+	}
+}
 
 /* Reuse admitted peers, actual native/QC owner, shared real-BSP finder and
  * full production publication. The late relocation is prepared, not authored
@@ -414,6 +577,11 @@ int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 	contents = !strcmp (liquid, "water") ? CONTENTS_WATER :
 		!strcmp (liquid, "slime") ? CONTENTS_SLIME : CONTENTS_LAVA;
 	StartLiquidPeers (argc, argv, map, command_msec, peers, states);
+	if (COM_CheckParm ("-q30boots"))
+	{
+		Q30Boots (peers, states, COM_CheckParm ("-vr") != 0);
+		return 0;
+	}
 	if (COM_CheckParm ("-q30publication"))
 	{
 		Q30Publication (peers, states);
@@ -542,7 +710,7 @@ int STOCK_LIQUID_FIXTURE_ENTRY (int argc, char **argv)
 				assert (cl.move_ack_prediction_allowed && replayed);
 			}
 			*states[0] = cl;
-			if (selected) LiquidDisposablePreview (states[0]);
+			if (selected) LiquidDisposablePreview (states[0], false);
 			printf ("STOCK_LIQUID_SAMPLE selected=%d vr=%d liquid=%s case=%s frame=%d origin=%.6f,%.6f,%.6f velocity=%.6f,%.6f,%.6f flags=%d water=%g health=%g jump=%.6f waterjump=%.6f ack=%d prediction=%d replay=%d\n",
 				selected, vr, liquid, cases[scenario], frame,
 				peers[0]->edict->v.origin[0], peers[0]->edict->v.origin[1], peers[0]->edict->v.origin[2],

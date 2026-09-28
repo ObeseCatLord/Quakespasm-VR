@@ -1,6 +1,7 @@
 # Installed AD program reuse qualification
 
-Status: planned before mounted-session qualification. This is the next-mod
+Status: mounted normal-session and boots software qualification passed; the plan
+preceded execution. This is the next-mod
 identity/reuse step of the [AD-family plan](predictive-mod-admission-2.0-plan.md).
 It does not add an AD physics implementation or grant unrelated programs replay.
 
@@ -37,3 +38,20 @@ e1m1 under the AD program is not proof of all AD maps. If identity or behavior
 fails, investigate existing mounting/resource/owner evidence and revise this
 plan before production changes. Mjolnir has a different schema/program and is
 not admitted by this identical-program result.
+
+## Executed bounded qualification
+
+The existing actual mixed-session binary with game ad exits0 and emits both
+Q30_SESSION_REPLAY_COMPLETION_PASSED (sequence17, numerical error<.01) and
+Q30_SESSION_PASSED. The boots driver with game ad/defaultselection/VR exits0,
+checks real pickup/native action/QC expiry and both positive-duration horizontal
+previews. Its112 observations match the q30 selected/native comparison at
+printed1e-6 resolution. Because the actual fixture asserts the loaded exact
+program, this verifies mounted identity and normal session for these isolated
+packs, not merely expected pak ordering.
+
+No production code, whitelist or AD-specific physics was added. This is stock
+e1m1 under installed AD bytecode and assets; it does not close actual AD-map
+ability/traversal/graphics or old AD/Mjolnir compatibility. The user's direction
+to avoid mod-special-case proliferation is recorded in the separately reopened
+shared movement decision before further production expansion.
