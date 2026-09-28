@@ -246,3 +246,46 @@ state machine. Resolve the final flag/timer/hold contract with fresh local Astra
 before production changes. Main extends the existing real-map fixture to every
 released liquid type and pending live history/preview; these checks must not
 be replaced by empty-history or policy-bypassing shadow evidence.
+
+### Permission-stage Astra disposition and refined implementation contract
+
+Fresh local Astra (`gpt-6-astra`, effort `max`, effective settings verified)
+reviewed the permission brief and then revised its quiet-frame advice against
+the main agent's actual pinned-QC probes. Main verified the completion writes,
+semantic epoch hook, hold gate and both client fluid gates against source.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Use the positive private waterjump timer as the ownership token. | Adopted. Neither a deadline nor a QuakeC flag alone may manufacture a private timer. No persistent Boolean, second deadline, new protocol bit or swimming state machine. |
+| Capture the PreThink movement witness before validation and scheduled Think. | Adopted. Compute the known stock velocity correction immediately; apply it only when scheduled Think leaves velocity and the semantic epoch unchanged. Later water/flag recategorization cannot change what QC actually executed. |
+| Detect flag/deadline/relocation takeover before PMove and after real callbacks. | Adopted. Preserve callback velocity/origin and authored deadline; cancel the private waterjump on takeover. Semantic relocation also cancels dry-jump debounce. A flag-only takeover releases its unchanged solver deadline. |
+| Extend the existing semantic teleport owner and keep callbacks from resurrecting old timers. | Adopted. Explicit no-hold relocation releases selected movement's deadline; identified QC teleports preserve their authored deadline, including a same-value write. Public/native relocation behavior remains on its existing owner. Completion checks the existing epoch before publishing local solver timers. |
+| Rewrite all ordinary quiet water/swim/ledge behavior from local QC source. | Rejected after reviewer correction. Actual active-ledge quiet frames keep velocity 310, deadline and command timer unchanged. The local QC source is not the pinned installed program. Normalize only a demonstrated provisional stock ledge write and observe callback takeovers; do not invent PMove, decay or ACK progress during maintenance. |
+| Keep teleport backmove blocking independent of a stale waterjump flag and prevent new ledge acquisition during an external hold. | Adopted. A zero private timer plus a future authored deadline is a hold. Reuse the existing PMove hold input for the acquisition guard. |
+| Open wet permission only after live history/preview and the released fluid domain are qualified. | Adopted. Current diagnostic shadow results do not authorize the gate change. Stock selection/default and AD-family admission remain separate parent stages. |
+
+New main probes establish two concrete failures before production changes:
+an admitted **new** quiet ledge writes stock velocity 225, FL_WATERJUMP and a
+two-second deadline while private timer remains zero; an admitted **active**
+ledge overlapping a real pinned `teleport_touch` advances the semantic epoch
+and authors teleport velocity, but the selected handoff erases its hold to zero.
+The prepared trigger/destination use actual BSP traces and world/QC dispatch;
+they are controlled test geometry, not a natural map route or live transport.
+
+Implementation order is now: (1) capture stock PreThink outputs and normalize
+only the witnessed provisional ledge writes; (2) preserve scheduled Think and
+callback ownership, including quiet/equal-ACK updates; (3) cancel timers at
+existing semantic relocation and completion boundaries; (4) block solver ledge
+acquisition during an external hold; (5) prove actual pending replay/preview,
+transit, hazards and batching before the coherent server/client permission
+change. Files remain `sv_phys.c`, `sv_user.c`, its existing teleport callers,
+`pmove.c`, fixtures and plan; later permission touches `sv_main.c`/`cl_main.c`.
+
+Real slime/lava depth/swim runs pass admitted command/QC/snapshot checks.
+Slime health matches native in the current 96 samples. Lava's two late
+deep-button health differences have a pinned PreThink trace: identical damage
+event frames/times, with native depth 2 receiving 20 damage and selected depth
+3 receiving 30 on the divergent event. The reused QSS-M swim trajectory explains
+this depth-dependent gameplay difference; health tolerance was not widened,
+damage was not suppressed and no coordinates were forced. This is a PreThink
+health/depth/deadline observation, not a count of nested `T_Damage` calls.
