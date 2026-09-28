@@ -62,7 +62,9 @@ callback scheduler or persistent per-program state.
 
 1. **Standard server builtin and native hook.** Production write set:
    `Quake/pr_ext.c` (builtin347), `Quake/progs.h` (`pmove_flags`),
-   `Quake/sv_phys.c` (existing native callback/input boundary). Reuse current
+   `Quake/sv_phys.c` (existing native callback/input boundary), `Quake/sv_user.c`
+   (native-force gate and decoded public metadata), `Quake/pmove.h` (one
+   engine-facing builtin adapter declaration). Reuse current
    `PR_GetSetInputs`, movevars and physent collection. Native private roomscale
    is consumed before QC and must not be applied again by the builtin. Run the
    actual hook after the existing one Think opportunity, then skip native body
@@ -106,3 +108,27 @@ or simpler reuse where it removes a duplicate owner. Direct receipt execution
 and silently substituting standard movement for a mod's hook are rejected.
 No human taste decision is needed. The review disposition must be committed
 before production implementation.
+
+## Astra design disposition
+
+Local Astra Max reviewed the verified source brief; main independently verified
+effective `gpt-6-astra`/`max` and spot-checked the public parser, native Think/body
+order, impact owner and donor TOSS fallthrough. No implementation/runtime review
+is implied by this design pass.
+
+| Recommendation | Main disposition |
+| --- | --- |
+| Native-world hook and builtin can precede selected hook execution. | Adopted as an incremental stage, with native classification/legacy authority retained. This does not finish cooperative prediction. |
+| Native input can accelerate before the new hook. | Adopted: preserve angle/recoil updates, then bypass native forces and deferred Gorilla movement for the cooperative owner. Capture actual public timestamp/angles/buttons/impulse in the existing command record, retaining old edict impulse latching. |
+| Standard physics callbacks can recurse and overwrite PMove scratch. | Adopted: reuse the existing saved-PMove pattern. Materialize results before callbacks, retain the contact entities before the first callback, stop stale contacts after removal/relocation, and restore enclosing scratch/context. Keep impacts in sv_phys.c through its existing helper. |
+| Input round-trip restoration loses bits/vector components. | Adopted: save exposed input globals as raw words, including full vectors and integer aliases. Restore transient globals/VM self-other/clocks/native context on normal exits; preserve authored entity state. Validate numeric globals before the existing bridge converts integer fields. |
+| Standard builtin plus native final relink can duplicate triggers. | Adopted: the hook owns its movement/trigger dispatch, with a non-touching native final relink. A frame-local standard-call marker also avoids repeating builtin triggers when independent customphysics uses it; customphysics precedence remains unchanged. |
+| Donor TOSS dispatch was described incorrectly. | Corrected: its commented-out assignment/break falls through to PM_DEAD. Use explicit initialized cases while preserving that actual behavior. |
+| Bound each standard invocation by the engine-owned interval. | Adapted: finite0..B per call, zero a no-op, where B is the captured world interval for stage1 (accepted command duration in stage2). Repeated authored/subdivided calls remain possible and never independently retire/debit commands. This bound is an explicit adapter restriction, not donor parity. |
+
+The standard-call marker/input snapshot/interval are borrowed stack scopes at
+the current native owner, with restoration across nesting, not persistent
+client state or a scheduler. Main will implement and consolidate the prepared
+loader/public/private/world/send proof, then request a bounded source recheck.
+Gorilla mapping, selected per-command callbacks, arbitrary QC prediction and
+broader mod/local/load compatibility remain mandatory later stages.
