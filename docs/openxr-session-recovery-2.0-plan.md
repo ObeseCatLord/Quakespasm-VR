@@ -157,3 +157,20 @@ runtime integration, live controller reconnect or GPU completion. This is a
 recorded verification limitation, not a newly implemented input owner or a
 claim that the entire migration is finished. Ordinary desktop hot-connect and
 full instance/device recovery still require their own shared-owner decisions.
+
+## Final source review adaptation
+
+Cicero's final Astra Max review accepted the provenance, destruction result,
+renderer intent/latch and reuse boundaries, but found one concrete polling
+classification defect: a new fatal PollEvent error during explicit retry could
+inherit the previous EXITING/SESSION_LOST reason. The existing attach owner now
+starts polling with a fresh outcome and restores the previous reason only after
+a healthy poll, preserving it for ordinary qualification refusals. Added both
+historical-stop → explicit retry → runtime polling failure cases; they require
+full backend teardown and unavailable retry.
+
+The reviewer also distinguished a DestroySession instance-loss injection from
+its permitted registry results. That probe is replaced with permitted runtime
+failure after EXITING; actual instance-loss events still test escalation. Input
+helper/renderer spy limits remain accurately stated. The correction requires
+targeted regressions and a final Astra disposition before closing this slice.

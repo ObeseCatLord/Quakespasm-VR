@@ -1439,8 +1439,13 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 	   (density_image_flags && (!density_maps || !g.vulkanSwapchainImageFlagsSupported))) return 0;
 	// The runtime may have gone away while VR was disabled. Do not create a
 	// session until pending instance events have been processed.
+	// Polling failures describe this attempt, not the previous recoverable stop.
+	// Restore the old reason only after a healthy poll, for qualification refusals.
+	const vrxr_stop_reason_t previousStop=g.stopReason;
+	g.stopReason=VRXR_STOP_NONE;
 	poll_events();
 	if(g.terminal) { destroy_stopped_runtime(); return 0; }
+	g.stopReason=previousStop;
 	bool created=false;
 	for(size_t i=0;i<g.vk.queues.size();++i)
 		if(g.vk.queues[i].family==queue_family && queue_index<g.vk.queues[i].count && !g.vk.queues[i].flags) created=true;

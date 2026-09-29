@@ -110,9 +110,13 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 VR-001 now has a bounded `vr_enable 0|1` session toggle on a Vulkan device
 selected with `-openxr` at startup. It releases VR input and retires borrowed
 images at a frame boundary, then reuses the existing backend for a healthy
-reattachment. Desktop-to-XR hot-connect without the startup binding, terminal
-runtime-loss recovery and live headset verification are still open; see the
-[session-toggle boundary](migration-openxr-session-toggle.md).
+reattachment. Explicit re-enable after session-only loss or EXITING now
+requalifies the original system/API/GPU; failed session destruction abandons
+backend eligibility. The [recovery plan](openxr-session-recovery-2.0-plan.md)
+records passing bounded software checks and their dispatch/input/camera limits.
+Desktop-to-XR hot-connect without the startup binding and full instance/device
+recovery remain open; see the [session-toggle boundary](migration-openxr-session-toggle.md).
+Live headset testing remains user-deferred and outside the implementation goal.
 
 For VR-010, weapon-wheel hover, menu navigation, and weapon-contact pulses
 already route through the same `vr_haptic` gate before physical-hand mapping

@@ -200,12 +200,21 @@ int main() {
  queue_state(XR_SESSION_STATE_LOSS_PENDING);
  assert(VRXR_BeginFrame(&sample)==-1 && instance_destroys==1 && !VRXR_VulkanRetryAvailable());
  assert(VRXR_StopReason()==VRXR_STOP_SESSION_LOST);
- recovery_setup();destroy_session_result=XR_ERROR_INSTANCE_LOST;
+ recovery_setup();destroy_session_result=XR_ERROR_RUNTIME_FAILURE;
  queue_state(XR_SESSION_STATE_EXITING);
  assert(VRXR_BeginFrame(&sample)==-1 && instance_destroys==1 && !VRXR_VulkanRetryAvailable());
- assert(VRXR_StopReason()==VRXR_STOP_INSTANCE_LOST);
+ assert(VRXR_StopReason()==VRXR_STOP_EXITING);
  recovery_setup();destroy_session_result=XR_ERROR_RUNTIME_FAILURE;VRXR_DetachVulkan();
  assert(instance_destroys==1 && !VRXR_VulkanRetryAvailable() && VRXR_StopReason()==VRXR_STOP_FAILURE);
+
+ for(int which=0;which<2;++which) {
+  recovery_setup();queue_state(which ? XR_SESSION_STATE_LOSS_PENDING : XR_SESSION_STATE_EXITING);
+  assert(VRXR_BeginFrame(&sample)==-1 && VRXR_VulkanRetryAvailable());
+  poll_result=XR_ERROR_RUNTIME_FAILURE;
+  assert(!VRXR_AttachVulkan(3,0,0,2,recovery_retire,nullptr,0,0));
+  assert(instance_destroys==1 && !VRXR_VulkanRetryAvailable() && !g.instance);
+  assert(VRXR_StopReason()==VRXR_STOP_FAILURE);
+ }
 
  recovery_setup();queue_state(XR_SESSION_STATE_READY);frame_result=XR_SESSION_LOSS_PENDING;
  assert(VRXR_BeginFrame(&sample)==-1 && VRXR_StopReason()==VRXR_STOP_SESSION_LOST && VRXR_VulkanRetryAvailable());
