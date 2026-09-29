@@ -1,9 +1,12 @@
 # Brush vertex regeneration for device reconstruction
 
-Status: source implemented with final local Astra acceptance; full parent
-reconstruction and end-of-full-implementation qualification remain open.
-This is a prerequisite of [device reconstruction](openxr-device-reconstruction-2.0-plan.md),
-not a complete brush/lightmap/device recovery claim. Only2.0 production edits;
+Status: private vertex calculation/validation and reduced polygon retention
+remain in the native initial upload path. General live device reconstruction is
+deferred by the [focused scope disposition](openxr-device-reconstruction-2.0-plan.md#focused-astra-max-scope-disposition);
+the unused public eligibility wrapper was removed with final Astra source
+acceptance in the lightmap cleanup. The earlier plan below records the historical
+reconstruction design, not a current completion dependency. End-of-implementation
+Linux/ARM and desktop/stereo qualification remain. Only2.0 production edits;
 primary and runtime game assets remain read-only. No builds/tests until the full
 implementation is finished.
 

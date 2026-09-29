@@ -337,3 +337,13 @@ creation/adoption paths and the retained alias allocation/copy sites.
 This defers a speculative transaction, not OpenXR, multiview, culling, foveation,
 graphics effects, networking or other requested features. Actual primary toggles
 and named-target initialization remain end-of-implementation qualification.
+
+
+Scope cleanup source checkpoint: d369e80e removes unused alias replay and
+normal-load replay payload retention; de413d73 removes unused lightmap replay and
+restores native initial setup/CPU/GPU update paths. Local Astra Max accepted each
+bounded source diff without P1/P2 findings; main corrected two stale comments.
+Texture descriptor cleanup, heap CPU cleanup, native source checks and the
+reduced ordinary-polygon design remain useful and retained. No device transaction
+was added. Further general replacement/recovery implementation remains deferred;
+required graphics/runtime/features and final Linux/ARM qualification remain open.
