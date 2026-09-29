@@ -91,7 +91,29 @@ Copy the generic inherited v_axe2 calibration (-3.5,34,41.5,.33), retaining
 the existing QBJ3 exclusion. Schema/user calibration remains authoritative.
 Do not add folder-name admission or further mod-specific behavior.
 
-## End-of-goal acceptance
+## Architecture estimate reopened before server integration
+
+The worker handback adds 413/removes 55 server lines and copies a 280-line
+descriptor header. This exceeds the approximately 200-line integration
+estimate, so implementation expansion is paused for Main/Astra review.
+The separate Copper outcome transaction has already been deleted: Copper
+now branches inside the existing stock outcome, sweep, rearm and trace owner.
+The remaining cost is ABI pinning, callback storage/owner validation and the
+native helper's retry/return semantics. Review must determine which guards
+are necessary and remove redundant metadata or duplicated validation before
+acceptance. A generic input pulse remains the small adapter for unknown mods;
+it cannot reproduce inherited physical-contact targeting for these pinned
+programs.
+
+Open decisions: identify an owned helper call before rejecting mutable edict
+storage, so invalidation cannot escape to native ray acquisition; decide
+whether Copper's always-true contact flag or copied function-pin helper can
+be removed; verify shared cleanup and friendly-fire scope changes preserve
+stock/Alkaline outcomes. No new state machine, scheduler or protocol is
+authorized by this estimate change. Source acceptance remains separate from
+the deferred Linux/ARM end-of-goal qualification.
+
+## Deferred qualification
 
 Build Linux and Linux ARM after implementation. Reuse the inherited Copper
 fixture patterns at actual selected command/QC owners: each recorded program,
