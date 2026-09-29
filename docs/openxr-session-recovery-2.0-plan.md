@@ -1,6 +1,7 @@
 # OpenXR session recovery on the existing Vulkan binding
 
-Status: planned before production edits; local Astra disposition pending.
+Status: design accepted with adaptations before production edits; implementation
+and final local review pending.
 This advances VR-001/VR-002/XR-002 within the full migration. It does not remove
 ordinary desktop hot-connect or instance-loss recovery from the parent scope.
 Current scope exclusions and user-deferred live/device/platform/performance
@@ -67,7 +68,7 @@ must state their limits. The user performs live testing later.
    after normal retirement; preserve original stop reason. Escalation to
    instance loss/failure remains destructive. Positive SESSION_LOSS_PENDING
    from frame calls must retain its proper reason rather than become FAILURE.
-3. At explicit attachment after a retryable stop, poll pending instance events,
+3. At every new attachment, including healthy disable/re-enable, poll pending instance events,
    query the current HMD system, and require the same system, compatible API
    minimum and same runtime-selected physical device. Preserve original
    Vulkan creation/queue provenance. Reject a changed or unavailable system
@@ -102,3 +103,20 @@ branch2.0 only. Main owns production/doc/test integration. User's dirty
 `docs/migration-2.0.md` remains untouched. Linux SDL3 Make build and native Vulkan
 dispatch fixtures work. Luna coding route is unavailable; main handles this
 bounded implementation. Astra is review only. No installed assets are modified.
+
+## Astra design disposition (2026-09-29 UTC)
+
+Reviewer Cicero verified local execution as `gpt-6-astra`, effort `max`.
+Read-only source and official-rule verification completed before critique.
+
+| Finding | Disposition |
+| --- | --- |
+| A healthy detach can retain NONE while the hardware changes. | Adopt: qualify every new attachment, querying the runtime directly rather than the cached physical-device accessor. |
+| DestroySession errors are ignored, so successful retirement alone cannot justify retained recovery. | Adopt: return destruction success from the existing cleanup owner; any failed session destruction abandons backend setup. Preserve the most specific stop reason. |
+| EXITING must not automatically restart. | Adopt: preserve the renderer attempted latch; only a fresh explicit command schedules another attachment. |
+| Backend-only dispatch does not cover frontend intent/input/camera integration. | Adapt: extend production command/attach boundaries and existing input/camera checks. State each substituted owner and avoid claiming full GPU/HMD integration. Add healthy detach changes and release/end-frame positive loss. |
+| Full device reconstruction would duplicate adjacent healthy ownership. | Adopt: retain current owners; broader device/instance recovery remains parent scope. |
+
+The P1 design gaps are resolved by these changes to the plan. Actual device
+health, physical reconnect behavior and graphics completion remain live-test
+unknowns, which the user has deferred; software evidence must not imply them.
