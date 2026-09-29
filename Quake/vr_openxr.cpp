@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <vector>
 
 namespace {
@@ -95,6 +96,9 @@ struct Api {
 	PFN_xrCreateVulkanInstanceKHR CreateVulkanInstance;
 	PFN_xrGetVulkanGraphicsDevice2KHR VulkanGraphicsDevice;
 	PFN_xrCreateVulkanDeviceKHR CreateVulkanDevice;
+	PFN_xrGetVulkanInstanceExtensionsKHR VulkanInstanceExtensions;
+	PFN_xrGetVulkanDeviceExtensionsKHR VulkanDeviceExtensions;
+	PFN_xrGetVulkanGraphicsDeviceKHR VulkanGraphicsDeviceLegacy;
 	PFN_xrUpdateSwapchainFB UpdateSwapchain;
 	PFN_xrCreateFoveationProfileFB CreateFoveationProfile;
 	PFN_xrDestroyFoveationProfileFB DestroyFoveationProfile;
@@ -129,6 +133,126 @@ struct VisibilityMesh {
 	VisibilityMesh() : dirty(true) {}
 };
 struct VulkanQueue { uint32_t family, count; VkDeviceQueueCreateFlags flags; };
+/* Metadata only: the single renderer owns these handles and calls Forget when
+ * abandoning them. XR instance/session teardown must not erase this record. */
+struct VulkanCreation {
+	PFN_vkGetInstanceProcAddr getProc = 0;
+	VkInstance instance = VK_NULL_HANDLE;
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+	VkDevice device = VK_NULL_HANDLE;
+	uint32_t apiVersion = 0;
+	std::vector<std::string> instanceExtensions, deviceExtensions;
+	std::vector<VulkanQueue> queues;
+	bool densityMap = false, multiview = false;
+};
+static VulkanCreation g_creation;
+
+static void copy_extensions(uint32_t count, const char *const *names, std::vector<std::string> &out) {
+	for(uint32_t i=0;i<count;++i) out.push_back(names[i]);
+}
+static VulkanCreation instance_creation(const VkInstanceCreateInfo *info) {
+	VulkanCreation saved;
+	saved.apiVersion=info->pApplicationInfo && info->pApplicationInfo->apiVersion ? info->pApplicationInfo->apiVersion : VK_API_VERSION_1_0;
+	copy_extensions(info->enabledExtensionCount,info->ppEnabledExtensionNames,saved.instanceExtensions);
+	return saved;
+}
+static VulkanCreation device_creation(const VkDeviceCreateInfo *info) {
+	VulkanCreation saved;
+	copy_extensions(info->enabledExtensionCount,info->ppEnabledExtensionNames,saved.deviceExtensions);
+	for(uint32_t i=0;i<info->queueCreateInfoCount;++i) {
+		const VkDeviceQueueCreateInfo &queue=info->pQueueCreateInfos[i];
+		saved.queues.push_back({queue.queueFamilyIndex,queue.queueCount,queue.flags});
+	}
+	for(const VkBaseInStructure *next=reinterpret_cast<const VkBaseInStructure*>(info->pNext); next; next=next->pNext) {
+		if(next->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT)
+			saved.densityMap=reinterpret_cast<const VkPhysicalDeviceFragmentDensityMapFeaturesEXT*>(next)->fragmentDensityMap==VK_TRUE;
+		if(next->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES)
+			saved.multiview=reinterpret_cast<const VkPhysicalDeviceMultiviewFeatures*>(next)->multiview==VK_TRUE;
+		if(next->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES)
+			saved.multiview=reinterpret_cast<const VkPhysicalDeviceVulkan11Features*>(next)->multiview==VK_TRUE;
+	}
+	saved.densityMap=saved.densityMap && std::find(saved.deviceExtensions.begin(),saved.deviceExtensions.end(),VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME)!=saved.deviceExtensions.end();
+	return saved;
+}
+/* Creation is serialized by the renderer. This mutex protects capture callbacks
+ * when a runtime invokes them on another thread; never held across driver/XR
+ * calls. Keep all successful creates until the wrapper identifies its output. */
+static struct VulkanCapture {
+	std::mutex mutex;
+	PFN_vkGetInstanceProcAddr getProc = 0;
+	PFN_vkCreateInstance createInstance = 0;
+	PFN_vkCreateDevice createDevice = 0;
+	VkInstance instance = VK_NULL_HANDLE;
+	bool active = false;
+	std::vector<VulkanCreation> records;
+} g_capture;
+static VKAPI_ATTR VkResult VKAPI_CALL capture_instance(const VkInstanceCreateInfo *info, const VkAllocationCallbacks *allocator, VkInstance *out) {
+	VulkanCreation saved=instance_creation(info);
+	PFN_vkCreateInstance create;
+	{ std::lock_guard<std::mutex> lock(g_capture.mutex); create=g_capture.createInstance; }
+	VkResult result=create(info,allocator,out);
+	if(result==VK_SUCCESS && *out) {
+		saved.instance=*out;
+		PFN_vkGetInstanceProcAddr getProc;
+		{ std::lock_guard<std::mutex> lock(g_capture.mutex); getProc=g_capture.getProc; }
+		const auto createDevice=reinterpret_cast<PFN_vkCreateDevice>(getProc(*out,"vkCreateDevice"));
+		std::lock_guard<std::mutex> lock(g_capture.mutex);
+		if(g_capture.active) {
+			// Accommodate a runtime caching device creation before this wrapper
+			// returns. Other instances' lookups retain their real dispatch.
+			if(!g_capture.instance) { g_capture.instance=*out; g_capture.createDevice=createDevice; }
+			g_capture.records.push_back(std::move(saved));
+		}
+	}
+	return result;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL capture_device(VkPhysicalDevice physical, const VkDeviceCreateInfo *info, const VkAllocationCallbacks *allocator, VkDevice *out) {
+	VulkanCreation saved=device_creation(info);
+	PFN_vkCreateDevice create;
+	{ std::lock_guard<std::mutex> lock(g_capture.mutex); create=g_capture.createDevice; }
+	VkResult result=create(physical,info,allocator,out);
+	if(result==VK_SUCCESS && *out) {
+		saved.physicalDevice=physical; saved.device=*out;
+		std::lock_guard<std::mutex> lock(g_capture.mutex);
+		if(g_capture.active) g_capture.records.push_back(std::move(saved));
+	}
+	return result;
+}
+static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL capture_proc(VkInstance instance, const char *name) {
+	PFN_vkGetInstanceProcAddr getProc; bool active; VkInstance target;
+	{ std::lock_guard<std::mutex> lock(g_capture.mutex); getProc=g_capture.getProc; active=g_capture.active; target=g_capture.instance; }
+	PFN_vkVoidFunction real=getProc(instance,name);
+	if(active && real) {
+		if(!std::strcmp(name,"vkGetInstanceProcAddr")) return reinterpret_cast<PFN_vkVoidFunction>(capture_proc);
+		if(!instance && !std::strcmp(name,"vkCreateInstance")) {
+			return reinterpret_cast<PFN_vkVoidFunction>(capture_instance);
+		}
+		if(instance && instance==target && !std::strcmp(name,"vkCreateDevice")) {
+			return reinterpret_cast<PFN_vkVoidFunction>(capture_device);
+		}
+	}
+	return real;
+}
+static bool begin_capture(PFN_vkGetInstanceProcAddr getProc, VkInstance instance) {
+	const auto createInstance=reinterpret_cast<PFN_vkCreateInstance>(getProc(VK_NULL_HANDLE,"vkCreateInstance"));
+	const auto createDevice=instance ? reinterpret_cast<PFN_vkCreateDevice>(getProc(instance,"vkCreateDevice")) : nullptr;
+	if(!createInstance || (instance && !createDevice)) return false;
+	std::lock_guard<std::mutex> lock(g_capture.mutex);
+	g_capture.getProc=getProc;
+	g_capture.createInstance=createInstance; g_capture.createDevice=createDevice;
+	g_capture.instance=instance;
+	g_capture.records.clear(); g_capture.active=true;
+	return true;
+}
+static bool end_capture(VkInstance instance, VkDevice device, VulkanCreation &saved) {
+	std::lock_guard<std::mutex> lock(g_capture.mutex);
+	g_capture.active=false;
+	bool found=false;
+	for(const VulkanCreation &record:g_capture.records)
+		if((device && record.device==device) || (!device && instance && record.instance==instance)) { saved=record; found=true; break; }
+	g_capture.records.clear();
+	return found;
+}
 struct VulkanBinding {
 	PFN_vkGetInstanceProcAddr getProc;
 	VkInstance instance;
@@ -156,7 +280,7 @@ struct State {
 	LoaderHandle loader;
 	void (*log)(const char *);
 	Api xr;
-	bool useVulkan, localFloorSupported;
+	bool useVulkan, legacyVulkan, localFloorSupported;
 	VulkanBinding vk;
 	XrInstance instance;
 	XrSystemId system;
@@ -190,7 +314,7 @@ struct State {
 	bool gazeSupported, gazeEnabled, trackerEnabled, xdevSupported, frameSupported, maskSupported, referenceChanged, referencePending;
 	char runtime[XR_MAX_RUNTIME_NAME_SIZE];
 	char systemName[XR_MAX_SYSTEM_NAME_SIZE];
-	State() : loader(0), log(0), xr(), useVulkan(false), localFloorSupported(false), instance(XR_NULL_HANDLE), system(0), session(XR_NULL_HANDLE),
+	State() : loader(0), log(0), xr(), useVulkan(false), legacyVulkan(false), localFloorSupported(false), instance(XR_NULL_HANDLE), system(0), session(XR_NULL_HANDLE),
 		appSpace(XR_NULL_HANDLE), viewSpace(XR_NULL_HANDLE), handSpace(), gazeSpace(XR_NULL_HANDLE), actions(XR_NULL_HANDLE), gazeActions(XR_NULL_HANDLE), action(), gazeAction(XR_NULL_HANDLE), trackerAction(XR_NULL_HANDLE),
 		handPath(), chain(), trackers(), trackerSources(), trackerVersion(0), htcxSupported(false), trackersDirty(false), xdevList(XR_NULL_HANDLE), views(), frameState(),
 		sessionState(XR_SESSION_STATE_IDLE), appSpaceType(XR_REFERENCE_SPACE_TYPE_LOCAL), pendingReferenceType(XR_REFERENCE_SPACE_TYPE_LOCAL),
@@ -613,10 +737,17 @@ static bool load_instance_functions() {
 	LOAD(CreateAction,"xrCreateAction"); LOAD(SuggestBindings,"xrSuggestInteractionProfileBindings"); LOAD(AttachActionSets,"xrAttachSessionActionSets"); LOAD(CurrentProfile,"xrGetCurrentInteractionProfile");
 	LOAD(CreateActionSpace,"xrCreateActionSpace"); LOAD(SyncActions,"xrSyncActions"); LOAD(BooleanState,"xrGetActionStateBoolean"); LOAD(FloatState,"xrGetActionStateFloat"); LOAD(VectorState,"xrGetActionStateVector2f"); LOAD(PoseState,"xrGetActionStatePose"); LOAD(Haptic,"xrApplyHapticFeedback");
 	if(g.useVulkan) {
-		LOAD(VulkanRequirements,"xrGetVulkanGraphicsRequirements2KHR");
-		LOAD(CreateVulkanInstance,"xrCreateVulkanInstanceKHR");
-		LOAD(VulkanGraphicsDevice,"xrGetVulkanGraphicsDevice2KHR");
-		LOAD(CreateVulkanDevice,"xrCreateVulkanDeviceKHR");
+		if(g.legacyVulkan) {
+			LOAD(VulkanRequirements,"xrGetVulkanGraphicsRequirementsKHR");
+			LOAD(VulkanInstanceExtensions,"xrGetVulkanInstanceExtensionsKHR");
+			LOAD(VulkanDeviceExtensions,"xrGetVulkanDeviceExtensionsKHR");
+			LOAD(VulkanGraphicsDeviceLegacy,"xrGetVulkanGraphicsDeviceKHR");
+		} else {
+			LOAD(VulkanRequirements,"xrGetVulkanGraphicsRequirements2KHR");
+			LOAD(CreateVulkanInstance,"xrCreateVulkanInstanceKHR");
+			LOAD(VulkanGraphicsDevice,"xrGetVulkanGraphicsDevice2KHR");
+			LOAD(CreateVulkanDevice,"xrCreateVulkanDeviceKHR");
+		}
 		if(g.foveationSupported) {
 			bool available=true;
 			available=proc(g.instance,"xrUpdateSwapchainFB",&g.xr.UpdateSwapchain,false) && available;
@@ -1091,7 +1222,7 @@ static bool discover_runtime() {
 	if(!ok("xrEnumerateInstanceExtensionProperties",g.xr.EnumerateExtensions(0,0,&extensionCount,0))) return false;
 	std::vector<XrExtensionProperties> extensions(extensionCount); for(uint32_t i=0;i<extensionCount;++i) extensions[i].type=XR_TYPE_EXTENSION_PROPERTIES;
 	if(!ok("xrEnumerateInstanceExtensionProperties",g.xr.EnumerateExtensions(0,extensionCount,&extensionCount,extensions.data()))) return false;
-	const char *graphicsExtension=XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME;
+	const char *graphicsExtension=g.legacyVulkan ? XR_KHR_VULKAN_ENABLE_EXTENSION_NAME : XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME;
 	if(!extension(extensions,graphicsExtension)) { say("OpenXR: required graphics extension unavailable"); return false; }
 	g.gazeSupported=extension(extensions,XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
 	g.htcxSupported=extension(extensions,XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
@@ -1308,6 +1439,16 @@ static uint32_t vulkan_version(XrVersion version) {
 	return VK_MAKE_API_VERSION(0,XR_VERSION_MAJOR(version),XR_VERSION_MINOR(version),0);
 }
 }
+extern "C" void VRXR_ForgetVulkanCreation(void) { g_creation=VulkanCreation(); }
+extern "C" void VRXR_RecordVulkanInstance(PFN_vkGetInstanceProcAddr get_proc, const VkInstanceCreateInfo *info, VkInstance instance) {
+	g_creation=instance_creation(info); g_creation.getProc=get_proc; g_creation.instance=instance;
+}
+extern "C" void VRXR_RecordVulkanDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo *info, VkDevice device) {
+	VulkanCreation saved=device_creation(info);
+	g_creation.physicalDevice=physical; g_creation.device=device;
+	g_creation.deviceExtensions=std::move(saved.deviceExtensions); g_creation.queues=std::move(saved.queues);
+	g_creation.densityMap=saved.densityMap; g_creation.multiview=saved.multiview;
+}
 extern "C" int VRXR_PrepareVulkan(void (*log_message)(const char *),
                                   uint32_t *minimum_version, uint32_t *maximum_version) {
 	if(!minimum_version || !maximum_version) return 0;
@@ -1341,11 +1482,16 @@ extern "C" int VRXR_CreateVulkanInstance(PFN_vkGetInstanceProcAddr get_proc,
 	 * on compatible newer Vulkan versions (XR_KHR_vulkan_enable2). */
 	if(xrVersion>maximum) say("OpenXR: requested Vulkan API is newer than the runtime's tested version");
 	XrVulkanInstanceCreateInfoKHR create={XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR};
-	create.systemId=g.system; create.pfnGetInstanceProcAddr=get_proc; create.vulkanCreateInfo=info;
+	create.systemId=g.system; create.pfnGetInstanceProcAddr=capture_proc; create.vulkanCreateInfo=info;
 	VkResult result=VK_ERROR_INITIALIZATION_FAILED;
+	if(!begin_capture(get_proc,VK_NULL_HANDLE)) { say("OpenXR: Vulkan instance creation entry point unavailable"); return 0; }
 	XrResult xrResult=g.xr.CreateVulkanInstance(g.instance,&create,instance,&result);
+	VulkanCreation saved;
+	const bool captured=end_capture(*instance,VK_NULL_HANDLE,saved);
 	if(!vulkan_result("xrCreateVulkanInstanceKHR",xrResult,result) || !*instance) return 0;
-	g.vk.getProc=get_proc; g.vk.instance=*instance; g.vk.apiVersion=version; return 1;
+	if(!captured) { say("OpenXR: runtime did not forward Vulkan instance creation through the supplied callback"); return 0; }
+	saved.getProc=get_proc; g_creation=std::move(saved);
+	g.vk.getProc=get_proc; g.vk.instance=*instance; g.vk.apiVersion=g_creation.apiVersion; return 1;
 }
 extern "C" VkPhysicalDevice VRXR_VulkanPhysicalDevice(VkInstance instance) {
 	if(!g.useVulkan || !g.instance || g.terminal || !instance || instance!=g.vk.instance) return VK_NULL_HANDLE;
@@ -1362,26 +1508,22 @@ extern "C" int VRXR_CreateVulkanDevice(const VkDeviceCreateInfo *info, VkDevice 
 	if(!g.useVulkan || !g.instance || g.terminal || !g.vk.physicalDevice || g.vk.device || !info ||
 	   !info->queueCreateInfoCount || !info->pQueueCreateInfos) return 0;
 	XrVulkanDeviceCreateInfoKHR create={XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR};
-	create.systemId=g.system; create.pfnGetInstanceProcAddr=g.vk.getProc;
+	create.systemId=g.system; create.pfnGetInstanceProcAddr=capture_proc;
 	create.vulkanPhysicalDevice=g.vk.physicalDevice; create.vulkanCreateInfo=info;
 	VkResult result=VK_ERROR_INITIALIZATION_FAILED;
+	if(!begin_capture(g.vk.getProc,g.vk.instance)) { say("OpenXR: Vulkan device creation entry point unavailable"); return 0; }
 	XrResult xrResult=g.xr.CreateVulkanDevice(g.instance,&create,device,&result);
+	VulkanCreation saved;
+	const bool captured=end_capture(VK_NULL_HANDLE,*device,saved);
 	if(!vulkan_result("xrCreateVulkanDeviceKHR",xrResult,result) || !*device) return 0;
-	g.vk.device=*device;
-	bool densityExtensionEnabled=false, densityFeatureEnabled=false;
-	for(uint32_t i=0;i<info->enabledExtensionCount;++i)
-		if(info->ppEnabledExtensionNames && info->ppEnabledExtensionNames[i] &&
-		   !std::strcmp(info->ppEnabledExtensionNames[i],VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME))
-			densityExtensionEnabled=true;
-	for(const VkBaseInStructure *next=reinterpret_cast<const VkBaseInStructure*>(info->pNext); next;
-	    next=reinterpret_cast<const VkBaseInStructure*>(next->pNext))
-		if(next->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT)
-			densityFeatureEnabled=reinterpret_cast<const VkPhysicalDeviceFragmentDensityMapFeaturesEXT*>(next)->fragmentDensityMap==VK_TRUE;
-	g.vk.fragmentDensityMapEnabled=densityExtensionEnabled && densityFeatureEnabled;
-	for(uint32_t i=0;i<info->queueCreateInfoCount;++i) {
-		const VkDeviceQueueCreateInfo &queue=info->pQueueCreateInfos[i];
-		VulkanQueue saved={queue.queueFamilyIndex,queue.queueCount,queue.flags}; g.vk.queues.push_back(saved);
+	if(!captured || saved.physicalDevice!=g.vk.physicalDevice) {
+		say("OpenXR: runtime did not forward the selected Vulkan device creation through the supplied callback"); return 0;
 	}
+	g_creation.device=*device; g_creation.physicalDevice=saved.physicalDevice;
+	g_creation.deviceExtensions=std::move(saved.deviceExtensions); g_creation.queues=std::move(saved.queues);
+	g_creation.densityMap=saved.densityMap; g_creation.multiview=saved.multiview;
+	g.vk.device=*device;
+	g.vk.fragmentDensityMapEnabled=g_creation.densityMap; g.vk.queues=g_creation.queues;
 	return 1;
 }
 extern "C" int VRXR_SetVulkanQueueCallbacks(void (*lock)(void *), void (*unlock)(void *), void *owner) {
@@ -1403,6 +1545,38 @@ extern "C" int VRXR_VulkanRetryAvailable(void) {
 		(g.stopReason==VRXR_STOP_NONE || g.stopReason==VRXR_STOP_EXITING ||
 		 g.stopReason==VRXR_STOP_SESSION_LOST) ? 1 : 0;
 }
+/* Both extension query functions have the same signature. Exact enabled names
+ * matter; advertised support or a promoted core feature is not an enabled name.
+ * Bound a changing runtime's allocations/retries before creating any session. */
+static bool required_extensions(PFN_xrGetVulkanInstanceExtensionsKHR query, const std::vector<std::string> &enabled) {
+	uint32_t size=0;
+	if(!ok("OpenXR Vulkan required extensions",query(g.instance,g.system,0,&size,nullptr))) return false;
+	for(int attempt=0;attempt<4;++attempt) {
+		if(!size || size>1024*1024) { say("OpenXR: invalid Vulkan extension list size"); return false; }
+		std::vector<char> buffer(size); uint32_t count=0;
+		const XrResult result=query(g.instance,g.system,size,&count,buffer.data());
+		if(result==XR_ERROR_SIZE_INSUFFICIENT) { size=count; continue; }
+		if(!ok("OpenXR Vulkan required extensions",result)) return false;
+		if(!count || count>size || buffer[count-1] || std::memchr(buffer.data(),0,count-1)) {
+			say("OpenXR: malformed Vulkan extension list"); return false;
+		}
+		std::string names(buffer.data()); size_t start=0;
+		while(start<names.size()) {
+			if(names[start]==' ') { ++start; continue; }
+			size_t end=names.find(' ',start); if(end==std::string::npos) end=names.size();
+			const std::string name=names.substr(start,end-start);
+			if(name.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")!=std::string::npos) {
+				say("OpenXR: malformed Vulkan extension name"); return false;
+			}
+			if(std::find(enabled.begin(),enabled.end(),name)==enabled.end()) {
+				say(("OpenXR: current Vulkan binding did not enable "+name).c_str()); return false;
+			}
+			start=end;
+		}
+		return true;
+	}
+	say("OpenXR: Vulkan extension requirements kept changing"); return false;
+}
 static bool qualify_vulkan_binding() {
 	XrSystemGetInfo systemInfo={XR_TYPE_SYSTEM_GET_INFO};
 	systemInfo.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
@@ -1410,16 +1584,40 @@ static bool qualify_vulkan_binding() {
 	if(!ok("xrGetSystem on attachment",g.xr.GetSystem(g.instance,&systemInfo,&system))) return false;
 	if(system!=g.system) { say("OpenXR: system changed; restart to select a new Vulkan binding"); return false; }
 	XrGraphicsRequirementsVulkan2KHR requirements={XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN2_KHR};
-	if(!ok("xrGetVulkanGraphicsRequirements2KHR on attachment",g.xr.VulkanRequirements(g.instance,system,&requirements))) return false;
+	if(!ok("OpenXR Vulkan graphics requirements on attachment",g.xr.VulkanRequirements(g.instance,system,&requirements))) return false;
 	const XrVersion selected=XR_MAKE_VERSION(VK_API_VERSION_MAJOR(g.vk.apiVersion),VK_API_VERSION_MINOR(g.vk.apiVersion),0);
 	const XrVersion minimum=XR_MAKE_VERSION(XR_VERSION_MAJOR(requirements.minApiVersionSupported),XR_VERSION_MINOR(requirements.minApiVersionSupported),0);
 	if(!g.vk.apiVersion || selected<minimum) { say("OpenXR: Vulkan API requirements changed; restart to select a new binding"); return false; }
+	if(g.legacyVulkan) {
+		auto properties=reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(g.vk.getProc(g.vk.instance,"vkGetPhysicalDeviceProperties"));
+		if(!properties) return false;
+		VkPhysicalDeviceProperties actual={}; properties(g.vk.physicalDevice,&actual);
+		const XrVersion deviceVersion=XR_MAKE_VERSION(VK_API_VERSION_MAJOR(actual.apiVersion),VK_API_VERSION_MINOR(actual.apiVersion),0);
+		if(VK_API_VERSION_VARIANT(actual.apiVersion) || deviceVersion<minimum) { say("OpenXR: current GPU is below the Vulkan API minimum"); return false; }
+	}
+	if(g.legacyVulkan && (!required_extensions(g.xr.VulkanInstanceExtensions,g_creation.instanceExtensions) ||
+	   !required_extensions(g.xr.VulkanDeviceExtensions,g_creation.deviceExtensions))) return false;
 	XrVulkanGraphicsDeviceGetInfoKHR info={XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR};
 	info.systemId=system; info.vulkanInstance=g.vk.instance;
 	VkPhysicalDevice physical=VK_NULL_HANDLE;
-	if(!ok("xrGetVulkanGraphicsDevice2KHR on attachment",g.xr.VulkanGraphicsDevice(g.instance,&info,&physical))) return false;
+	const XrResult result=g.legacyVulkan ? g.xr.VulkanGraphicsDeviceLegacy(g.instance,system,g.vk.instance,&physical) :
+		g.xr.VulkanGraphicsDevice(g.instance,&info,&physical);
+	if(!ok("OpenXR Vulkan graphics device on attachment",result)) return false;
 	if(!physical || physical!=g.vk.physicalDevice) { say("OpenXR: selected GPU changed; restart to select a new Vulkan binding"); return false; }
 	return true;
+}
+extern "C" int VRXR_AdoptVulkan(void (*log_message)(const char *), VkInstance instance, VkPhysicalDevice physical, VkDevice device) {
+	if(g.session || g.initialized || !instance || !physical || !device ||
+	   instance!=g_creation.instance || physical!=g_creation.physicalDevice || device!=g_creation.device ||
+	   !g_creation.getProc || !g_creation.multiview || VK_API_VERSION_VARIANT(g_creation.apiVersion) ||
+	   g_creation.apiVersion<VK_API_VERSION_1_1) return 0;
+	destroy_resources(); g=State(); g.log=log_message; g.useVulkan=g.legacyVulkan=true;
+	if(!discover_runtime()) { destroy_resources(); return 0; }
+	g.vk.instance=instance; g.vk.physicalDevice=physical; g.vk.device=device;
+	g.vk.getProc=g_creation.getProc; g.vk.apiVersion=g_creation.apiVersion;
+	g.vk.queues=g_creation.queues; g.vk.fragmentDensityMapEnabled=g_creation.densityMap;
+	if(!qualify_vulkan_binding()) { destroy_resources(); return 0; }
+	return 1;
 }
 extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
                                  VkImageUsageFlags extra_image_usage, uint32_t array_layers,

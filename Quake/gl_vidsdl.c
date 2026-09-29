@@ -84,6 +84,20 @@ static int		nummodes;
 static qboolean vid_initialized = false;
 static qboolean has_focus = true;
 static uint32_t num_images_acquired = 0;
+/* Optional interop with core1.1 dependencies; no runtime/device selection here. */
+static const char *const openxr_instance_interop[] = {
+	VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+	VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME,
+	VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME
+};
+static const char *const openxr_device_interop[] = {
+	VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME, VK_KHR_EXTERNAL_FENCE_EXTENSION_NAME, VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+#ifdef _WIN32
+	"VK_KHR_external_memory_win32", "VK_KHR_external_fence_win32", "VK_KHR_external_semaphore_win32"
+#else
+	VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME, VK_KHR_EXTERNAL_FENCE_FD_EXTENSION_NAME, VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME
+#endif
+};
 static qboolean openxr_vulkan_binding = false;
 static uint32_t openxr_vulkan_api_version;
 static uint32_t openxr_vulkan_minimum_version;
@@ -1119,6 +1133,7 @@ static void GL_OpenXRCreationFailed (void)
 {
 	GL_ClearOpenXRFragmentShadingRate ();
 	VRXR_Shutdown ();
+	VRXR_ForgetVulkanCreation ();
 	if (vulkan_globals.device != VK_NULL_HANDLE)
 	{
 		vkDestroyDevice (vulkan_globals.device, NULL);
@@ -1179,6 +1194,7 @@ static void GL_InitInstance (void)
 	VkResult	 err;
 	uint32_t	 i;
 	unsigned int sdl_extension_count;
+	qboolean interop_supported[countof (openxr_instance_interop)] = {false};
 	vulkan_globals.debug_utils = false;
 
 #ifdef USE_SDL3
@@ -1186,14 +1202,14 @@ static void GL_InitInstance (void)
 	if (!sdl_extensions)
 		Sys_Error ("SDL_Vulkan_GetInstanceExtensions failed: %s", SDL_GetError ());
 
-	const char **const instance_extensions = Mem_Alloc (sizeof (const char *) * (sdl_extension_count + 4));
+	const char **const instance_extensions = Mem_Alloc (sizeof (const char *) * (sdl_extension_count + 8));
 	for (i = 0; i < sdl_extension_count; i++)
 		instance_extensions[i] = sdl_extensions[i];
 #else
 	if (!SDL_Vulkan_GetInstanceExtensions (draw_context, &sdl_extension_count, NULL))
 		Sys_Error ("SDL_Vulkan_GetInstanceExtensions failed: %s", SDL_GetError ());
 
-	const char **const instance_extensions = Mem_Alloc (sizeof (const char *) * (sdl_extension_count + 4));
+	const char **const instance_extensions = Mem_Alloc (sizeof (const char *) * (sdl_extension_count + 8));
 	if (!SDL_Vulkan_GetInstanceExtensions (draw_context, &sdl_extension_count, instance_extensions))
 		Sys_Error ("SDL_Vulkan_GetInstanceExtensions failed: %s", SDL_GetError ());
 #endif
@@ -1212,6 +1228,9 @@ static void GL_InitInstance (void)
 
 		for (i = 0; i < instance_extension_count; ++i)
 		{
+			for (uint32_t candidate = 0; candidate < countof (openxr_instance_interop); ++candidate)
+				if (!strcmp (openxr_instance_interop[candidate], extension_props[i].extensionName))
+					interop_supported[candidate] = true;
 			if (strcmp (VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME, extension_props[i].extensionName) == 0)
 				vulkan_globals.get_surface_capabilities_2 = true;
 			if (strcmp (VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, extension_props[i].extensionName) == 0)
@@ -1307,6 +1326,11 @@ static void GL_InitInstance (void)
 	}
 #endif
 
+	if (!COM_CheckParm ("-novr") && GL_CompareVulkanApiVersions (application_info.apiVersion, VK_API_VERSION_1_1) >= 0)
+		for (uint32_t candidate = 0; candidate < countof (openxr_instance_interop); ++candidate)
+			if (interop_supported[candidate])
+				instance_extensions[sdl_extension_count + additionalExtensionCount++] = openxr_instance_interop[candidate];
+
 	instance_create_info.enabledExtensionCount = sdl_extension_count + additionalExtensionCount;
 
 	if (openxr_vulkan_binding)
@@ -1322,6 +1346,7 @@ static void GL_InitInstance (void)
 		err = vkCreateInstance (&instance_create_info, NULL, &vulkan_instance);
 		if (err != VK_SUCCESS)
 			Sys_Error ("Couldn't create Vulkan instance with code %i", (int)err);
+		VRXR_RecordVulkanInstance (fpGetInstanceProcAddr, &instance_create_info, vulkan_instance);
 	}
 
 #ifdef _DEBUG
@@ -1348,7 +1373,7 @@ static void GL_InitInstance (void)
 	GET_INSTANCE_PROC_ADDR (GetPhysicalDeviceSurfacePresentModesKHR);
 	GET_INSTANCE_PROC_ADDR (GetSwapchainImagesKHR);
 
-	if (vulkan_globals.get_physical_device_properties_2 || (openxr_vulkan_binding && vulkan_globals.vulkan_1_1_available))
+	if (vulkan_globals.get_physical_device_properties_2 || vulkan_globals.vulkan_1_1_available)
 	{
 		if (openxr_vulkan_binding && !vulkan_globals.vulkan_1_1_available)
 		{
@@ -1621,10 +1646,12 @@ static void GL_InitDevice (void)
 			GL_OpenXRCreationFailed ();
 			Sys_Error ("OpenXR runtime-selected GPU does not meet its minimum Vulkan API version");
 		}
-		/* Instance version alone does not establish core device feature support. */
-		vulkan_globals.vulkan_1_1_available = vulkan_globals.vulkan_1_1_available &&
-			GL_CompareVulkanApiVersions (device_version, VK_API_VERSION_1_1) >= 0;
 	}
+	/* Instance version alone does not establish core device feature support. */
+	vulkan_globals.vulkan_1_1_available = vulkan_globals.vulkan_1_1_available &&
+		!VK_API_VERSION_VARIANT (vulkan_globals.device_properties.apiVersion) &&
+		GL_CompareVulkanApiVersions (vulkan_globals.device_properties.apiVersion, VK_API_VERSION_1_1) >= 0;
+	qboolean interop_supported[countof (openxr_device_interop)] = {false};
 
 	qboolean shader_float16_available = false;
 	qboolean driver_properties_available = false;
@@ -1669,6 +1696,9 @@ static void GL_InitDevice (void)
 
 		for (i = 0; i < device_extension_count; ++i)
 		{
+			for (uint32_t candidate = 0; candidate < countof (openxr_device_interop); ++candidate)
+				if (!strcmp (openxr_device_interop[candidate], device_extensions[i].extensionName))
+					interop_supported[candidate] = true;
 			if (strcmp (VK_KHR_SWAPCHAIN_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				found_swapchain_extension = true;
 			if (strcmp (VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
@@ -1857,7 +1887,7 @@ static void GL_InitDevice (void)
 			vulkan_globals.physical_device_acceleration_structure_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR;
 			CHAIN_PNEXT (device_properties_next, vulkan_globals.physical_device_acceleration_structure_properties);
 		}
-		if (openxr_vulkan_binding && GL_CompareVulkanApiVersions (openxr_vulkan_api_version, VK_API_VERSION_1_1) >= 0)
+		if (!COM_CheckParm ("-novr") && vulkan_globals.vulkan_1_1_available)
 		{
 			multiview_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES;
 			CHAIN_PNEXT (device_properties_next, multiview_properties);
@@ -1910,7 +1940,7 @@ static void GL_InitDevice (void)
 			ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
 			CHAIN_PNEXT (device_features_next, ray_query_features);
 		}
-		if (openxr_vulkan_binding && GL_CompareVulkanApiVersions (openxr_vulkan_api_version, VK_API_VERSION_1_1) >= 0)
+		if (!COM_CheckParm ("-novr") && vulkan_globals.vulkan_1_1_available)
 		{
 			multiview_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES;
 			CHAIN_PNEXT (device_features_next, multiview_features);
@@ -2086,8 +2116,12 @@ static void GL_InitDevice (void)
 		Con_Printf ("Using present wait\n");
 #endif
 
-	const char *device_extensions[32] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+	const char *device_extensions[48] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 	uint32_t	numEnabledExtensions = 1;
+	if (!COM_CheckParm ("-novr") && vulkan_globals.vulkan_1_1_available)
+		for (uint32_t candidate = 0; candidate < countof (openxr_device_interop); ++candidate)
+			if (interop_supported[candidate])
+				device_extensions[numEnabledExtensions++] = openxr_device_interop[candidate];
 	if (vulkan_globals.shader_float16)
 		device_extensions[numEnabledExtensions++] = VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME;
 	if (vulkan_globals.dedicated_allocation)
@@ -2258,6 +2292,7 @@ static void GL_InitDevice (void)
 		err = vkCreateDevice (vulkan_physical_device, &device_create_info, NULL, &vulkan_globals.device);
 		if (err != VK_SUCCESS)
 			Sys_Error ("Couldn't create Vulkan device with code %i", (int)err);
+		VRXR_RecordVulkanDevice (vulkan_physical_device, &device_create_info, vulkan_globals.device);
 	}
 
 	GET_DEVICE_PROC_ADDR (CreateSwapchainKHR);
@@ -4632,7 +4667,7 @@ static void GL_OpenXRRetireImages (void *unused)
 
 static void GL_OpenXRAttach (void)
 {
-	if (!openxr_vulkan_binding || !openxr_session_wanted || openxr_attach_attempted)
+	if (!openxr_session_wanted || openxr_attach_attempted)
 		return;
 	openxr_attach_attempted = true;
 	if (!vulkan_globals.openxr_multiview_available)
@@ -4641,6 +4676,23 @@ static void GL_OpenXRAttach (void)
 		return;
 	}
 	GL_SynchronizeEndRenderingTask ();
+	if (!VRXR_VulkanRetryAvailable ())
+	{
+		openxr_vulkan_binding = false;
+		vulkan_globals.openxr_vulkan_available = false;
+		if (!VRXR_AdoptVulkan (GL_OpenXRLog, vulkan_instance, vulkan_physical_device, vulkan_globals.device))
+		{
+			Con_Printf ("OpenXR cannot use the current Vulkan binding; keeping desktop output. Restart with -openxr if needed.\n");
+			return;
+		}
+		openxr_vulkan_binding = true;
+		vulkan_globals.openxr_vulkan_available = true;
+	}
+	if (!VRXR_SetVulkanQueueCallbacks (GL_OpenXRLockQueue, GL_OpenXRUnlockQueue, vulkan_globals.queue_mutex))
+	{
+		Con_Printf ("OpenXR queue synchronization registration failed; keeping desktop output.\n");
+		return;
+	}
 	GL_DestroyRenderResources ();
 	openxr_desktop_width = vid.width;
 	openxr_desktop_height = vid.height;
@@ -4670,8 +4722,8 @@ static void GL_OpenXRAttach (void)
 	Con_Printf ("OpenXR stereo session attached: %ux%u per eye.\n", width, height);
 }
 
-/* Toggle a session on the startup-selected binding. Explicit reattachment
- * validates the current system/API/GPU; instance loss needs a new binding. */
+/* Commands schedule intent; runtime adoption/attachment occurs after joining
+ * the renderer at the existing frame boundary. */
 static void GL_OpenXREnable_f (void)
 {
 	const char *value = Cmd_Argv (1);
@@ -4680,15 +4732,10 @@ static void GL_OpenXREnable_f (void)
 		Con_Printf ("vr_enable 0|1 (currently %d)\n", openxr_session_wanted ? 1 : 0);
 		return;
 	}
-	if (!openxr_vulkan_binding)
-	{
-		Con_Printf ("OpenXR needs a startup-selected Vulkan binding; restart with -openxr.\n");
-		return;
-	}
 	const qboolean enable = value[0] == '1';
-	if (enable && VRXR_StopReason () != VRXR_STOP_NONE && !VRXR_VulkanRetryAvailable ())
+	if (enable && COM_CheckParm ("-novr"))
 	{
-		Con_Printf ("OpenXR runtime stopped; restart with -openxr to select a fresh system/device.\n");
+		Con_Printf ("OpenXR disabled by -novr.\n");
 		return;
 	}
 	if (enable && vulkan_globals.stereo_active)
@@ -5889,6 +5936,7 @@ void VID_Shutdown (void)
 			vulkan_globals.openxr_multiview_available = false;
 			vulkan_globals.openxr_max_multiview_view_count = 0;
 		}
+		VRXR_ForgetVulkanCreation ();
 		GL_ClearOpenXRFragmentShadingRate ();
 		VID_DestroyCursors ();
 		SDL_DestroyWindow (draw_context);

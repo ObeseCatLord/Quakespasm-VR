@@ -20,6 +20,22 @@ int VRXR_CreateVulkanInstance(PFN_vkGetInstanceProcAddr get_proc,
                               const VkInstanceCreateInfo *info, VkInstance *instance);
 VkPhysicalDevice VRXR_VulkanPhysicalDevice(VkInstance instance);
 int VRXR_CreateVulkanDevice(const VkDeviceCreateInfo *info, VkDevice *device);
+/* The renderer's singleton creation record owns no GPU objects and survives
+ * XR shutdown. Direct desktop creation records actual parameters only after
+ * VK_SUCCESS. enable2 wrappers capture their runtime-merged parameters instead.
+ * All creation/record/forget calls belong to the serialized renderer lifecycle;
+ * runtime getProc/create callbacks may execute on another thread during a
+ * wrapper call. Forget after XR shutdown before abandoning Vulkan handles.
+ * Inputs must be valid create parameters and successful, non-null handles. */
+void VRXR_RecordVulkanInstance(PFN_vkGetInstanceProcAddr get_proc, const VkInstanceCreateInfo *info, VkInstance instance);
+void VRXR_RecordVulkanDevice(VkPhysicalDevice physical, const VkDeviceCreateInfo *info, VkDevice device);
+void VRXR_ForgetVulkanCreation(void);
+/* Explicit fresh discovery on already-created renderer handles. Uses original
+ * XR_KHR_vulkan_enable, not enable2 provenance. Requires matching retained
+ * metadata and genuinely enabled core multiview. No session may exist. Queries
+ * required enabled names/API/runtime GPU before accepting; failure destroys
+ * only XR discovery. Caller reinstalls queue callbacks before attachment. */
+int VRXR_AdoptVulkan(void (*log_message)(const char *), VkInstance instance, VkPhysicalDevice physical, VkDevice device);
 /* Register the renderer's existing external synchronization for the attached
  * Vulkan queue. Both callbacks are required together; both null clears the
  * registration. This may only be changed while no XR session exists. The

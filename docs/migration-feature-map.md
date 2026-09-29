@@ -418,3 +418,12 @@ options, and fixed mode is only selected explicitly.
 - [Original architecture comparison and preservation plan](vkquake-base-migration-plan.md), [current migration status](migration-2.0.md).
 
 The earlier [Astra senior review and disposition](migration-feature-map-review.md) corrected the early multiview gate and concrete donor asset/lighting differences. Its OpenVR qualification recommendation predates the user's later explicit OpenXR-and-desktop release targets; the runtime API requirement above follows those targets while retaining behavior parity checks.
+
+
+The [compatible-device late attachment checkpoint](openxr-late-binding-2.0-plan.md)
+now adds ordinary desktop explicit XR discovery and instance-loss rediscovery
+on retained Vulkan handles, with actual creation metadata and original-Vulkan
+qualification. This is bounded progress for VR-001/VR-002/XR-001/XR-002, not
+completion of these whole behaviors: incompatible-device reconstruction and
+late foveation readiness remain implementation scope, and current software
+checks do not prove loaded-scene or actual six-set GPU output.

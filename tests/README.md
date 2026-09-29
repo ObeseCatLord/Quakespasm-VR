@@ -3243,3 +3243,71 @@ inputs/clocks, sign-on and transport are prepared/captured. This is not a live
 multiplayer, authored initial spawn, all-mod, local/load or hardware result, nor
 a claim of arbitrary cooperative client prediction. Gorilla/instant stop are
 excluded from the goal and are not added by this adapter.
+
+## OpenXR actual Vulkan creation and late attachment
+
+`openxr_vulkan_creation_fixture.cpp` drives the production enable2 wrappers and
+getProc forwarding. It checks runtime-merged API/names/queues/features, threaded
+callbacks, cached creation dispatch and foreign-instance isolation, missing
+entry points, exact returned-handle selection, failure publication, direct
+renderer records and record lifetime across XR shutdown. Its `--real-vulkan`
+mode simulates XR wrapping genuine headless Vulkan instance/device creation with
+runtime-added supported extensions and actual core multiview. No HMD/frame/scene
+or renderer performance claim follows from this device-creation check.
+
+```sh
+c++ -std=c++14 -DUSE_SDL3 -Wall -Wextra -Werror \
+  -Wno-missing-field-initializers -pthread \
+  tests/openxr_vulkan_creation_fixture.cpp \
+  $(pkg-config --cflags --libs sdl3) -lvulkan \
+  -o /tmp/qsvr-openxr-vulkan-creation
+/tmp/qsvr-openxr-vulkan-creation
+VK_ICD_FILENAMES=/usr/lib/chromium/vk_swiftshader_icd.json \
+  /tmp/qsvr-openxr-vulkan-creation --real-vulkan
+```
+
+`openxr_late_binding_fixture.cpp` uses the production loader/discovery,
+original-Vulkan qualification, session/action/swapchain/frame/teardown owners.
+SDL loader, XR dispatch and Vulkan driver are simulated; handles are retained
+from successful spied creation rather than an invented enabled-feature flag.
+It covers no runtime at desktop setup, explicit discovery/attach/submitted
+stereo frame, instance-loss retirement, rediscovery/new frame and fresh sample,
+original-binding adoption of enable2-created handles, callback re-registration,
+missing/exact/prefix/malformed/growing extension queries, wrong GPU/API, absent
+legacy extension and handle mismatches. This does not run a loaded engine scene
+or real GPU commands on borrowed XR images.
+
+```sh
+c++ -std=c++14 -DUSE_SDL3 -Wall -Wextra -Werror \
+  -Wno-missing-field-initializers tests/openxr_late_binding_fixture.cpp \
+  $(pkg-config --cflags --libs sdl3) -o /tmp/qsvr-openxr-late-binding
+/tmp/qsvr-openxr-late-binding
+```
+
+The existing `openxr_enable_fixture.c` now also executes actual command/frame
+transition/attach/retirement after ordinary desktop/instance loss. Discovery and
+queue registration are spies; GPU resources are empty/prepared idle. It checks
+explicit failure/retry latching and `-novr`; it proves scheduling/ownership, not
+loaded-scene/asset continuity. The original session-recovery and Vulkan-boundary
+fixtures remain regressions for enable2 and retained-session retries.
+
+`openxr_layout_fixture.c` calls actual donor descriptor/pipeline-layout creation
+with desktop stereo output off and multiview readiness off/on, on a real Vulkan
+device with core1.1, enabled multiview, two views and at least six descriptor sets.
+It does not draw shaders/scenes. Exit77 is a capability/driver skip, not a pass.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+  tests/openxr_layout_fixture.c Quake/r_ssao.c -Wl,--gc-sections \
+  $(pkg-config --cflags --libs sdl3) -lvulkan -lm -o /tmp/qsvr-openxr-layout
+VK_ICD_FILENAMES=/usr/lib/chromium/vk_swiftshader_icd.json /tmp/qsvr-openxr-layout
+```
+
+2026-09-29 Linux checkpoint: SDL3 Make, creation/real headless creation, original
+Vulkan boundary, session recovery, late-binding and command-owner checks pass.
+The default hardware driver is inaccessible in the sandbox. SwiftShader supports
+core multiview and six views but reports only four descriptor sets, so the real
+layout-owner test **skips77**. Do not claim actual six-set layouts or loaded-scene
+continuity from these checks. Live/gaze/performance and Windows/ARM tests remain
+user-deferred; incompatible-device reconstruction and late foveation readiness
+remain implementation work.

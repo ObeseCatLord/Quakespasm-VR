@@ -184,3 +184,41 @@ successful handles. A failed wrapper must not publish adoption eligibility.
 
 Primary source for the capture correction:
 [enable2 Appendix Q1](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/khr/khr_vulkan_enable2.adoc).
+
+## Implementation checkpoint (Linux, 2026-09-29)
+
+- Real-create getProc capture copies actual runtime-merged names/API/queues and
+  density/multiview feature facts; matches the wrapper's returned handle and
+  publishes only after XR/Vulkan success. Creation record survives XR teardown
+  and is forgotten at renderer handle abandonment. Astra's implementation review
+  found mutable dispatch selection and missing-resolution hazards; forwarding is
+  now pinned to the wrapper's instance, validated before XR and accommodates a
+  device-create shim cached during instance creation. Foreign instance lookups
+  keep their genuine dispatch. Threaded/cached/multiple-create checks pass.
+- Fresh original-Vulkan discovery uses corresponding queries, exact enabled
+  names with bounded size/retry/parsing, both API and physical-device support,
+  and the runtime GPU. It shares session/frame/actions/images/retirement.
+- Desktop enables supported core1.1 multiview and advertised finite external
+  memory/fence/semaphore candidates with FD/Win32 names. Donor GPU selection,
+  startup enable2 foveation and all desktop effect settings remain at their
+  existing owners. Name arrays expand to accommodate these additions.
+- Explicit command schedules adoption at the joined frame boundary, restores
+  queue callbacks and retains the attempted latch. No automatic resurrection;
+  -novr remains authoritative. No late speculative foveation selection.
+
+| Check | Result and limits |
+| --- | --- |
+| Linux SDL3 Make | Pass. |
+| Actual creation forwarding fixture | Pass: merged facts, matching outputs, cached/foreign/threaded dispatch, missing entry points, wrapper failures and lifecycle. XR/driver spies. |
+| Actual headless Vulkan creation | Pass with SwiftShader: real instance/device/core multiview, runtime-added supported names via simulated XR wrappers. No session/HMD/draw. |
+| Original Vulkan boundary and retained-session recovery | Pass, actual backend owners with simulated runtime/driver. |
+| Fresh discovery/adoption/session/frame/loss/rediscovery | Pass, actual backend owners; SDL loader/XR/driver simulated. Retained created handle identities and fresh sample/submitted layer. No loaded assets/scene or real XR image work. |
+| Renderer command/frame transition/retirement | Pass, actual production owners; discovery/input/camera and empty prepared idle GPU resources are seams. Explicit failed/successful adoption and -novr included. |
+| Real donor descriptor/pipeline layout owners | Test implemented, skips77 on this host: accessible SwiftShader exposes only four sets, while donor world/MD5 needs five and stereo needs six. Do not bypass the capability gate or claim a pass. Default hardware Vulkan driver is inaccessible. |
+
+Remaining: final Astra source review disposition; actual six-set layouts and
+loaded-scene continuity proof on an accessible capable driver; broader migration
+closure; late foveation readiness; existing-owner live reconstruction for changed
+GPU/API/extensions and actual Vulkan device loss. Live headset/gaze/multiplayer/
+performance testing and Windows/ARM checks remain deferred per user scope.
+This checkpoint does not declare VR-001/VR-002 or the whole migration complete.

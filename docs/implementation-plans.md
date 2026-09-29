@@ -63,8 +63,12 @@ runtime-created Vulkan binding. Every new attachment requalifies system/API/GPU;
 failed session destruction and instance loss abandon backend eligibility. Linux
 build and bounded backend/renderer/camera/input-helper checks pass. Final Astra
 Max source review accepted the polling correction with no remaining blocker in
-this slice. Full instance/device recovery and ordinary desktop
-hot-connect remain parent scope, with live testing deferred to the user.
+this slice. The subsequent [late-binding plan](openxr-late-binding-2.0-plan.md)
+adds compatible-device desktop attachment and fresh instance recovery using
+actual creation metadata and original-Vulkan qualification. Its Linux component
+checks pass; real six-set layouts/loaded-scene proof is unavailable on the
+sandbox's four-set software device. Incompatible-device reconstruction and late
+foveation readiness remain parent implementation scope. Live tests stay deferred.
 
 These links do not certify that a feature is finished. Completed work predating
 this index retains its original design/review provenance; this document does

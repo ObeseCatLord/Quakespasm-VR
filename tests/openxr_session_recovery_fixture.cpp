@@ -108,16 +108,23 @@ static XrResult XRAPI_PTR recovery_end_frame(XrSession session, const XrFrameEnd
 static void VKAPI_PTR recovery_families(VkPhysicalDevice, uint32_t *count, VkQueueFamilyProperties *properties) {
  *count=4;if(properties) { std::memset(properties,0,4*sizeof(*properties));properties[3].queueFlags=VK_QUEUE_GRAPHICS_BIT;properties[3].queueCount=1; }
 }
+static void VKAPI_PTR recovery_properties(VkPhysicalDevice, VkPhysicalDeviceProperties *properties) {
+ *properties={};properties->apiVersion=VK_API_VERSION_1_1;
+}
 static PFN_vkVoidFunction VKAPI_PTR recovery_proc(VkInstance, const char *name) {
  if(!std::strcmp(name,"vkGetPhysicalDeviceQueueFamilyProperties")) return reinterpret_cast<PFN_vkVoidFunction>(recovery_families);
- return nullptr;
+ if(!std::strcmp(name,"vkGetPhysicalDeviceProperties")) return reinterpret_cast<PFN_vkVoidFunction>(recovery_properties);
+ return driver_proc(VK_NULL_HANDLE,name);
 }
-static void recovery_setup() {
+static void recovery_reset() {
  reset();resource_id=1000;offered_system=7;offered_physical=fake_physical;
  session_creates=session_destroys=instance_destroys=recovery_retirements=recovery_chain_destroys=system_queries=requirements_queries=0;
  system_result=requirements_result=poll_result=frame_result=XR_SUCCESS;
  destroy_session_result=release_session_result=end_session_frame_result=XR_SUCCESS;
  minimum_api=XR_MAKE_VERSION(1,0,0);instance_loss_event=event_pending=false;
+}
+static void recovery_setup() {
+ recovery_reset();
  VkApplicationInfo app={VK_STRUCTURE_TYPE_APPLICATION_INFO};app.apiVersion=VK_API_VERSION_1_1;
  VkInstanceCreateInfo info={VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};info.pApplicationInfo=&app;
  VkInstance instance;assert(VRXR_CreateVulkanInstance(recovery_proc,&info,&instance));
@@ -125,6 +132,8 @@ static void recovery_setup() {
  float priority=1;VkDeviceQueueCreateInfo queue={VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
  queue.queueFamilyIndex=3;queue.queueCount=1;queue.pQueuePriorities=&priority;
  VkDeviceCreateInfo device={VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};device.queueCreateInfoCount=1;device.pQueueCreateInfos=&queue;
+ VkPhysicalDeviceMultiviewFeatures multiview={VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES};
+ multiview.multiview=VK_TRUE;device.pNext=&multiview;
  VkDevice handle;assert(VRXR_CreateVulkanDevice(&device,&handle));
  assert(VRXR_SetVulkanQueueCallbacks(queue_lock,queue_unlock,&queue_lock_depth));
  g.xr.GetSystem=recovery_get_system;g.xr.VulkanRequirements=recovery_requirements;g.xr.VulkanGraphicsDevice=recovery_physical;
@@ -147,6 +156,7 @@ static void recovered_frame() {
 }
 }
 
+#ifndef VRXR_SESSION_RECOVERY_HELPERS_ONLY
 int main() {
  recovery_setup();recovered_frame();
  const XrSession old_session=g.session;
@@ -231,3 +241,4 @@ int main() {
  assert(VRXR_StopReason()==VRXR_STOP_INSTANCE_LOST);
  puts("OPENXR_SESSION_RECOVERY_PASSED actual backend creation/event/explicit retry/new frame; simulated runtime/Vulkan dispatch");
 }
+#endif

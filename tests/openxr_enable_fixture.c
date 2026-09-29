@@ -6,14 +6,25 @@ vulkanglobals_t vulkan_globals;
 static const char *enable_argument;
 static vrxr_stop_reason_t stop_reason;
 static int retry_available, retry_queries, messages;
+static int novr, adoptions, adoption_result = 1, registrations;
 static int attachments, input_releases, reference_invalidations, restored_views, joins;
 static void (*retire_callback)(void *);
 atomic_uint32_t num_vulkan_misc_allocations;
 int Cmd_Argc (void) { return 2; }
+int COM_CheckParm (const char *argument) { assert (!strcmp (argument, "-novr")); return novr; }
 const char *Cmd_Argv (int argument) { assert (argument == 1); return enable_argument; }
 void Con_Printf (const char *format, ...) { (void)format; ++messages; }
 vrxr_stop_reason_t VRXR_StopReason (void) { return stop_reason; }
 int VRXR_VulkanRetryAvailable (void) { ++retry_queries; return retry_available; }
+int VRXR_AdoptVulkan (void (*log)(const char *), VkInstance instance, VkPhysicalDevice physical, VkDevice device)
+{
+ (void)log; (void)instance; (void)physical; (void)device;
+ assert (joins && !vulkan_globals.stereo_active); ++adoptions;
+ if (adoption_result) retry_available = 1;
+ return adoption_result;
+}
+int VRXR_SetVulkanQueueCallbacks (void (*lock)(void *), void (*unlock)(void *), void *owner)
+{ assert (lock == GL_OpenXRLockQueue && unlock == GL_OpenXRUnlockQueue && owner == vulkan_globals.queue_mutex); ++registrations; return 1; }
 int VRXR_AttachVulkan (uint32_t family, uint32_t index, VkImageUsageFlags usage,
  uint32_t layers, void (*retire)(void *), void *owner, int density, VkImageCreateFlags flags)
 {
@@ -50,12 +61,14 @@ int main (void)
 {
  enable_argument = "1";
  openxr_vulkan_binding = false;
+ novr = 1;
  GL_OpenXREnable_f ();
  assert (!openxr_session_change_pending && !retry_queries && messages == 1);
+ novr = 0;
  openxr_vulkan_binding = true;
  stop_reason = VRXR_STOP_SESSION_LOST;
  GL_OpenXREnable_f ();
- assert (!openxr_session_change_pending && messages == 2);
+ assert (openxr_session_change_pending && !retry_queries);
  retry_available = 1;
  GL_OpenXREnable_f ();
  assert (openxr_session_wanted && openxr_session_change_pending);
@@ -68,7 +81,7 @@ int main (void)
  openxr_session_wanted = openxr_session_change_pending = false;
  stop_reason = VRXR_STOP_INSTANCE_LOST; retry_available = 0;
  GL_OpenXREnable_f ();
- assert (!openxr_session_change_pending);
+ assert (openxr_session_change_pending);
  stop_reason = VRXR_STOP_NONE;
  GL_OpenXREnable_f ();
  assert (openxr_session_wanted && openxr_session_change_pending);
@@ -104,6 +117,16 @@ int main (void)
  enable_argument = "0"; GL_OpenXREnable_f (); GL_OpenXRApplySessionChange (); GL_OpenXRAttach ();
  assert (input_releases == 1 && !vulkan_globals.stereo_active && attachments == 2);
  assert (reference_invalidations == 2 && vid.width == 640 && vid.height == 480);
+ // Ordinary desktop/instance loss uses fresh adoption only at the frame owner.
+ enable_argument = "1"; openxr_vulkan_binding = false; retry_available = 0;
+ stop_reason = VRXR_STOP_INSTANCE_LOST; adoption_result = 0;
+ GL_OpenXREnable_f (); assert (openxr_session_change_pending && !adoptions);
+ GL_OpenXRApplySessionChange (); GL_OpenXRAttach ();
+ assert (adoptions == 1 && attachments == 2 && !vulkan_globals.stereo_active);
+ for (int frame = 0; frame < 3; ++frame) GL_OpenXRAttach ();
+ assert (adoptions == 1);
+ adoption_result = 1; GL_OpenXREnable_f (); GL_OpenXRApplySessionChange (); GL_OpenXRAttach ();
+ assert (adoptions == 2 && attachments == 3 && registrations == 3 && vulkan_globals.stereo_active);
  puts ("OPENXR_ENABLE_PASSED actual command/transition/attach/retirement; simulated runtime, camera/input and empty GPU resources");
  return 0;
 }

@@ -10,18 +10,30 @@ static int queue_lock_depth, queue_locks, queue_unlocks, error_logs;
 static VkInstance fake_instance=(VkInstance)(uintptr_t)101;
 static VkPhysicalDevice fake_physical=(VkPhysicalDevice)(uintptr_t)102;
 static VkDevice fake_device=(VkDevice)(uintptr_t)103;
+static VKAPI_ATTR VkResult VKAPI_CALL driver_create_instance(const VkInstanceCreateInfo *,const VkAllocationCallbacks *allocator,VkInstance *out) {
+ assert(!allocator);*out=vk_result==VK_SUCCESS ? fake_instance : VK_NULL_HANDLE;return vk_result;
+}
+static VKAPI_ATTR VkResult VKAPI_CALL driver_create_device(VkPhysicalDevice physical,const VkDeviceCreateInfo *,const VkAllocationCallbacks *allocator,VkDevice *out) {
+ assert(physical==fake_physical && !allocator);*out=vk_result==VK_SUCCESS ? fake_device : VK_NULL_HANDLE;return vk_result;
+}
 static XrResult XRAPI_PTR create_instance(XrInstance,const XrVulkanInstanceCreateInfoKHR *info,VkInstance *out,VkResult *result) {
- assert(info->systemId==7 && !info->vulkanAllocator); ++instance_calls; *result=vk_result;
- *out=vk_result==VK_SUCCESS ? fake_instance : VK_NULL_HANDLE; return xr_result;
+ assert(info->systemId==7 && !info->vulkanAllocator); ++instance_calls;
+ auto create=reinterpret_cast<PFN_vkCreateInstance>(info->pfnGetInstanceProcAddr(VK_NULL_HANDLE,"vkCreateInstance"));
+ assert(create);*result=create(info->vulkanCreateInfo,info->vulkanAllocator,out);return xr_result;
 }
 static XrResult XRAPI_PTR get_physical(XrInstance,const XrVulkanGraphicsDeviceGetInfoKHR *info,VkPhysicalDevice *out) {
  assert(info->vulkanInstance==fake_instance); *out=fake_physical; return XR_SUCCESS;
 }
 static XrResult XRAPI_PTR create_device(XrInstance,const XrVulkanDeviceCreateInfoKHR *info,VkDevice *out,VkResult *result) {
- assert(info->vulkanPhysicalDevice==fake_physical && !info->vulkanAllocator); ++device_calls; *result=vk_result;
- *out=vk_result==VK_SUCCESS ? fake_device : VK_NULL_HANDLE; return xr_result;
+ assert(info->vulkanPhysicalDevice==fake_physical && !info->vulkanAllocator); ++device_calls;
+ auto create=reinterpret_cast<PFN_vkCreateDevice>(info->pfnGetInstanceProcAddr(fake_instance,"vkCreateDevice"));
+ assert(create);*result=create(info->vulkanPhysicalDevice,info->vulkanCreateInfo,info->vulkanAllocator,out);return xr_result;
 }
-static PFN_vkVoidFunction VKAPI_PTR unused_proc(VkInstance,const char *) { return 0; }
+static PFN_vkVoidFunction VKAPI_PTR driver_proc(VkInstance,const char *name) {
+ if(!std::strcmp(name,"vkCreateInstance")) return reinterpret_cast<PFN_vkVoidFunction>(driver_create_instance);
+ if(!std::strcmp(name,"vkCreateDevice")) return reinterpret_cast<PFN_vkVoidFunction>(driver_create_device);
+ return 0;
+}
 static int queue_proc_calls;
 static PFN_vkVoidFunction VKAPI_PTR counting_proc(VkInstance,const char *) { ++queue_proc_calls;return 0; }
 static XrResult XRAPI_PTR no_events(XrInstance,XrEventDataBuffer *) { return XR_EVENT_UNAVAILABLE; }
@@ -101,6 +113,7 @@ static XrResult XRAPI_PTR locate_views(XrSession,const XrViewLocateInfo *,XrView
  return XR_SUCCESS;
 }
 static void reset() {
+ VRXR_ForgetVulkanCreation();
  g=State();g.useVulkan=true;g.instance=(XrInstance)(uintptr_t)1;g.system=7;
  g.vk.requirements.minApiVersionSupported=XR_MAKE_VERSION(1,0,0);
  g.vk.requirements.maxApiVersionSupported=XR_MAKE_VERSION(1,3,0);
@@ -116,24 +129,26 @@ int main() {
  VkInstance instance;
  // Runtime requirements ignore patches; the maximum is advisory.
  reset(); application.apiVersion=VK_API_VERSION_1_3+1;
- assert(VRXR_CreateVulkanInstance(unused_proc,&instance_info,&instance));assert(instance_calls==1);
+ assert(VRXR_CreateVulkanInstance(driver_proc,&instance_info,&instance));assert(instance_calls==1);
+ assert(g.vk.apiVersion==application.apiVersion);
  reset(); application.apiVersion=VK_MAKE_API_VERSION(0,1,4,0);
- assert(VRXR_CreateVulkanInstance(unused_proc,&instance_info,&instance));assert(instance_calls==1);
+ assert(VRXR_CreateVulkanInstance(driver_proc,&instance_info,&instance));assert(instance_calls==1);
  reset(); g.vk.requirements.minApiVersionSupported=XR_MAKE_VERSION(1,1,99);
  application.apiVersion=VK_API_VERSION_1_1;
- assert(VRXR_CreateVulkanInstance(unused_proc,&instance_info,&instance));
+ assert(VRXR_CreateVulkanInstance(driver_proc,&instance_info,&instance));
  assert(vulkan_version(g.vk.requirements.minApiVersionSupported)==VK_API_VERSION_1_1);
  reset(); g.vk.requirements.minApiVersionSupported=XR_MAKE_VERSION(1,2,0);
- assert(!VRXR_CreateVulkanInstance(unused_proc,&instance_info,&instance));assert(!instance_calls);
+ assert(!VRXR_CreateVulkanInstance(driver_proc,&instance_info,&instance));assert(!instance_calls);
  reset(); application.apiVersion=VK_MAKE_API_VERSION(1,1,1,0);
- assert(!VRXR_CreateVulkanInstance(unused_proc,&instance_info,&instance));assert(!instance_calls);
+ assert(!VRXR_CreateVulkanInstance(driver_proc,&instance_info,&instance));assert(!instance_calls);
  reset(); application.apiVersion=VK_API_VERSION_1_1;
  xr_result=XR_ERROR_RUNTIME_FAILURE;
- assert(!VRXR_CreateVulkanInstance(unused_proc,&instance_info,&instance));assert(!g.vk.instance);
+ assert(!VRXR_CreateVulkanInstance(driver_proc,&instance_info,&instance));assert(!g.vk.instance);
+ assert(!g.vk.apiVersion);
  assert(instance==fake_instance); // caller can clean a created handle even on XR failure
  xr_result=XR_SUCCESS;vk_result=VK_ERROR_OUT_OF_DEVICE_MEMORY;
- assert(!VRXR_CreateVulkanInstance(unused_proc,&instance_info,&instance));assert(!instance);
- vk_result=VK_SUCCESS;assert(VRXR_CreateVulkanInstance(unused_proc,&instance_info,&instance));
+ assert(!VRXR_CreateVulkanInstance(driver_proc,&instance_info,&instance));assert(!instance);
+ vk_result=VK_SUCCESS;assert(VRXR_CreateVulkanInstance(driver_proc,&instance_info,&instance));
  assert(instance==fake_instance);assert(!VRXR_VulkanPhysicalDevice((VkInstance)(uintptr_t)999));
  assert(VRXR_VulkanPhysicalDevice(instance)==fake_physical);
  float priority=1;VkDeviceQueueCreateInfo queue={VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};

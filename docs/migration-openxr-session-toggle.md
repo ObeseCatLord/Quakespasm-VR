@@ -1,29 +1,41 @@
-# OpenXR session toggle on the startup Vulkan binding
+# OpenXR selection, late attachment and session recovery
 
-The `vr_enable 0|1` console command queues a transition at the next renderer
-frame boundary. `0` releases VR-owned input, retires renderer references to
-borrowed swapchain images through the existing OpenXR callback, and destroys
-the OpenXR session. Desktop rendering then uses vkQuake's existing Vulkan
-device and window. `1` creates a new session using that same Vulkan binding.
-Two commands in one command batch resolve to the last requested state.
+The `vr_enable 0|1` command queues a transition at the next renderer frame
+boundary. `0` releases VR input, retires borrowed images through the existing
+renderer callback and destroys the session. Desktop keeps the existing Vulkan
+device/window. `1` attaches explicitly; two commands in one batch resolve to
+the last requested state. `-novr` disables selection. EXITING and failed attempts
+never retry automatically.
 
-The command requires `-openxr` at startup, because the runtime chooses the
-Vulkan physical device during bootstrap. It cannot turn an ordinary desktop
-Vulkan device into an XR-compatible binding, nor recover a lost OpenXR instance
-or device. After session-only loss or EXITING, the game returns to desktop and
-an explicit `vr_enable 1` can retry the retained binding. Every new attachment
-checks the current headset system, runtime API minimum and selected GPU. Changed
-hardware, instance loss or failed session destruction requires a restart to
-rediscover the binding. EXITING never starts an automatic retry. See the
-[session recovery plan and checks](openxr-session-recovery-2.0-plan.md).
+`-openxr` startup retains the enable2 path, including runtime GPU selection and
+real runtime-wrapped Vulkan creation. Ordinary desktop startup retains donor GPU
+selection and does not require an XR runtime. On supported core1.1 devices,
+multiview and a finite platform interop extension set are enabled before device
+creation so an explicit later selection can qualify that existing device.
+Foveation optimization is not enabled by this readiness policy.
 
-The renderer still owns resource creation and retirement; the OpenXR backend
-still owns session state. No parallel render or session state machine was added.
-The screen path recalculates the view after `GL_BeginRendering`, so a successful
-switch uses the new dimensions in its first rendered frame.
+After desktop startup or instance loss, `vr_enable 1` can discover a fresh XR
+instance using original `XR_KHR_vulkan_enable`. It compares actual creation
+metadata, API minimum, required enabled extension names and runtime-selected GPU
+before session creation. enable2 runtime-added parameters are captured through
+real Vulkan creation dispatch; the renderer keeps this metadata across XR
+teardown. Each attachment requalifies, and fresh adoption reinstalls the current
+queue mutex callbacks. Failed qualification leaves desktop usable and another
+attempt requires an explicit command. A runtime exposing only enable2, a
+changed/incompatible GPU/requirements or real device loss still needs startup
+selection or a future live reconstruction implementation.
 
-Linux SDL3 build and bounded backend, renderer command/retirement, camera and
-input-helper checks pass. These use simulated runtime or prepared boundaries;
-they do not prove GPU completion or complete renderer/input/runtime integration.
-Live headset, Windows and ARM results are not claimed. The user performs live
-testing later, outside the current implementation goal.
+One renderer/device/asset owner and one XR session/frame/input owner remain.
+The renderer joins and retires work at the existing boundary; no parallel
+render/session state machine was introduced. View dimensions are recalculated
+after `GL_BeginRendering` for a successful switch.
+
+See the [late attachment plan and Astra disposition](openxr-late-binding-2.0-plan.md)
+and earlier [session recovery checks](openxr-session-recovery-2.0-plan.md).
+Linux Make and bounded backend/command/creation checks pass. Real headless
+Vulkan creation/capture passes on SwiftShader; the real donor-layout test skips
+because that driver has four descriptor sets and stereo needs six. XR/driver
+spies and empty render resources do not prove loaded-scene/asset continuity or
+real borrowed-image GPU completion. Live headset/gaze/performance and Windows/
+ARM verification remain deferred. Full incompatible-device recovery and late
+foveation readiness remain implementation scope.
