@@ -101,9 +101,12 @@ so runtime filter changes and the unsupported-feature path are unqualified.
 
 The read-only product checkout now points to primary branch `master` at
 `51b452c018273647dcf94f4628a370267ff8fa91`; no local `main` ref exists.
-The earlier preservation ledger and feature-map source pins remain historical
-evidence. A direct current-primary comparison is not a claim that the whole
-ledger has been regenerated or that every later behavior has been migrated.
+The feature-map anchors and inherited/donor/WIP ledger columns remain historical
+evidence. The ledger's current-primary blobs now advance only the two changed
+existing paths, `Quake/vr.c` and `Quake/vr_weapon_catalog.h`; the new
+`docs/vr-weapon-wheel.md` adds one row (905 to906) with the existing CSV schema.
+The history index records this exact commit. This scoped update does not claim
+that every later behavior has been migrated or qualified.
 
 The latest commit, **Fix weapon wheel identity and native mod rosters**, changes
 `Quake/vr.c`, `Quake/vr_weapon_catalog.h` and `docs/vr-weapon-wheel.md`.
