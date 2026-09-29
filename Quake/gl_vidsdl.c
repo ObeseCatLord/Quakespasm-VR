@@ -1651,6 +1651,10 @@ static void GL_InitDevice (void)
 	vulkan_globals.vulkan_1_1_available = vulkan_globals.vulkan_1_1_available &&
 		!VK_API_VERSION_VARIANT (vulkan_globals.device_properties.apiVersion) &&
 		GL_CompareVulkanApiVersions (vulkan_globals.device_properties.apiVersion, VK_API_VERSION_1_1) >= 0;
+	const qboolean prepare_foveation = !COM_CheckParm ("-novr") && vulkan_globals.vulkan_1_1_available;
+	/* A VkDevice can enable only one foveation feature family. Keep KHR ready
+	 * when FB/META cannot be selected for this runtime and render setting. */
+	const qboolean prepare_khr_shading_rate = prepare_foveation;
 	qboolean interop_supported[countof (openxr_device_interop)] = {false};
 
 	qboolean shader_float16_available = false;
@@ -1718,15 +1722,15 @@ static void GL_InitDevice (void)
 			if (strcmp (VK_KHR_RAY_QUERY_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				vulkan_globals.ray_query = true;
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
-			if (openxr_vulkan_binding && strcmp (VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+			if (prepare_khr_shading_rate && strcmp (VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				fragment_shading_rate_extension = true;
 #endif
 #if defined(VK_KHR_create_renderpass2)
-			if (openxr_vulkan_binding && strcmp (VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+			if (prepare_foveation && strcmp (VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				create_renderpass2_extension = true;
 #endif
 #if defined(VK_EXT_fragment_density_map)
-			if (openxr_vulkan_binding && strcmp (VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
+			if (prepare_foveation && strcmp (VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
 				fragment_density_map_extension = true;
 #if defined(VK_QCOM_fragment_density_map_offset)
 			if (openxr_vulkan_binding && strcmp (VK_QCOM_FRAGMENT_DENSITY_MAP_OFFSET_EXTENSION_NAME, device_extensions[i].extensionName) == 0)
@@ -1756,11 +1760,11 @@ static void GL_InitDevice (void)
 		Mem_Free (device_extensions);
 	}
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
-	if (openxr_vulkan_binding && fragment_shading_rate_extension)
+	if (prepare_khr_shading_rate && fragment_shading_rate_extension)
 		fpGetPhysicalDeviceFragmentShadingRatesKHR =
 			(PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR)fpGetInstanceProcAddr (vulkan_instance, "vkGetPhysicalDeviceFragmentShadingRatesKHR");
 #endif
-	fragment_shading_rate_usable = openxr_vulkan_binding && fragment_shading_rate_extension &&
+	fragment_shading_rate_usable = prepare_khr_shading_rate && fragment_shading_rate_extension &&
 		(create_renderpass2_core || create_renderpass2_extension)
 #if defined(VK_KHR_fragment_shading_rate) && defined(VK_KHR_create_renderpass2)
 		&& fpGetPhysicalDeviceFragmentShadingRatesKHR != NULL
@@ -1893,7 +1897,7 @@ static void GL_InitDevice (void)
 			CHAIN_PNEXT (device_properties_next, multiview_properties);
 		}
 #if defined(VK_EXT_fragment_density_map)
-		if (fragment_density_map_extension && VRXR_VulkanFoveationSupported ())
+		if (fragment_density_map_extension && prepare_foveation)
 		{
 			fragment_density_map_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_PROPERTIES_EXT;
 			CHAIN_PNEXT (device_properties_next, fragment_density_map_properties);
@@ -1946,7 +1950,7 @@ static void GL_InitDevice (void)
 			CHAIN_PNEXT (device_features_next, multiview_features);
 		}
 #if defined(VK_EXT_fragment_density_map)
-		if (fragment_density_map_extension && VRXR_VulkanFoveationSupported ())
+		if (fragment_density_map_extension && prepare_foveation)
 		{
 			fragment_density_map_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_DENSITY_MAP_FEATURES_EXT;
 			CHAIN_PNEXT (device_features_next, fragment_density_map_features);
@@ -1994,7 +1998,7 @@ static void GL_InitDevice (void)
 	qboolean fragment_density_offset_candidate = false;
 #endif
 	if (fragment_density_map_extension && (create_renderpass2_core || create_renderpass2_extension) &&
-		vulkan_globals.openxr_multiview_available && VRXR_VulkanFoveationSupported () &&
+		vulkan_globals.openxr_multiview_available &&
 		fragment_density_map_features.fragmentDensityMap &&
 		fragment_density_map_properties.maxFragmentDensityTexelSize.width &&
 		fragment_density_map_properties.maxFragmentDensityTexelSize.height)
@@ -2011,8 +2015,8 @@ static void GL_InitDevice (void)
 			{
 				fragment_density_map_candidate = true;
 				vulkan_globals.openxr_fragment_density_map_max_texel_size = fragment_density_map_properties.maxFragmentDensityTexelSize;
-				Con_Printf ("OpenXR runtime FDM candidate: Vulkan feature, RG8 array format and non-subsampled scene images available; eye profile %s. Borrowed-map contract still unverified.\n",
-					VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable");
+				Con_Printf ("Vulkan FDM candidate: feature, RG8 array format and non-subsampled scene images available; XR eye profile %s. Borrowed-map contract still unverified.\n",
+					!openxr_vulkan_binding ? "not discovered" : (VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable"));
 #if defined(VK_QCOM_fragment_density_map_offset)
 				fragment_density_offset_candidate = fragment_density_offset_extension && VRXR_VulkanFoveationEyeSupported () &&
 					fragment_density_offset_features.fragmentDensityMapOffset &&
@@ -2028,7 +2032,7 @@ static void GL_InitDevice (void)
 #endif
 			}
 			else
-				Con_Printf ("OpenXR runtime FDM requires subsampled scene images; this renderer currently keeps KHR shading rate or full-rate rendering.\n");
+				Con_Printf ("OpenXR FDM requires unsupported subsampled scene images; keeping KHR shading rate or full-rate rendering.\n");
 		}
 	}
 #endif
@@ -2057,10 +2061,14 @@ static void GL_InitDevice (void)
 
 #if defined(VK_EXT_fragment_density_map)
 	const qboolean khr_shading_rate_candidate = fragment_shading_rate_feature_enabled;
-	// VID initializes before saved configs execute, so the current mode cvar
-	// cannot safely select a fixed-only FB device. Keep the KHR eye path when
-	// META eye capability is absent; the runtime route is still development-only.
-	if (COM_CheckParm ("-vk-runtime-foveation") && fragment_density_map_candidate && VRXR_VulkanFoveationEyeSupported ())
+	/* Prefer runtime-owned eye foveation only when this Vulkan device and the
+	 * startup runtime qualify and the current scene can use the density pass.
+	 * Desktop-first startup keeps the KHR eye path if available. If KHR is
+	 * unavailable, retain FDM readiness for an explicit later XR attachment. */
+	const qboolean density_settings_ready = !(vid_fsaa.value >= 2 && vid_fsaamode.value >= 1) &&
+		!(r_width.value > 0 && r_height.value > 0);
+	const qboolean prefer_fb_eye = openxr_vulkan_binding && VRXR_VulkanFoveationEyeSupported () && density_settings_ready;
+	if (fragment_density_map_candidate && (prefer_fb_eye || !khr_shading_rate_candidate))
 	{
 #if defined(VK_QCOM_fragment_density_map_offset)
 		// XR_META_foveation_eye_tracked makes the runtime apply the gaze pattern
@@ -2073,15 +2081,13 @@ static void GL_InitDevice (void)
 #endif
 		fragment_density_map_feature_enabled = true;
 		fragment_shading_rate_feature_enabled = false;
-		Con_Printf ("OpenXR development density-map device selected; runtime image contract still requires validation.\n");
+		Con_Printf ("OpenXR FB/META density-map device prepared; runtime image contract still requires validation.\n");
 	}
-	else if (COM_CheckParm ("-vk-runtime-foveation") && fragment_density_map_candidate)
-		Con_Printf ("OpenXR runtime has no META eye-foveation capability; keeping KHR shading rate when available.\n");
-	if (openxr_vulkan_binding)
-		Con_Printf ("OpenXR foveation device: KHR attachment %s, FB density map %s, selected %s.\n",
+	if (prepare_foveation)
+		Con_Printf ("Vulkan VR foveation device: KHR attachment %s, FB density map %s, selected %s.\n",
 			khr_shading_rate_candidate ? "capable" : "unavailable",
-			fragment_density_map_candidate ? "candidate" : "unavailable",
-			fragment_density_map_feature_enabled ? "FB development path" :
+			fragment_density_map_candidate ? "capable" : "unavailable",
+			fragment_density_map_feature_enabled ? "FB/META if runtime supports it" :
 			(fragment_shading_rate_feature_enabled ? "KHR" : "full rate"));
 #endif
 
@@ -2271,6 +2277,9 @@ static void GL_InitDevice (void)
 		CHAIN_PNEXT (device_create_info_next, present_wait_features);
 	}
 #endif
+	/* Query structures are reused above. An unselected feature chained during
+	 * vkGetPhysicalDeviceFeatures2 must not leak into VkDevice creation. */
+	*device_create_info_next = NULL;
 	device_create_info.queueCreateInfoCount = 1;
 	device_create_info.pQueueCreateInfos = &queue_create_info;
 	device_create_info.enabledExtensionCount = numEnabledExtensions;
@@ -4178,7 +4187,10 @@ static qboolean GL_DensityFoveationRequestedActive (int render_width, int render
 {
 	if (!vulkan_globals.stereo_active || !vulkan_globals.openxr_fragment_density_map_enabled ||
 		openxr_density_backend_failed || !openxr_density_image_views ||
-		render_width != vid.width || render_height != vid.height || vid_fsaa.value >= 2)
+		render_width != vid.width || render_height != vid.height ||
+		// This runs before GL_CreateColorBuffer updates supersampling on restart.
+		// Use the requested mode to conservatively preserve sample shading.
+		(vid_fsaa.value >= 2 && vid_fsaamode.value >= 1 && vulkan_globals.device_features.sampleRateShading))
 		return false;
 
 	const int mode = VRF_RequestedMode (vr_foveation.value);
@@ -4696,15 +4708,18 @@ static void GL_OpenXRAttach (void)
 	GL_DestroyRenderResources ();
 	openxr_desktop_width = vid.width;
 	openxr_desktop_height = vid.height;
+	/* Device-time FDM readiness survives rediscovery; only request borrowed
+	 * maps from a runtime that actually supports the FB extension family. */
+	const qboolean runtime_density_maps = vulkan_globals.openxr_fragment_density_map_enabled && VRXR_VulkanFoveationSupported ();
 	if (!VRXR_AttachVulkan (vulkan_globals.gfx_queue_family_index, 0,
 		VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 2, GL_OpenXRRetireImages, NULL,
-		vulkan_globals.openxr_fragment_density_map_enabled, 0))
+		runtime_density_maps, 0))
 	{
 		Con_Printf ("OpenXR session attachment failed; keeping desktop output.\n");
 		return;
 	}
-	if (vulkan_globals.openxr_fragment_density_map_enabled && !VRXR_VulkanFoveationEyeAvailable ())
-		Con_Printf ("OpenXR META eye profile unavailable after attachment; eye mode will render full rate. Restart without -vk-runtime-foveation for the KHR path.\n");
+	if (runtime_density_maps && !VRXR_VulkanFoveationEyeAvailable ())
+		Con_Printf ("OpenXR META eye profile unavailable after attachment; eye mode will render full rate.\n");
 	unsigned width, height;
 	if (!VRXR_GetViewSize (0, &width, &height) || !width || !height ||
 		width > vulkan_globals.device_properties.limits.maxFramebufferWidth ||

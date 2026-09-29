@@ -1,9 +1,10 @@
 # OpenXR foveation after ordinary desktop Vulkan startup
 
-**Backend selection superseded on 2026-09-29:** the user directed that KHR
-shading rate be mothballed. The [FB/META sole-route plan](openxr-fb-meta-foveation-2.0-plan.md)
-governs the next implementation. This document retains the Astra device-time
-readiness and non-FB attachment findings, not its former KHR priority.
+**Backend priority updated on 2026-09-29:** prefer FB/META when the runtime,
+device and render settings allow it, retaining KHR where FB/META cannot work.
+The [selection plan](openxr-foveation-selection-2.0-plan.md) governs the next
+implementation. This document retains the Astra device-time readiness and
+non-FB attachment findings, not its former KHR-first priority.
 
 Status: Astra Max design accepted; device-readiness adapter and non-FB
 attachment correction implemented on `2.0`. Final source review is pending.

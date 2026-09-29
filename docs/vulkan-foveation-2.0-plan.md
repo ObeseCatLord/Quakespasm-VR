@@ -1,9 +1,9 @@
 # Vulkan/OpenXR foveation on the 2.0 branch
 
-**Superseded for backend selection on 2026-09-29:** the user directed that
-KHR attachment shading rate be mothballed and FB/META be the sole foveation
-route. See [the current FB/META implementation plan](openxr-fb-meta-foveation-2.0-plan.md).
-The KHR sections below record earlier design and checks, not current policy.
+**Updated backend priority on 2026-09-29:** the user wants Valve's FB/META
+route where it can work, with KHR shading rate retained when it cannot. See
+[the current selection plan](openxr-foveation-selection-2.0-plan.md). The
+KHR-first sections below record earlier design and checks, not current priority.
 
 The vkQuake renderer remains the graphics owner. Its existing multiview scene,
 compiled pass order, secondary command buffers, and internal color/depth targets
@@ -134,10 +134,9 @@ foveation, not quad views, and the published [runtime extension
 inventory](https://github.khronos.org/OpenXR-Inventory/runtime_extension_support.html)
 lists `XR_VARJO_quad_views` only for Android XR and Varjo submissions, not
 SteamVR or desktop Monado. Core 1.1 support must be checked by enumerating
-view configurations on the actual runtime. Do not replace the two-view path
-until an intended runtime advertises the four-view configuration and a
-representative `mj4m1` route demonstrates better total GPU frame time and
-both-eye image quality at the same central angular resolution.
+view configurations on the actual runtime. The user has since excluded quad
+views from 2.0 after the [Frame/large-map assessment](openxr-quad-views-2.0-assessment.md);
+do not replace the two-view path in this migration.
 
 The latest Astra senior review retains KHR as the production baseline because
 the FB path currently adds a coarse-color pass and full-rate depth replay, and
@@ -145,7 +144,7 @@ the default MSAA setting disables its density-map pass after device selection.
 FB/META may still win on Frame through runtime-controlled gaze or hardware
 density-map behavior; that requires device evidence. The review also rejects
 quad views as the default until target support and a net frame-time gain are
-shown. Quad-view qualification is deferred.
+shown. Quad views are excluded from the current goal by the later user decision.
 
 ## Minimal renderer adapter
 

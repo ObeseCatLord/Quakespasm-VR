@@ -671,7 +671,7 @@ bool R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 		physical_pass_t *physical = &physical_passes[variant][pass];
 		assert (!physical->framebuffers);
 		if (density && (!images->density_maps || !images->density_map_count ||
-			images->density_map_count != images->swapchain_count || msaa))
+			images->density_map_count != images->swapchain_count))
 			return false;
 		if (density && images->density_map_count > UINT32_MAX / NUM_COLOR_BUFFERS)
 			return false;
@@ -1186,11 +1186,14 @@ static void R_CreateScenePasses (main_render_pass_variant_t variant)
 
 	if (resolve)
 	{
-		attachment_descriptions[scene_attachment_index].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		/* The density scene already stored coarse MSAA color. The protected
+		 * pass must load it before resolving, or its first resolve would
+		 * replace the foveated world with an undefined MSAA attachment. */
+		attachment_descriptions[scene_attachment_index].initialLayout = after_density ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
 		attachment_descriptions[scene_attachment_index].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 		attachment_descriptions[scene_attachment_index].samples = vulkan_globals.sample_count;
 		attachment_descriptions[scene_attachment_index].format = vulkan_globals.color_format;
-		attachment_descriptions[scene_attachment_index].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+		attachment_descriptions[scene_attachment_index].loadOp = after_density ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
 		attachment_descriptions[scene_attachment_index].storeOp = use_oit ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
 	}
 
@@ -1378,21 +1381,22 @@ static bool R_CreateDensityScenePasses (main_render_pass_variant_t variant)
 {
 	if (!R_FrameHasTarget (variant, FRAME_TARGET_DENSITY_SCENE))
 		return true;
-	if (!current_layout.stereo || current_layout.samples != VK_SAMPLE_COUNT_1_BIT || current_layout.fragment_shading_rate)
-		Sys_Error ("Density scene requires single-sample stereo without KHR shading rate");
+	if (!current_layout.stereo || current_layout.fragment_shading_rate)
+		Sys_Error ("Density scene requires stereo without KHR shading rate");
+	const bool msaa = current_layout.samples != VK_SAMPLE_COUNT_1_BIT;
 
-	VkAttachmentDescription attachments[3] = {0};
+	VkAttachmentDescription attachments[4] = {0};
 	attachments[0] = (VkAttachmentDescription){
 		.format = vulkan_globals.color_format,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
-		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.loadOp = msaa ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : VK_ATTACHMENT_LOAD_OP_CLEAR,
 		.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 		.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 	};
 	attachments[1] = (VkAttachmentDescription){
 		.format = vulkan_globals.depth_format,
-		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.samples = current_layout.samples,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 		.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
 		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
@@ -1400,7 +1404,16 @@ static bool R_CreateDensityScenePasses (main_render_pass_variant_t variant)
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
 		.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 	};
-	attachments[2] = (VkAttachmentDescription){
+	if (msaa)
+		attachments[2] = (VkAttachmentDescription){
+			.format = vulkan_globals.color_format,
+			.samples = current_layout.samples,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		};
+	attachments[msaa ? 3 : 2] = (VkAttachmentDescription){
 		.format = VK_FORMAT_R8G8_UNORM,
 		.samples = VK_SAMPLE_COUNT_1_BIT,
 		.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
@@ -1408,16 +1421,18 @@ static bool R_CreateDensityScenePasses (main_render_pass_variant_t variant)
 		.initialLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
 		.finalLayout = VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
 	};
-	const VkAttachmentReference color = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+	const VkAttachmentReference color = {msaa ? 2 : 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+	const VkAttachmentReference resolve = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 	const VkAttachmentReference depth = {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
 	VkSubpassDescription stages[SUBPASS_COUNT] = {0};
 	stages[SUBPASS_MAIN] = (VkSubpassDescription){
 		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 		.colorAttachmentCount = 1,
 		.pColorAttachments = &color,
+		.pResolveAttachments = msaa ? &resolve : NULL,
 		.pDepthStencilAttachment = &depth,
 	};
-	return R_CreateGraphicsPasses (variant, FRAME_TARGET_DENSITY_SCENE, attachments, countof (attachments), stages);
+	return R_CreateGraphicsPasses (variant, FRAME_TARGET_DENSITY_SCENE, attachments, msaa ? 4 : 3, stages);
 }
 
 static void R_CreateUIPasses (main_render_pass_variant_t variant)

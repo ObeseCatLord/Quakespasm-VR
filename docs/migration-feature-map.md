@@ -3,7 +3,9 @@
 The [current user scope decisions](migration-scope-decisions.md) exclude Gorilla
 locomotion and instant stop from the goal. Their historical rows below remain
 source inventory, not requirements; ordinary VR swim/ladder and joystick behavior
-remain required. Skyrooms and quad views remain excluded.
+remain required. Skyrooms and quad views are excluded; the
+[Frame/large-map assessment](openxr-quad-views-2.0-assessment.md) records the
+two-view foveation decision.
 
 This is the working feature checklist for moving the inherited QuakeSpasm OpenVR product and all surviving project work onto vkQuake. It maps **185 behavior/work items**: 124 product, VR, platform and goal items below, 29 [network items](migration-network-map.md), and 32 [renderer/loading/asset items](migration-renderer-map.md). Items overlap where a user behavior crosses subsystem boundaries; this is not a count of independently implemented features. The [combined CSV](migration-feature-map.csv) includes destination owners, source evidence and acceptance criteria.
 

@@ -1131,7 +1131,7 @@ void R_DrawIndirectBrushesFiltered (
 				(fullbright_enabled ? 1 : 0) + (alpha_test ? 2 : 0) + (alpha_blend ? 4 : 0) + (vid_filter.value != 0 && vid_palettize.value != 0 ? 8 : 0);
 			vulkan_pipeline_t pipeline = cbx->depth_only ?
 				(cbx->hidden_area_masked_world ? vulkan_globals.world_hidden_area_depth_replay_pipeline[cbx->pipeline_variant] :
-				 vulkan_globals.world_depth_replay_pipeline) : R_PipelineForSubpassType (
+				 vulkan_globals.world_depth_replay_pipeline[cbx->pipeline_variant]) : R_PipelineForSubpassType (
 				cbx->subpass_type, vulkan_globals.world_pipelines[cbx->pipeline_variant][pipeline_index], vulkan_globals.world_wboit_pipelines[pipeline_index],
 				vulkan_globals.world_mboit_moment_pipelines[pipeline_index], vulkan_globals.world_mboit_composite_pipelines[pipeline_index]);
 			if (cbx->hidden_area_masked_world && indirect_draws[i].world_owned && !is_decal &&

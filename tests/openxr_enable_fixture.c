@@ -7,6 +7,7 @@ static const char *enable_argument;
 static vrxr_stop_reason_t stop_reason;
 static int retry_available, retry_queries, messages;
 static int novr, adoptions, adoption_result = 1, registrations;
+static int runtime_fb_supported, last_density_request;
 static int attachments, input_releases, reference_invalidations, restored_views, joins;
 static void (*retire_callback)(void *);
 atomic_uint32_t num_vulkan_misc_allocations;
@@ -25,10 +26,13 @@ int VRXR_AdoptVulkan (void (*log)(const char *), VkInstance instance, VkPhysical
 }
 int VRXR_SetVulkanQueueCallbacks (void (*lock)(void *), void (*unlock)(void *), void *owner)
 { assert (lock == GL_OpenXRLockQueue && unlock == GL_OpenXRUnlockQueue && owner == vulkan_globals.queue_mutex); ++registrations; return 1; }
+int VRXR_VulkanFoveationSupported (void) { return runtime_fb_supported; }
 int VRXR_AttachVulkan (uint32_t family, uint32_t index, VkImageUsageFlags usage,
  uint32_t layers, void (*retire)(void *), void *owner, int density, VkImageCreateFlags flags)
 {
- (void)family; (void)usage; (void)owner; (void)density; (void)flags;
+ (void)family; (void)usage; (void)owner; (void)flags;
+ last_density_request = density;
+ assert (density == (vulkan_globals.openxr_fragment_density_map_enabled && runtime_fb_supported));
  assert (index == 0 && layers == 2); ++attachments; retire_callback = retire; stop_reason = VRXR_STOP_NONE; return 1;
 }
 void VRXR_DetachVulkan (void) { assert (input_releases); retire_callback (NULL); }
@@ -127,6 +131,19 @@ int main (void)
  assert (adoptions == 1);
  adoption_result = 1; GL_OpenXREnable_f (); GL_OpenXRApplySessionChange (); GL_OpenXRAttach ();
  assert (adoptions == 2 && attachments == 3 && registrations == 3 && vulkan_globals.stereo_active);
+ // A desktop device prepared with FDM still attaches full-rate VR when the
+ // newly discovered runtime lacks FB. The same device can request FDM after
+ // a later runtime discovery that advertises it; never infer fixed mode.
+ enable_argument = "0"; GL_OpenXREnable_f (); GL_OpenXRApplySessionChange ();
+ assert (!vulkan_globals.stereo_active);
+ vulkan_globals.openxr_fragment_density_map_enabled = true;
+ openxr_vulkan_binding = false; retry_available = 0; runtime_fb_supported = 0;
+ enable_argument = "1"; GL_OpenXREnable_f (); GL_OpenXRApplySessionChange (); GL_OpenXRAttach ();
+ assert (attachments == 4 && !last_density_request && vulkan_globals.stereo_active);
+ enable_argument = "0"; GL_OpenXREnable_f (); GL_OpenXRApplySessionChange ();
+ runtime_fb_supported = 1;
+ enable_argument = "1"; GL_OpenXREnable_f (); GL_OpenXRApplySessionChange (); GL_OpenXRAttach ();
+ assert (attachments == 5 && last_density_request && vulkan_globals.stereo_active);
  puts ("OPENXR_ENABLE_PASSED actual command/transition/attach/retirement; simulated runtime, camera/input and empty GPU resources");
  return 0;
 }

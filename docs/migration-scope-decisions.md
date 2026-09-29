@@ -20,7 +20,9 @@ their further integration/qualification a completion gate.
   defect requires a narrow change. No deletion of adjacent working owners or
   protocol bodies is implied by these exclusions.
 
-Skyrooms and quad views remain excluded. User live headset, eye-tracking,
+Skyrooms and quad views are excluded from the current 2.0 goal. The
+[Frame/large-map assessment](openxr-quad-views-2.0-assessment.md) records why
+two-view foveation remains the selected design. User live headset, eye-tracking,
 multiplayer and performance tests are outside this implementation goal;
 Windows/ARM verification remains deferred. The full remaining migration scope
 is unchanged.

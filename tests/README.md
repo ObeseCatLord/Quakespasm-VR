@@ -16,7 +16,10 @@ iterations after EXITING cannot attach; a fresh command schedules re-enable.
 Retirement restores desktop dimensions and clears the old frame/reference.
 Ordinary disable invokes input release. Runtime attachment/eligibility and
 camera/input/destructor calls are spies; render resources are empty and the
-device is prepared idle. It submits no GPU work. Separate camera/input-helper
+device is prepared idle. It also describes a desktop-prepared FDM device
+attaching ordinary stereo to a runtime without FB foveation, then requesting
+density maps after FB support appears on rediscovery. This is a simulated
+attachment boundary and submits no GPU work. Separate camera/input-helper
 fixtures cover reference preparation, held-key release and neutral gates; this
 does not prove complete renderer/input/runtime integration or a live headset.
 

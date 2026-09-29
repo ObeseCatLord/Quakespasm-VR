@@ -3956,12 +3956,16 @@ static void R_CreateWorldPipelines ()
 	{
 		// Rebuild authoritative depth after the density pass without
 		// re-running the world fragment shader or touching its coarse color.
-		R_CopyPipelineCreateInfos (&infos, &base);
-		R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, MAIN_RENDER_PASS_STANDARD);
-		infos.graphics_pipeline.stageCount = 1;
-		infos.blend_attachment_states[0].colorWriteMask = 0;
-		R_CreateGraphicsPipeline (
-			&vulkan_globals.world_depth_replay_pipeline, &infos, vulkan_globals.world_pipeline_layout, "world_depth_replay");
+		for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
+		{
+			R_CopyPipelineCreateInfos (&infos, &base);
+			R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
+			infos.graphics_pipeline.stageCount = 1;
+			infos.blend_attachment_states[0].colorWriteMask = 0;
+			R_CreateGraphicsPipeline (
+				&vulkan_globals.world_depth_replay_pipeline[variant], &infos, vulkan_globals.world_pipeline_layout,
+				va ("world_depth_replay %d", variant));
+		}
 	}
 	if (vulkan_globals.stereo_active)
 	{
@@ -4918,9 +4922,9 @@ void R_DestroyPipelines (void)
 		vulkan_globals.hidden_area_stencil_pipeline[variant].handle = VK_NULL_HANDLE;
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_hidden_area_depth_replay_pipeline[variant].handle, NULL);
 		vulkan_globals.world_hidden_area_depth_replay_pipeline[variant].handle = VK_NULL_HANDLE;
+		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_depth_replay_pipeline[variant].handle, NULL);
+		vulkan_globals.world_depth_replay_pipeline[variant].handle = VK_NULL_HANDLE;
 	}
-	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.world_depth_replay_pipeline.handle, NULL);
-	vulkan_globals.world_depth_replay_pipeline.handle = VK_NULL_HANDLE;
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.raster_tex_warp_pipeline.handle, NULL);
 	vulkan_globals.raster_tex_warp_pipeline.handle = VK_NULL_HANDLE;
 	vkDestroyPipeline (vulkan_globals.device, vulkan_globals.particle_pipeline.handle, NULL);
