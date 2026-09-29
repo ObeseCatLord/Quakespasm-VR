@@ -345,8 +345,8 @@ and live QuakeC response remain part of the MOD-013 acceptance check.
 | ID / behavior | Pinned source evidence | Destination / treatment | Acceptance |
 |---|---|---|---|
 | AUDIO-001 — Optional Opus spatial voice transport and gameplay-first budgets | MAIN:Quake/voice.c:13 (Voice_); MAIN:Quake/voice_protocol.h:11 (VOICE); MAIN:Quake/sv_main.c:135 (sv_voice) | Quake/voice.c;Quake/sv_main.c;Quake/cl_parse.c; **ADAPT**, P3 | Multiple talkers, loss, mute, rate limits and reconnect preserve voice while movement remains responsive. |
-| AUDIO-002 — Local microphone consent, VAD/PTT and guarded persistent settings | MAIN:Quake/voice_settings.c:1 (Voice); MAIN:Quake/voice.c:50 (voice_transmit); MAIN:Quake/voice.c:53 (voice_mode) | Quake/voice_settings.c;Quake/voice.c;Quake/menu.c; **REUSE**, P3 | Config/server text cannot bypass local consent; PTT/VAD and saved device/gain settings survive restart safely. |
-| AUDIO-003 — Headset microphone selection, device retry and Linux/Windows endpoint matching | MAIN:Quake/vr.c:573 (VR_GetHeadsetMicrophoneName); MAIN:Quake/voice.c:54 (voice_input_device) | Quake/vr.c;Quake/voice.c;SDL/platform device boundary; **ADAPT**, P3 | Beyond/default headset and explicit microphone selection work; missing or ambiguous devices do not silently select unintended input. |
+| AUDIO-002 — VR default-on transmission with saved opt-out; desktop consent, VAD/PTT and persistent settings | MAIN:Quake/voice_settings.c:1 (Voice); MAIN:Quake/voice.c:50 (voice_transmit); MAIN:Quake/voice.c:53 (voice_mode); later user scope decision | Quake/voice_settings.c;Quake/voice.c;Quake/menu.c; **ADAPT**, P3 | Fresh VR enables transmission during a negotiated multiplayer session; saved opt-out remains off. Desktop and local reflections retain separate permissions; PTT/VAD and settings survive restart and mode changes. |
+| AUDIO-003 — System-default microphone with optional exact device selection and retry | MAIN:Quake/vr.c:573 (VR_GetHeadsetMicrophoneName); MAIN:Quake/voice.c:54 (voice_input_device); later user scope decision supersedes headset matching | Quake/voice.c;existing SDL capture boundary; **ADAPT**, P3 | SDL opens the default recording device without headset aliases. Exact named devices remain optional; missing or ambiguous explicit names stay inactive. |
 | AUDIO-004 — Jitter buffering, source generations, local mute and per-player levels | MAIN:Quake/voice_jitter.c:21 (Voice); MAIN:Quake/voice.c:236 (voice_player_volume); MAIN:Quake/voice.c:218 (voice_mute) | Quake/voice_jitter.c;Quake/voice.c; **REUSE**, P3 | Reordered/lost audio remains bounded; reused player slots do not inherit stale speech, gain or mute identity incorrectly. |
 | AUDIO-005 — Mic meter and active-speaker HUD in VR and desktop | MAIN:Quake/voice.c:61 (voice_hud); MAIN:Quake/sbar.c:25 (Voice) | Quake/voice.c;Quake/sbar.c;donor UI draw contexts; **ADAPT**, P3 | Meter is visible when configured, distinguishes permission/transmission and never renders twice per logical-frame update. |
 | AUDIO-006 — Steam Audio HRTF for voices/game sounds and legacy fallback | MAIN:Quake/snd_steamaudio.c:15 (IPL); MAIN:Quake/snd_spatial.c:11 (snd_hrtf); MAIN:SPATIAL_AUDIO.md:93 (-sndlegacy) | Quake/snd_spatial.c;Quake/snd_steamaudio.c;donor sound mixer; **ADAPT**, P3 | Front/back/elevation and head rotation track correctly; legacy/no-SDK path still plays all supported audio. |
@@ -367,6 +367,15 @@ desktop/OpenXR voice HUD, meter and active-speaker indicators. Later commits
 acoustics, wet-only local reflections, bounded occlusion, channel admission and
 underwater filtering through the existing mixer. SDL2/SDL3 Linux builds with
 and without the SDK link; none of these changes has live audio qualification.
+
+The later [system-default microphone slice](voice-default-device-2.0-plan.md)
+implements the user's VR default-on transmission policy with a persistent
+Microphone toggle in VR Options. Desktop retains its opt-in profile. Live
+desktop/VR switches retire old capture and pending input before changing
+profiles; version-4 persistence preserves opt-outs from the prior empty-device
+semantics. A local Astra Max source review and targeted follow-up found no
+remaining blocker in this bounded slice. Builds and capture execution are
+deferred until implementation of the complete goal is finished.
 
 ### OpenXR and stereo goals
 

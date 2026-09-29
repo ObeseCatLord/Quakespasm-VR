@@ -19,6 +19,9 @@ qboolean Voice_ConfirmKeyEvent(int key, qboolean down);
 void Voice_PTTKeyEvent(int key, qboolean down);
 qboolean Voice_SpeakerTalking(int source_slot);
 qboolean Voice_TransmitEnabled(void);
+/* Atomic UI snapshot and local input action for the saved VR preference. */
+qboolean Voice_VRTransmitEnabled(void);
+void Voice_SetVRTransmitEnabled(qboolean enabled);
 qboolean Voice_CaptureReady(void);
 qboolean Voice_IsTransmitting(void);
 float Voice_InputLevel(void);
@@ -37,6 +40,8 @@ qboolean Voice_HUDEnabled(void);
 #define Voice_PTTKeyEvent(key, down) ((void)0)
 #define Voice_SpeakerTalking(source_slot) 0
 #define Voice_TransmitEnabled() 0
+#define Voice_VRTransmitEnabled() 0
+#define Voice_SetVRTransmitEnabled(enabled) ((void)0)
 #define Voice_CaptureReady() 0
 #define Voice_IsTransmitting() 0
 #define Voice_InputLevel() 0.0f

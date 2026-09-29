@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "view.h"
 #include "addon_catalog.h"
 #include "custom_avatar.h"
+#include "voice.h"
 
 void (*vid_menucmdfn) (void); // johnfitz
 void (*vid_menukeyfn) (int key);
@@ -2523,6 +2524,7 @@ enum
 	VR_OPT_MIRROR,
 	VR_OPT_HIDDEN_AREA,
 	VR_OPT_HAPTICS,
+	VR_OPT_MICROPHONE,
 	VR_OPT_GORILLA,
 	VR_OPT_MENU_SCALE,
 	VR_OPT_HUD_SCALE,
@@ -3338,6 +3340,9 @@ static void M_VROptions_Adjust (int dir)
 	case VR_OPT_HAPTICS:
 		Cvar_SetValueQuick (&vr_haptic, vr_haptic.value == 0 ? 1 : 0);
 		break;
+	case VR_OPT_MICROPHONE:
+		Voice_SetVRTransmitEnabled (!Voice_VRTransmitEnabled ());
+		break;
 	case VR_OPT_GORILLA:
 		Cvar_SetValueQuick (&vr_gorilla, vr_gorilla.value == 0 ? 1 : 0);
 		break;
@@ -3519,6 +3524,14 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_HAPTICS, "Haptics");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_HAPTICS, vr_haptic.value != 0);
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MICROPHONE, "Microphone");
+#ifdef USE_VOICECHAT
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MICROPHONE,
+		Voice_VRTransmitEnabled ());
+#else
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MICROPHONE, "unavailable");
+#endif
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_GORILLA, "Gorilla Movement");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_GORILLA, vr_gorilla.value != 0);

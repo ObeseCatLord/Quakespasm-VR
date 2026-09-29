@@ -93,6 +93,7 @@ static voice_atomic_t voice_receive_enabled;
 static voice_atomic_t voice_input_level;
 static voice_atomic_t voice_transmitting;
 static voice_atomic_t voice_transmit_enabled;
+static voice_atomic_t voice_vr_transmit_enabled;
 static voice_atomic_t voice_capture_ready;
 static voice_atomic_t voice_hud_visible;
 static OpusEncoder *voice_encoder;
@@ -109,7 +110,7 @@ static unsigned int voice_next_sequence;
 static uint32_t voice_next_timestamp;
 static uint8_t voice_talkspurt;
 static qboolean voice_initialized;
-static qboolean voice_vr_launch;
+static qboolean voice_profile_vr;
 static qboolean voice_sending;
 static qboolean voice_ptt_keys[MAX_KEYS];
 static qboolean voice_ptt;
@@ -127,10 +128,12 @@ static vec3_t voice_listener_right;
 
 static void Voice_PublishSpatialVoiceSource(int slot);
 static void Voice_ResetSpatialStreams(void);
+static void Voice_SyncProfile(void);
 
 static voice_settings_profile_t *Voice_Profile(void)
 {
-	return voice_vr_launch ? &voice_settings.vr : &voice_settings.desktop;
+	Voice_SyncProfile();
+	return voice_profile_vr ? &voice_settings.vr : &voice_settings.desktop;
 }
 
 static void Voice_LoadSettings(void)
@@ -139,7 +142,6 @@ static void Voice_LoadSettings(void)
 	int length, result = -1;
 
 	VoiceSettings_Defaults(&voice_settings);
-	voice_vr_launch = COM_CheckParm("-openxr") && !COM_CheckParm("-novr");
 	directory = SDL_GetPrefPath("vkQuake", "vkQuake");
 	if (directory)
 	{
@@ -152,12 +154,18 @@ static void Voice_LoadSettings(void)
 	if (result < 0)
 	{
 		VoiceSettings_Defaults(&voice_settings);
+		voice_settings.desktop.transmit = 0;
+		voice_settings.vr.transmit = 0;
 		Con_Printf("Voice: microphone preferences couldn't be read; capture is disabled.\n");
 	}
+	Voice_AtomicSet(&voice_vr_transmit_enabled,
+		voice_settings.vr.transmit ? 1 : 0);
 }
 
 static void Voice_SaveSettings(void)
 {
+	Voice_AtomicSet(&voice_vr_transmit_enabled,
+		voice_settings.vr.transmit ? 1 : 0);
 	if (!voice_settings_path[0] || !VoiceSettings_Save(voice_settings_path,
 		&voice_settings))
 		Con_Printf("Voice: settings couldn't be saved; this choice lasts until exit.\n");
@@ -331,7 +339,10 @@ static qboolean Voice_CaptureStopped(void)
 static qboolean Voice_OpenCapture(int device_index)
 {
 	SDL_AudioSpec desired;
-	const char *name = SDL_GetAudioDeviceName(device_index, SDL_TRUE);
+	const char *name = device_index >= 0 ?
+		SDL_GetAudioDeviceName(device_index, SDL_TRUE) : NULL;
+	if (device_index >= 0 && !name)
+		return false; /* A removed explicit device must not open the default. */
 	SDL_zero(desired);
 	desired.freq = VOICE_SAMPLE_RATE;
 	desired.format = AUDIO_S16SYS;
@@ -429,13 +440,36 @@ static void Voice_CaptureClear(void)
 }
 #endif
 
+static void Voice_SyncProfile(void)
+{
+	qboolean vr_active = V_TrackedSessionActive();
+
+	if (vr_active == voice_profile_vr)
+		return;
+	if (voice_initialized)
+	{
+		voice_pending_action = VOICE_PENDING_NONE;
+		Voice_StopTransmit();
+		Voice_CloseCapture();
+		voice_capture_wanted = false;
+		voice_last_session_active = false;
+		voice_next_device_check = 0;
+	}
+	voice_profile_vr = vr_active;
+}
+
 static void Voice_RefreshCapture(qboolean force)
 {
 	voice_settings_profile_t *profile = Voice_Profile();
 	qboolean session = Voice_MultiplayerSessionActive();
 	qboolean stopped = Voice_CaptureStopped();
-	qboolean unique_device = false;
+	qboolean device_available = true;
 	voice_capture_route_t route;
+#ifdef USE_SDL3
+	SDL_AudioDeviceID resolved_device = SDL_AUDIO_DEVICE_DEFAULT_RECORDING;
+#else
+	int resolved_device = -1;
+#endif
 
 	if (!voice_initialized)
 		return;
@@ -445,19 +479,18 @@ static void Voice_RefreshCapture(qboolean force)
 	voice_last_session_active = session;
 	voice_next_device_check = realtime + VOICE_DEVICE_POLL_SECONDS;
 	if (profile->device[0])
-    {
+	{
+		resolved_device = Voice_ResolveCaptureDevice(profile->device);
 #ifdef USE_SDL3
-		SDL_AudioDeviceID resolved_device = Voice_ResolveCaptureDevice(profile->device);
-		unique_device = resolved_device != 0;
+		device_available = resolved_device != 0;
 #else
-		int resolved_device = Voice_ResolveCaptureDevice(profile->device);
-		unique_device = resolved_device >= 0;
+		device_available = resolved_device >= 0;
 #endif
 	}
-	route = Voice_CaptureRoute(unique_device, profile->transmit, session);
+	route = Voice_CaptureRoute(device_available, profile->transmit, session);
 	/* Wet-only local monitoring has its own locally confirmed permission and
 	 * does not require a network session or authorize transmission. */
-	route.capture |= unique_device && profile->self_reverb && Spatial_Active();
+	route.capture |= device_available && profile->self_reverb && Spatial_Active();
 	if (force || stopped || route.capture != voice_capture_wanted)
 	{
 		if (voice_sending || stopped || route.capture != voice_capture_wanted)
@@ -468,13 +501,7 @@ static void Voice_RefreshCapture(qboolean force)
 	}
 	if (route.capture && !voice_capture_device)
 	{
-#ifdef USE_SDL3
-		SDL_AudioDeviceID resolved_device = Voice_ResolveCaptureDevice(profile->device);
 		if (!Voice_OpenCapture(resolved_device))
-#else
-		int resolved_device = Voice_ResolveCaptureDevice(profile->device);
-		if (!Voice_OpenCapture(resolved_device))
-#endif
 			voice_next_device_check = realtime + 10.0;
 	}
 }
@@ -486,6 +513,11 @@ static qboolean Voice_DeviceIsUnique(const char *name)
 #else
 	return Voice_ResolveCaptureDevice(name) >= 0;
 #endif
+}
+
+static qboolean Voice_DevicePreferenceAvailable(const char *name)
+{
+	return !name[0] || Voice_DeviceIsUnique(name);
 }
 
 static void Voice_ListDevices_f(void)
@@ -504,41 +536,54 @@ static void Voice_ListDevices_f(void)
 	for (i = 0; i < count; ++i)
 		Con_Printf("  %d: %s\n", i + 1, SDL_GetAudioDeviceName(i, SDL_TRUE));
 #endif
+	Con_Printf("Use the system default: voice_select_device default\n");
 	Con_Printf("Select a device by its exact name: voice_select_device \"name\"\n");
 }
 
 static void Voice_Status_f(void)
 {
 	voice_settings_profile_t *profile = Voice_Profile();
-	Con_Printf("Voice receive %s; microphone consent %s; local reflections %s; capture %s; mode %s.\n",
+	Con_Printf("Voice receive %s; microphone transmission %s; local reflections %s; capture %s; mode %s.\n",
 		voice_receive.value ? "on" : "off",
-		profile->transmit ? "saved" : "off",
+		profile->transmit ? "on" : "off",
 		profile->self_reverb ? "on" : "off",
 		voice_capture_device ? "active" : "inactive",
 		profile->mode ? "push-to-talk" : "VAD");
-	Con_Printf("Voice input: %s\n", profile->device[0] ? profile->device : "(none selected)");
+	Con_Printf("Voice input: %s\n", profile->device[0] ? profile->device : "system default");
 	if (voice_pending_action != VOICE_PENDING_NONE)
 		Con_Printf("A local voice change is waiting for physical Y confirmation.\n");
 }
 
 static void Voice_SelectDevice_f(void)
 {
+	voice_settings_profile_t *profile;
 	const char *name;
 	if (Cmd_Argc() != 2)
 	{
-		Con_Printf("usage: voice_select_device \"exact device name\" | none\n");
+		Con_Printf("usage: voice_select_device default | \"exact device name\" | none\n");
 		return;
 	}
+	profile = Voice_Profile();
 	name = Cmd_Argv(1);
 	if (!q_strcasecmp(name, "none"))
 	{
 		voice_pending_action = VOICE_PENDING_NONE;
 		Voice_StopTransmit();
 		Voice_CloseCapture();
-		Voice_Profile()->device[0] = 0;
+		profile->device[0] = 0;
+		profile->transmit = 0;
+		profile->self_reverb = 0;
 		voice_capture_wanted = false;
 		Voice_SaveSettings();
-		Con_Printf("Voice: microphone device cleared.\n");
+		Con_Printf("Voice: microphone capture disabled; device preference reset to system default.\n");
+		return;
+	}
+	if (!q_strcasecmp(name, "default"))
+	{
+		voice_pending_device[0] = 0;
+		voice_pending_action = VOICE_PENDING_DEVICE;
+		voice_pending_deadline = realtime + VOICE_CONFIRM_SECONDS;
+		Con_Printf("Voice: press physical Y in the console within 15 seconds to use the system default microphone.\n");
 		return;
 	}
 	if (strlen(name) >= sizeof(voice_pending_device) || !Voice_DeviceIsUnique(name))
@@ -555,9 +600,9 @@ static void Voice_SelectDevice_f(void)
 static void Voice_Consent_f(void)
 {
 	voice_settings_profile_t *profile = Voice_Profile();
-	if (!profile->device[0] || !Voice_DeviceIsUnique(profile->device))
+	if (!Voice_DevicePreferenceAvailable(profile->device))
 	{
-		Con_Printf("Voice: select one unique recording device first with voice_select_device.\n");
+		Con_Printf("Voice: selected recording device is missing or ambiguous; run voice_devices.\n");
 		return;
 	}
 	voice_pending_action = VOICE_PENDING_CONSENT;
@@ -567,9 +612,10 @@ static void Voice_Consent_f(void)
 
 static void Voice_Revoke_f(void)
 {
+	voice_settings_profile_t *profile = Voice_Profile();
 	voice_pending_action = VOICE_PENDING_NONE;
-	Voice_Profile()->transmit = 0;
-	Voice_Profile()->self_reverb = 0;
+	profile->transmit = 0;
+	profile->self_reverb = 0;
 	Voice_StopTransmit();
 	Voice_CloseCapture();
 	voice_capture_wanted = false;
@@ -607,9 +653,9 @@ static void Voice_SelfReverb_f(void)
 		Con_Printf("Voice: local reflections require the active Steam Audio renderer.\n");
 		return;
 	}
-	if (!profile->device[0] || !Voice_DeviceIsUnique(profile->device))
+	if (!Voice_DevicePreferenceAvailable(profile->device))
 	{
-		Con_Printf("Voice: select one unique recording device first with voice_select_device.\n");
+		Con_Printf("Voice: selected recording device is missing or ambiguous; run voice_devices.\n");
 		return;
 	}
 	voice_pending_action = VOICE_PENDING_SELF_REVERB;
@@ -620,6 +666,7 @@ static void Voice_SelfReverb_f(void)
 static void Voice_Mode_f(void)
 {
 	const char *mode;
+	(void)Voice_Profile();
 	if (Cmd_Argc() != 2)
 	{
 		Con_Printf("usage: voice_mode vad|ptt\n");
@@ -701,6 +748,8 @@ static void Voice_RefreshSpeakerRing(voice_speaker_t *speaker)
 qboolean Voice_ConfirmKeyEvent(int key, qboolean down)
 {
 	voice_settings_profile_t *profile;
+
+	profile = Voice_Profile();
 	if (!voice_initialized || !down || key_dest != key_console ||
 		(key != 'y' && key != 'Y') || voice_pending_action == VOICE_PENDING_NONE)
 		return false;
@@ -710,13 +759,12 @@ qboolean Voice_ConfirmKeyEvent(int key, qboolean down)
 		Con_Printf("Voice: confirmation expired.\n");
 		return true;
 	}
-	profile = Voice_Profile();
 	if (voice_pending_action == VOICE_PENDING_CONSENT)
 	{
-		if (!profile->device[0] || !Voice_DeviceIsUnique(profile->device))
+		if (!Voice_DevicePreferenceAvailable(profile->device))
 		{
 			voice_pending_action = VOICE_PENDING_NONE;
-			Con_Printf("Voice: selected device is no longer uniquely available.\n");
+			Con_Printf("Voice: selected device is no longer available uniquely.\n");
 			return true;
 		}
 		profile->transmit = 1;
@@ -724,7 +772,7 @@ qboolean Voice_ConfirmKeyEvent(int key, qboolean down)
 	}
 	else if (voice_pending_action == VOICE_PENDING_DEVICE)
 	{
-		if (!Voice_DeviceIsUnique(voice_pending_device))
+		if (voice_pending_device[0] && !Voice_DeviceIsUnique(voice_pending_device))
 		{
 			voice_pending_action = VOICE_PENDING_NONE;
 			Con_Printf("Voice: device is no longer uniquely available.\n");
@@ -733,7 +781,8 @@ qboolean Voice_ConfirmKeyEvent(int key, qboolean down)
 		Voice_StopTransmit();
 		Voice_CloseCapture();
 		q_strlcpy(profile->device, voice_pending_device, sizeof(profile->device));
-		Con_Printf("Voice: selected %s.\n", profile->device);
+		Con_Printf("Voice: selected %s.\n",
+			profile->device[0] ? profile->device : "system default microphone");
 	}
 	else if (voice_pending_action == VOICE_PENDING_MODE)
 	{
@@ -743,11 +792,10 @@ qboolean Voice_ConfirmKeyEvent(int key, qboolean down)
 	}
 	else if (voice_pending_action == VOICE_PENDING_SELF_REVERB)
 	{
-		if (!Spatial_Active() || !profile->device[0] ||
-			!Voice_DeviceIsUnique(profile->device))
+		if (!Spatial_Active() || !Voice_DevicePreferenceAvailable(profile->device))
 		{
 			voice_pending_action = VOICE_PENDING_NONE;
-			Con_Printf("Voice: local reflections need Steam Audio and a unique selected device.\n");
+			Con_Printf("Voice: local reflections need Steam Audio and an available microphone.\n");
 			return true;
 		}
 		profile->self_reverb = 1;
@@ -1036,6 +1084,8 @@ void Voice_Init(void)
 	voice_initialized = true;
 	Voice_AtomicSet(&voice_input_level, 0);
 	Voice_AtomicSet(&voice_transmitting, 0);
+	Voice_AtomicSet(&voice_vr_transmit_enabled,
+		voice_settings.vr.transmit ? 1 : 0);
 	Voice_AtomicSet(&voice_transmit_enabled, Voice_Profile()->transmit ? 1 : 0);
 	Voice_AtomicSet(&voice_capture_ready, voice_capture_device ? 1 : 0);
 	Voice_AtomicSet(&voice_hud_visible, Voice_HUDShouldDisplay() ? 1 : 0);
@@ -1048,8 +1098,12 @@ void Voice_Init(void)
 		SNDDMA_Submit();
 	Voice_ResetSpatialStreams();
 	Voice_RefreshCapture(true);
-	Con_Printf("Voice ready. Microphone capture is %s; use voice_devices, voice_select_device, and voice_consent to opt in.\n",
-		Voice_Profile()->transmit ? "consented" : "off");
+	if (voice_profile_vr)
+		Con_Printf("Voice ready. VR microphone transmission is %s; toggle Microphone in VR Options or use voice_revoke to turn it off.\n",
+			Voice_Profile()->transmit ? "on" : "off");
+	else
+		Con_Printf("Voice ready. Microphone transmission is %s; use voice_consent to opt in, or voice_select_device for another microphone.\n",
+			Voice_Profile()->transmit ? "on" : "off");
 }
 
 void Voice_Shutdown(void)
@@ -1123,6 +1177,8 @@ void Voice_Frame(void)
 	if (!voice_initialized)
 		return;
 	Voice_AtomicSet(&voice_receive_enabled, voice_receive.value != 0);
+	Voice_AtomicSet(&voice_vr_transmit_enabled,
+		voice_settings.vr.transmit ? 1 : 0);
 	Voice_RefreshCapture(false);
 	Spatial_SelfGain(Voice_Profile()->self_reverb && voice_capture_device ? 1.0f : 0.0f);
 	Voice_ProcessCapture();
@@ -1302,6 +1358,30 @@ qboolean Voice_SpeakerTalking(int source_slot)
 qboolean Voice_TransmitEnabled(void)
 {
 	return Voice_AtomicGet(&voice_transmit_enabled) != 0;
+}
+
+qboolean Voice_VRTransmitEnabled(void)
+{
+	return Voice_AtomicGet(&voice_vr_transmit_enabled) != 0;
+}
+
+void Voice_SetVRTransmitEnabled(qboolean enabled)
+{
+	Voice_SyncProfile();
+
+	voice_settings.vr.transmit = enabled ? 1 : 0;
+	if (!enabled)
+		voice_settings.vr.self_reverb = 0;
+	Voice_AtomicSet(&voice_vr_transmit_enabled, enabled ? 1 : 0);
+	Voice_SaveSettings();
+	if (!voice_profile_vr)
+		return;
+
+	voice_pending_action = VOICE_PENDING_NONE;
+	Voice_StopTransmit();
+	Voice_CloseCapture();
+	voice_capture_wanted = false;
+	Voice_RefreshCapture(true);
 }
 
 qboolean Voice_CaptureReady(void)

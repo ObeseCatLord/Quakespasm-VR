@@ -26,3 +26,13 @@ two-view foveation remains the selected design. User live headset, eye-tracking,
 multiplayer and performance tests are outside this implementation goal;
 Windows/ARM verification remains deferred. The full remaining migration scope
 is unchanged.
+
+## Microphone selection and defaults (2026-09-29)
+
+Use the system default recording device. AUDIO-003's inherited headset
+endpoint/name matching is superseded; explicit SDL device selection remains
+available without headset-specific routing. VR transmission is default on and
+opt out, with a valid saved opt-out retained. Desktop transmission retains its
+existing opt-in behavior. Local microphone reflections remain independent.
+The [bounded voice plan](voice-default-device-2.0-plan.md) records reuse of the
+existing SDL capture/settings owners and mode-transition behavior.

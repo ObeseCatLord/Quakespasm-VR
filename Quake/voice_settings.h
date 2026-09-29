@@ -11,6 +11,7 @@ extern "C" {
 typedef struct {
 	unsigned char transmit;
 	unsigned char mode;
+	/* Empty requests the system recording default; otherwise an exact SDL name. */
 	char device[512];
 	unsigned char self_reverb;
 } voice_settings_profile_t;

@@ -68,7 +68,7 @@ static int VoiceSettings_FileClose(voice_settings_file_t *file)
 #endif
 
 /* Keep this independent of the in-memory struct layout and its padding. */
-#define VOICE_SETTINGS_VERSION 3
+#define VOICE_SETTINGS_VERSION 4
 #define VOICE_SETTINGS_MAGIC_BYTES 8
 #define VOICE_SETTINGS_PROFILE_BYTES (2 + VOICE_SETTINGS_DEVICE_BYTES)
 #define VOICE_SETTINGS_V1_BYTES (VOICE_SETTINGS_MAGIC_BYTES + 1 + \
@@ -128,9 +128,10 @@ void VoiceSettings_Defaults(voice_settings_t *settings)
 	if (!settings)
 		return;
 	memset(settings, 0, sizeof(*settings));
-	/* Microphone capture always starts disabled until saved local consent. */
+	/* VR uses the system microphone unless the player opts out. Desktop
+	 * transmission and local wet-only monitoring remain opt-in. */
 	settings->desktop.transmit = 0;
-	settings->vr.transmit = 0;
+	settings->vr.transmit = 1;
 }
 
 static void VoiceSettings_WriteProfile(unsigned char *wire,
@@ -182,7 +183,7 @@ static int VoiceSettings_Deserialize(const unsigned char *wire, size_t bytes,
 	cursor += sizeof(voice_settings_magic);
 	version = *cursor++;
 	if (!((version == 1 && bytes == VOICE_SETTINGS_V1_BYTES) ||
-		((version == 2 || version == VOICE_SETTINGS_VERSION) &&
+		((version == 2 || version == 3 || version == VOICE_SETTINGS_VERSION) &&
 		bytes == VOICE_SETTINGS_FILE_BYTES))) return 0;
 	VoiceSettings_ReadProfile(&loaded.desktop, cursor);
 	cursor += VOICE_SETTINGS_PROFILE_BYTES;
@@ -196,10 +197,19 @@ static int VoiceSettings_Deserialize(const unsigned char *wire, size_t bytes,
 	}
 	/* Older files could contain the old default-on value. Require fresh local
 	 * confirmation before trusting a persisted capture permission. */
-	if (version < VOICE_SETTINGS_VERSION)
+	if (version < 3)
 	{
 		loaded.desktop.transmit = loaded.vr.transmit = 0;
 		loaded.desktop.self_reverb = loaded.vr.self_reverb = 0;
+	}
+	/* Before v4, an empty device could mean a deliberately cleared microphone
+	 * even with retained permissions. Do not reinterpret that as the default. */
+	if (version < 4)
+	{
+		if (!loaded.desktop.device[0])
+			loaded.desktop.transmit = loaded.desktop.self_reverb = 0;
+		if (!loaded.vr.device[0])
+			loaded.vr.transmit = loaded.vr.self_reverb = 0;
 	}
 	if (!VoiceSettings_Valid(&loaded) ||
 		!VoiceSettings_ProfileCanonical(&loaded.desktop) ||
