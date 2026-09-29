@@ -155,3 +155,76 @@ Conditional acceptance with these adopted constraints precedes production:
 Revised expected source size: 80–110 lines including declaration/comments.
 Stages2/3 still require their own verified briefs and dispositions. End-of-goal
 validation remains deferred, including the complete parent transaction.
+
+## Stage2a verified CPU regeneration brief
+
+Scope is now deliberately bounded to CPU input preparation; stage2b will join
+these inputs to existing crop/upload functions. No new GPU buffers/descriptors,
+retirement, device-switch activation or second lightmap registry in stage2a.
+Write set: r_brush.c, declarations in glquake.h, lightdata byte-length metadata
+in gl_model.c/.h. Expected180–320 changed source lines including moved allocation
+code. The earlier combined180–350 estimate is tight; separating CPU preparation
+from GPU ownership avoids implementing the latter before its verified contract.
+
+Proposed narrow APIs: GL_CanRegenerateLightmapInputs (read-only pre-retirement
+query), GL_RegenerateLightmapInputs (same validation then regenerate), plus
+GL_FreeLightmapInputs to release only the existing transient style/index/bounds
+arrays on preparation cancellation. They are prerequisites, not a transaction.
+Caller quiesces model/atlas owners and frees temporary inputs after upload or
+cancellation. Fatal native allocation failures remain fatal.
+
+Share the original AllocBlock's style/index/workgroup allocation and bound
+initialization in a private owner helper. Initial map packing still allocates
+base lm->data and initializes shelves exactly as before. Regeneration frees
+any outstanding transient inputs, allocates fresh ones in existing lm owners,
+clears compacted membership/counts, submodel block flags and derived bounds.
+Do not change rectused, source assignments or lightmap records. Reuse
+GL_CreateSurfaceLightmap and R_BuildLightMap to refresh retained base atlas
+pixels at current lightstyle phase, R_AssignSurfaceIndex for original indices,
+and R_FillLightstyleTextures for native packing. Membership remains an unpacked
+bitmap until the single existing setup/upload compaction step in stage2b.
+
+Model traversal must match GL_BuildLightmaps: precache1..first null; skip inline
+shared arrays, process non-inline brush owners; preserve the cumulative surface
+index including tiled surfaces, external brush high bit and world submodel tags
+using the same firstface progression. Reuse R_AssignWorkgroupBounds's existing
+math with an added qmodel input: retained polygon XYZ when present, otherwise
+Mod_SurfaceVertexPosition; don't regenerate whole vertex/UV spans or allocate
+replacement polygons. Initial path retains its polygon order/number exactly.
+External model surfaces remain excluded from dlight bounds as native code does.
+
+Preflight reuses GL_CanRebuildBModelVertexBuffer for retained geometry and world
+submodel validity, then checks lightmap_count/array, persistent base pixels,
+nonnegative extents, bounded atlas rectangle and blocklights capacity, active
+styles below MAX_LIGHTSTYLES and readable styled sample span. Record shape/crop
+and retired GPU validation belong to stage2b preflight; source readiness must
+not claim complete image/GPU eligibility. Count traversal exactly against
+num_surfaces; reject a non-brush non-inline precache owner in this native path
+instead of inventing surfaces. Validate required style/surface extents fit their
+existing rectused crop before mutation. Null samples are permitted with native
+fullbright/no-samples behavior. A retained sample pointer is checked by integer
+address offset and required RGB bytes against the actual owner allocation span;
+no subtraction of unrelated C pointers.
+
+Store size_t lightdata_bytes beside qmodel's existing lightdata pointer. Set
+from actual allocations in .lit, Q64, Valve RGB and grayscale loader paths;
+clear at loader entry and full model disposal. Existing inline struct copies
+preserve shared metadata. Use checked/nonnegative native input lengths and
+size_t products for that allocation byte length; do not add allocation tracking
+or retain extra data. Required per-surface bytes derive from bounded smax*tmax,
+three RGB bytes and actual styles terminated at255. No generic memory-size guess.
+
+Invalidate only derived lighting caches after native base refresh: surface
+cached_light=-1 and cached_dlight=true for CPU refresh; atlas cached_light=-1,
+modified[0]=UINT_MAX, active_dlights bytes=true, cached_framecount=r_framecount
+for a complete GPU refresh. This specifically defeats modified==0 and gives
+unconditional regions when stale dlights must be removed; stage2b upload must
+not clear these restoration markers afterward. Do not reset r_framecount,
+d_lightstylevalue, entity/dlight state, particles or map ownership. No new
+persistent restoration flag is planned. Astra should challenge these refresh
+semantics in both GPU/CPU modes, transient cleanup, traversal and byte-span proof.
+
+End-of-full-implementation checks remain the parent scene transaction plus
+native image/input comparison, repeated preparation/cancellation, live phase,
+external/movable brush spaces, lightmapped liquids, sparse planes and malformed
+span rejection before mutation. No builds or tests during this implementation.
