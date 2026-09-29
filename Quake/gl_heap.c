@@ -623,6 +623,10 @@ GL_HeapDestroy
 */
 void GL_HeapDestroy (glheap_t *heap, atomic_uint32_t *num_allocations)
 {
+	if (!heap)
+		return;
+	// Allocation records, including dedicated memory, must be retired first.
+	assert (heap->stats.num_allocations == 0);
 	for (uint32_t mask_page_offset = 0; mask_page_offset < heap->num_segments; ++mask_page_offset)
 	{
 		glheapsegment_t *segment = heap->segments[mask_page_offset];
@@ -635,8 +639,10 @@ void GL_HeapDestroy (glheap_t *heap, atomic_uint32_t *num_allocations)
 			Mem_Free (segment->free_blocks_bitfields[mask_page_index]);
 			Mem_Free (segment->free_blocks_skip_bitfields[mask_page_index]);
 		}
+		Mem_Free (segment);
 	}
 	Mem_Free (heap->segments);
+	Mem_Free (heap);
 }
 
 /*

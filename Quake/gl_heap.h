@@ -43,6 +43,8 @@ typedef struct glheapstats_s
 glheap_t *GL_HeapCreate (
 	VkDeviceSize segment_size, uint32_t page_size, uint32_t memory_type_index, vulkan_memory_type_t memory_type, qboolean device_address,
 	const char *heap_name);
+// Consumes the owner (NULL allowed); retire all allocations first, then clear
+// the caller's heap pointer. Existing GPU completion/loss policy is caller-owned.
 void				GL_HeapDestroy (glheap_t *heap, atomic_uint32_t *num_allocations);
 glheapallocation_t *GL_HeapAllocate (glheap_t *heap, VkDeviceSize size, VkDeviceSize alignment, atomic_uint32_t *num_allocations);
 void				GL_HeapFree (glheap_t *heap, glheapallocation_t *allocation, atomic_uint32_t *num_allocations);
