@@ -534,3 +534,10 @@ wwheel final-axe correction (lava selector plus command1 -> RIT_AXE) before
 duplicate-slot checks. No new flags, callback dispatcher, table registry,
 identity fallback by command, parser or authority policy. This amendment needs
 bounded local Astra disposition before changing the production boundary.
+
+Local Astra accepted that amendment with one P2 correction: preserve primary's
+Enyo WEAPONS (otherwise ITEMS) fallback even for an unmatched wwheel slot.
+Adopt it through the existing game-directory predicate; keep derived pairs
+unflagged. Preserve existing wwheel descriptors as whole pairs when native
+profile stat metadata is unset. No P1, new owner or architecture reopening;
+production source review remains required.
