@@ -46,7 +46,7 @@ additional exceptions require evidence of an actual incompatible boundary.
 | Cooperative QuakeC movement | [Cooperative movement plan](predictive-cooperative-qc-2.0-plan.md), [accepted-command integration](predictive-cooperative-commands-2.0-plan.md), [VR identity adapter](predictive-cooperative-vr-input-2.0-plan.md) | Standard server builtin347/native hook and accepted-command integration pass prepared loader/VM/body/send checks, relevant regressions and final local Astra source review. Plans/dispositions preceded edits; quiet-hook and sticky-handoff contracts are explicit. VR identity now preserves bounded swim/ladder consumer behavior with exact target-call/nested isolation and decoded-body proof. Replay and broader states remain required. Gorilla and instant stop are excluded. |
 | OpenXR lifecycle and stereo renderer | [Migration architecture plan](vkquake-base-migration-plan.md), [stereo review](migration-stereo-review.md), [frame ownership review](migration-frame-boundary-review.md) | Existing architecture/reviews; write a bounded feature plan before expanding runtime or renderer ownership. |
 | VR input and locomotion | [Input review](migration-input-review.md), [locomotion review](migration-locomotion-review.md), [Gorilla review](migration-gorilla-2.0-review.md) | Existing designs/reviews; plan any new input or movement behavior before implementation. |
-| Vulkan foveation | [Existing foveation plan](vulkan-foveation-2.0-plan.md), [Steam Frame review](migration-steam-frame-foveation-review.md) | Existing plan/review; revise before another major capability or architecture expansion. |
+| Vulkan foveation | [FB/META sole-route plan](openxr-fb-meta-foveation-2.0-plan.md), [historical foveation plan](vulkan-foveation-2.0-plan.md), [Steam Frame review](migration-steam-frame-foveation-review.md), [late device-readiness review](openxr-late-foveation-2.0-plan.md) | The user has mothballed KHR shading rate. FB/META device selection, default-MSAA support and borrowed-image qualification are current work. The existing non-FB attachment safeguard remains useful. Final source review and end-of-goal verification are pending. |
 | VR SSAO | [Existing SSAO design and review](migration-vr-ssao-review.md) | Existing design/review; revise before another major algorithm change. |
 | 3D weapon wheel | [Existing wheel design](migration-wheel-3d-design.md), [foreground review](migration-wheel-foreground-review.md) | Existing design/review; revise before expanding presentation ownership. |
 | VR HUD and multiplayer presentation | [HUD design](vr-multiplayer-hud-design.md), [desktop parity review](migration-desktop-parity-review.md) | Existing design/review; new UI behavior needs a feature plan and desktop/VR acceptance. |
@@ -67,8 +67,11 @@ this slice. The subsequent [late-binding plan](openxr-late-binding-2.0-plan.md)
 adds compatible-device desktop attachment and fresh instance recovery using
 actual creation metadata and original-Vulkan qualification. Its Linux component
 checks pass; a later native-GPU run also passes the actual donor six-set layout
-owners, while loaded-scene XR/GPU proof remains open. Incompatible-device reconstruction and late
-foveation readiness remain parent implementation scope. Live tests stay deferred.
+owners, while loaded-scene XR/GPU proof remains open. Incompatible-device reconstruction remains parent implementation scope. The
+[late-foveation plan](openxr-late-foveation-2.0-plan.md) records the device-time
+readiness adapter and its remaining proof limits. At the user's request, no
+further builds or tests will run until implementation of the full goal is done;
+live checks remain user-deferred.
 
 These links do not certify that a feature is finished. Completed work predating
 this index retains its original design/review provenance; this document does

@@ -1,6 +1,12 @@
 # OpenXR foveation after ordinary desktop Vulkan startup
 
-Status: Astra Max design accepted with the attachment correction below; production work pending.
+**Backend selection superseded on 2026-09-29:** the user directed that KHR
+shading rate be mothballed. The [FB/META sole-route plan](openxr-fb-meta-foveation-2.0-plan.md)
+governs the next implementation. This document retains the Astra device-time
+readiness and non-FB attachment findings, not its former KHR priority.
+
+Status: Astra Max design accepted; device-readiness adapter and non-FB
+attachment correction implemented on `2.0`. Final source review is pending.
 Scope: enable existing KHR eye-tracked shading rate after compatible-device late
 attachment, and make the existing explicit FB/META development route eligible
 when the XR runtime is not present at Vulkan creation. This is a device-time
@@ -95,15 +101,17 @@ XR images or headset output. User does live/performance tests.
    because `stereo_active` is false; later XR adoption uses current renderer
    capabilities without rebuilding VkDevice. A runtime lacking usable gaze or
    the chosen family renders full rate, never fixed fallback.
-4. Verify exact creation parameters (enabled extension names/features, real
+4. At the end of the full migration, verify exact creation parameters (enabled extension names/features, real
    `vkCreateRenderPass2`/`vkCmdSetFragmentShadingRateKHR` or FDM entry points)
    through production-boundary checks. Exercise default desktop, desktop then
    XR gaze, explicit FDM with runtime absent/present, unsupported extension,
    `-novr`, lost instance/rediscovery, MSAA and invalid gaze. Check real Vulkan
    device setup on an accessible capable GPU when available. State seams
    honestly: actual donor six-set layouts and KHR format/rates now pass locally,
-   but foveated draws, HMD/XR images and FDM GPU execution are not proven here. Linux Make plus focused fixtures; Windows/ARM and live/performance
-   checks remain user-deferred.
+   but foveated draws, HMD/XR images and FDM GPU execution are not proven here.
+   The user has deferred all further builds and tests until implementation of
+   the full goal is finished. Windows/ARM and live/performance checks remain
+   user-deferred.
 
 Estimate: under150 production lines inside `gl_vidsdl.c`, no new owner or
 policy state; reopen if the change duplicates Vulkan selection, alters desktop
@@ -142,3 +150,24 @@ adoption, but that is source-based until real foveated opaque draws/XR images ar
 verified. Native host GPUs can validate KHR device creation and layouts; neither
 advertises FDM. Subsequent code review must examine both desktop and late VR
 paths, with no new render graph or GPU-state owner.
+
+## Implemented adapter
+
+`GL_InitDevice` now prepares KHR shading-rate and RenderPass2 eligibility on
+the actual Vulkan device before OpenXR discovery, provided VR was not excluded
+with `-novr`. The same point probes FDM GPU eligibility for an explicit
+`-vk-runtime-foveation` request. The selected KHR or FDM feature remains
+exclusive in VkDevice creation. Desktop still requests Vulkan1.1 and uses the
+KHR RenderPass2 extension and dispatch when selected. At XR attachment,
+`GL_OpenXRAttach` requests borrowed density maps only when both the prepared
+device and current runtime support FB foveation. This lets a prepared FDM
+device attach ordinary full-rate VR to a non-FB runtime. The existing
+`vr_eye_tracking` and `vr_foveation` controls remain the frame policy; this
+change does not select fixed foveation by default.
+
+The new `openxr_enable_fixture.c` cases describe a desktop-prepared FDM device
+attaching first to a non-FB runtime and later to an FB runtime without losing
+its device feature. These use the source renderer boundary with simulated
+runtime and empty GPU resources. Earlier local builds and checks predate the
+user's latest testing deferral; no further checks will be run until full
+implementation is complete.

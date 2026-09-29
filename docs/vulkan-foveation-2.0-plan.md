@@ -1,5 +1,10 @@
 # Vulkan/OpenXR foveation on the 2.0 branch
 
+**Superseded for backend selection on 2026-09-29:** the user directed that
+KHR attachment shading rate be mothballed and FB/META be the sole foveation
+route. See [the current FB/META implementation plan](openxr-fb-meta-foveation-2.0-plan.md).
+The KHR sections below record earlier design and checks, not current policy.
+
 The vkQuake renderer remains the graphics owner. Its existing multiview scene,
 compiled pass order, secondary command buffers, and internal color/depth targets
 remain in place. Eye-tracked foveation is an optional reduction in **opaque
