@@ -1,4 +1,4 @@
-# Quad views for Frame and large maps: conditional design assessment
+# Quad views for Frame and large maps: 2.0 design decision
 
 Status: assessed on 2026-09-29; the user decided **not to pursue quad views in
 the 2.0 migration**. Retain two-view multiview with eye-tracked FB/META density
@@ -57,7 +57,7 @@ would not implement correct four-view rendering or culling.
 | Route | Reuse, expected win and added cost | Decision |
 | --- | --- | --- |
 | Existing two-view multiview plus FB/META density map, or KHR shading-rate fallback | Reuses the existing XR gaze/profile, passes, culling and single stereo world draw. Reduces fragment shading; keeps full raster/depth and current SSAO/composition semantics. | Primary route for Frame and `mj4m1`. Finish and qualify this path first. |
-| OpenXR four-view wide/inset path, selected only when runtime advertises it | Can reduce *both* fragment and raster pixel work at very high resolution. Adds two projections, more scene visibility and geometry work, swapchain images, composition, effect handling and potentially more GPU/CPU work in big maps. | Defer until the capability and frame-time gate below is met. Do not duplicate the existing runtime state machine. |
+| OpenXR four-view wide/inset path, selected only when runtime advertises it | Can reduce *both* fragment and raster pixel work at very high resolution. Adds two projections, more scene visibility and geometry work, swapchain images, composition, effect handling and potentially more GPU/CPU work in big maps. | Excluded from 2.0. Do not duplicate the existing runtime state machine. |
 | App-composited inset layers without runtime four-view configuration | Requires custom projection/compositing and gaze handling and duplicates OpenXR's view contract. | Reject for this migration. |
 
 For an equal-quality comparison, count all four quad-view pixel areas against
@@ -66,8 +66,8 @@ geometry, depth, shadows, transparency, SSAO, resolve/composition and XR
 overhead. Pixel savings alone cannot show net frame-time savings. `mj4m1` may
 be CPU/visibility/draw limited, where two extra views can regress performance;
 that is an inference from this renderer's work topology, not a measured
-benchmark. Conversely, a high-resolution, raster-bound Frame workload could
-justify quad views even if VRS works. Keep that possibility open.
+benchmark. A high-resolution, raster-bound Frame workload might favor quad
+views even if VRS works, but pursuing it would require a new user decision.
 
 ## Evidence needed if the user reopens this decision later
 
