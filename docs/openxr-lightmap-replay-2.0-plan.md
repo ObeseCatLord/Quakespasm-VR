@@ -458,3 +458,25 @@ packed payload equality, GPU-only lifecycle versus native full map cleanup,
 first-use history and whether the 400–600-line scope requires splitting. This
 brief is verified-source planning only; source acceptance, parent integration
 and end-of-implementation Linux/ARM behavior proof remain required.
+
+## Stage2b local Astra design disposition
+
+Local Astra/max personally verified the complete candidate, including staging,
+and conditionally accepted the owner-local architecture. Adopt before production:
+
+| Finding | Disposition |
+| --- | --- |
+| P1: sequential uploader validation can fail after prior uploads | Share the existing TexMgr predicate through one read-only readiness query. Validate all matching records, fresh CPU inputs, retired GPU fields and new workgroup buffer prerequisites before mutation; unexpected later rejection is a fatal invariant failure. |
+| P1: submodel lighting can survive skipped atlas frames | On forced refresh, conservatively latch existing active_dlights for in-crop submodel blocks when current lights exist. Retain ordinary intersection/expiration/clearing logic; no new persistent flag or shader. |
+| P2: first refresh must survive frame increments | Derive forcefull from exact cached_framecount==-1; bypass both early skips and force region2 only within rounded index crop, counting each block once after native dynamic accounting. Consume through existing scheduling assignment. |
+| P2: CPU activation follows complete replay | Invalidate per-surface cached_light and clear cached_dlight after whole staging pass; full base upload supplies static/style lighting even when r_dynamic is off. Empty dirty rectangles are not upload proof. |
+| P2: empty planes and compaction lifetime | Empty planes retain shared nonnull nulltexture, skipped for generated lookup/retirement/upload. Validate native width promotion/ceil-to-eight locally; require fresh arrays and zero compact counts. Repeat requires regeneration. |
+| Staging memory dependency | Reuse verified R_SubmitStagingBuffer global barrier. Parent drains pending staging before consumer submissions; no duplicate barrier or queue-idle readiness claim. |
+
+One owner eligibility query and one replay operation are justified, plus the
+shared TexMgr readiness query; cache activation remains private. Workgroup
+buffers must be newly created/bound by the caller after retirement; nonnull
+handles do not prove provenance. Pre-retirement query checks source/record
+eligibility without requiring transient arrays, retired handles or future-device
+readiness. Revised estimate250–350 changed lines including moves. Stage3/parent
+still needs its own review; no renderer-ready or rollback claim from upload.
