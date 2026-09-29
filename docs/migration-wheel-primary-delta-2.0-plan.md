@@ -3,8 +3,9 @@
 Status: plan preceded implementation; stage1 stock preview paths and required
 held-identity consumer adapter and association/fallback corrections pass final
 local Astra source review. Build/draw qualification remains end-of-goal work.
-Stage2 authored identity/partial-overlay consumers pass final local Astra
-source review. Stages3/4 and full implementation qualification remain pending.
+Stage2 authored identity/partial-overlay consumers and stage3 own-game complete
+roster metadata pass final local Astra source review. Stage4 and full
+implementation qualification remain pending.
 Reference: product primary `master` at
 `51b452c018273647dcf94f4628a370267ff8fa91`, read-only sibling
 `quakespasm-openvr`. The [source-update record](migration-source-updates.md)
@@ -412,6 +413,15 @@ selected baseline with rewritten output, and retain post-write byte verification
 No P1, additional owner or architecture reopening. Production source review
 and Linux/ARM qualification remain required; no builds/tests/fixtures now.
 
+Stage3's81-line source adapter is now implemented under that disposition.
+The parser's original entry staging remains, with one staged metadata flag
+and existing four-argument wrapper. The wheel accepts own-game zero-entry
+complete files and activates the existing mutable catalog/authority. Save
+preflight retains the source path_id, chooses own-game or empty text, and
+compares original/rewritten completeness in the same two parser calls. Ordinary
+inherited calibration loading and post-write byte verification remain. Final
+local Astra source acceptance found no P1/P2. No runtime/save success is claimed.
+
 ## Stage4 verified brief: native rosters, variants and diagnostics
 
 This is planning, not stage4 implementation or acceptance. Direct read-only
@@ -432,7 +442,8 @@ visibility and prints `vr_weaponlist`. The current 2.0 tables and consumers in
 - Alk/limjam use WEAPONS ownership, including stock-looking bits that overlap
   unrelated ITEMS. Copy native held paths (including 20/40fps names); correct
   saw impulse to226 and mine to229 from the actual primary table. Enyo also
-  uses WEAPONS, and its launcher previews spell glaunch/rlaunch.
+  uses WEAPONS. Its current glaunch/rlaunch preview spellings already match
+  primary; preserve them.
 - Enyo's AV72 is an upgrade of selector4 using WEAPONS flag16384, not the
   current independent selector1024/impulse5 row. AD axe grapple/shadow variants,
   SSG Widowmaker and lightning plasma use MODITEMS128/4096,2,64 respectively.
@@ -445,6 +456,10 @@ visibility and prints `vr_weaponlist`. The current 2.0 tables and consumers in
 - Current peer fields are not computed; primary compares descriptor identity
   before suppressing fallback rows and known-slot observations. Current2.0
   also lacks `vr_weaponlist`, which exposes these exact decisions to users.
+- Rogue additions currently use stock paths/impulses4..8. Copy primary's
+  native impulses60..64 and v_lava/v_lava2/v_multi/v_multi2/v_plasma paths.
+  Rogue and Hipnotic additions use explicit ITEMS/ACTIVEWEAPON descriptors
+  from primary, while both expansion additions remain partial rosters.
 
 Minimal adapter: extend the existing native profile row with its known held
 path and update its literal tables, rather than add another roster registry.
@@ -487,3 +502,12 @@ partial authored overrides, empty ownership, parent upgrades while wheel is
 open, missing preview with exact held fallback, source peer conflicts,
 observed known slots, game/map reset and diagnostic/visible-row agreement.
 User-owned live VR/performance tests remain outside the implementation goal.
+
+Stage4 local Astra design disposition: accepted with the expansion literal
+correction above, no P1 or architecture reopening. Adopt simplification:
+computed visibility peers replace currently unpopulated stored peer fields and
+writers rather than add persistent policy state. Compare resolved cache paths
+before cached-missing short-circuit; otherwise an upgrade can retain an old
+missing result. The estimate remains plausible but tight; challenge any overrun
+against new ownership/state rather than line count alone. Production review and
+end-of-full-implementation Linux/ARM checks remain required.

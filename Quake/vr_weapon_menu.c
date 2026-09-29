@@ -623,13 +623,15 @@ static qboolean VR_WeaponMenu_AddSchemaEntry (
 }
 
 static qboolean VR_WeaponMenu_LoadSchema (
-	vr_weapon_schema_entry_t *entries, size_t *count)
+	vr_weapon_schema_entry_t *entries, size_t *count,
+	vr_weapon_schema_metadata_t *metadata)
 {
 	byte *data;
 	unsigned int path_id = 0;
 	qboolean parsed;
 
 	*count = 0;
+	memset (metadata, 0, sizeof (*metadata));
 	data = COM_LoadFile ("vr_weapons.txt", &path_id);
 	if (!data)
 		return false;
@@ -640,10 +642,10 @@ static qboolean VR_WeaponMenu_LoadSchema (
 		Mem_Free (data);
 		return false;
 	}
-	parsed = VR_WeaponSchemaParse ((const char *)data, entries,
-		VR_WEAPON_SCHEMA_MAX_ENTRIES, count);
+	parsed = VR_WeaponSchemaParseWithMetadata ((const char *)data, entries,
+		VR_WEAPON_SCHEMA_MAX_ENTRIES, count, metadata);
 	Mem_Free (data);
-	if (!parsed || !*count)
+	if (!parsed || (!*count && !metadata->complete_roster))
 	{
 		*count = 0;
 		Con_DPrintf ("VR: ignoring invalid or empty vr_weapons.txt for %s\n",
@@ -933,6 +935,7 @@ void VR_WeaponMenu_ReloadGame (void)
 	byte *data;
 	unsigned int path_id = 0;
 	vr_weapon_schema_entry_t schema_entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	vr_weapon_schema_metadata_t schema_metadata;
 	size_t schema_count = 0;
 
 	VR_WeaponMenu_ClientReset ();
@@ -985,8 +988,16 @@ void VR_WeaponMenu_ReloadGame (void)
 	if (!vr_weapon_menu_has_wwheel)
 		VR_WeaponMenu_SeedStock ();
 	VR_WeaponMenu_LoadBuiltinProfiles ();
-	if (VR_WeaponMenu_LoadSchema (schema_entries, &schema_count))
+	if (VR_WeaponMenu_LoadSchema (schema_entries, &schema_count, &schema_metadata))
+	{
 		VR_WeaponMenu_ApplySchema (schema_entries, schema_count);
+		if (schema_metadata.complete_roster)
+		{
+			/* Even an empty complete declaration suppresses stock guesses. */
+			vr_weapon_menu_has_schema = true;
+			vr_weapon_menu_wwheel_catalog.authoritative_schema = 1;
+		}
+	}
 }
 
 static qboolean VR_WeaponMenu_GameContextValid (void)

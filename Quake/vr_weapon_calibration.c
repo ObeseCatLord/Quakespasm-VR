@@ -807,16 +807,19 @@ static qboolean VR_CalibrationSavedVectorMatches(const vec3_t actual,
  * active entry carries the exact requested effective values after rewriting. */
 static qboolean VR_CalibrationSavedValuesMatch(const char *text,
 	const char *model, int slot, qboolean enhanced_format,
-	size_t original_count)
+	size_t original_count, const vr_weapon_schema_metadata_t *original_metadata)
 {
 	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	vr_weapon_schema_metadata_t metadata;
 	const vr_weapon_calibration_slot_t *calibration =
 		&vr_weapon_calibration_slots[slot];
 	size_t count;
 	int matches = 0;
 
-	if (!VR_WeaponSchemaParse(text, entries,
-		VR_WEAPON_SCHEMA_MAX_ENTRIES, &count) || count < original_count ||
+	if (!VR_WeaponSchemaParseWithMetadata(text, entries,
+		VR_WEAPON_SCHEMA_MAX_ENTRIES, &count, &metadata) ||
+		metadata.complete_roster != original_metadata->complete_roster ||
+		count < original_count ||
 		count > original_count + 1)
 		return false;
 	for (size_t i = 0; i < count; ++i)
@@ -881,9 +884,11 @@ static qboolean VR_WeaponCalibrationSave(void)
 {
 	vr_calibration_textbuf_t output = {0};
 	vr_weapon_schema_entry_t parsed[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	vr_weapon_schema_metadata_t metadata;
 	qmodel_t *model;
 	aliashdr_t *alias_header;
 	byte *file = NULL;
+	unsigned int path_id = 0;
 	const char *source;
 	const char *p;
 	const char *end;
@@ -977,10 +982,13 @@ static qboolean VR_WeaponCalibrationSave(void)
 		added_classic_muzzle = true;
 	}
 
-	file = COM_LoadFile("vr_weapons.txt", NULL);
-	source = file ? (const char *)file : "";
-	if (!VR_WeaponSchemaParse(source, parsed,
-		VR_WEAPON_SCHEMA_MAX_ENTRIES, &parsed_count))
+	file = COM_LoadFile("vr_weapons.txt", &path_id);
+	/* Saving inherited text into this game would promote its roster authority.
+	 * Keep inherited calibration loads, but author only this game's save. */
+	source = file && com_searchpaths && path_id == com_searchpaths->path_id ?
+		(const char *)file : "";
+	if (!VR_WeaponSchemaParseWithMetadata(source, parsed,
+		VR_WEAPON_SCHEMA_MAX_ENTRIES, &parsed_count, &metadata))
 	{
 		Con_Printf("VR: refusing to save; existing vr_weapons.txt is invalid\n");
 		goto done;
@@ -1046,7 +1054,7 @@ static qboolean VR_WeaponCalibrationSave(void)
 		goto done;
 	}
 	if (!VR_CalibrationSavedValuesMatch(output.data ? output.data : "",
-		model->name, slot, enhanced_format, parsed_count))
+		model->name, slot, enhanced_format, parsed_count, &metadata))
 	{
 		Con_Printf("VR: refusing to save; rewritten vr_weapons.txt does not preserve the requested calibration\n");
 		goto done;

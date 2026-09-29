@@ -533,11 +533,12 @@ static qboolean VR_SchemaParseGlobal(vr_schema_parser_t *parser,
 	return true;
 }
 
-qboolean VR_WeaponSchemaParse(const char *text,
-							  vr_weapon_schema_entry_t *entries,
-							  size_t capacity, size_t *count)
+qboolean VR_WeaponSchemaParseWithMetadata(const char *text,
+	vr_weapon_schema_entry_t *entries, size_t capacity, size_t *count,
+	vr_weapon_schema_metadata_t *metadata)
 {
 	vr_weapon_schema_entry_t staged[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	vr_weapon_schema_metadata_t staged_metadata = {false};
 	vr_schema_globals_t globals;
 	vr_schema_parser_t parser;
 	char token[COM_PARSE_MAX_TOKEN_SIZE];
@@ -545,6 +546,8 @@ qboolean VR_WeaponSchemaParse(const char *text,
 	size_t blocks_seen = 0;
 	enum vr_schema_token_result result;
 
+	if (metadata)
+		memset(metadata, 0, sizeof(*metadata));
 	if (!count)
 		return false;
 	*count = 0;
@@ -579,6 +582,15 @@ qboolean VR_WeaponSchemaParse(const char *text,
 			staged[staged_count++] = entry;
 			continue;
 		}
+		if (!strcmp(token, "roster"))
+		{
+			if (!VR_SchemaReadValue(&parser, token, sizeof(token)))
+				return false;
+			/* Unknown scalar values do not undo a prior complete directive. */
+			if (VR_SchemaEqualNoCase(token, "complete"))
+				staged_metadata.complete_roster = true;
+			continue;
+		}
 		if (!VR_SchemaParseGlobal(&parser, token, &globals))
 			return false;
 	}
@@ -586,5 +598,13 @@ qboolean VR_WeaponSchemaParse(const char *text,
 	if (staged_count)
 		memcpy(entries, staged, staged_count * sizeof(staged[0]));
 	*count = staged_count;
+	if (metadata)
+		*metadata = staged_metadata;
 	return true;
+}
+
+qboolean VR_WeaponSchemaParse(const char *text,
+	vr_weapon_schema_entry_t *entries, size_t capacity, size_t *count)
+{
+	return VR_WeaponSchemaParseWithMetadata(text, entries, capacity, count, NULL);
 }

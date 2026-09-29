@@ -83,6 +83,16 @@ typedef struct
 	vr_weapon_schema_wheel_t wheel;
 } vr_weapon_schema_entry_t;
 
+typedef struct
+{
+	qboolean complete_roster;
+} vr_weapon_schema_metadata_t;
+
+/* Metadata and entries publish together only after successful parsing. */
+qboolean VR_WeaponSchemaParseWithMetadata(const char *text,
+	vr_weapon_schema_entry_t *entries, size_t capacity, size_t *count,
+	vr_weapon_schema_metadata_t *metadata);
+
 qboolean VR_WeaponSchemaParse(const char *text,
 							  vr_weapon_schema_entry_t *entries,
 							  size_t capacity, size_t *count);
