@@ -23,8 +23,9 @@ Each plan must contain:
 4. Concrete implementation stages, files/owners and dependencies. Define the
    smallest usable vertical slice and how later stages reach the full outcome.
 5. Relevant software acceptance checks, negative cases and completion evidence.
-   Headset/eye-tracking trials, Windows/ARM qualification and performance
-   measurement remain the user's deferred checkpoints, not prerequisites to
+   Headset/eye-tracking trials, Windows qualification and performance
+   measurement remain the user's deferred checkpoints. Linux/ARM software
+   qualification is performed after full implementation, not before
    finishing the current implementation pass.
 6. Open design decisions, chosen tradeoffs and an Astra senior-review disposition
    when the architecture has expensive or subtle forks. Reopen the plan if the
@@ -53,6 +54,8 @@ additional exceptions require evidence of an actual incompatible boundary.
 | Weapon calibration and mod discovery | [Adjustment implementation review](migration-weapon-adjustment-implementation-review.md), [runtime discovery review](migration-weapon-runtime-discovery-review.md) | Existing reviews; future expansion must plan shared offsets and actual mod identity/discovery behavior. |
 | Physical attacks and akimbo | [Akimbo integration review](migration-akimbo-integration-review.md), [server review](migration-akimbo-server-review.md) | Existing reviews; plan new combat behavior against the inherited physical/native attack owners. |
 | Remaining inherited Copper axe | [Copper reuse plan](migration-copper-melee-2.0-plan.md) | Reuse native QC descriptors/helper trace rules and current contact/model cache owners. Plan precedes implementation; consolidated builds/tests deferred. |
+| Universal melee fallback | [Generic melee plan](migration-generic-melee-2.0-plan.md) | User-requested unknown-mod support; assess native attack gesture with shared weapon profiles instead of another per-mod damage owner. Astra disposition precedes implementation. |
+| Linux native audio/build packaging | [Linux packaging plan](linux-native-packaging-2.0-plan.md) | Reuse inherited native Steam Audio recipe and pinned dependencies; adapt game package to vkQuake Meson. Linux/ARM qualification at the end. |
 | Vulkan avatars/equipment | [Existing avatar design](avatar-vulkan-review.md), [equipment review](avatar-equipment-vulkan-review.md) | Existing design/review; revise before expanding rig or geometry ownership. |
 | Expanded co-op | [Inventory review](migration-coop-inventory-review.md), [outline design](migration-coop-outline-design.md), [friendly-fire review](migration-friendly-fire-review.md) | Existing designs/reviews; new co-op behavior requires a bounded plan across public desktop and private VR peers. |
 | Spatial audio and voice capture | [Spatial audio review](migration-spatial-audio-review.md), [system-default microphone plan](voice-default-device-2.0-plan.md) | Existing mixer owners remain. The user's system-default microphone and VR default-on/saved-opt-out policy reuse SDL capture and settings; desktop/VR profile switching is part of the bounded voice slice. |
