@@ -96,3 +96,49 @@ graphics-menu row cycles available levels, and the existing sampler/texture
 descriptor owner applies them. Both Linux builds pass. A local windowed probe
 stopped at SDL video initialization under the sandbox before sampler creation,
 so runtime filter changes and the unsupported-feature path are unqualified.
+
+## Current primary reference `51b452c0`
+
+The read-only product checkout now points to primary branch `master` at
+`51b452c018273647dcf94f4628a370267ff8fa91`; no local `main` ref exists.
+The earlier preservation ledger and feature-map source pins remain historical
+evidence. A direct current-primary comparison is not a claim that the whole
+ledger has been regenerated or that every later behavior has been migrated.
+
+The latest commit, **Fix weapon wheel identity and native mod rosters**, changes
+`Quake/vr.c`, `Quake/vr_weapon_catalog.h` and `docs/vr-weapon-wheel.md`.
+Directly inspected behaviors to reconcile at existing `2.0`
+`vr_weapon_menu.c` / shared-schema owners:
+
+- `VR_WeaponCatalog_IdentitiesCompatible` treats selector, explicit ownership
+  and active descriptors as identity evidence. Shared commands or coincident
+  preview models cannot merge conflicting explicit identities.
+- Held-model identity is distinct from wheel preview. Explicit file fields
+  preserve provenance and take precedence over native roster/profile fallback;
+  runtime discovery must not replace declared preview geometry.
+- Partial calibration/schema overlays enrich known records; own-game
+  `roster complete` and verified complete built-in profiles suppress unrelated
+  stock guesses. The inherited roster must not define another game's inventory.
+- AD and Enyo native upgrades replace parent-slot previews rather than add
+  independently owned slots. Observation and ambiguous matching do not invent
+  commands, arbitrary inventory masks or first-match overrides.
+- Stock shotgun/super-shotgun preview paths are corrected to the actual native
+  models. Existing `2.0` tables still carry the older paths.
+
+The current `2.0` wheel has existing provenance, stable IDs, own-game wwheel
+filtering and field-preserving schema adapters. Reuse those; do not transplant
+the monolithic OpenGL wheel or create another catalog. The latest primary's
+identity helper, complete-roster declaration, distinct held/preview identity
+and upgrade behavior are **pending reconciliation**, not silently marked done.
+A bounded wheel-delta plan/review must precede that implementation, retaining
+desktop/VR wheel parity, the current renderer and all newer melee profile fields.
+
+Separately, the [gesture-only plan](migration-gesture-only-melee-2.0-plan.md)
+directly compares this same primary revision's
+`VR_ImmersiveMeleeSuppressTrigger`, final client attack-bit suppression and
+`VR_DrawTrackedViewModel` ready-pose presentation. That control/presentation
+slice is implemented and source-reviewed; physical-contact damage and native
+hybrid adapters remain user-deferred. The
+[device reconstruction brief](openxr-device-reconstruction-2.0-plan.md) also
+references this revision's actual texture/model restart code rather than
+assuming the old vkQuake restart changes devices.
