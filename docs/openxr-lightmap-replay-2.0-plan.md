@@ -110,3 +110,29 @@ modes, failed preflight and partial creation cleanup. Qualification must include
 the complete parent loaded-scene transaction, not just CRCs or a mock uploader.
 Linux/ARM checks follow implementation; user live headset/gaze/performance tests
 and Windows builds remain deferred under the established scope.
+
+## Stage2 source-input checkpoint for the narrower brief
+
+Further direct source inspection locates a necessary preflight input boundary:
+Mod_LoadLighting atgl_model.c1959 allocates retained RGB samples for .lit,
+Quake64, Valve RGB and converted grayscale data, but qmodel_t stores only
+lightdata, not its readable byte length. Faces retain interior samples pointers
+(`:2509..2515`); mem.h exposes allocation/free, not an authoritative readable
+source-size API. A promise to validate sample spans cannot rely on pointer
+existence or texture extents alone. Proposed narrow metadata: retain allocated
+lightdata byte length alongside that existing model field, set at actual loader
+allocation, clear at existing full model disposal, and preserve it in existing
+inline-model copies. No second source buffer or allocation registry. This is
+stage2 design work; it needs local Astra disposition before production.
+
+The image regeneration path should use existing atlas rectangles, samples and
+style arrays, without GL_SortSurfaces or UpdateIndirectStructs. R_FillLightstyleTextures
+at1369 both writes packed pixels and marks membership; its MAXLIGHTMAPS/255
+termination and original packing must remain one implementation. Reset compact
+membership/counts before calling it, then compact once. R_AssignWorkgroupBounds
+at1423 must use its original polygon positions or checked BSP positions; keep
+existing model-space/mixed-space tagging. Retained global bounds may be reset
+and deterministically regenerated under this owner, not mistaken for live
+entity state. Cache invalidation must account for the modified==0 early exit
+in GPU updating at3983 and CPU per-surface lightstyle caches; resetting cached
+values alone does not establish a complete first-frame refresh.
