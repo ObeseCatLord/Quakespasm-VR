@@ -44,9 +44,9 @@
               # SDL loads XR by absolute executable-side path first. Preserve
               # runtime selection; do not bundle a compositor or driver.
               ln -s ${pkgs.openxr-loader}/lib/libopenxr_loader.so.1 $out/bin/libopenxr_loader.so.1
-              install -Dm644 Misc/vkquake.desktop $out/share/applications/vkquake.desktop
-              install -Dm644 Misc/vkQuake_256.png $out/share/icons/hicolor/256x256/apps/vkquake.png
-              install -Dm644 LICENSE.txt $out/share/licenses/vkquake-vr/LICENSE.txt
+              install -Dm644 "$src/Misc/vkquake.desktop" $out/share/applications/vkquake.desktop
+              install -Dm644 "$src/Misc/vkQuake_256.png" $out/share/icons/hicolor/256x256/apps/vkquake.png
+              install -Dm644 "$src/LICENSE.txt" $out/share/licenses/vkquake-vr/LICENSE.txt
             '';
             meta = {
               description = "vkQuake with OpenXR VR and native spatial audio";

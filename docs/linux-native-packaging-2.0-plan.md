@@ -44,3 +44,13 @@ no-SDK build preserves desktop fallback; OpenXR loader discovery remains runtime
 owned. Use isolated Foundry build directory via SSH. No builds/tests or package
 evaluation during this implementation slice; software checks occur at the end.
 Headset/audio listening and performance measurement remain user-deferred.
+
+## Astra Max source disposition
+
+Local Astra Max accepted the copied SDK boundary, source closure, SDL3/Vulkan/
+voice/audio flags and executable-side XR loader link. It found one packaging
+blocker: pinned Nix Meson hooks enter the build directory before postInstall.
+Main verified the [pinned setup hook](https://github.com/NixOS/nixpkgs/blob/5545adfad2e98de106a5544ca7067e03010410bd/pkgs/by-name/me/meson/setup-hook.sh)
+and changed desktop/icon/license copies to absolute `$src` paths. Adopted without
+another build owner. Source review is complete; native build and installation
+qualification remains deferred until all implementation is finished.
