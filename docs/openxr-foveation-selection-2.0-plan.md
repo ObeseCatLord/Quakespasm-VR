@@ -5,7 +5,9 @@ Status: implementation plan amended after the user's clarification on
 shading rate where FB/META cannot. Quad views are excluded from 2.0 after the
 [Frame/large-map assessment](openxr-quad-views-2.0-assessment.md). The complete
 vkQuake migration goal remains active. No further builds or tests until
-implementation is complete, per the latest user instruction.
+implementation is complete, per the latest user instruction. **FB/META's
+borrowed-image contract remains unqualified**; device selection and render-pass
+construction are implementation progress, not release readiness.
 
 ## Intended behavior and evidence
 
@@ -108,8 +110,15 @@ FB/META. A runtime's extension list never substitutes for actual GPU support.
    returned image and the Vulkan feature contract. Keep XR-owned images alive
    through their swapchain lifetime and retire all app views before detaching.
    Preserve the existing failed-density-to-ordinary-stereo retry. Do not
-   assume that a successful `xrEnumerateSwapchainImages` alone proves the
-   image can be used with this renderer.
+   assume that a successful `xrEnumerateSwapchainImages` or `vkCreateImageView`
+   alone proves the image can be used with this renderer. A 1-layer density map
+   is legal for Vulkan multiview, but this renderer currently creates a 2-layer
+   view to allow distinct eye patterns. Do not infer its layer count from the
+   color swapchain's `arraySize`. Establish the producer-completion and initial
+   layout contract for the borrowed image before the density pass; a device
+   subpass dependency does not make a host-read map ready. On qualification
+   failure, rebuild using the existing ordinary scene topology rather than
+   merely drawing no world into a still-active density render pass.
 5. **Guard user behavior.** Keep `vr_eye_tracking` and `vr_foveation` as shared
    VR options. Eye mode requires META profile, focus, current valid eye state
    and the existing stability policy. Invalid or lost gaze restores the off
@@ -143,3 +152,27 @@ pipeline creation/destruction and current-setting corrections; it flagged the
 indirect caller as outside its scope. Main inspected and updated that caller.
 This remains a **static** disposition: no 4x FDM draw, OIT/SSAO output, borrowed
 XR image or gaze-off recovery has been verified on hardware.
+
+## Astra borrowed-image review disposition
+
+A second local Astra Max review checked the existing XR, Vulkan image-view and
+render-pass owners against official [OpenXR returned-image](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSwapchainImageFoveationVulkanFB.html),
+[Vulkan view](https://docs.vulkan.org/refpages/latest/refpages/source/VkImageViewCreateInfo.html)
+and [density-map read-time](https://docs.vulkan.org/refpages/latest/refpages/source/VkRenderPassFragmentDensityMapCreateInfoEXT.html)
+rules. Meta's [native Vulkan FFR guide](https://developers.meta.com/horizon/documentation/native/android/os-fixed-foveated-rendering/)
+shows a two-layer color swapchain and the same borrowed-image enumeration but
+does not specify the returned density image's format, layer count or initial
+layout. The [open Khronos specification issue](https://github.com/KhronosGroup/OpenXR-Docs/issues/102)
+independently records the missing format query/guarantee. Valve's Frame guide
+recommends the extension family without specifying these Vulkan image details.
+
+| Finding | Disposition |
+| --- | --- |
+| RG8 and two density layers are assumed from a handle plus extent. The structure supplies neither format nor layer count; a successful image-view call cannot certify the VUIDs. | **Adopt as release blocker.** Keep existing XR and renderer owners, document the required target-runtime contract, and qualify it through vendor documentation/source or the deferred native runtime checks before claiming Frame/Beyond behavior. Do not add a headset allowlist or pretend the Vulkan format query describes the borrowed image. |
+| A static map view is host-read at render-pass recording. `xrUpdateSwapchainFB` and a device-stage dependency alone do not prove the runtime's producer has finished or that the image is in `FRAGMENT_DENSITY_MAP_OPTIMAL_EXT`. | **Adopt as release blocker.** Establish update/acquire readiness and layout on the actual runtime path. If unavailable, use ordinary stereo/KHR selection on a compatible device. |
+| `fragmentDensityMapDynamic=false` and view flags zero. | **Reject as a correctness defect on its own.** Static mode is valid when readiness precedes recording. Enabling the dynamic view flag without the device feature would itself violate Vulkan. Optional dynamic/`VK_EXT_fragment_density_map2` work is a later latency optimization only after the image contract is qualified. |
+| Off profile with compiled density pass. | **Adapt.** Off can render full-rate color, but the pass still accesses the borrowed image. A missing or unsafe image requires the existing ordinary pass topology, not an empty density draw. |
+
+This is a limitation in the published interface, not proof that Frame's or
+Meta's runtime returns an incompatible image. No runtime or headset execution
+was performed for this review, as requested.
