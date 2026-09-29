@@ -1,7 +1,9 @@
 # Linux native build packaging
 
-Status: plan before implementation. Native x86-64 and ARM64 Linux, with Foundry
-qualification after the entire implementation pass. No Windows builds now.
+Status: recipe implemented and source-reviewed; native builds and packaging
+qualification remain pending. The plan preceded implementation. Native x86-64
+and ARM64 Linux, with Foundry qualification after the entire implementation
+pass. No Windows builds now.
 
 Behavior: build the same vkQuake/OpenXR/voice/spatial-audio engine on each host
 architecture using native dependencies. Include matching libphonon rather than
@@ -12,8 +14,9 @@ Verified reuse: inherited nix/steamaudio.nix pins Valve Steam Audio4.8.1 and
 its source hash, PFFFT/MySOFA/FlatBuffers/zlib dependencies and the inherited
 unaligned accumulator fix. Its flake.lock pins nixpkgs and its flake already
 lists x86_64-linux/aarch64-linux. Current2.0 Meson owns shader compilation,
-SDL selection, codecs/voice, Vulkan and explicit native phonon paths, but does
-not install its executable. Existing AppImage tooling is x86-only and predates
+SDL selection, codecs/voice, Vulkan and explicit native phonon paths. Before
+this slice it did not install its executable; the adapter now enables the
+existing Meson installation flag. Existing AppImage tooling is x86-only and predates
 the XR/audio integration.
 
 Official source confirms native Linux aarch64 detection in

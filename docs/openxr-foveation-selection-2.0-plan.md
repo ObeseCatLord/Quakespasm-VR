@@ -135,7 +135,9 @@ FB/META. A runtime's extension list never substitutes for actual GPU support.
 6. **End-of-goal verification.** When implementation is finished, run a
    consolidated Linux build and the existing renderer/backend fixtures, plus
    genuine GPU/runtime scene checks where available. The user will run live
-   headset, eye-tracking, Windows/ARM and performance checks later. No
+   headset, eye-tracking, Windows and performance checks later. Linux ARM
+   software build/packaging qualification remains an end-of-implementation
+   engine task via the isolated Foundry build. No
    performance improvement or Beyond/Frame compatibility claim follows from
    extension discovery or a simulated image alone.
 
