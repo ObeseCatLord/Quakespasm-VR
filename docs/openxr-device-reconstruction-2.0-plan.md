@@ -219,3 +219,29 @@ Main compared allocation/free/call sites and the eight-line source/header change
 passes. No new heap retirement callers or device-switch claim. Source-only
 verification; no builds/tests/fixtures. Final full-goal senior review/qualification
 still includes actual heap destruction under the parent GPU retirement order.
+
+## Fan-index allocation ownership prerequisite
+
+Verified before implementation: R_InitFanIndexBuffer in gl_rmisc.c keeps its
+persistent buffer in vulkan_globals, but stores the allocation in a local
+VkDeviceMemory that is lost on return. No existing destroy path can release
+that allocation explicitly. Keep the allocation at the existing dynamic-buffer
+owner as a native vulkan_memory_t and use R_AllocateVulkanMemory instead of
+duplicating allocation/accounting. Preserve buffer flags, memory selection,
+binding offset, fan index generation and staging. Expected under20 changed
+source lines; no new resource registry, retirement caller or submission policy.
+The forthcoming owner retirement will release the buffer and this allocation
+before destroying the device. Source review now; builds/tests only at the end.
+
+## Primary reference check
+
+The actual read-only primary master51b452c0 was reread for this continuation:
+Quake/vr.c:7346 suppresses physical trigger by immersive-melee profile identity;
+Quake/cl_input.c:1086 clears BUTTON_ATTACK before command history/send;
+Quake/vr.c:7730 uses a scoped held-model ready pose and restores cl.viewent and
+currententity without rewriting QC animation state. The bounded gesture-only
+adapter follows those ownership/presentation principles; deferred hybrid and
+physical-contact modes are not imported as new policy.
+Quake/gl_vidsdl.c:920..936 retires old graphics before recreation and reuploads
+existing texture/model owners. Vulkan reconstruction follows that behavioral
+reference through vkQuake's Vulkan owners, preserving the loaded game.
