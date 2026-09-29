@@ -3318,3 +3318,11 @@ cases also pass ASan/UBSan (`-fsanitize=address,undefined
 -fno-omit-frame-pointer`). Run the executable with
 `ASAN_OPTIONS=detect_leaks=0` in this ptrace-managed sandbox: LeakSanitizer
 cannot run here, so this result does not include leak checking.
+
+
+Later 2026-09-29 capability update: native NVIDIA and RADV GPUs are accessible
+in this session. Running `/tmp/qsvr-openxr-layout` without a SwiftShader override
+passes the actual donor descriptor/pipeline layout owner in both readiness
+configurations (`objects=31` each). The older SwiftShader skip remains a valid
+four-set driver result, not the current host's only graphics evidence. This
+layout test still does not draw a loaded scene or XR image.

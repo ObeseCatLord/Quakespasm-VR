@@ -270,3 +270,12 @@ ASan/UBSan parser checks pass with leak checking unavailable as documented.
 Real software device creation passes; the real layout-owner test remains
 skip77. No live headset/gaze/multiplayer/performance, Windows/ARM or complete
 VR-001/VR-002/whole-goal completion is claimed.
+
+
+Later host capability update, 2026-09-29: this session can enumerate native
+NVIDIA RTX4090 and RADV GPUs. Re-running the existing
+`openxr_layout_fixture.c` without the SwiftShader override passes the **actual**
+donor descriptor and pipeline layout owners both before and after multiview
+readiness (`objects=31` in each configuration). This supersedes the earlier
+four-set SwiftShader skip for this machine. It does not prove a loaded scene,
+XR borrowed-image GPU work, headset output, or changed-device reconstruction.

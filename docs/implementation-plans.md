@@ -66,8 +66,8 @@ Max source review accepted the polling correction with no remaining blocker in
 this slice. The subsequent [late-binding plan](openxr-late-binding-2.0-plan.md)
 adds compatible-device desktop attachment and fresh instance recovery using
 actual creation metadata and original-Vulkan qualification. Its Linux component
-checks pass; real six-set layouts/loaded-scene proof is unavailable on the
-sandbox's four-set software device. Incompatible-device reconstruction and late
+checks pass; a later native-GPU run also passes the actual donor six-set layout
+owners, while loaded-scene XR/GPU proof remains open. Incompatible-device reconstruction and late
 foveation readiness remain parent implementation scope. Live tests stay deferred.
 
 These links do not certify that a feature is finished. Completed work predating

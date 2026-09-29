@@ -48,10 +48,15 @@ https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom
 The inherited FB/META image and gaze-contract limits are recorded in
 [vulkan-foveation-2.0-plan.md](vulkan-foveation-2.0-plan.md).
 
-Unknown: each target GPU's actual KHR/FDM formats, sample-rate support and
-runtime capability; Beyond gaze is not configured. The local accessible
-SwiftShader supports only four descriptor sets, below stereo's six, so it
-cannot prove real stereo layout rendering. User does live/performance tests.
+Unknown: each release target GPU's full KHR/FDM format and sample-rate matrix,
+actual XR runtime capability, and Beyond gaze (not configured). New current-host
+probe on 2026-09-29 enumerates NVIDIA RTX4090 and RADV devices, both advertising
+`VK_KHR_fragment_shading_rate`, `VK_KHR_create_renderpass2`,
+`attachmentFragmentShadingRate=true` and 32 descriptor sets. The existing
+`openxr_layout_fixture.c` passes the real donor descriptor and pipeline layout
+owners with multiview readiness off and on on this host. This replaces the old
+software-only evidence for layouts; it does not prove foveated draw commands,
+XR images or headset output. User does live/performance tests.
 
 ## Architecture comparison
 
@@ -88,8 +93,8 @@ cannot prove real stereo layout rendering. User does live/performance tests.
    XR gaze, explicit FDM with runtime absent/present, unsupported extension,
    `-novr`, lost instance/rediscovery, MSAA and invalid gaze. Check real Vulkan
    device setup on an accessible capable GPU when available. State seams
-   honestly: this host's software driver cannot prove six-set layout or HMD
-   output. Linux Make plus focused fixtures; Windows/ARM and live/performance
+   honestly: actual donor six-set layouts now pass locally, but HMD/XR image
+   output still requires user testing. Linux Make plus focused fixtures; Windows/ARM and live/performance
    checks remain user-deferred.
 
 Estimate: under150 production lines inside `gl_vidsdl.c`, no new owner or
