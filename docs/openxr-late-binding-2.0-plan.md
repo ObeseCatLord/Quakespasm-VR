@@ -1,6 +1,6 @@
 # OpenXR late attachment and instance recovery on vkQuake's device
 
-Status: verified design draft before production edits; Astra disposition pending.
+Status: Astra Max design accepted with the revisions below; implementation in progress.
 Scope: VR-001/VR-002/XR-001/XR-002. The whole migration and user exclusions in
 [scope decisions](migration-scope-decisions.md) remain intact. No GPU benchmark,
 Windows/ARM build or live headset trial is required in this implementation pass.
@@ -75,7 +75,7 @@ devices. Runtime support must be queried; no headset/provider allowlist.
 
 | Option | Reuse / incompatibility | Assessment |
 | --- | --- | --- |
-| Add original-Vulkan qualification at the existing backend; remember actual renderer creation metadata and prepare supported optional graphics capabilities | Reuses every session/frame/input/asset/render owner. The demonstrated gaps are creation provenance, missing enabled-extension records and missing device-time multiview readiness. | Preferred first implementation, subject to Astra. Additional graphics dispatch only; no parallel session machine. Leaves different-GPU/device reconstruction explicit. |
+| Add original-Vulkan qualification at the existing backend; remember actual renderer creation metadata and prepare supported optional graphics capabilities | Reuses every session/frame/input/asset/render owner. The demonstrated gaps are creation provenance, missing enabled-extension records and missing device-time multiview readiness. | Preferred first implementation, accepted with revisions below. Additional graphics dispatch only; no parallel session machine. Leaves different-GPU/device reconstruction explicit. |
 | Recreate Vulkan instance/device and all GPU assets on every runtime rediscovery | Reuses loader data in principle, but no live recreation contract exists across textures, mesh heaps, staging, descriptors, ray resources and task owners. | Larger necessary fallback only when the minimal binding is actually incompatible; plan it separately rather than replace adjacent healthy owners now. |
 | Always initialize/choose OpenXR's device during desktop startup | Can reuse enable2, but changes donor desktop selection and introduces an XR-runtime dependency; no headset/runtime may exist yet. | Reject as general desktop behavior. |
 | Bind arbitrary desktop handles as enable2 / fake successful wrapper creations | Does not establish the documented creation contract. | Reject. |
@@ -91,18 +91,25 @@ or different-GPU behavior as finished.
 1. Commit this plan; local Astra verifies source/spec then critiques the reuse,
    startup effect and extension policy. Commit adopted/adapted disposition before
    production work. Main prepares independent fixture support while review runs.
-2. Existing renderer creation owners retain selected API, explicit enabled
-   instance/device extensions and actual ordinary graphics queue provenance.
-   Record only after successful creation. No resource handles are newly owned.
-   Hidden enable2 additions are not guessed; known enabled names form a safe
-   sufficient subset. Incompatible unknown requirements must reject adoption.
+2. Existing renderer creation owners retain actual selected API, enabled
+   instance/device extensions, ordinary queue provenance and relevant feature
+   facts. For enable2, a getProc adapter forwards real Vulkan creation and
+   copies the runtime-merged create parameters; publish the matching handle's
+   record only after both XR and Vulkan creation succeed. Direct desktop
+   creation records its actual create parameters after success. One singleton
+   renderer metadata record survives XR State teardown, contains no destruction
+   authority and is explicitly forgotten by the renderer when Vulkan handles
+   are abandoned. Creation/teardown remain serialized at the existing owner;
+   callback capture supports runtime calls from another thread without TLS.
 3. Unless `-novr`, query/enable core multiview on a genuinely Vulkan1.1-capable
    device and keep existing six-set layout eligibility checks. Enable only
    advertised, dependency-satisfied external memory/fence/semaphore and platform
    handle candidates at startup. Keep donor GPU choice, raster/effects/settings
-   and no-runtime desktop behavior. Preserve existing foveation-family exclusion;
-   optional KHR readiness must not start fixed foveation. META readiness without
-   an available runtime needs its own verified dependency decision.
+   and no-runtime desktop behavior. Account for promoted core dependencies,
+   explicitly enable supported platform-handle names, expand fixed name arrays
+   and do not invent enabled extension names. Speculative foveation readiness
+   is outside this minimum attachment proof; startup foveation stays intact,
+   and broader late-attachment foveation remains unfinished parent scope.
 4. Backend original-Vulkan discovery and adoption query API minimum, required
    instance/device extensions and runtime-selected physical device against
    the immutable creation record, before accepting binding/session resources.
@@ -113,6 +120,8 @@ or different-GPU behavior as finished.
    binding eligibility is absent, rediscover/adopt instead of rejecting all
    stops. Failures retire only newly-created XR discovery/session resources,
    retain desktop handles/assets, and require another explicit command to retry.
+   Reinstall the existing queue mutex callbacks after each fresh adoption and
+   before attachment; XR State teardown clears their registration.
    Do not auto-restart EXITING, -novr, or a failed attempt.
 6. Consolidated Linux build and production-boundary fixtures after coherent
    implementation: ordinary desktop no runtime; explicit late attachment/new
@@ -150,3 +159,28 @@ verification, max800words with file/line evidence and adopt/adapt/reject table.
 No edits/builds/tests/nested agents. Do not re-review networking, graphics
 algorithms, asset parsing or the entire185-item inventory. If compatibility is
 insufficient, report the required next owner instead of authorizing a rewrite.
+
+## Astra Max design disposition
+
+Local reviewer Locke verified the actual owners and primary specifications.
+Main spot-checked the load-bearing enable2 Appendix Q1 recommendation: an
+application may supply a local `pfnGetInstanceProcAddr` to capture the actual
+combined parameters. This changes the initial subset-only proposal.
+
+| Recommendation | Disposition and implementation consequence |
+| --- | --- |
+| Capture actual merged enable2 creation parameters | Adapted: use a real-create forwarding shim at the current boundary; retain metadata for the renderer handle lifetime, independently of XR State. No fake creates or second GPU owner. |
+| Prefer compatible-device reuse, keep reconstruction fallback explicit | Adopted: API/extensions/GPU refusals preserve desktop; they do not finish incompatible-device or actual device-loss recovery. Plan live recreation through existing owners separately. |
+| One explicit graphics binding mode per XrInstance | Adopted: fresh adoption enables original Vulkan and uses its corresponding queries; startup keeps enable2 wrapper provenance. Type aliases do not establish that provenance. |
+| Restore queue synchronization after rediscovery | Adopted: register the renderer's current mutex before every attachment. Explicit intent, -novr, joins, retirement and attempted latch remain. |
+| Finite dependency-checked readiness table | Adapted: supported platform interop only, promoted dependencies treated accurately and arrays expanded. No guarantee for every future runtime. Foveation readiness is a separate remaining slice. |
+| Real device-time multiview and existing layout owner | Adopted: query and enable actual core1.1 multiview plus two-view/six-set limits. Verify real desktop and stereo layouts; stereo output still requires stereo_active. |
+| Vertical proof beyond hand-set flags/refusals | Adopted: exercise real creation capture, existing layout/command/session/retirement boundaries and submitted stereo continuity. Describe simulated XR separately from software Vulkan execution; no claim of live HMD validation. |
+
+The shim implementation must preserve real Vulkan results, allocation callbacks
+and driver dispatch. Runtime-added API/extension/queue/feature facts are copied
+before borrowed create pointers expire and published only for the returned
+successful handles. A failed wrapper must not publish adoption eligibility.
+
+Primary source for the capture correction:
+[enable2 Appendix Q1](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/khr/khr_vulkan_enable2.adoc).
