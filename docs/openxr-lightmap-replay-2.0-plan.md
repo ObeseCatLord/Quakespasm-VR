@@ -361,3 +361,26 @@ restored frame and cannot resume the old renderer. No external callers, GPU
 creation/upload or cache activation were added. Compilation and end-to-end
 qualification remain deferred until full implementation, not certified by this
 source review. Main reviewed the combined diff and git diff --check passed.
+
+## Stage3 additional GPU source checkpoint
+
+r_brush.c's existing static owners retain surface count, draw membership and
+CPU indirect commands, while surface-data/submodel/workgroup/indirect/index/
+visibility buffers have separate native memory owners. Frame-upload lightstyle,
+light, submodel-transform and bmodel-instance buffers share one allocation and
+mapped views. R_AllocateLightmapComputeBuffers remains their startup creator;
+full retirement must clear all four buffers/mappings before using it again.
+R_FreeBuffers destroys buffers then shared memory but does not clear caller
+fields; R_FreeBuffer likewise leaves its by-value buffer field unchanged.
+
+The native GL_BuildLightmaps loop calculates each compute surface's packed
+styles, normal/plane, atlas coordinates, texture vectors, indirect membership
+and vbo offset. A GPU-only surface restoration should extract those existing
+writes into one private shared fill routine, using retained vbo_firstvert during
+replay, while initial construction alone still assigns that offset. Restore
+surface-submodel tags using the existing progression and preserve the cutout bit.
+Reusing UpdateIndirectStructs/GL_SortSurfaces would change membership/packing and
+is not indicated. Existing GL_SetupIndirectDraws can then consume retained CPU
+commands/dependencies after its own GPU fields have been retired and cleared.
+These are source checkpoints; a bounded retirement/recreation contract and local
+Astra disposition are still required before any stage3 production edits.
