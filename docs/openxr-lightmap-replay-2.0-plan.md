@@ -1,7 +1,7 @@
 # Lightmap derived-input reconstruction
 
-Status: verified design brief, not implemented. Local Astra disposition precedes
-production. This preserves the parent [device reconstruction contract](openxr-device-reconstruction-2.0-plan.md),
+Status: stage1 source integrated with final local Astra acceptance; stage2a
+verified brief awaits disposition. Full lightmap/device replay remains open. This preserves the parent [device reconstruction contract](openxr-device-reconstruction-2.0-plan.md),
 with the [brush vertex prerequisite](openxr-brush-vertex-replay-2.0-plan.md)
 already source integrated. Only2.0 edits; primary, donor and game assets remain
 read-only. No builds/tests until the entire implementation is finished.
@@ -228,3 +228,12 @@ End-of-full-implementation checks remain the parent scene transaction plus
 native image/input comparison, repeated preparation/cancellation, live phase,
 external/movable brush spaces, lightmapped liquids, sparse planes and malformed
 span rejection before mutation. No builds or tests during this implementation.
+
+## Stage1 production/source acceptance
+
+TexMgr_ReplayGeneratedImage is source integrated:73 added lines in existing
+texmgr.c/.h, direct native upload, ordinary reload verbatim. Local Astra personally
+accepted the final source with no P1/P2 findings after verifying membership,
+retired handles, borrowed-input restrictions, signed staging bounds, metadata,
+native precision and postconditions. No production caller/parent transaction is
+claimed. Source inspection and git diff --check only; no builds/tests/fixtures.
