@@ -215,7 +215,7 @@ existing heap exercise and full reconstruction checks remain end-of-goal only.
 
 Heap prerequisite source integrated: null guard, live-allocation assertion and
 frees for the existing segment/root structs, with consuming-owner declaration.
-Main compared allocation/free/call sites and the12-line change; git diff --check
+Main compared allocation/free/call sites and the eight-line source/header change; git diff --check
 passes. No new heap retirement callers or device-switch claim. Source-only
 verification; no builds/tests/fixtures. Final full-goal senior review/qualification
 still includes actual heap destruction under the parent GPU retirement order.
