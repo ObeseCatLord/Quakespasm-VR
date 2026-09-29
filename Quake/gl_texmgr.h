@@ -124,6 +124,7 @@ gltexture_t *TexMgr_LoadImage (
 void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants);
 // Quiesced reconstruction of retired generated records only; span is borrowed.
 // Caller proves atlas identity/shape and keeps CPU inputs and record alive.
+qboolean TexMgr_CanReplayGeneratedImage (gltexture_t *glt, const byte *data, size_t data_bytes);
 qboolean TexMgr_ReplayGeneratedImage (gltexture_t *glt, const byte *data, size_t data_bytes);
 void TexMgr_ReloadNobrightImages (void);
 

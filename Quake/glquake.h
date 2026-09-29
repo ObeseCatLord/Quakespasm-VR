@@ -936,6 +936,10 @@ void GL_BuildLightmaps (void);
  * renderer until reconstruction completes or the lightmap owner is discarded. */
 qboolean GL_CanRegenerateLightmapInputs (void);
 qboolean GL_RegenerateLightmapInputs (void);
+/* Source eligibility before retirement; replay additionally requires fresh CPU
+ * inputs and newly bound workgroup buffers. Return does not imply GPU completion. */
+qboolean GL_CanReplayLightmapImages (void);
+qboolean GL_ReplayLightmapInputs (void);
 void GL_SetupIndirectDraws (void);
 void GL_SetupLightmapCompute (void);
 void GL_UpdateLightmapDescriptorSets (void);

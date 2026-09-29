@@ -1690,7 +1690,7 @@ void TexMgr_ReloadImage (gltexture_t *glt, int shirt, int pants)
 
 /*
 ================
-TexMgr_ReplayGeneratedImage
+TexMgr_CanReplayGeneratedImage / TexMgr_ReplayGeneratedImage
 
 Only for quiesced reconstruction: the caller owns stable pixels/record identity,
 retired GPU fields and initialized new-device upload resources. No source pointer
@@ -1698,11 +1698,10 @@ is installed in the record. The permitted profile cannot modify borrowed pixels.
 False means rejection before mutation; native allocation failures remain fatal.
 ================
 */
-qboolean TexMgr_ReplayGeneratedImage (gltexture_t *glt, const byte *data, size_t data_bytes)
+qboolean TexMgr_CanReplayGeneratedImage (gltexture_t *glt, const byte *data, size_t data_bytes)
 {
 	gltexture_t *active;
 	size_t required_bytes;
-	textureflags_t flags;
 	qboolean valid = false;
 
 	if (!glt || !data || !texmgr_mutex)
@@ -1736,9 +1735,15 @@ qboolean TexMgr_ReplayGeneratedImage (gltexture_t *glt, const byte *data, size_t
 
 preflight_done:
 	SDL_UnlockMutex (texmgr_mutex);
-	if (!valid)
+	return valid;
+}
+
+qboolean TexMgr_ReplayGeneratedImage (gltexture_t *glt, const byte *data, size_t data_bytes)
+{
+	if (!TexMgr_CanReplayGeneratedImage (glt, data, data_bytes))
 		return false;
 
+	textureflags_t flags;
 	// Lifetime safety after unlocking belongs to the quiesced parent transaction.
 	flags = glt->flags;
 	glt->width = glt->source_width;

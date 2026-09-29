@@ -1,7 +1,7 @@
 # Lightmap derived-input reconstruction
 
-Status: stage1 and stage2a source integrated with final local Astra acceptance;
-stage2b upload/activation brief awaits disposition. Full device replay remains open. This preserves the parent [device reconstruction contract](openxr-device-reconstruction-2.0-plan.md),
+Status: stage1, stage2a and stage2b source integrated with final local Astra
+acceptance; stage3 GPU owner brief awaits disposition. Full device replay remains open. This preserves the parent [device reconstruction contract](openxr-device-reconstruction-2.0-plan.md),
 with the [brush vertex prerequisite](openxr-brush-vertex-replay-2.0-plan.md)
 already source integrated. Only2.0 edits; primary, donor and game assets remain
 read-only. No builds/tests until the entire implementation is finished.
@@ -480,3 +480,22 @@ handles do not prove provenance. Pre-retirement query checks source/record
 eligibility without requiring transient arrays, retired handles or future-device
 readiness. Revised estimate250–350 changed lines including moves. Stage3/parent
 still needs its own review; no renderer-ready or rollback claim from upload.
+
+## Stage2b production/source acceptance
+
+Local Astra/max personally accepted the four-file source with no P1/P2 findings:
+169 additions/16 deletions. The shared TexMgr readiness predicate validates the
+whole record graph before packing/upload; pre-retirement source eligibility is
+separate from fresh-input/retired-GPU readiness. Native initial allocation and
+record creation remain unchanged. Replay uses existing records, shared crop/
+packing/staging/free code and shared null planes. Activation follows the complete
+pass; exact cached_framecount==-1 forces one cropped unconditional GPU refresh,
+retaining dynamic-light accounting and submodel removal obligations. CPU cache
+activation relies on full base upload when r_dynamic is off.
+
+No duplicate barrier, renderer registry, persistent flag or shader change.
+Return establishes CPU staging/recording, not GPU completion or renderer readiness.
+No production parent callers were added; new bound workgroups, descriptors,
+shared placeholder and ordered staging drain remain caller obligations. Main
+reviewed the diff and git diff --check passed. No builds/tests/fixtures/compiler
+commands ran; end-of-full-implementation qualification remains outstanding.

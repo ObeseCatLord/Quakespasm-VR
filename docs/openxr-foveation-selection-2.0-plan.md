@@ -197,3 +197,17 @@ currently lists neither `XR_FB_foveation_vulkan` nor
 `XR_META_foveation_eye_tracked` for desktop Monado. This is a published
 self-reported capability snapshot, so the installed runtime must still be
 queried at attachment.
+
+
+## Official documentation recheck, 2026-09-29
+
+Re-read [Valve's actual custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
+(standalone Linux ARM64, six FB/META recommendations, EXT gaze) and OpenXR1.1.63's
+[borrowed-image structure](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSwapchainImageFoveationVulkanFB.html).
+The latter still supplies a compatible image plus width/height, without explicit
+format/layer/layout metadata. The Khronos [format-clarification issue102](https://github.com/KhronosGroup/OpenXR-Docs/issues/102)
+is still open. Vulkan's [FDM sample](https://docs.vulkan.org/samples/latest/samples/extensions/fragment_density_map/README.html)
+uses RG8 as an example of a supported format; required GPU RG8 support does not
+by itself identify a runtime-owned image's format. No new inference qualifies
+the borrowed-image contract here. Existing fallback/protected full-rate behavior
+and user exclusions remain; no FDM tests or policy changes in this checkpoint.
