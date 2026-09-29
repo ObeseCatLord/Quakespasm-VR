@@ -199,8 +199,8 @@ nonnegative extents, bounded atlas rectangle and blocklights capacity, active
 styles below MAX_LIGHTSTYLES and readable styled sample span. Record shape/crop
 and retired GPU validation belong to stage2b preflight; source readiness must
 not claim complete image/GPU eligibility. Count traversal exactly against
-num_surfaces; reject a non-brush non-inline precache owner in this native path
-instead of inventing surfaces. Validate required style/surface extents fit their
+num_surfaces; allow/skip ordinary non-brush precache owners with zero brush
+surfaces and reject only inconsistent non-brush owners with brush surfaces. Validate required style/surface extents fit their
 existing rectused crop before mutation. Null samples are permitted with native
 fullbright/no-samples behavior. A retained sample pointer is checked by integer
 address offset and required RGB bytes against the actual owner allocation span;
@@ -258,3 +258,13 @@ allocation helpers run on the replacement device. GL_SetupIndirectDraws reuses
 retained initial_indirect_buffer and indirect_draws, but its index/visibility
 allocation helpers also free their old buffer inputs. No new CPU upload mirror
 or independent draw-membership rebuild is indicated by this evidence.
+
+Supporting parent-retirement evidence: R_DestroyStagingBuffers currently frees
+shared staging memory before destroying its buffers; it does not destroy staging
+fences/command pool or clear buffer fields. R_InitStagingBuffers recreates several
+mutexes and a condition unconditionally. R_FreeBuffer receives a buffer by value
+and leaves the owner field unchanged; R_FreeVulkanMemory does clear its own
+handle/size/type. GL_HeapDestroy frees segment-owned arrays and shared segments
+array but does not free the heap object or each segment allocation itself.
+These are concrete lifetime gaps for later bounded owner retirement, not a
+reason to replace staging/heap allocation or add a generic resource registry.
