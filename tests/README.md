@@ -7,7 +7,8 @@ helpers and runs the actual backend creation/session/frame owners with fake
 runtime and Vulkan dispatch. It checks session loss/EXITING without automatic
 restart, explicit recovery, loss during wait/release/end, healthy detach with
 changed hardware, stale session events, API/GPU/system rejection, failed session
-destruction, instance escalation, retirement order and queue-lock balance.
+destruction, fresh polling failure after either retained stop, instance
+escalation, retirement order and queue-lock balance.
 
 `openxr_enable_fixture.c` includes the actual renderer source and exercises its
 command, frame-transition, attachment and retirement owners. Repeated desktop

@@ -1,7 +1,7 @@
 # OpenXR session recovery on the existing Vulkan binding
 
-Status: implemented with passing bounded Linux checks; final local Astra source
-review pending.
+Status: implemented with passing bounded Linux checks and final local Astra Max
+source acceptance. This bounded slice is complete; full migration remains open.
 This advances VR-001/VR-002/XR-002 within the full migration. It does not remove
 ordinary desktop hot-connect or instance-loss recovery from the parent scope.
 Current scope exclusions and user-deferred live/device/platform/performance
@@ -172,5 +172,14 @@ full backend teardown and unavailable retry.
 The reviewer also distinguished a DestroySession instance-loss injection from
 its permitted registry results. That probe is replaced with permitted runtime
 failure after EXITING; actual instance-loss events still test escalation. Input
-helper/renderer spy limits remain accurately stated. The correction requires
-targeted regressions and a final Astra disposition before closing this slice.
+helper/renderer spy limits remain accurately stated.
+
+Final disposition: Cicero verified `gpt-6-astra`, effort `max`, and accepted the
+targeted correction with no remaining blocker. The reviewer checked the fresh
+poll outcome and restoration ordering, discriminating EXITING/session-loss
+failure assertions and the corrected destruction probe. No new owner or
+persistent recovery policy was introduced. Both backend recovery and original
+Vulkan boundary regressions pass after the correction; the Linux SDL3 Make
+build passes again. The reviewer inspected source/assertions and did not rerun
+these main-reported checks. Full dispatcher integration, combined runtime/
+renderer/input behavior and GPU/HMD health remain the stated evidence limits.

@@ -61,8 +61,9 @@ The [OpenXR session recovery plan](openxr-session-recovery-2.0-plan.md) adds
 explicit re-enable after a session-only loss or EXITING using the original
 runtime-created Vulkan binding. Every new attachment requalifies system/API/GPU;
 failed session destruction and instance loss abandon backend eligibility. Linux
-build and bounded backend/renderer/camera/input-helper checks pass; final Astra
-source review is pending. Full instance/device recovery and ordinary desktop
+build and bounded backend/renderer/camera/input-helper checks pass. Final Astra
+Max source review accepted the polling correction with no remaining blocker in
+this slice. Full instance/device recovery and ordinary desktop
 hot-connect remain parent scope, with live testing deferred to the user.
 
 These links do not certify that a feature is finished. Completed work predating
