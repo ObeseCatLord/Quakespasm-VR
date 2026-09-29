@@ -1753,7 +1753,7 @@ void TexMgr_CollectGarbage (void)
 		vkDestroyImage (vulkan_globals.device, garbage->image, NULL);
 		R_FreeDescriptorSet (garbage->descriptor_set, &vulkan_globals.single_texture_set_layout);
 		if (garbage->storage_descriptor_set)
-			R_FreeDescriptorSet (garbage->descriptor_set, &vulkan_globals.single_texture_cs_write_set_layout);
+			R_FreeDescriptorSet (garbage->storage_descriptor_set, &vulkan_globals.single_texture_cs_write_set_layout);
 
 		GL_HeapFree (texmgr_heap, garbage->allocation, &num_vulkan_tex_allocations);
 	}
@@ -1810,6 +1810,8 @@ static void GL_DeleteTexture (gltexture_t *texture)
 	texture->target_image_view = VK_NULL_HANDLE;
 	texture->image_view = VK_NULL_HANDLE;
 	texture->image = VK_NULL_HANDLE;
+	texture->descriptor_set = VK_NULL_HANDLE;
+	texture->storage_descriptor_set = VK_NULL_HANDLE;
 	texture->allocation = NULL;
 
 mutex_unlock:
