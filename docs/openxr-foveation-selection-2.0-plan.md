@@ -11,10 +11,13 @@ construction are implementation progress, not release readiness.
 
 ## Intended behavior and evidence
 
-OpenXR VR prefers the existing runtime-owned `XR_FB_foveation` /
-`XR_META_foveation_eye_tracked` path when the actual Vulkan device, startup
-runtime and current render setting can use it. When FB/META cannot be selected,
-a capable device uses the existing KHR attachment shading-rate path.
+OpenXR VR uses the KHR attachment shading-rate path on a capable device by
+default. The runtime-owned `XR_FB_foveation` /
+`XR_META_foveation_eye_tracked` path is currently available only with the
+explicit `-vk-runtime-foveation` development switch and compatible settings.
+After the borrowed-image contract is qualified for a target runtime, prefer
+FB/META there when its device and render settings can use it; retain KHR where
+FB/META cannot be selected.
 `vr_eye_tracking` is the user toggle for eye-tracked mode;
 `vr_foveation 1` is the only way to request fixed mode. An absent extension,
 unavailable/invalid gaze, unsupported graphics configuration, or runtime
@@ -39,11 +42,12 @@ alone do not prove a usable device/image/profile contract.
 Existing code already owns FB/META discovery, runtime profiles, borrowed
 image enumeration, multiview density-scene pass, full-rate protected pass and
 depth replay (`vr_openxr.cpp`, `gl_vidsdl.c`, `r_passes.c`, `gl_rmain.c`).
-The current FB priority incompatibilities are concrete: device selection
-prefers KHR except behind `-vk-runtime-foveation`; runtime-absent desktop
-creation cannot ready FDM; the FDM scene is rejected at the donor default
-`vid_fsaa 4`; and borrowed image assumptions (RG8 format, layout/readiness,
-size) have not been qualified against intended runtimes. The local NVIDIA
+The current FB priority incompatibilities are concrete: the published FB
+Vulkan interface does not establish the borrowed image's RG8 format, layer
+count, layout or producer readiness; those assumptions have not been qualified
+against intended runtimes. The implementation now adapts the density pass for
+the donor's default `vid_fsaa 4`, but the runtime path remains experimental.
+The local NVIDIA
 RTX4090 and RADV iGPU do not advertise Vulkan FDM, so this host cannot prove
 FDM execution; both do advertise the KHR candidate, so an OpenXR runtime with
 a working `XR_EXT_eye_gaze_interaction` action can still support eye foveation.
@@ -61,16 +65,19 @@ FB/META. A runtime's extension list never substitutes for actual GPU support.
 ## Implementation slices and acceptance contract
 
 1. **Select one device feature family.** Probe both Vulkan candidates at device
-   creation. Startup XR prefers FB/META when the runtime advertises eye-profile
-   support, the GPU has FDM and current settings permit its density pass.
+   creation. The unqualified FB/META path requires
+   `-vk-runtime-foveation`; only then can startup XR prefer it when the runtime
+   advertises eye-profile support, the GPU has FDM and current settings permit
+   its density pass.
    Read the existing `r_width`/`r_height` settings alongside FSAA before
    device selection; otherwise a saved reduced render size is applied only
    after an FB/META device has already precluded KHR. Later command changes
    still cannot change the selected feature family without device recreation.
    Otherwise select KHR if the GPU qualifies. Ordinary desktop creation favors
    KHR when present because no runtime has been discovered yet; explicit
-   `-openxr` startup can choose FB/META. If KHR is absent, retain FDM device
-   readiness where eligible for later runtime discovery. A runtime/profile
+   `-openxr` startup can choose FB/META only with the development switch.
+   If KHR is absent, the switch can retain FDM device readiness for later
+   runtime discovery; without it, keep full-rate rendering. A runtime/profile
    failure after selecting FDM cannot switch to KHR on the same VkDevice;
    ordinary full-rate VR remains until a future device reconstruction or app
    restart. Never quietly switch to fixed foveation.
@@ -176,3 +183,15 @@ recommends the extension family without specifying these Vulkan image details.
 This is a limitation in the published interface, not proof that Frame's or
 Meta's runtime returns an incompatible image. No runtime or headset execution
 was performed for this review, as requested.
+
+The release-blocker disposition is now enforced at device selection: without
+`-vk-runtime-foveation`, FDM cannot preempt a usable KHR device or be selected
+merely because KHR is unavailable. The switch exposes the existing FB/META
+path for qualification, not for a default release configuration. Once a target
+runtime's image contract is established, remove the switch for that qualified
+route and revisit the FB/META preference under the same single-device policy.
+The [Khronos runtime inventory](https://github.khronos.org/OpenXR-Inventory/runtime_extension_support.html)
+currently lists neither `XR_FB_foveation_vulkan` nor
+`XR_META_foveation_eye_tracked` for desktop Monado. This is a published
+self-reported capability snapshot, so the installed runtime must still be
+queried at attachment.

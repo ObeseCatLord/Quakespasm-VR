@@ -138,13 +138,13 @@ view configurations on the actual runtime. The user has since excluded quad
 views from 2.0 after the [Frame/large-map assessment](openxr-quad-views-2.0-assessment.md);
 do not replace the two-view path in this migration.
 
-The latest Astra senior review retains KHR as the production baseline because
-the FB path currently adds a coarse-color pass and full-rate depth replay, and
-the default MSAA setting disables its density-map pass after device selection.
-FB/META may still win on Frame through runtime-controlled gaze or hardware
-density-map behavior; that requires device evidence. The review also rejects
-quad views as the default until target support and a net frame-time gain are
-shown. Quad views are excluded from the current goal by the later user decision.
+An earlier Astra review retained KHR as the production baseline because the
+FB path adds a coarse-color pass and full-rate depth replay; at that time,
+default MSAA also disabled its density pass. The MSAA pass has since been
+adapted, but its borrowed-image format, layers and synchronization remain
+unqualified. FB/META may still win on Frame through runtime-controlled gaze
+or hardware density-map behavior; that requires device evidence. The later
+user decision excludes quad views from the current goal.
 
 ## Minimal renderer adapter
 

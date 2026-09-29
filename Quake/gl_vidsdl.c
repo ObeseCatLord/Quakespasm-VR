@@ -2061,14 +2061,15 @@ static void GL_InitDevice (void)
 
 #if defined(VK_EXT_fragment_density_map)
 	const qboolean khr_shading_rate_candidate = fragment_shading_rate_feature_enabled;
-	/* Prefer runtime-owned eye foveation only when this Vulkan device and the
-	 * startup runtime qualify and the current scene can use the density pass.
-	 * Desktop-first startup keeps the KHR eye path if available. If KHR is
-	 * unavailable, retain FDM readiness for an explicit later XR attachment. */
+	/* The FB borrowed-image format, layers and producer synchronization are
+	 * not established by the published XR interface. Keep this path explicit
+	 * until the target runtime contract is qualified. Ordinary startup keeps
+	 * KHR eye foveation where available, otherwise full-rate rendering. */
 	const qboolean density_settings_ready = !(vid_fsaa.value >= 2 && vid_fsaamode.value >= 1) &&
 		!(r_width.value > 0 && r_height.value > 0);
-	const qboolean prefer_fb_eye = openxr_vulkan_binding && VRXR_VulkanFoveationEyeSupported () && density_settings_ready;
-	if (fragment_density_map_candidate && (prefer_fb_eye || !khr_shading_rate_candidate))
+	const qboolean allow_runtime_foveation = COM_CheckParm ("-vk-runtime-foveation") && density_settings_ready;
+	const qboolean prefer_fb_eye = allow_runtime_foveation && openxr_vulkan_binding && VRXR_VulkanFoveationEyeSupported ();
+	if (fragment_density_map_candidate && allow_runtime_foveation && (prefer_fb_eye || !khr_shading_rate_candidate))
 	{
 #if defined(VK_QCOM_fragment_density_map_offset)
 		// XR_META_foveation_eye_tracked makes the runtime apply the gaze pattern
