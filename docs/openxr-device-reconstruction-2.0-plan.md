@@ -136,7 +136,11 @@ reopen if it introduces a parallel asset/resource state machine or repeatedly
 fixes interactions between newly duplicated owners.
 
 No device reconstruction or device-loss success is claimed at this checkpoint.
-The immediate next stage is the [alias replay prerequisite](openxr-alias-replay-2.0-plan.md). Source
+The [alias replay prerequisite](openxr-alias-replay-2.0-plan.md) is now source-
+implemented in32ca78f7 with final local Astra acceptance, including private-prop
+joint lifetime; its new APIs are not yet wired to a live switch transaction.
+The next resource prerequisite is the bounded brush/lightmap reconstruction
+contract. Source
 review and `git diff --check` are allowed now; builds/tests remain deferred by
 the user's instruction until full implementation is finished.
 
@@ -160,3 +164,23 @@ gl_sky.c:126/499, r_brush.c:2498/2514/2570/2664, gl_screen.c:2497,
 gl_heap.c:624, vr_openxr.cpp:1629 and gl_vidsdl.c:4686/5837. Main inspected
 the upload and deletion/retention boundaries before choosing the next write set.
 No builds, tests or live device work were performed for this review.
+
+### Brush/lightmap source checkpoint before a bounded implementation brief
+
+Direct current2.0 source inspection confirms the parent disposition still
+applies. `r_brush.c:2629` uploads every brush surface from `s->polys->verts`,
+then releases ordinary polygons at2700; tiled polygons remain. Calling that
+upload again on a loaded map therefore cannot replay all surfaces unchanged.
+The existing `BuildSurfaceDisplayList:1619` reconstructs those ordinary
+vertices from retained BSP edges, vertexes, texture vectors and current
+lightmap coordinates. Reuse its vertex calculation rather than create a
+second brush source/payload cache. Its current currentmodel/vertex-base globals
+and polygon allocation require a bounded owner-local contract before edits.
+
+`GL_BuildLightmaps:2053` reallocates atlas assignments, surface data and draw
+membership; `GL_SetupLightmapCompute:2460` frees lightstyle/surface-index/
+workgroup upload inputs and compacts used-lightstyle membership in place.
+They are not GPU-only replay functions. `R_NewMap` also clears particles and
+resets live lightstyles, leaves and frame counters, so using it as reconstruction
+would alter the running game. Distinguish regenerated derived inputs from live
+scene state in the next brief. No production brush/lightmap adapter is claimed.
