@@ -216,7 +216,7 @@ Primary source for the capture correction:
 | Renderer command/frame transition/retirement | Pass, actual production owners; discovery/input/camera and empty prepared idle GPU resources are seams. Explicit failed/successful adoption and -novr included. |
 | Real donor descriptor/pipeline layout owners | Test implemented, skips77 on this host: accessible SwiftShader exposes only four sets, while donor world/MD5 needs five and stereo needs six. Do not bypass the capability gate or claim a pass. Default hardware Vulkan driver is inaccessible. |
 
-Remaining: final Astra source review disposition; actual six-set layouts and
+Remaining: actual six-set layouts and
 loaded-scene continuity proof on an accessible capable driver; broader migration
 closure; late foveation readiness; existing-owner live reconstruction for changed
 GPU/API/extensions and actual Vulkan device loss. Live headset/gaze/multiplayer/
@@ -244,4 +244,29 @@ device handles could select a destroyed earlier creation; device matching now
 searches newest to oldest. Focused regressions reject ambiguous instance creation
 and distinguish the latest reused-handle device's feature facts. The creation
 and actual software Vulkan checks pass after both fixes; final correction
-verification by Astra remains pending. Known layout/scene proof limits persist.
+verification by Astra accepted both fixes with no remaining source blocker. Known layout/scene proof limits persist.
+
+
+## Final Astra Max source disposition
+
+Local reviewer Dalton (`gpt-6-astra`, max, effective settings verified) accepted
+creation/provenance, qualification, finite interop readiness, actual multiview
+request, renderer intent/latch, queue callbacks and retirement owners after the
+following corrections. Main reviewed and tested the changes before integrating.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Remove lookup-driven dispatch replacement | Adopted: forwarding pointers are resolved/pinned before XR; foreign-instance device lookups are forwarded unchanged. |
+| Handle cached creates and missing entry points | Adapted: successful instance capture establishes its instance-scoped device dispatch for early caching; each wrapper refreshes and validates required dispatch before calling XR. |
+| Reject ambiguous successful instance captures | Adopted: exactly one successful instance record must agree with output and dispatch pin; preserve any output for renderer cleanup on refusal. |
+| Capture latest metadata when a device handle is recycled | Adopted: reverse-search successful matching device records; fixture distinguishes later feature facts. |
+| Retain the lower-forwarded-API guard | Adopted: variants and lower major/minor are rejected before publication; renderer prepared core features/entry points retain their contract. |
+| Separate source acceptance from missing graphical proof | Adopted: six-set actual layout and loaded-scene preservation remain unproved on this host, not inferred from simulated frames or empty resources. Broader implementation scope stays open. |
+
+Final reviewer conclusion: no remaining source blocker in this bounded slice.
+Linux build, actual/spied creation, command-owner, original Vulkan boundary,
+retained-session and fresh-discovery/recovery checks pass after corrections.
+ASan/UBSan parser checks pass with leak checking unavailable as documented.
+Real software device creation passes; the real layout-owner test remains
+skip77. No live headset/gaze/multiplayer/performance, Windows/ARM or complete
+VR-001/VR-002/whole-goal completion is claimed.
