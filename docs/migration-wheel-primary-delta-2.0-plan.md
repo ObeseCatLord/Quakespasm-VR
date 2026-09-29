@@ -3,7 +3,8 @@
 Status: plan preceded implementation; stage1 stock preview paths and required
 held-identity consumer adapter and association/fallback corrections pass final
 local Astra source review. Build/draw qualification remains end-of-goal work.
-Stages2..4 remain pending.
+Stage2 authored identity/partial-overlay consumers pass final local Astra
+source review. Stages3/4 and full implementation qualification remain pending.
 Reference: product primary `master` at
 `51b452c018273647dcf94f4628a370267ff8fa91`, read-only sibling
 `quakespasm-openvr`. The [source-update record](migration-source-updates.md)
@@ -241,9 +242,9 @@ Its inline snapshot captures parsed declarations before calibration finishing,
 including explicit ammo maximum at token read. All13 presence bits are set
 only by successful authored reads; omitted keys and inference add no bits.
 Calibration's finished values, globals, aliases, held/melee fields and staged
-filtering remain unchanged. Catalog consumers do not yet read the snapshot;
-the subsequent identity/partial-overlay stage remains required. Final local Astra Max source review accepted this bounded prerequisite.
-End-of-goal qualification and catalog consumer integration remain pending.
+filtering remain unchanged. Final local Astra Max source review accepted this
+bounded prerequisite. Stage2 catalog consumers now read the snapshot; final
+source acceptance is recorded below. End-of-goal qualification remains pending.
 
 ## Stage2 consumer implementation contract
 
@@ -373,14 +374,43 @@ acceptance does not prove actual selection, render/asset availability or full
 native rosters. Complete-roster/upgrade work and end-of-goal Linux/ARM checks
 remain required. No builds/tests/fixtures have run for this stage.
 
-The four corrections and provenance deletion are now integrated. Final source
-scope is789 changed lines against the400–750 estimate; the39-line overrun is
+The corrections and provenance deletion are now integrated. Final source
+scope is792 changed lines against the400–750 estimate; the42-line overrun is
 bounded to sharing the existing activation predicate, preserving/resetting
 existing comparison inputs, and deleting the obsolete provenance enum/array
-and writers. It adds no new owner or architecture. Final Astra review must
-challenge that interpretation and confirm the corrected source paths. The
+and writers. It adds no new owner or architecture. Final Astra review accepted
+these corrected source paths and judged no architecture reopening necessary.
+The final mask correction compares authored active halves against stored values,
+not selector-normalized identity; repeating a half declaration cannot erase it.
+Native-profile model discrimination now survives source changes to SCHEMA.
+The
 capacity fallback remains stored exactly, including explicit zero, while
 current-type runtime capacity retains primary precedence.
+
+## Stage3 local Astra design disposition
+
+Sartre accepted the metadata adapter design with one P2 source-path correction
+before production. Own-game filtering in the wheel alone is insufficient:
+the existing saver resolves an inherited file, copies text outside blocks, then
+writes it into the active game. Preserving `roster complete` would promote
+previously ignored inherited authority. Adopt the narrow fix: retain load
+path_id and choose the existing own-game file or empty save baseline if the
+resolved source is inherited. Ordinary inherited calibration loading remains
+unchanged; only the requested calibration block is created in the active game.
+The user explicitly permits dropping unrelated legacy settings. No token-removal
+scanner, extra parse pass or second save path. Compare roster metadata from the
+selected baseline with rewritten output, and retain post-write byte verification.
+
+| Decision | Disposition |
+| --- | --- |
+| Optional parser metadata | Accepted: one staged flag, existing tokenizer and four-argument compatibility wrapper. Failed parses publish false metadata. |
+| Syntax | Accepted: primary exact key, case-insensitive/sticky complete value; malformed missing/brace values fail under the shared validated grammar. |
+| Empty complete declaration | Accepted: reuse existing mutable-catalog activation and authority, never infer completeness from count. |
+| Calibration save baseline | Corrected as above: own-game or empty; inherited authority must not be promoted. |
+| Save verification | Accepted: extend the two existing parses, effective-value/count comparison and exact post-write verification. |
+
+No P1, additional owner or architecture reopening. Production source review
+and Linux/ARM qualification remain required; no builds/tests/fixtures now.
 
 ## Stage4 verified brief: native rosters, variants and diagnostics
 

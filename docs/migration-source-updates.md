@@ -133,13 +133,17 @@ Directly inspected behaviors to reconcile at existing `2.0`
 The current `2.0` wheel has existing provenance, stable IDs, own-game wwheel
 filtering and field-preserving schema adapters. Reuse those; do not transplant
 the monolithic OpenGL wheel or create another catalog. The latest primary's
-identity helper, complete-roster declaration, distinct held/preview identity
-and upgrade behavior are **pending reconciliation**, not silently marked done.
+identity helper and distinct held/preview identity now have source-integrated
+adapters with final local Astra acceptance. Complete-roster declarations and
+native upgrade behavior remain **pending reconciliation**.
 The [bounded wheel-delta plan](migration-wheel-primary-delta-2.0-plan.md)
-precedes adaptation; broader policy implementation still needs senior review,
+precedes adaptation; complete-roster metadata has an Astra design disposition,
 retaining desktop/VR wheel parity, the current renderer and all newer melee
 profile fields. Stock paths plus their required held-identity adapter are
-source-integrated; final source review is pending. Builds and presentation
+source-integrated with final source review accepted. Catalog matching/partial
+overlays preserve authored raw fields and IDs, reject ambiguity, and learn held
+identity independently of preview. Native rosters/upgrades and diagnostic work
+remain planned. Builds and presentation
 checks are deferred until the full implementation is finished.
 
 Separately, the [gesture-only plan](migration-gesture-only-melee-2.0-plan.md)

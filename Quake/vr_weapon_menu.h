@@ -34,6 +34,8 @@ typedef struct {
 	int has_profile_peer;
 	/* Held identity is independent of the pickup/preview mesh. */
 	const char *viewmodel_path;
+	unsigned int schema_fields; /* successful authored keys, not inferred values */
+	int game_profile; /* native profile identity survives partial file overlays */
 } vr_weapon_menu_entry_t;
 
 typedef struct {
