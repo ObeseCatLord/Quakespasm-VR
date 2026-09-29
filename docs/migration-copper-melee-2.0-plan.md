@@ -1,6 +1,7 @@
 # Reuse the inherited Copper axe adapter
 
-Status: source-grounded plan before implementation. Only branch 2.0; the user's
+Status: client geometry/presentation implemented; server adapter in progress.
+Only branch 2.0; the user's
 dirty migration-2.0.md stays untouched. Builds/tests are deferred until the full
 implementation is finished. This bounded slice does not close the whole melee,
 movement, foveation, packaging or migration scope.
@@ -67,12 +68,28 @@ behavior beyond accepted private VR contact.
 
 ## Ownership and review
 
-Main owns plan/scope/index and client integration in gl_model.c/h and vr_input.c.
+Main owns plan/scope/index and client integration in gl_model.c/h,
+vr_input.c/h, r_alias.c and vr_weapon_calibration.c. The alias hook is read-only
+and Copper-only; view.c already consumes the shared edge helper.
 One coding worker may own only sv_phys.c, sv_main.c and a new
 vr_melee_copper.h; server.h only for a required declaration. Those writes are
 disjoint. No source-reference repo, tests, runtime installation or deployment
 edits. Main reviews/integrates output; local Astra Max verifies then critiques
 this mostly-worked boundary and later the final source.
+
+## Astra Max design disposition
+
+| Finding | Disposition and verified evidence |
+| --- | --- |
+| Stock/Copper v_axe pathname collision | Accepted. Add a pin discriminator to the existing two-point cache and require it in the family getter. Preserve the held-mesh cache owner. |
+| Recursive traceline2 could escape the owned acquisition | Resolved by reading all five mounted bytecode programs. The recursive call is guarded by `(traceflags & 3) == 2`; W_FireAxe supplies zero and the helper never writes traceflags. Calls 8853/8863/9326/9081/9217 are therefore unreachable for this exact acquisition. Keep the immediate caller/callsite pins; no broader descendant interception. Loop retries at the pinned builtin still receive misses. |
+| Prelude retains fields across callbacks | Accepted. Revalidate VM storage, edicts, owner, selection, idle think and contact cursor/origin after each native callback; reacquire fields before writing. Failed owned acquisition remains miss-only until root return. |
+| Copper ready pose should not rewrite entity animation | Accepted. An observational input predicate gates frame0 in R_SetupAliasFrame, including exact selected geometry and tracked session/menu/calibration checks. gl_screen.c joins draw_done_task after all alias-draw tasks, so the render predicate reads stable frame input. |
+| Reversal/recovery and whiff policy | Accepted. Reuse inherited edge-only sweep/overlap recovery and ALK reversal rearm; Copper whiff performs only the native prelude. Fraction repair restores trace.fraction, never sweep event_time. |
+
+Copy the generic inherited v_axe2 calibration (-3.5,34,41.5,.33), retaining
+the existing QBJ3 exclusion. Schema/user calibration remains authoritative.
+Do not add folder-name admission or further mod-specific behavior.
 
 ## End-of-goal acceptance
 

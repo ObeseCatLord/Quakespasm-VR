@@ -173,6 +173,16 @@ static const vr_weapon_schema_entry_t vr_stock_classic_fallbacks[] = {
 };
 #undef VR_CLASSIC_FALLBACK
 
+/* Generic donor v_axe2 default. The inherited QBJ3 profile authors its own
+ * wrench/fist geometry and deliberately excludes this fallback. */
+static const vr_weapon_schema_entry_t vr_copper_axe_fallback[] = {
+	{
+		.viewmodel_path = "progs/v_axe2.mdl",
+		.held_offset = {-3.5f, 34.0f, 41.5f}, .has_held_offset = true,
+		.held_scale = 0.33f, .has_held_scale = true,
+	},
+};
+
 /* Donor Alkaline axe defaults, also present in the installed alk profile.
  * LimJam uses the same viewmodel but omits its calibration from vr_weapons.txt. */
 static const vr_weapon_schema_entry_t vr_alk_axe_fallback[] = {
@@ -1970,6 +1980,9 @@ static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 		VR_WeaponCalibrationApplySchema(vr_stock_classic_fallbacks,
 			sizeof(vr_stock_classic_fallbacks) /
 			sizeof(vr_stock_classic_fallbacks[0])) &&
+		(!q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") ||
+		 VR_WeaponCalibrationApplySchema(vr_copper_axe_fallback,
+			sizeof(vr_copper_axe_fallback) / sizeof(vr_copper_axe_fallback[0]))) &&
 		VR_WeaponCalibrationApplyAlkalineAxeFallback() &&
 		VR_WeaponCalibrationApplyEnyoFallbacks() &&
 		VR_WeaponCalibrationApplyADRootFallbacks() &&

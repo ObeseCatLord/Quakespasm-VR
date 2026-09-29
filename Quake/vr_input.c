@@ -102,7 +102,8 @@ static qboolean VR_InputMeleeAuthorized (void)
 	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
 		(cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_STOCK ||
-		 cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ALK) &&
+		 cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ALK ||
+		 cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_COPPER) &&
 		vr_immersive_melee.value != 0.0f;
 }
 
@@ -1539,6 +1540,8 @@ static qboolean VR_InputSelectedStockAxe (int *modelindex_out,
 	const int modelindex = cl.stats[STAT_WEAPON];
 	const qboolean alkaline = cl.vr_weapon_contact_profile ==
 		VR_WEAPON_CONTACT_PROFILE_ALK;
+	const qboolean copper = cl.vr_weapon_contact_profile ==
+		VR_WEAPON_CONTACT_PROFILE_COPPER;
 	const char *modelname = alkaline ? "progs/v_alkaxe20fps.mdl" :
 		"progs/v_axe.mdl";
 	qmodel_t *model;
@@ -1562,11 +1565,12 @@ static qboolean VR_InputSelectedStockAxe (int *modelindex_out,
 		return false;
 	model = cl.model_precache[modelindex];
 	if (!model || model->needload || model != cl.viewent.model ||
-		strcmp (model->name, modelname) || skin < 0)
+		(!copper && strcmp (model->name, modelname)) || skin < 0)
 		return false;
 	geometry = (aliashdr_t *)Mod_Extradata_CheckSkin (model, skin);
 	if (!geometry || geometry->poseverttype != PV_QUAKE1 ||
-		!(alkaline ? Mod_GetAlkalineAxeEdge (model, skin, &edge) :
+		!(copper ? Mod_GetCopperAxeEdge (model, skin, &edge) :
+		  alkaline ? Mod_GetAlkalineAxeEdge (model, skin, &edge) :
 			Mod_GetStockAxeEdge (model, skin, &edge)) || !edge.valid)
 		return false;
 
@@ -1576,6 +1580,40 @@ static qboolean VR_InputSelectedStockAxe (int *modelindex_out,
 	*geometry_out = geometry;
 	*edge_out = edge;
 	return true;
+}
+
+/* Rendering observes the same selected geometry as contact sampling. Do not
+ * rewrite the view entity's QC animation or lerp history. */
+qboolean VR_InputCopperReadyPose (const entity_t *entity,
+	const aliashdr_t *geometry)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const int hand = VR_InputDominantPhysicalHand ();
+	qmodel_t *selected_model;
+	aliashdr_t *selected_geometry;
+	stockaxe_edge_t edge;
+	int modelindex, skin;
+
+	return entity == &cl.viewent && geometry &&
+		hand >= 0 && hand <= 1 &&
+		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_COPPER &&
+		VR_InputMeleeAuthorized () && VR_InputControllerAim () &&
+		V_TrackedSessionActive () && !CL_AngleLocked () &&
+		!VR_WeaponMenu_IsOpenVR () && !VR_WeaponCalibrationAdjustActive () &&
+		VR_InputMotionContextAccepted (frame) && frame->sample_id &&
+		frame->should_render && frame->devices[0].tracked &&
+		frame->devices[0].kind == VRXR_DEVICE_HEAD &&
+		frame->devices[0].hand == -1 &&
+		VR_InputHandAccepted (frame, hand) &&
+		frame->devices[hand + 1].valid && frame->devices[hand + 1].tracked &&
+		frame->devices[hand + 1].kind == VRXR_DEVICE_HAND &&
+		frame->devices[hand + 1].hand == hand &&
+		cl.stats[STAT_HEALTH] > 0 && cl.worldmodel && !cl.worldmodel->needload &&
+		cl.entities && cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
+		VR_InputSelectedStockAxe (&modelindex, &selected_model, &skin,
+			&selected_geometry, &edge) && selected_geometry == geometry &&
+		geometry->numframes > 0 && geometry->frames[0].numposes == 1 &&
+		geometry->frames[0].firstpose == 0 && geometry->numposes > 0;
 }
 
 static qboolean VR_InputSelectedHeldMelee (int *modelindex_out,

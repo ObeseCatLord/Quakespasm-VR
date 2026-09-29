@@ -481,6 +481,12 @@ cl.time. Does not modify the entity.
 void R_SetupAliasFrame (const entity_t *e, aliashdr_t *paliashdr, lerpdata_t *lerpdata)
 {
 	int frame = e->frame;
+	if (VR_InputCopperReadyPose (e, paliashdr))
+	{
+		lerpdata->pose1 = lerpdata->pose2 = paliashdr->frames[0].firstpose;
+		lerpdata->blend = 1;
+		return;
+	}
 	if ((frame >= paliashdr->numframes) || (frame < 0))
 		frame = 0;
 

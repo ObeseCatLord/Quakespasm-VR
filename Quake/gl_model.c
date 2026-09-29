@@ -393,7 +393,7 @@ void *Mod_Extradata (qmodel_t *mod)
 }
 
 static qboolean Mod_GetPinnedAxeEdge (qmodel_t *mod, int skinnum,
-	const char *name, stockaxe_edge_t *out)
+	const char *name, uint32_t source_crc32, stockaxe_edge_t *out)
 {
 	aliashdr_t *selected;
 
@@ -410,7 +410,7 @@ static qboolean Mod_GetPinnedAxeEdge (qmodel_t *mod, int skinnum,
 		return false;
 
 	/* Only the source-pinned loaders set valid. Reload/free clears this record. */
-	if (!mod->stockaxe_edge.valid)
+	if (!mod->stockaxe_edge.valid || mod->stockaxe_edge.source_crc32 != source_crc32)
 		return false;
 
 	*out = mod->stockaxe_edge;
@@ -419,12 +419,20 @@ static qboolean Mod_GetPinnedAxeEdge (qmodel_t *mod, int skinnum,
 
 qboolean Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
 {
-	return Mod_GetPinnedAxeEdge (mod, skinnum, "progs/v_axe.mdl", out);
+	return Mod_GetPinnedAxeEdge (mod, skinnum, "progs/v_axe.mdl", 0x2aa03605u, out);
 }
 
 qboolean Mod_GetAlkalineAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
 {
-	return Mod_GetPinnedAxeEdge (mod, skinnum, "progs/v_alkaxe20fps.mdl", out);
+	return Mod_GetPinnedAxeEdge (mod, skinnum, "progs/v_alkaxe20fps.mdl", 0x3003ca78u, out);
+}
+
+qboolean Mod_GetCopperAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
+{
+	/* The byte-identical donor is mounted under either name by Copper mods. */
+	return Mod_GetPinnedAxeEdge (mod, skinnum,
+		mod && !strcmp (mod->name, "progs/v_axe2.mdl") ?
+			"progs/v_axe2.mdl" : "progs/v_axe.mdl", 0xf5d8df1bu, out);
 }
 
 qboolean Mod_GetQBJ3BerserkPalmCentroid (const qmodel_t *mod, int hand,
@@ -4713,6 +4721,7 @@ static void Mod_CacheStockAxeEdge (qmodel_t *mod, byte *mod_base,
 			pheader->scale[axis] + pheader->scale_origin[axis];
 	}
 	edge.valid = true;
+	edge.source_crc32 = source_crc32;
 	mod->stockaxe_edge = edge;
 }
 
@@ -4751,6 +4760,43 @@ static void Mod_CacheAlkalineAxeEdge (qmodel_t *mod, byte *mod_base,
 			pheader->scale[axis] + pheader->scale_origin[axis];
 	}
 	edge.valid = true;
+	edge.source_crc32 = 0x3003ca78u;
+	mod->stockaxe_edge = edge;
+}
+
+/* Reuse the inherited Copper ready pose and edge112/124; retain only two
+ * points before the alias upload discards the CPU pose stream. */
+static void Mod_CacheCopperAxeEdge (qmodel_t *mod, const byte *mod_base,
+	qfilesize_t source_size, const aliashdr_t *pheader)
+{
+	stockaxe_edge_t edge;
+
+	if ((strcmp (mod->name, "progs/v_axe.mdl") &&
+		 strcmp (mod->name, "progs/v_axe2.mdl")) || source_size != 70932 ||
+		(uint32_t)mz_crc32 (MZ_CRC32_INIT, mod_base, (size_t)source_size) != 0xf5d8df1bu ||
+		ReadLongUnaligned (mod_base + offsetof (mdl_t, ident)) != IDPOLYHEADER ||
+		ReadLongUnaligned (mod_base + offsetof (mdl_t, version)) != ALIAS_VERSION ||
+		pheader->poseverttype != PV_QUAKE1 || pheader->numverts != 155 ||
+		pheader->numtris != 198 || pheader->numframes != 51 ||
+		pheader->frames[0].numposes != 1 || pheader->frames[0].firstpose != 0 ||
+		pheader->numposes < 1 || !poseverts[0])
+		return;
+
+	memset (&edge, 0, sizeof (edge));
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		if (!isfinite (pheader->scale[axis]) || pheader->scale[axis] == 0.0f ||
+			!isfinite (pheader->scale_origin[axis]))
+			return;
+		edge.base[axis] = poseverts[0][112].v[axis] *
+			pheader->scale[axis] + pheader->scale_origin[axis];
+		edge.tip[axis] = poseverts[0][124].v[axis] *
+			pheader->scale[axis] + pheader->scale_origin[axis];
+		if (!isfinite (edge.base[axis]) || !isfinite (edge.tip[axis]))
+			return;
+	}
+	edge.valid = true;
+	edge.source_crc32 = 0xf5d8df1bu;
 	mod->stockaxe_edge = edge;
 }
 
@@ -4783,6 +4829,7 @@ static void Mod_CacheHeldMeleeEdge (qmodel_t *mod, const byte *mod_base,
 			pheader->scale[axis] + pheader->scale_origin[axis];
 	}
 	edge.valid = true;
+	edge.source_crc32 = recipe->generated_crc;
 	mod->stockaxe_edge = edge;
 }
 
@@ -4967,6 +5014,7 @@ static void Mod_LoadAliasModel (qmodel_t *mod, void *buffer,
 	/* Copy only the pinned ready-pose edge while the source pose is live. */
 	Mod_CacheStockAxeEdge (mod, mod_base, source_size, pheader);
 	Mod_CacheAlkalineAxeEdge (mod, mod_base, source_size, pheader);
+	Mod_CacheCopperAxeEdge (mod, mod_base, source_size, pheader);
 	Mod_CacheHeldMeleeEdge (mod, mod_base, source_size, pheader);
 	Mod_CacheQBJ3BerserkPalms (mod, mod_base, source_size, pheader);
 

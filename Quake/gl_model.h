@@ -355,6 +355,7 @@ typedef enum
 typedef struct stockaxe_edge_s
 {
 	qboolean valid;
+	uint32_t source_crc32; // pathname alone cannot distinguish stock/Copper geometry
 	vec3_t base;
 	vec3_t tip;
 } stockaxe_edge_t;
@@ -904,6 +905,8 @@ qboolean Mod_IsAdmittedAvatarModel (const qmodel_t *mod);
 qboolean  Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
 /* Exact Alkaline/LimJam v_alkaxe20fps.mdl, frame 0; original MDL only. */
 qboolean  Mod_GetAlkalineAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
+/* Exact Copper ready-pose MDL under v_axe.mdl or v_axe2.mdl. */
+qboolean  Mod_GetCopperAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
 qboolean  Mod_GetQBJ3BerserkPalmCentroid (const qmodel_t *mod, int hand,
 	int pose, vec3_t out);
 
