@@ -25,6 +25,14 @@ visible as an unresolved qualification cost, and avoid unconditional copies
 of already retained skeletal poses across surfaces if a safe shared lifetime
 exists. Brush/BSP arrays are outside this slice and will be regenerated.
 
+The MD5 loader creates its retained skeleton after surface uploads. Keep a
+temporary joint-source borrow marked not replay-ready while that loader is
+active, then bind the already retained, byte-identical pose span before freeing
+the temporary joints. If no matching retained span exists, materialize one
+owned copy at that narrow completion hook. This avoids a permanent joint copy
+per surface and a large transient duplicate during upload. Preflight refuses
+an unfinished borrow; full failed-load disposal never dereferences it.
+
 Write ownership: gl_mesh.c, gl_model.h and glquake.h. A narrow gl_model.c
 lifetime hook may be needed solely to bind existing retained MD5 poses before
 temporary loader arrays are freed, or dispose replay inputs on a demonstrated
