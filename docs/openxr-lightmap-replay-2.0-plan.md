@@ -237,3 +237,24 @@ accepted the final source with no P1/P2 findings after verifying membership,
 retired handles, borrowed-input restrictions, signed staging bounds, metadata,
 native precision and postconditions. No production caller/parent transaction is
 claimed. Source inspection and git diff --check only; no builds/tests/fixtures.
+
+## Stage2b/3 GPU owner source checkpoint (not implementation authorization)
+
+Existing r_brush.c owners remain the reconstruction boundary: surface-data and
+surface-submodels allocation helpers free their existing buffers; workgroup
+allocation frees shared memory but assumes all old per-atlas buffers are already
+retired. The current setup call creates new image records, clears modified bits,
+compacts membership in place and frees transient inputs after staging. Reusing it
+unchanged would lose record identity and restoration cache markers. The next
+verified GPU brief must share its actual crop/row-compaction/bounds staging once
+between native initial creation and existing-record replay, preserving old-device
+retire-before-create ordering directly read from primary gl_vidsdl.c920..936.
+
+R_UpdateLightmapDescriptors references surface-data, surface-submodels, workgroup,
+frame-upload, vertex and transform buffers. Record image restoration alone is
+not draw readiness. The parent must restore these existing owners before
+updating descriptors, and clear old handles/mapped pointers before native
+allocation helpers run on the replacement device. GL_SetupIndirectDraws reuses
+retained initial_indirect_buffer and indirect_draws, but its index/visibility
+allocation helpers also free their old buffer inputs. No new CPU upload mirror
+or independent draw-membership rebuild is indicated by this evidence.
