@@ -1,6 +1,7 @@
 # Local and restored private movement
 
-Status: planned at `c3c13ac4`; local Astra Max review incorporated below.
+Status: implemented; local Astra Max design review incorporated below. Final
+implementation review is in progress; Linux software checks are recorded below.
 This is a bounded continuation of the complete migration goal, not completion
 of the inventory. [Current scope exclusions](migration-scope-decisions.md) apply.
 
@@ -111,3 +112,39 @@ begin/frame validator, and private sender dispatch against current source.
 
 The review added two concrete save/load safeguards. No new production state
 machine, transport, save dialect, or mod policy is introduced.
+
+## Linux implementation checkpoint
+
+- Linux SDL3 engine Make build passes with warnings treated as errors.
+- All nine stock local/load cases pass: local, private-disabled, public,
+  private fastload/autofastload, public fastload/autofastload, pending identity
+  and pending ground. Actual loopback commands, weapon discharge, full snapshot
+  parsing, received ACK/owner, usable stats and stock replay are exercised.
+  A command outstanding on the real socket predicts nonzero displacement and
+  matches subsequent authoritative completion within0.125units. The actual
+  client reset owner clears journal/ACK/snapshot/clock/replay metadata before
+  fixture resource preparation can replace it.
+- Menu and pause suspension go through `Host_ServerFrame`; resume uses existing
+  epochs/markers. Cooperative/native authority remains correction-only where
+  arbitrary QC cannot be replayed.
+- Five prepared cooperative-QC local/load cases pass: local, both private load
+  routes and both pending cases. Saved QC position/ammo survive; old queued and
+  retained commands and history cannot survive reconnect. Pending saves remain
+  prohibited, second identity position/ammo restore, and first-player movement
+  continues after the second named restoration.
+- Private sender, mixed selected/arrival-gap and cooperative default-selection
+  regressions pass. No performance or hardware result is claimed.
+
+Reproduction is in [tests/README.md](../tests/README.md#local-private-movement-and-restored-identities).
+The runner uses disposable profiles and external read-only packs/QC. The initial
+stock and cooperative matrix failures were fixture preparation issues: invalid
+synthetic endpoint driver, overly strict replay expectation for cooperative
+authority, and uninitialized graphical particle pools in the public fastload
+check. They required no extra production system. Skin uploads and both graphical
+particle cleanup bodies are fixture boundaries, not graphics qualification.
+
+The first player's transport is real paired loopback. The second saved identity
+uses the established synthetic endpoint and actual named spawn/begin. Renderer
+resources are prepared; complete graphical serverinfo, physical OpenXR and the
+wider reverse-order/dead-player/late-join/save-dialect matrix remain outside this
+bounded evidence. The full migration goal remains open.

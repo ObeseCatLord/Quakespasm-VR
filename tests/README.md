@@ -1,5 +1,50 @@
 # Migration boundary fixtures
 
+## Local private movement and restored identities
+
+`local_load_native_fixture.c` uses actual paired loopback transport for the
+local player: client offer, server initialization and spawn/begin, move receipt,
+`Host_ServerFrame`, full server datagrams and the client parser. Baselines and
+renderer resources use the existing native-fixture preparation; this does not
+run graphical serverinfo loading or headset input. Player skin uploads and the
+two graphical particle cleanup calls are test boundaries. The second saved
+identity uses the existing synthetic negotiation endpoint and real named spawn.
+The actual `CL_ClearState` owner runs before resource preparation and its old
+history is inspected before preparation can overwrite it.
+
+```sh
+make -C Quake -f ../tests/negotiation_native.make \
+  negotiation-native-fixture USE_SDL3=1 -j4 \
+  NEGOTIATION_FIXTURE=/tmp/qsvr-local-load-native-fixture \
+  NEGOTIATION_SOURCE=../tests/local_load_native_fixture.c \
+  NEGOTIATION_EXTRA_LDFLAGS='-Wl,--wrap=NET_SendUnreliableMessage -Wl,--wrap=R_TranslateNewPlayerSkin -Wl,--wrap=R_ClearParticles -Wl,--wrap=PScript_ClearParticles'
+python3 tests/run_local_load_native.py --basedir /path/to/licensed/game
+python3 tests/run_local_load_native.py --basedir /path/to/licensed/game \
+  --game /tmp/qsvr-cooperative-qc-calls1/cooperative \
+  --cases local fastload autofastload pending pending-ground
+```
+
+The runner links stock packs and optionally the prepared cooperative program
+into disposable writable profiles; all saves remain temporary. Require exit0
+and PASS for all selected cases. Stock cases cover movement/fire/replay, no
+synthetic ACK at send, matching received owner, private-disabled native movement,
+public desktop movement, actual menu/pause suspension and recovery, and both
+explicit private fastload and ordinary load with autofastload. Those v5 loads
+preserve position/ammo while reconnect discards queued and retained old input.
+The stock local case also leaves a command outstanding on the actual socket,
+replays it from the received snapshot, requires visible predicted displacement,
+and compares prediction with subsequent authoritative completion within0.125units.
+Public fastload retains its socket/signon/journal and reaches the original
+graphics cleanup boundary; graphical cleanup itself is not qualified.
+
+Actual v7 cases restore the first named identity and move it while the second
+remains pending, reject saving in that interval, restore the second identity's
+position/ammo and continue first-player movement. A saved ground reference to
+the absent player stays on native authority before selection. Cooperative
+native/correction-only authority need not permit generic client replay.
+This covers these load boundaries, not the whole reverse-order/dead-player/
+late-join/save-dialect matrix or complete graphical signon and multiplayer.
+
 ## Production private negotiation
 
 `negotiation_native_fixture.c` loads stock `e1m1` and QC through the existing

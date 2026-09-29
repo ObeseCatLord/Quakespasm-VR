@@ -493,7 +493,7 @@ static void test_packet_angles (void)
 	test_private_angles ();
 }
 
-static void test_local_ack_invalidates_snapshot (void)
+static void test_local_send_preserves_received_snapshot (void)
 {
 	setup ();
 	usercmd_t cmd = {0};
@@ -507,8 +507,9 @@ static void test_local_ack_invalidates_snapshot (void)
 	cl.move_snapshot_owner = 1;
 	cl.qcvm.extglobals.servercommandframe = &servercommandframe;
 	CL_SendMove (&cmd);
-	assert (cl.ackedmovemessages == 12 && servercommandframe == 12);
-	assert (!cl.move_snapshot_valid);
+	assert (cl.ackedmovemessages == 10 && servercommandframe == -1);
+	assert (cl.move_snapshot_valid && cl.move_snapshot_ack == 10 &&
+		cl.move_snapshot_owner == 1 && cl.movemessages == 13);
 }
 
 static void test_public_and_demo (void)
@@ -630,7 +631,7 @@ int main (void)
 	test_startup_resume_marker ();
 	test_full_bundle_and_wrap ();
 	test_packet_angles ();
-	test_local_ack_invalidates_snapshot ();
+	test_local_send_preserves_received_snapshot ();
 	test_public_and_demo ();
 	test_public_ignores_vr_command_fields ();
 	puts ("Private sender: angles, redundancy, ACKs, public VR isolation and demo/error checks passed");

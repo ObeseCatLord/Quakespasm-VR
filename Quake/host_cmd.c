@@ -2793,6 +2793,11 @@ static void Host_Loadgame_f (void)
 	}
 	if (inherited_load)
 		fastload = false;
+	/* Private command history belongs to the connection, not the restored QC
+	 * world. Reconnect through the existing load path to discard old input. */
+	if (fastload && sv.active && svs.maxclients == 1 &&
+		svs.clients[0].protocol_qsvr == QSVR_PROTOCOL_PINNED)
+		fastload = false;
 
 	if (fastload && (!sv.active || cls.signon != SIGNONS || svs.maxclients != 1))
 	{

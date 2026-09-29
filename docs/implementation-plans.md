@@ -72,6 +72,17 @@ publication and older AD dry return pass Linux checks and final local Astra
 source review. Plans/reopening preceded the production boundary changes; complete
 local/load/state/replay compatibility remains parent scope.
 
+The [local and restored private movement plan](predictive-local-load-2.0-plan.md)
+reuses the same negotiation, command, physics, completion, snapshot and loaded
+identity owners for single-slot clients. Its Astra disposition adds private
+fastload reconnect isolation and stock stale-ground refusal before selection.
+The implementation and Linux checks cover actual loopback movement/fire/replay,
+host menu/pause recovery, native/public fallback, v5 private load entry routes,
+public fastload preservation and v7 first-player movement while a second saved
+identity remains pending. Prepared renderer resources and a synthetic second
+endpoint retain explicit evidence limits; this does not certify the whole
+save, graphical/OpenXR lifecycle or full migration inventory.
+
 The [stock activation plan](predictive-stock-activation-2.0-plan.md) was committed
 before changing defaults, then reopened before the source-proven intermission
 fix. Its implementation retains existing movement/QC/completion owners.

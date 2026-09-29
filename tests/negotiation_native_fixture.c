@@ -12,11 +12,13 @@
 #include "native_engine_fixture.h"
 #include <assert.h>
 
+#ifndef NEGOTIATION_FIXTURE_CUSTOM_CAN_SEND
 qboolean __wrap_NET_CanSendMessage (qsocket_t *socket)
 {
 	assert (socket);
 	return false; /* Keep the production writer's bytes for inspection. */
 }
+#endif
 
 static char modern_offer[1024];
 

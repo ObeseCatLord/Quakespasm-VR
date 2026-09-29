@@ -866,10 +866,8 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 
 	if (!client || !client->active || !client->knowntoqc || !client->edict || client->edict->free)
 		return "client is not a live spawned owner";
-	if (svs.maxclients <= 1 || !client->netconnection)
-		return "requires a remote client on a server with multiple client slots";
-	if (sv.loadgame)
-		return "loadgame state is outside the trial";
+	if (!client->netconnection)
+		return "requires a connected client";
 	if (client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
 		return "requires the pinned private profile";
 	if (q30 && !(client->offered_pmove_policies & QSVR_PMOVE_CAP_Q30_JUMP))
@@ -912,7 +910,7 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 			groundentity % qcvm->edict_size)
 			return "owner has an invalid groundentity offset";
 	}
-	return NULL;
+	return SV_PrivateWalkTrialBeginStateError (client, &client->cmd);
 }
 
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client)

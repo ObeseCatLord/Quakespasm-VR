@@ -1074,15 +1074,7 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	cl.movecmds[seq & MOVECMDS_MASK] = sendcmd;
 	cl.cmd = sendcmd;
 
-	if (sv.active && svs.maxclients <= 1)
-	{
-		cl.ackedmovemessages = seq;
-		// This synthetic local ACK has no matching received owner snapshot.
-		cl.move_snapshot_valid = false;
-		if (cl.qcvm.extglobals.servercommandframe)
-			*cl.qcvm.extglobals.servercommandframe = seq;
-	}
-	else if (seq < 2)
+	if (seq < 2)
 	{
 		cl.movecmds[seq & MOVECMDS_MASK].seconds = 0;
 		CL_FlushAckFrames ();

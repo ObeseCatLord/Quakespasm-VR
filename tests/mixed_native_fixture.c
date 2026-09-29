@@ -19,6 +19,7 @@ void __wrap_R_TranslateNewPlayerSkin (int player)
 	skin_uploads++;
 }
 
+#ifndef MIXED_FIXTURE_CUSTOM_UNRELIABLE
 int __wrap_NET_SendUnreliableMessage (qsocket_t *socket, sizebuf_t *message)
 {
 	assert (socket && message->cursize <= sizeof (captured));
@@ -27,6 +28,7 @@ int __wrap_NET_SendUnreliableMessage (qsocket_t *socket, sizebuf_t *message)
 	captured_length = message->cursize;
 	return 1;
 }
+#endif
 
 static client_t *SpawnPeer (int slot, const char *offer, unsigned profile)
 {
