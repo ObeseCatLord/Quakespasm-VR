@@ -1,6 +1,9 @@
 # Reuse the inherited Copper axe adapter
 
-Status: client geometry/presentation implemented; server adapter in progress.
+Status: deferred by the user's gesture-only scope decision. The uncommitted
+server patch was removed; no Copper server integration is required in this pass.
+The committed geometry cache remains reusable source, not a completed adapter.
+The shared gesture ready-pose predicate will replace the Copper-only render hook.
 Only branch 2.0; the user's
 dirty migration-2.0.md stays untouched. Builds/tests are deferred until the full
 implementation is finished. This bounded slice does not close the whole melee,

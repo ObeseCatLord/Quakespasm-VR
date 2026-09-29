@@ -11,8 +11,11 @@ Later scope decisions also exclude Mjolnir dual-state/hybrid adapters and defer
 Windows builds. Linux and Linux ARM software verification follows full
 implementation. [Generic melee](migration-generic-melee-2.0-plan.md) adds built-in
 ordinary attack gestures for uncovered axe mods and profile opt-in for other
-models, using native QC rather than per-mod engine damage patches. Exact
-inherited contact behavior remains a separate adapter contract.
+models, using native QC rather than per-mod engine damage patches. The later
+[gesture-only decision](migration-gesture-only-melee-2.0-plan.md) defers remaining
+physical-contact adapters: mode-on melee uses gestures alone, ignores physical
+attack triggers and holds the VR weapon's ready pose. Historical physical-contact
+rows below remain reference inventory rather than completion gates.
 
 This is the working feature checklist for moving the inherited QuakeSpasm OpenVR product and all surviving project work onto vkQuake. It maps **185 behavior/work items**: 124 product, VR, platform and goal items below, 29 [network items](migration-network-map.md), and 32 [renderer/loading/asset items](migration-renderer-map.md). Items overlap where a user behavior crosses subsystem boundaries; this is not a count of independently implemented features. The [combined CSV](migration-feature-map.csv) includes destination owners, source evidence and acceptance criteria.
 

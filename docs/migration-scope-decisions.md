@@ -24,8 +24,8 @@ Skyrooms and quad views are excluded from the current 2.0 goal. The
 [Frame/large-map assessment](openxr-quad-views-2.0-assessment.md) records why
 two-view foveation remains the selected design. User live headset, eye-tracking,
 multiplayer and performance tests are outside this implementation goal;
-Windows/ARM verification remains deferred. The full remaining migration scope
-is unchanged.
+Windows verification remains deferred. Linux/ARM software verification follows
+implementation as recorded below.
 
 ## Microphone selection and defaults (2026-09-29)
 
@@ -57,8 +57,30 @@ Uncovered mods should have built-in melee behavior without requiring engine
 patches per mod. The [generic melee plan](migration-generic-melee-2.0-plan.md)
 selects an ordinary attack-input gesture: default standard-axe conventions and
 explicit weapon-profile opt-in for other models. Original QuakeC owns damage,
-animation, cooldown, reach and custom effects. No universal damage replacement
-or arbitrary QC function invocation is implied. Exact inherited adapters remain
-for measured physical contact; the fallback avoids new per-mod engine fixes
-where ordinary native-input semantics suffice. Mjolnir hybrid/dual-state weapon
-adapters remain excluded. [Configuration](generic-melee.md) records the limits.
+cooldown, reach and custom effects. No universal damage replacement or arbitrary
+QC function invocation is implied. [Configuration](generic-melee.md) records
+the limits. The gesture-only decision below supersedes physical-contact work.
+
+## Gesture-only melee (2026-09-29)
+
+The user deferred physical-contact melee implementation and requested only
+gestures that activate the mod's ordinary melee attack. In immersive melee
+mode the physical attack trigger must do nothing for recognized melee weapons;
+only a validated swing supplies the normal attack input. The held VR melee
+weapon stays in its ready pose instead of playing a scripted attack animation.
+QuakeC retains its internal animation/think sequence, timing, damage and effects;
+render-only suppression must not cancel gameplay. Desktop, ranged weapons and
+immersive-melee-off input remain native.
+
+MOVE-002's physical reach/contact solver, MOVE-004..007's remaining exact attack
+adapters and MOVE-008's physical parry/contact damage are deferred. Existing
+server owners and protocol validation are retained, but this client must not
+request immersive physical-contact damage. Visual weapon collision, tracked
+weapon presentation and native ranged/paired weapons remain in scope. No new
+Copper server adapter will be integrated; its uncommitted patch was removed.
+This does not remove ordinary native melee play or Mjolnir map support.
+
+The [gesture-only plan](migration-gesture-only-melee-2.0-plan.md) precedes the
+client policy, command-finalization and ready-pose changes. Unknown weapons use
+the shared profile opt-in rather than a per-mod engine patch. Linux/ARM checks
+remain end-of-goal work; live headset testing remains user-deferred.
