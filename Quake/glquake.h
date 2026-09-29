@@ -938,6 +938,8 @@ void GL_UpdateLightmapDescriptorSets (void);
 void GL_DeleteBModelVertexBuffer (void);
 void GL_DeleteBModelAccelerationStructures (void);
 void GL_BuildBModelVertexBuffer (void);
+/* CPU-only eligibility; caller retires old GPU buffers before rebuilding. */
+qboolean GL_CanRebuildBModelVertexBuffer (void);
 void GL_BuildBModelAccelerationStructures (void);
 void GL_PrepareSIMDAndParallelData (void);
 void GLMesh_UploadBuffers (

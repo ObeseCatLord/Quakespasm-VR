@@ -1,6 +1,7 @@
 # Brush vertex regeneration for device reconstruction
 
-Status: verified pre-production brief, not implemented or source accepted.
+Status: source implemented with final local Astra acceptance; full parent
+reconstruction and end-of-full-implementation qualification remain open.
 This is a prerequisite of [device reconstruction](openxr-device-reconstruction-2.0-plan.md),
 not a complete brush/lightmap/device recovery claim. Only2.0 production edits;
 primary and runtime game assets remain read-only. No builds/tests until the full
@@ -94,3 +95,25 @@ donor operation order and original initial polygon ownership/tiled copying.
 The estimate is plausible but tight; source review must separate moved arithmetic
 from new checks and challenge duplicated policy, not just line count. Full
 lightmap/BLAS/device recovery and qualification are still outside this slice.
+
+## Production checkpoint
+
+The173-line source adapter passes final local Astra review.
+One private float-span generator retains donor texture/lightmap arithmetic and
+uses Mod_SurfaceVertexPosition; the original display-list allocation/linking
+now passes its explicit model. The two otherwise write-only model/vertex-base
+globals and assignments are removed. Both retained-copy and regenerated-upload
+branches use the same CPU-only eligibility implementation, with checked local
+aggregate counts, per-surface destination spans and world-submodel inputs.
+The thin public eligibility call leaves upload/model/surface state unchanged.
+No persistent geometry payload, replacement glpoly allocation for replay or
+new GPU creation/staging/tagging policy. The device-switch caller remains
+unimplemented; source integration is not full resource reconstruction proof.
+
+Final source disposition: accepted after one bounded P2 correction. Initial
+polygon allocation now checks complete header-plus-payload against SIZE_MAX,
+preserving donor sizes including triangles without overflow on smaller address
+spaces. No remaining P1/P2; within the120–240 estimate. GPU allocation/staging,
+submodel tagging and original polygon release remain unchanged. No builds,
+tests or fixtures ran; the initial-versus-regenerated upload and parent loaded-
+scene proof remain end-of-full-implementation work.

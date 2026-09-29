@@ -1,7 +1,8 @@
 # OpenXR Vulkan device reconstruction
 
-Status: local Astra Max design disposition recorded; production reconstruction
-is not implemented. Texture-retirement prerequisite passes bounded source review.
+Status: local Astra Max design disposition recorded; full production reconstruction
+is not implemented. Texture-retirement, alias replay and brush vertex regeneration
+prerequisites pass bounded final source review.
 Compatible-device late attachment already uses the separate
 [late-binding plan](openxr-late-binding-2.0-plan.md). This plan covers the
 remaining incompatible-device case without replacing vkQuake's renderer.
@@ -139,9 +140,9 @@ No device reconstruction or device-loss success is claimed at this checkpoint.
 The [alias replay prerequisite](openxr-alias-replay-2.0-plan.md) is now source-
 implemented in32ca78f7 with final local Astra acceptance, including private-prop
 joint lifetime; its new APIs are not yet wired to a live switch transaction.
-The next resource prerequisite is the bounded
-[brush vertex regeneration contract](openxr-brush-vertex-replay-2.0-plan.md),
-followed by separate lightmap/derived-input reconstruction. Source
+The [brush vertex regeneration prerequisite](openxr-brush-vertex-replay-2.0-plan.md)
+is also source implemented with final Astra acceptance, without another retained
+geometry copy. Next is separate lightmap/derived-input reconstruction. Source
 review and `git diff --check` are allowed now; builds/tests remain deferred by
 the user's instruction until full implementation is finished.
 
@@ -184,4 +185,13 @@ workgroup upload inputs and compacts used-lightstyle membership in place.
 They are not GPU-only replay functions. `R_NewMap` also clears particles and
 resets live lightstyles, leaves and frame counters, so using it as reconstruction
 would alter the running game. Distinguish regenerated derived inputs from live
-scene state in the next brief. No production brush/lightmap adapter is claimed.
+scene state in the next brief. The bounded vertex adapter is now implemented;
+full brush/lightmap reconstruction is not claimed.
+
+The lightmap follow-up must preserve existing texture-record ownership too.
+Current TexMgr_LoadImage atgl_texmgr.c1473 allocates a new record unless
+TEXPREF_OVERWRITE is supplied; that flag alone is not a reconstruction path,
+because an equal CRC returns the existing record before GPU upload. Ordinary
+lightstyle and surface-index sources are freed after compacting/upload. These
+source facts require a bounded regenerate-and-restore contract; neither new
+duplicate records nor a cache-hit return proves new-device image creation.

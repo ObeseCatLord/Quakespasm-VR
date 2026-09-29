@@ -26,6 +26,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "r_vrik_render.h"
 
+#include <limits.h>
+#include <stdint.h>
+
 extern cvar_t gl_fullbrights, r_drawflat, r_gpulightmapupdate, r_rtshadows;
 
 static const r_vrik_prepared_palette_t *R_TLASVRIKPalette (const entity_t *e)
@@ -1334,9 +1337,6 @@ static int AllocBlock (int w, int h, int *x, int *y)
 	return 0; // johnfitz -- shut up compiler
 }
 
-mvertex_t *r_pcurrentvertbase;
-qmodel_t  *currentmodel;
-
 int nColinElim;
 
 /*
@@ -1614,26 +1614,31 @@ static void GL_CreateSurfaceLightmap (msurface_t *surf, uint32_t surface_index)
 BuildSurfaceDisplayList -- called at level load time
 ================
 */
-static void BuildSurfaceDisplayList (msurface_t *fa)
+static qboolean GL_BrushRegenerationSourceValid (const qmodel_t *model, const msurface_t *surf)
 {
-	int		  i, lindex, lnumverts;
-	medge_t	 *pedges, *r_pedge;
+	if (!model || !surf || surf->numedges < 3 ||
+		(unsigned int)surf->numedges > UINT_MAX / (VERTEXSIZE * sizeof (float)) ||
+		model->numsurfedges < 0 || model->numedges < 0 || model->numvertexes < 0 ||
+		!model->surfedges || !model->edges || !model->vertexes ||
+		!surf->texinfo || !surf->texinfo->texture)
+		return false;
+	const texture_t *texture = surf->texinfo->texture;
+	if (!(surf->flags & SURF_DRAWTURB) && (!texture->width || !texture->height))
+		return false;
+	return texture->shift <= UINT_MAX / 2 && surf->light_s >= 0 && surf->light_s < LMBLOCK_WIDTH &&
+		surf->light_t >= 0 && surf->light_t < LMBLOCK_HEIGHT;
+}
+
+static qboolean GL_FillBrushSurfaceVertices (const qmodel_t *model, const msurface_t *fa, float *vertices)
+{
+	int		  i, lnumverts;
 	float	 *vec;
 	float	  s, t, s0, t0, sdiv, tdiv;
-	glpoly_t *poly;
 	float	 *poly_vert;
 
-	// reconstruct the polygon
-	pedges = currentmodel->edges;
+	if (!GL_BrushRegenerationSourceValid (model, fa) || !vertices)
+		return false;
 	lnumverts = fa->numedges;
-
-	//
-	// draw texture
-	//
-	poly = (glpoly_t *)Mem_Alloc (sizeof (glpoly_t) + (lnumverts - 4) * VERTEXSIZE * sizeof (float));
-	poly->next = fa->polys;
-	fa->polys = poly;
-	poly->numverts = lnumverts;
 
 	if (fa->flags & SURF_DRAWTURB)
 	{
@@ -1651,26 +1656,16 @@ static void BuildSurfaceDisplayList (msurface_t *fa)
 
 	for (i = 0; i < lnumverts; i++)
 	{
-		lindex = currentmodel->surfedges[fa->firstedge + i];
-
-		if (lindex > 0)
-		{
-			r_pedge = &pedges[lindex];
-			vec = r_pcurrentvertbase[r_pedge->v[0]].position;
-		}
-		else
-		{
-			r_pedge = &pedges[-lindex];
-			vec = r_pcurrentvertbase[r_pedge->v[1]].position;
-		}
+		poly_vert = vertices + (i * VERTEXSIZE);
+		if (!Mod_SurfaceVertexPosition (model, fa, i, poly_vert))
+			return false;
+		vec = poly_vert;
 		s = DotProduct (vec, fa->texinfo->vecs[0]) + s0;
 		s /= sdiv;
 
 		t = DotProduct (vec, fa->texinfo->vecs[1]) + t0;
 		t /= tdiv;
 
-		poly_vert = &poly->verts[0][0] + (i * VERTEXSIZE);
-		VectorCopy (vec, poly_vert);
 		poly_vert[3] = s;
 		poly_vert[4] = t;
 
@@ -1702,7 +1697,26 @@ static void BuildSurfaceDisplayList (msurface_t *fa)
 
 	// johnfitz -- removed gl_keeptjunctions code
 
+	return true;
+}
+
+static void BuildSurfaceDisplayList (const qmodel_t *model, msurface_t *fa)
+{
+	if (!GL_BrushRegenerationSourceValid (model, fa))
+		Sys_Error ("Invalid brush surface vertex source");
+	const int lnumverts = fa->numedges;
+	const size_t vertex_stride = VERTEXSIZE * sizeof (float);
+	const size_t polygon_header = sizeof (glpoly_t) - sizeof (((glpoly_t *)0)->verts);
+	if ((size_t)lnumverts > (SIZE_MAX - polygon_header) / vertex_stride)
+		Sys_Error ("Brush polygon allocation exceeds address space");
+	/* Same donor allocation size, including triangles, without signed or
+	 * header-plus-payload overflow on smaller address spaces. */
+	glpoly_t *poly = (glpoly_t *)Mem_Alloc (polygon_header + (size_t)lnumverts * vertex_stride);
+	poly->next = fa->polys;
+	fa->polys = poly;
 	poly->numverts = lnumverts;
+	if (!GL_FillBrushSurfaceVertices (model, fa, &poly->verts[0][0]))
+		Sys_Error ("Invalid brush surface vertex indices");
 }
 
 /*
@@ -2117,8 +2131,6 @@ void GL_BuildLightmaps (void)
 			break;
 		if (m->name[0] == '*')
 			continue;
-		r_pcurrentvertbase = m->vertexes;
-		currentmodel = m;
 		for (i = 0; i < m->numsurfaces; i++)
 		{
 			int submodel = 0;
@@ -2135,7 +2147,7 @@ void GL_BuildLightmaps (void)
 			{
 				const qboolean no_dlights = j > 1;
 				GL_CreateSurfaceLightmap (surf, surface_index | 0x80000000 * no_dlights);
-				BuildSurfaceDisplayList (surf);
+				BuildSurfaceDisplayList (m, surf);
 				if (!no_dlights)
 					R_AssignWorkgroupBounds (surf, submodel);
 			}
@@ -2622,29 +2634,88 @@ void GL_DeleteBModelAccelerationStructures (void)
 ==================
 GL_BuildBModelVertexBuffer
 
-Deletes gl_bmodel_vbo if it already exists, then rebuilds it with all
-surfaces from world + all brush models
+Caller retires the old buffers, then rebuilds all surfaces from world + all
+brush models. Ordinary vertices can be regenerated after polygon release.
 ==================
 */
+/* Shared CPU-only preflight for initial upload and the parent's pre-retirement
+ * eligibility query. Do not change atlas assignments or upload globals. */
+static qboolean GL_ValidateBModelVertexSources (uint32_t *vertex_count)
+{
+	size_t total = 0;
+	const qmodel_t *world = cl.model_precache[1];
+	if (!world || world->type != mod_brush || world->numsurfaces < 0 ||
+		world->numsubmodels <= 0 || !world->submodels ||
+		num_worldmodel_submodels != q_min (world->numsubmodels, MAX_MODELS))
+		return false;
+	for (int i = 0; i < world->numsubmodels; ++i)
+		if (world->submodels[i].firstface < 0 || world->submodels[i].firstface > world->numsurfaces ||
+			(i && world->submodels[i].firstface < world->submodels[i - 1].firstface))
+			return false;
+
+	/* Count first so every destination span is checked against the same bound. */
+	for (int j = 1; j < MAX_MODELS; ++j)
+	{
+		const qmodel_t *m = cl.model_precache[j];
+		if (!m || m->name[0] == '*' || m->type != mod_brush)
+			continue;
+		if (m->numsurfaces < 0 || (m->numsurfaces && !m->surfaces))
+			return false;
+		for (int i = 0; i < m->numsurfaces; ++i)
+		{
+			const int count = m->surfaces[i].numedges;
+			if (count < 3 || (size_t)count > UINT_MAX / (VERTEXSIZE * sizeof (float)) - total)
+				return false;
+			total += count;
+		}
+	}
+	if (!total)
+		return false;
+	for (int j = 1; j < MAX_MODELS; ++j)
+	{
+		const qmodel_t *m = cl.model_precache[j];
+		if (!m || m->name[0] == '*' || m->type != mod_brush)
+			continue;
+		for (int i = 0; i < m->numsurfaces; ++i)
+		{
+			const msurface_t *surf = &m->surfaces[i];
+			if (surf->vbo_firstvert < 0 || (size_t)surf->vbo_firstvert > total - surf->numedges)
+				return false;
+			if (surf->polys)
+			{
+				if (surf->polys->numverts < surf->numedges)
+					return false;
+			}
+			else
+			{
+				if ((surf->flags & SURF_DRAWTILED) || !GL_BrushRegenerationSourceValid (m, surf))
+					return false;
+				vec3_t position;
+				for (int v = 0; v < surf->numedges; ++v)
+					if (!Mod_SurfaceVertexPosition (m, surf, v, position))
+						return false;
+			}
+		}
+	}
+	*vertex_count = (uint32_t)total;
+	return true;
+}
+
+qboolean GL_CanRebuildBModelVertexBuffer (void)
+{
+	uint32_t vertex_count;
+	return GL_ValidateBModelVertexSources (&vertex_count);
+}
+
 void GL_BuildBModelVertexBuffer (void)
 {
 	unsigned int varray_bytes;
-	int			 i, j;
-	qmodel_t	*m;
-
-	// count all verts in all models
-	bmodel_numverts = 0;
-	for (j = 1; j < MAX_MODELS; j++)
-	{
-		m = cl.model_precache[j];
-		if (!m || m->name[0] == '*' || m->type != mod_brush)
-			continue;
-
-		for (i = 0; i < m->numsurfaces; i++)
-		{
-			bmodel_numverts += m->surfaces[i].numedges;
-		}
-	}
+	int i, j;
+	qmodel_t *m;
+	uint32_t vertex_count;
+	if (!GL_ValidateBModelVertexSources (&vertex_count))
+		Sys_Error ("Invalid brush vertex reconstruction sources");
+	bmodel_numverts = vertex_count;
 
 	// build vertex array
 	varray_bytes = VERTEXSIZE * sizeof (float) * bmodel_numverts;
@@ -2661,7 +2732,11 @@ void GL_BuildBModelVertexBuffer (void)
 		for (i = 0; i < m->numsurfaces; i++)
 		{
 			msurface_t *s = &m->surfaces[i];
-			memcpy (&varray[VERTEXSIZE * s->vbo_firstvert], s->polys->verts, VERTEXSIZE * sizeof (float) * s->numedges);
+			float *destination = &varray[VERTEXSIZE * s->vbo_firstvert];
+			if (s->polys)
+				memcpy (destination, s->polys->verts, VERTEXSIZE * sizeof (float) * s->numedges);
+			else if (!GL_FillBrushSurfaceVertices (m, s, destination))
+				Sys_Error ("Brush vertex reconstruction source changed after preflight");
 
 			uint32_t submodel = 0;
 			if (j == 1) // the worldmodel surface array also contains all movable submodel surfaces
