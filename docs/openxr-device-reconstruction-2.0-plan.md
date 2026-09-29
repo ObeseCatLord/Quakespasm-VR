@@ -195,3 +195,19 @@ because an equal CRC returns the existing record before GPU upload. Ordinary
 lightstyle and surface-index sources are freed after compacting/upload. These
 source facts require a bounded regenerate-and-restore contract; neither new
 duplicate records nor a cache-hit return proves new-device image creation.
+
+## Heap destruction prerequisite, verified source plan
+
+The existing GL_HeapCreate and GL_CreateHeapSegment allocate their opaque CPU
+owner structs in gl_heap.c, but GL_HeapDestroy currently releases only nested
+arrays and Vulkan segment memory. Its only current caller is the debug heap
+exercise, which frees every allocation before destruction and never uses the
+heap afterward; no caller already frees the root/segment structs separately.
+Narrow correction: destroy those existing owned structs at the same teardown
+boundary, permit null input, and assert that all allocation records (including
+dedicated allocations) were retired first. Document that the existing API
+consumes its opaque owner and callers must clear their own pointer. Expected
+under20 source/header lines; no allocator rewrite, registry or new GPU policy.
+This is the parent plan's already-dispositioned CPU heap leak prerequisite,
+independent of the pending brush GPU design. Source review/git diff --check now;
+existing heap exercise and full reconstruction checks remain end-of-goal only.
