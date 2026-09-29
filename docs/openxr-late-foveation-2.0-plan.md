@@ -1,6 +1,6 @@
 # OpenXR foveation after ordinary desktop Vulkan startup
 
-Status: verified design draft for senior review before production edits.
+Status: Astra Max design accepted with the attachment correction below; production work pending.
 Scope: enable existing KHR eye-tracked shading rate after compatible-device late
 attachment, and make the existing explicit FB/META development route eligible
 when the XR runtime is not present at Vulkan creation. This is a device-time
@@ -17,7 +17,9 @@ needed extension/feature, it stays full rate. `vr_eye_tracking` gates eye mode;
 with eligible density-map features, an **explicit** `-vk-runtime-foveation`
 request may prepare the existing FB/META development path even before the XR
 runtime appears. Later runtime capability and valid profile/image contracts
-remain necessary; absent/invalid eye tracking restores full rate. Startup
+remain necessary; absent/invalid eye tracking restores full rate. A non-FB
+runtime must still attach ordinary full-rate VR even if this optional FDM
+feature was prepared at device creation. Startup
 `-openxr` behavior, desktop effects/SSAO/MSAA and donor GPU selection remain.
 Steam Frame streaming/ARM standalone and Beyond 2e/Monado remain targets, not
 headset-name allowlists or assumed extension sets.
@@ -84,7 +86,10 @@ XR images or headset output. User does live/performance tests.
    XR discovery; if a runtime was already discovered, retain the existing META
    requirement. Select exactly one Vulkan feature family. If the requested
    development FDM route cannot qualify, the preexisting KHR/full-rate choice
-   remains; no fixed-mode switch is performed.
+   remains; no fixed-mode switch is performed. A full-rate XR runtime without
+   FB/META must not lose VR merely because the persistent device has FDM: pass
+   a density request to `VRXR_AttachVulkan` only if both the FDM device feature
+   and the newly discovered runtime's FB support are present.
 3. Retain the existing `vr_foveation`/`vr_eye_tracking` control, sample-rate,
    stability and action/profile checks at frame time. Desktop remains full rate
    because `stereo_active` is false; later XR adoption uses current renderer
@@ -96,8 +101,8 @@ XR images or headset output. User does live/performance tests.
    XR gaze, explicit FDM with runtime absent/present, unsupported extension,
    `-novr`, lost instance/rediscovery, MSAA and invalid gaze. Check real Vulkan
    device setup on an accessible capable GPU when available. State seams
-   honestly: actual donor six-set layouts now pass locally, but HMD/XR image
-   output still requires user testing. Linux Make plus focused fixtures; Windows/ARM and live/performance
+   honestly: actual donor six-set layouts and KHR format/rates now pass locally,
+   but foveated draws, HMD/XR images and FDM GPU execution are not proven here. Linux Make plus focused fixtures; Windows/ARM and live/performance
    checks remain user-deferred.
 
 Estimate: under150 production lines inside `gl_vidsdl.c`, no new owner or
@@ -115,3 +120,25 @@ adapter is possible. Do not review the whole migration, shader math, network or
 asset systems. Return a prioritized adopt/adapt/reject critique with file/line
 and primary-source evidence, no edits or tests. Main will synthesize before
 production coding.
+
+
+## Astra Max design disposition
+
+Local reviewer Sartre (`gpt-6-astra`, max; effective settings verified) checked
+current source and official Vulkan/OpenXR/Valve references. Main spot-checked
+the load-bearing [`vkGetDeviceProcAddr` core-version rule](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetDeviceProcAddr.html)
+and the early non-FB rejection before the existing optional density retry.
+
+| Finding | Disposition |
+| --- | --- |
+| A prepared FDM device passed directly to non-FB `VRXR_AttachVulkan` prevents ordinary VR, before density fallback | **Adopt.** Gate the *per-attachment request* with current runtime FB capability, preserving the VkDevice feature for future rediscovery. Test full-rate attachment without FB after speculative preparation. |
+| Desktop requests Vulkan1.1; a Vulkan1.2+ GPU alone does not authorize core RenderPass2 dispatch | **Adopt.** Keep `create_renderpass2_core` tied to requested application version and GPU; enable/use KHR extension/entry points on desktop. |
+| Partial removal of XR discovery gates still blocks KHR/FDM candidates | **Adopt.** Audit enumeration, function pointer, usability, property, feature, candidate and selection gates in the existing device owner; retain actual Vulkan format/feature checks, sample-rate query at the existing renderer boundary and disabled offset path. |
+| FDM preparation is not eye-foveation proof at default 4x MSAA or an unqualified borrowed-map contract | **Adopt as limit.** Do not infer Frame performance/visual readiness. Keep explicit development flag, VR eye toggle and full-rate fallback; fixed mode only on explicit request. |
+| New capability owner or routine VkDevice rebuild | **Reject.** Reuse existing renderer and backend owners. Incompatible-device reconstruction stays its separately required later phase. |
+
+The KHR route can reach the existing gaze/map/frame path after compatible
+adoption, but that is source-based until real foveated opaque draws/XR images are
+verified. Native host GPUs can validate KHR device creation and layouts; neither
+advertises FDM. Subsequent code review must examine both desktop and late VR
+paths, with no new render graph or GPU-state owner.
