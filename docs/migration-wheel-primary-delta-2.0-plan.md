@@ -1,8 +1,9 @@
 # Current-primary weapon-wheel reconciliation
 
 Status: plan preceded implementation; stage1 stock preview paths and required
-held-identity consumer adapter are source-integrated. Final local Astra source
-review and build/draw qualification remain pending. Stages2..4 remain pending.
+held-identity consumer adapter and association/fallback corrections pass final
+local Astra source review. Build/draw qualification remains end-of-goal work.
+Stages2..4 remain pending.
 Reference: product primary `master` at
 `51b452c018273647dcf94f4628a370267ff8fa91`, read-only sibling
 `quakespasm-openvr`. The [source-update record](migration-source-updates.md)
@@ -217,3 +218,20 @@ super-shotgun preview and held meshes are missing, do not guess the regular
 shotgun. The three association-lifetime corrections are source-accepted; the
 remaining fallback guard receives a bounded final check. Asset availability
 and actual drawing are end-of-goal qualification, not inferred source results.
+
+Stage1 final local Astra Max source review accepted the guarded fallback.
+The parser-prerequisite representation is also accepted: append inline value
+storage and13 per-key bits to the existing schema entry, set bits only after
+successful reads, snapshot before finishing, and retain explicit ammo maximum
+when its token is read. `ammo` and `ammo_stat` have separate presence bits but
+share the final authored type value. No token/source pointers may escape.
+Existing filtering, acceptance, finished calibration values and failure-atomic
+staging are unchanged; missing bits mean non-authoritative snapshot values.
+
+Astra verified the size tradeoff: roughly180 extra bytes per entry and11.25KiB
+per64-entry array, potentially34KiB additional nested save-verification stack.
+This is bounded declaration metadata, not another catalog. Static built-ins
+remain zero-metadata values consumed through their existing finished fields.
+Appending preserves existing member offsets but changes size/array stride;
+rebuild dependents during end-of-goal qualification. No binary compatibility
+with stale objects is claimed. Raw-mode/new API is rejected for this slice.
