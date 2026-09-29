@@ -287,3 +287,58 @@ Revised estimate250–350 changed source lines including moved initialization.
 Initial-map allocation and dynamic-light behavior remain native. No GPU creation,
 record crop/upload replay, cache activation or parent transaction in this slice.
 Source-only final review follows implementation; no builds/tests/fixtures yet.
+
+## Stage2b candidate upload/activation brief (awaits separate Astra disposition)
+
+Now that stage2a separates static/style preparation from entity-space dynamics,
+this next slice must preserve atlas image identities through the existing native
+crop/compaction/upload code. Exact write set r_brush.c/glquake.h and only a narrow
+texmgr validation sharing if source evidence requires it; expected180–320 changed
+lines including moved setup code. Workgroup GPU allocation/retirement, surface
+buffers, descriptors and parent switching remain stage3, not upload readiness
+claims. The caller supplies new-device staging/texture owners and workgroup
+buffers after old-device retirement, plus prepared stage2a CPU inputs.
+
+Share existing GL_SetupLightmapCompute's actual crop, in-place row compaction,
+style-list compaction and workgroup staging in one private setup helper. Initial
+setup retains original TexMgr_LoadImage record creation and cache initialization;
+replay calls TexMgr_ReplayGeneratedImage on those same records, skips shared
+nulltexture planes, restores complete base pixels and frees temporary inputs at
+the same copy-complete boundary. No pointer installation or CRC path. The public
+initial setup still owns original workgroup buffer allocation. Replay requires
+already-created new buffers; owner-local GPU recreation is a distinct contract.
+
+Before mutation/upload, check the complete graph's actual records by stable
+owner plus generated native names through TexMgr_FindTexture, compare pointers
+before dereferencing supplied record fields, and verify native source format,
+source dimensions/crop and permitted immutable borrowed profile. Verify base,
+style and index span readiness and new workgroup handles in the replay entry;
+require retired fields for every generated record. Eligibility for pre-retirement
+checks must not require transient pixels that stage2a has not generated yet or
+empty GPU fields on the still-running old device. Native initial setup remains
+unchanged for ordinary callers. No claim that old-device capability limits are
+proof of a prospective runtime GPU's limits. The parent owns prospective-device
+qualification and post-retirement failures; a staging uploader is not rollback.
+
+Activation after full base upload: invalidate per-surface cached_light so the
+next correctly contextual CPU render performs native refresh if r_dynamic is on;
+when off, the complete uploaded static/style base already supplies the native
+output. Do not rely on modified bits with an empty rectchange. Existing surface
+cached_dlight becomes false because the restored base contains no dynamic light.
+For GPU mode, mark existing atlas cached_framecount explicitly invalid (-1),
+then have the existing updater consume that invalid state independently of a
+frame increment. It must bypass the modified==0/unchanged-style early exits and
+force unconditional regions only within the cropped dispatch domain. Preserve
+normal dynamic-light block analysis even on that frame so active_dlights records
+where the newly rendered lights must be removed on a later frame. Count blocks
+once, preserve native style packing/compute shaders, and clear invalid status
+through the existing successful scheduling assignment to cached_framecount.
+No separate persistent restoration flag, lightstyle phase reset or GPU timing
+assumption. Initial map caches/updates remain their existing policy.
+
+Astra must challenge sentinel/first-update semantics, CPU r_dynamic-off behavior,
+null planes, graph-wide rejection before partial upload, compaction exactly once,
+record membership/borrowed lifetime and whether any new APIs are necessary. A
+preflight rejection preserves all records and inputs; native fatal allocation
+errors remain fatal. Final parent qualification at the end is required; this
+brief does not authorize production or establish live device reconstruction.
