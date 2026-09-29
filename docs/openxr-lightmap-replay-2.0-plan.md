@@ -268,3 +268,22 @@ handle/size/type. GL_HeapDestroy frees segment-owned arrays and shared segments
 array but does not free the heap object or each segment allocation itself.
 These are concrete lifetime gaps for later bounded owner retirement, not a
 reason to replace staging/heap allocation or add a generic resource registry.
+
+## Stage2a local Astra disposition and revised production contract
+
+Local Astra/max personally verified7e53c098 and accepted the narrow owner design
+conditionally. Adopt all findings before production:
+
+| Finding | Disposition |
+| --- | --- |
+| P1: live R_BuildLightMap consumes entity-space dynamic-light scratch | Add a private option inside the same native calculation: reconstruction builds static/style pixels without dynamic lights or surface-cache updates. Ordinary public R_BuildLightMap retains original behavior. No copied lighting math or temporary live frame/dlight mutations. |
+| P1: early cache markers depend on eventual update timing and CPU r_dynamic | Delete all proposed stage2a activation markers. Full base upload, cropped unconditional GPU refresh and CPU cache activation move to the verified stage2b boundary. Preparation alone does not establish a restored frame. |
+| P2: freeing temporary arrays is not rollback | Preparation destructively replaces derived CPU inputs. Caller remains quiesced until reconstruction completes or the owner is discarded; no resume-old-renderer cancellation promise or rollback copies. |
+| P2: third public cleanup API is unnecessary | Keep transient free helper private and reuse during regeneration/full owner disposal; expose only eligibility and regeneration. Any future external cancellation cleanup needs a concrete owner contract. |
+| P2: authoritative sample byte length must share real size arithmetic | Record actual .lit/grayscale/Q64/Valve RGB allocation lengths, use checked size_t products for allocation/copy/offset, guard .lit header reads, clear borrowed inline metadata on full disposal without freeing shared pixels twice. |
+| Non-brush precache correction | Skip zero-surface aliases; reject inconsistent non-brush owners with brush surfaces. Match first-null native lightmap traversal and tiled index contributions. Existing geometry validator is an additional prerequisite, not traversal replacement. |
+
+Revised estimate250–350 changed source lines including moved initialization.
+Initial-map allocation and dynamic-light behavior remain native. No GPU creation,
+record crop/upload replay, cache activation or parent transaction in this slice.
+Source-only final review follows implementation; no builds/tests/fixtures yet.
