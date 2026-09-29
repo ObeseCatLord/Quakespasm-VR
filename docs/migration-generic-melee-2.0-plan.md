@@ -109,5 +109,6 @@ Main spot-checked the load-bearing declarations/transform consumers and adopted:
 | Geometry configuration identity incomplete | Snapshot effective model height/gun angle and decoded viewentity scale with existing calibration/scaling inputs. |
 | Early rejected input retains partial stroke | Clear only generic gesture state in VR_InputMove's existing rejected context/angle-lock path; preserve ordinary held buttons. |
 
-These are source corrections; no tests/builds ran. Follow-up source review and
-end-of-goal native command/QC qualification remain separate evidence.
+These are source corrections; no tests/builds ran. Local Astra Max follow-up
+accepted all four corrections in 0a11b427 with no new source blocker in this
+slice. End-of-goal native command/QC qualification remains separate evidence.
