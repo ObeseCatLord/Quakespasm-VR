@@ -167,7 +167,7 @@ typedef struct
 	unsigned int generation;
 	vr_melee_gesture_profile_t profile;
 	vec3_t held, muzzle, previous[2], direction;
-	float held_scale, gun_scale, gun_pitch, units;
+	float held_scale, gun_scale, gun_pitch, gun_height, gun_angle, entity_scale, units;
 	double sample_time, intent_time;
 	uint64_t sample_id;
 	float arc;
@@ -1913,10 +1913,16 @@ static qboolean VR_InputGenericMeleeIdentity (const vrxr_frame_t *frame,
 		return false;
 	identity->gun_scale = vr_gunmodelscale.value;
 	identity->gun_pitch = vr_gunmodelpitch.value;
+	identity->gun_height = vr_gunmodely.value;
+	identity->gun_angle = Cvar_VariableValue ("vr_gunangle");
+	if (!isfinite (identity->gun_angle))
+		identity->gun_angle = 32.0f; // match the view owner's effective fallback
+	identity->entity_scale = ENTSCALE_DECODE (cl.viewent.netstate.scale);
 	identity->units = V_VRUnitsPerMetre ();
 	if (!isfinite (identity->units) || identity->units <= 0 ||
 		!isfinite (identity->gun_scale) || identity->gun_scale <= 0 ||
-		!isfinite (identity->gun_pitch))
+		!isfinite (identity->gun_pitch) || !isfinite (identity->gun_height) ||
+		!isfinite (identity->entity_scale) || identity->entity_scale == 0)
 		return false;
 	identity->modelindex = modelindex;
 	identity->weapon = cl.stats[STAT_ACTIVEWEAPON];
@@ -1939,7 +1945,8 @@ static qboolean VR_InputGenericMeleeSameIdentity (const vr_input_generic_melee_t
 		!memcmp (a->held, b->held, sizeof (a->held)) &&
 		!memcmp (a->muzzle, b->muzzle, sizeof (a->muzzle)) &&
 		a->held_scale == b->held_scale && a->gun_scale == b->gun_scale &&
-		a->gun_pitch == b->gun_pitch && a->units == b->units;
+		a->gun_pitch == b->gun_pitch && a->gun_height == b->gun_height &&
+		a->gun_angle == b->gun_angle && a->entity_scale == b->entity_scale && a->units == b->units;
 }
 
 static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame)
@@ -1947,16 +1954,23 @@ static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame)
 	vr_input_generic_melee_t identity;
 	stockaxe_edge_t edge = {0};
 	vec3_t render[2], offsets[2], points[2], motion[2], direction;
-	vec3_t grip, angles;
-	float yaw, mapping_yaw, speed[2], point_motion, metres;
+	vec3_t grip, angles, tracking_grip;
+	float yaw, speed[2], point_motion, metres;
 	double seconds;
 	int endpoint;
 
 	if (!VR_InputGenericMeleeIdentity (frame, &identity) ||
-		!V_TrackedPresentationYaw (&yaw) || !V_TrackedMappingYaw (&mapping_yaw) ||
-		!V_TrackedHandBodyOffset (identity.hand, grip) ||
+		!V_TrackedPresentationYaw (&yaw) ||
 		!V_TrackedPresentationHandAngles (identity.hand, angles))
 		goto reset;
+	/* Keep head-relative physical points in a fixed tracking basis. Virtual
+	 * smooth turning, body interpolation and viewheight cannot add swing arc. */
+	for (int axis = 0; axis < 3; ++axis)
+		tracking_grip[axis] = frame->devices[identity.hand + 1].matrix[axis][3] -
+			frame->devices[0].matrix[axis][3];
+	if (!VR_InputFBTMapTrackingVector (tracking_grip, 0.0f, 0.0f, grip))
+		goto reset;
+	VectorScale (grip, identity.units, grip);
 	if (identity.profile.has_base || identity.profile.has_tip)
 	{
 		edge.valid = true;
@@ -1970,14 +1984,14 @@ static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame)
 		VectorCopy (vec3_origin, render[0]);
 	if (!identity.profile.has_tip &&
 		!VR_LocomotionMuzzleOffsetToWorld (identity.muzzle, angles,
-			identity.gun_scale, identity.gun_pitch, render[1]))
+			identity.gun_scale, identity.gun_pitch, identity.hand == 0, render[1]))
 		goto reset;
 	for (int point = 0; point < 2; ++point)
 	{
-		if (!VR_InputRenderOffsetToBody (render[point], yaw, mapping_yaw, offsets[point]) ||
+		if (!VR_InputRenderOffsetToBody (render[point], yaw, 0.0f, offsets[point]) ||
 			VectorLength (offsets[point]) > 96.0f ||
 			!VR_InputContactPointSpeed (&frame->devices[identity.hand + 1],
-				offsets[point], mapping_yaw, identity.units, &speed[point]))
+				offsets[point], 0.0f, identity.units, &speed[point]))
 			goto reset;
 		VectorAdd (grip, offsets[point], points[point]);
 		if (!VR_InputWireVec (points[point]))
@@ -4769,6 +4783,7 @@ void VR_InputMove (usercmd_t *pending)
 
 	if (!VR_InputMotionContextAccepted (frame) || CL_AngleLocked ())
 	{
+		memset (&vr_input_generic_melee, 0, sizeof (vr_input_generic_melee));
 		VR_InputGateMovement (pending);
 		VR_InputGateTurn ();
 		vr_input_gorilla_discontinuity = true;
@@ -4814,6 +4829,7 @@ void VR_InputMove (usercmd_t *pending)
 		{
 			vr_input_contact_discontinuity = true;
 			vr_input_gorilla_discontinuity = true;
+			memset (&vr_input_generic_melee, 0, sizeof (vr_input_generic_melee));
 		}
 	}
 
@@ -4838,6 +4854,7 @@ void VR_InputMove (usercmd_t *pending)
 					{
 						vr_input_contact_discontinuity = true;
 						vr_input_gorilla_discontinuity = true;
+						memset (&vr_input_generic_melee, 0, sizeof (vr_input_generic_melee));
 					}
 					vr_input_last_snap = snap;
 				}

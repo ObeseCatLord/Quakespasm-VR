@@ -96,3 +96,18 @@ The earlier stronger proof wording is superseded: promise one synthetic input
 request per gesture with ordinary attack semantics. A cooldown-rejected request
 is not queued for later, and unknown custom QC may generate its own multiple
 effects. This limitation preserves mod behavior rather than inventing damage.
+
+## Final source review corrections
+
+Local Astra Max accepted the input/profile ownership and found four issues.
+Main spot-checked the load-bearing declarations/transform consumers and adopted:
+
+| Finding | Correction |
+| --- | --- |
+| Missing sixth muzzle-transform argument | Supply the existing physical-left-hand reflection argument. |
+| Points compared across changing virtual yaw | Keep head-relative physical points and offsets in the existing yaw-zero tracking transform; sample velocities in that same basis. Explicit snap/180 turns discard continuity. No second yaw owner. |
+| Geometry configuration identity incomplete | Snapshot effective model height/gun angle and decoded viewentity scale with existing calibration/scaling inputs. |
+| Early rejected input retains partial stroke | Clear only generic gesture state in VR_InputMove's existing rejected context/angle-lock path; preserve ordinary held buttons. |
+
+These are source corrections; no tests/builds ran. Follow-up source review and
+end-of-goal native command/QC qualification remain separate evidence.
