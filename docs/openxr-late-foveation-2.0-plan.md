@@ -52,9 +52,12 @@ Unknown: each release target GPU's full KHR/FDM format and sample-rate matrix,
 actual XR runtime capability, and Beyond gaze (not configured). New current-host
 probe on 2026-09-29 enumerates NVIDIA RTX4090 and RADV devices, both advertising
 `VK_KHR_fragment_shading_rate`, `VK_KHR_create_renderpass2`,
-`attachmentFragmentShadingRate=true` and 32 descriptor sets. The existing
-`openxr_layout_fixture.c` passes the real donor descriptor and pipeline layout
-owners with multiview readiness off and on on this host. This replaces the old
+`attachmentFragmentShadingRate=true` and 32 descriptor sets. A direct Vulkan1.1 physical-device probe on this machine additionally confirms
+both GPUs expose `R8_UINT` shading-rate attachment plus transfer destination,
+array layers, and 1x1/2x2 shading rates at 4x MSAA; neither advertises
+`VK_EXT_fragment_density_map`. The existing `openxr_layout_fixture.c` passes
+the real donor descriptor and pipeline layout owners with multiview readiness
+off and on on this host. This replaces the old
 software-only evidence for layouts; it does not prove foveated draw commands,
 XR images or headset output. User does live/performance tests.
 
