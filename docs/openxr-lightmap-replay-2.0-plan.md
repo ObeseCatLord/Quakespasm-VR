@@ -399,3 +399,62 @@ sample](https://docs.vulkan.org/samples/latest/samples/performance/pipeline_barr
 establishes host-observed completion and is not the generated upload API's
 return guarantee. This source finding resolves the tentative barrier question;
 full transaction/validation qualification still follows implementation.
+
+## Stage3 candidate brush GPU owner brief (not authorized yet)
+
+Verified remaining owner slice: r_brush.c and existing glquake.h declarations;
+expected400–600 changed lines including moves. Native buffers and descriptor
+layout/allocator/staging helpers remain the owners. No renderer registry,
+parallel map data or preserved whole-map upload mirror. GPU retirement runs only
+under the parent's joined/quiesced and completed-or-lost submission contract on
+the old device, before its allocator/layout/function-pointer owners are retired.
+No unconditional nested healthy-device wait in the loss path is proposed.
+
+Retire lightmap and indirect descriptor sets; surface-data/submodel/indirect/
+index/visibility buffers plus their native memory; per-atlas workgroup buffers
+before shared memory; four mapped frame-upload buffers before their shared
+allocation. Clear handles/mappings/visibility offsets at those same owners.
+Preserve lightmaps/base pixels/crops/records, num_surfaces, indirect_draws,
+initial_indirect_buffer, brush_deps_data and native CPU draw membership. Keep
+buffer deletion helpers private unless the parent needs a single owner entry.
+Do not mistake R_FreeBuffer's by-value argument for clearing the owner field.
+Shared partial allocations must be freed even if a particular buffer is null;
+this is an idempotent disposal requirement, not another GPU resource catalog.
+
+Restore surface compute payload through a private extraction of initial
+GL_BuildLightmaps's existing field writes. Initial map construction alone
+assigns vbo_firstvert and builds draw membership; replay uses retained offsets,
+indirect_idx, atlas coordinates and original packed styles/texture vectors.
+Restore native surface-submodel tags and cutout bit. Reuse existing allocation,
+staging, frame-upload, workgroup creation and GL_SetupIndirectDraws functions
+after all old fields are clear. Integrate stage2b image replay before native
+descriptor updates and preserve native staging drain before consumer submission.
+Preflight includes shader source pointers/plane/texinfo, index/tag/range counts
+and retained indirect spans, not just nonnull geometry. This remains one owner
+reconstruction entry, without a second command generator or atlas rebuild.
+
+Brush acceleration needs the same old-owner handling: existing creation records
+per-model BLAS and buffers for brush precache owners (including inline models),
+shared bmodel indices/AS memory and TLAS/buffer/memory. Its current deletion
+returns immediately when TLAS is absent and can miss partially initialized
+children. Retire each existing nonnull child through that owner, then shared
+memory, clearing model addresses/handles. Dynamic TLAS resize already queues old
+allocations through existing dynamic garbage; parent must drain every native slot
+before device destruction. Alias entity/static/private-prop acceleration remains
+its separate existing owner, not an invented qmodel brush allocation. Shared AS
+scratch remains R_FreeASScratchBuffer's owner and must not be retired twice.
+
+First compute restoration must account for double-buffered transform history:
+current transforms are populated from native live entities; replay's first
+unconditional regions must avoid reading an uninitialized previous transform
+half for dlight-only differential updates. Stage2b's forced full-refresh frame
+is intended to establish that boundary. Existing R_ClearBModelInstanceClaims
+latches the compute half and clears claims each frame; do not add a new claim
+state machine or reset live entity transforms. Restore old settings/presentation
+policy, retaining native ray-query conditional creation.
+
+Astra must challenge ownership/order, partial-init guards, retained CPU readiness,
+packed payload equality, GPU-only lifecycle versus native full map cleanup,
+first-use history and whether the 400–600-line scope requires splitting. This
+brief is verified-source planning only; source acceptance, parent integration
+and end-of-implementation Linux/ARM behavior proof remain required.
