@@ -20,6 +20,33 @@ typedef enum {
   VR_WEAPON_CATALOG_SOURCE_DISCOVERED
 } vr_weapon_catalog_source_t;
 
+/* Commands and models are not identities: two weapons can share an impulse,
+ * while one weapon can have several models. Missing descriptors may be filled
+ * by a declaration; conflicting explicit descriptors must remain distinct. */
+typedef struct {
+  int selector;
+  int owned_stat, owned_mask;
+  int active_stat, active_mask;
+} vr_weapon_catalog_identity_t;
+
+static inline int VR_WeaponCatalog_IdentitiesCompatible(
+    vr_weapon_catalog_identity_t a, vr_weapon_catalog_identity_t b) {
+  int related = 0;
+  if (a.selector && b.selector) {
+    if (a.selector != b.selector) return 0;
+    related = 1;
+  }
+  if (a.owned_stat >= 0 && b.owned_stat >= 0) {
+    if (a.owned_stat != b.owned_stat || a.owned_mask != b.owned_mask) return 0;
+    related = 1;
+  }
+  if (a.active_stat >= 0 && b.active_stat >= 0) {
+    if (a.active_stat != b.active_stat || a.active_mask != b.active_mask) return 0;
+    related = 1;
+  }
+  return related;
+}
+
 typedef struct {
   int selector;
   int model_index;
@@ -56,9 +83,9 @@ static inline int VR_WeaponCatalog_Observe(vr_weapon_catalog_t *catalog,
   return 1;
 }
 
-/* The wheel renders an absent pickup model by swapping its g_ basename for
- * the corresponding v_ viewmodel. Treat that same pair as one catalogue
- * identity so runtime viewmodel discovery does not add a second wheel slot. */
+/* Conventional g_/v_ names may provide a provisional model alias. This is
+ * not ownership or selector evidence; verified held aliases and explicit
+ * declarations take precedence when a mod uses a different naming scheme. */
 static inline int VR_WeaponCatalog_ModelPathsMatch(const char *a,
                                                    const char *b) {
   const char *a_marker;
