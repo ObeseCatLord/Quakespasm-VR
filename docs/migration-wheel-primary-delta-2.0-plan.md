@@ -244,3 +244,51 @@ Calibration's finished values, globals, aliases, held/melee fields and staged
 filtering remain unchanged. Catalog consumers do not yet read the snapshot;
 the subsequent identity/partial-overlay stage remains required. Final local Astra Max source review accepted this bounded prerequisite.
 End-of-goal qualification and catalog consumer integration remain pending.
+
+## Stage2 consumer implementation contract
+
+Continue the accepted identity/provenance design using the raw snapshot now
+implemented in `764cea68`. Verified existing owners: `ApplySchemaMetadata` and
+`AddSchemaEntry` currently infer finished values; `ApplySchema` merges every
+first matching wwheel row or creates a replacement partial roster; profiles
+currently follow file overlays; discovery has ambiguous `-1` outcomes that can
+fall through to new allocation. These are the next demonstrated boundaries.
+
+Reuse the primary identity helper verbatim in the existing catalog header.
+Keep one catalog, stable-ID allocator, model provenance and prepared frame.
+Append authored-field bits and native-profile provenance to existing entries,
+and copy authored/learned held paths into the existing catalog owner's bounded
+storage. The native-profile bit preserves the primary's independent
+`game_profile` information after a file overlay marks a row schema-derived.
+
+- Parse own-game wwheel into an empty catalog; seed stock only if absent or
+  invalid. Built-ins follow, then own-game file overlays. Successful wwheel
+  authority remains independent of partial files; complete rosters remain stage3.
+- Match declarations using actual selector/full descriptor relationships; a
+  command never proves identity. Check authored descriptor halves separately.
+  Missing halves are constraints rather than new identity evidence and are
+  resolved only after a unique match. Unauthored stock descriptor defaults may
+  be replaced when another known identity relationship identifies that slot;
+  conflicting explicit/native-profile descriptors remain distinct. Rank exact
+  held match before exact preview, then current source provenance. Ambiguity
+  stops the operation, including runtime discovery; no alternate first-match
+  search or allocation follows it.
+- Merge only flagged raw values. Keep matched IDs; use the current collision-
+  checked allocator for new declarations. Unmatched fragments need a valid
+  authored native command and complete usable identity; unresolved descriptor
+  halves and calibration-only fragments create no rows. An explicit ownership
+  declaration disables both implicit selector ownership and legacy supplements.
+- Recompute native ammo/capacity fallback when ammo type changes; preserve
+  omitted values and explicit maximum, including zero. Explicit maxima must not
+  accidentally use a capacity stat from the former ammo type.
+- Learn held identity independently of preview provenance. Authored preview is
+  preserved. Authored/native-profile held identity cannot be overwritten by an
+  unrelated observation. Prepared models and frame strings stay under the
+  existing main-thread load/frame-copy owners.
+
+Write set: `vr_weapon_menu.c/.h`, `vr_weapon_catalog.h`; parser and calibrator
+unchanged in this stage. Expected400–750 changed lines across the existing
+matching/overlay/discovery functions. A separate catalog/parser, protocol,
+entity viewmodel owner, command interpreter or per-mod gameplay layer requires
+reopening. Astra source review follows integration; builds/tests remain deferred
+until full implementation. Stage3/4 and device-owner reconstruction remain open.
