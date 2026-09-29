@@ -1265,7 +1265,7 @@ void R_RenderDynamicLightmaps (msurface_t *fa)
 	}
 }
 
-/* Existing atlas-owned transient inputs, shared by initial packing/replay. */
+/* Atlas-owned transient inputs used during initial packing and map disposal. */
 static void GL_FreeLightmapInputs (struct lightmap_s *lm)
 {
 	for (int i = 0; i < MAXLIGHTMAPS * 3 / 4; ++i)
@@ -1611,9 +1611,7 @@ static void PrepareIndirectDraws ()
 GL_CreateSurfaceLightmap
 ========================
 */
-static void R_BuildLightMapInternal (msurface_t *surf, byte *dest, int stride, qboolean dynamic_lights);
-
-static void GL_CreateSurfaceLightmap (msurface_t *surf, uint32_t surface_index, qboolean dynamic_lights)
+static void GL_CreateSurfaceLightmap (msurface_t *surf, uint32_t surface_index)
 {
 	int		  i;
 	byte	 *base;
@@ -1624,7 +1622,7 @@ static void GL_CreateSurfaceLightmap (msurface_t *surf, uint32_t surface_index, 
 
 	base = lightmaps[surf->lightmaptexturenum].data;
 	base += (surf->light_t * LMBLOCK_WIDTH + surf->light_s) * LIGHTMAP_BYTES;
-	R_BuildLightMapInternal (surf, base, LMBLOCK_WIDTH * LIGHTMAP_BYTES, dynamic_lights);
+	R_BuildLightMap (surf, base, LMBLOCK_WIDTH * LIGHTMAP_BYTES);
 
 	surface_indices = lightmaps[surf->lightmaptexturenum].surface_indices;
 	surface_indices += (surf->light_t * LMBLOCK_WIDTH + surf->light_s);
@@ -1636,124 +1634,6 @@ static void GL_CreateSurfaceLightmap (msurface_t *surf, uint32_t surface_index, 
 		lightstyles[i] += (surf->light_t * LMBLOCK_WIDTH + surf->light_s) * LIGHTMAP_BYTES;
 	}
 	R_FillLightstyleTextures (surf, lightstyles, LMBLOCK_WIDTH * LIGHTMAP_BYTES);
-}
-
-/* CPU-only eligibility: no GPU ownership or resume-old-renderer guarantee. */
-qboolean GL_CanRegenerateLightmapInputs (void)
-{
-	size_t surface_count = 0;
-	if (cl.worldmodel != cl.model_precache[1] || !GL_CanRebuildBModelVertexBuffer () ||
-		num_surfaces < 0 || lightmap_count < 0 || lightmap_count > MAX_SANITY_LIGHTMAPS || (lightmap_count && !lightmaps))
-		return false;
-	for (int i = 0; i < lightmap_count; ++i)
-	{
-		const struct lightmap_s *lm = &lightmaps[i];
-		if (!lm->data)
-			return false;
-		for (int j = 0; j < 1 + MAXLIGHTMAPS * 3 / 4; ++j)
-			if (lm->lightstyle_rectused[j].w > LMBLOCK_WIDTH || lm->lightstyle_rectused[j].h > LMBLOCK_HEIGHT)
-				return false;
-	}
-
-	for (int j = 1; j < MAX_MODELS; ++j)
-	{
-		const qmodel_t *m = cl.model_precache[j];
-		if (!m)
-			break; // Match native lightmap traversal, including tiled indices.
-		if (m->name[0] == '*')
-			continue;
-		if (m->numsurfaces < 0 || (size_t)m->numsurfaces > (size_t)num_surfaces - surface_count)
-			return false;
-		if (m->type != mod_brush)
-		{
-			if (m->numsurfaces)
-				return false;
-			continue;
-		}
-		surface_count += m->numsurfaces;
-		for (int i = 0; i < m->numsurfaces; ++i)
-		{
-			const msurface_t *surf = &m->surfaces[i];
-			if (surf->flags & SURF_DRAWTILED)
-				continue;
-			if (surf->lightmaptexturenum < 0 || surf->lightmaptexturenum >= lightmap_count ||
-				surf->extents[0] < 0 || surf->extents[1] < 0 || surf->light_s < 0 || surf->light_t < 0 ||
-				surf->light_s >= LMBLOCK_WIDTH || surf->light_t >= LMBLOCK_HEIGHT)
-				return false;
-			const int width = (surf->extents[0] >> 4) + 1;
-			const int height = (surf->extents[1] >> 4) + 1;
-			if (width > LMBLOCK_WIDTH - surf->light_s || height > LMBLOCK_HEIGHT - surf->light_t ||
-				(size_t)width * height > sizeof (blocklights) / (3 * sizeof (blocklights[0])))
-				return false;
-			int styles = 0;
-			while (styles < MAXLIGHTMAPS && surf->styles[styles] != 255)
-			{
-				if (surf->styles[styles] >= MAX_LIGHTSTYLES)
-					return false;
-				++styles;
-			}
-			const struct lightmap_s *lm = &lightmaps[surf->lightmaptexturenum];
-			// The fourth style occupies alpha in all three RGB style planes.
-			for (int plane = 0; plane <= q_min (styles, MAXLIGHTMAPS * 3 / 4); ++plane)
-				if (lm->lightstyle_rectused[plane].w < surf->light_s + width ||
-					lm->lightstyle_rectused[plane].h < surf->light_t + height)
-					return false;
-			if (surf->samples)
-			{
-				const uintptr_t base = (uintptr_t)m->lightdata;
-				const uintptr_t source = (uintptr_t)surf->samples;
-				const size_t required = (size_t)width * height * 3 * styles;
-				if (!m->lightdata || source < base || source - base > m->lightdata_bytes ||
-					required > m->lightdata_bytes - (source - base))
-					return false;
-			}
-		}
-	}
-	return surface_count == (size_t)num_surfaces;
-}
-
-qboolean GL_RegenerateLightmapInputs (void)
-{
-	if (!GL_CanRegenerateLightmapInputs ())
-		return false; // No freeing, clearing or pixel writes until full validation.
-	// Destructive derived-state preparation: remain quiesced until GPU replay or
-	// full owner disposal. Transient cleanup alone is not a cancellation rollback.
-	for (int i = 0; i < lightmap_count; ++i)
-	{
-		GL_FreeLightmapInputs (&lightmaps[i]);
-		GL_AllocateLightmapInputs (&lightmaps[i]);
-	}
-
-	uint32_t surface_index = 0;
-	int current_submodel = 0;
-	for (int j = 1; j < MAX_MODELS; ++j)
-	{
-		qmodel_t *m = cl.model_precache[j];
-		if (!m)
-			break;
-		if (m->name[0] == '*' || m->type != mod_brush)
-			continue;
-		for (int i = 0; i < m->numsurfaces; ++i, ++surface_index)
-		{
-			int submodel = 0;
-			if (j == 1)
-			{
-				while (((current_submodel + 1) < m->numsubmodels) && (i >= m->submodels[current_submodel + 1].firstface))
-					++current_submodel;
-				if (current_submodel < num_worldmodel_submodels)
-					submodel = current_submodel;
-			}
-			msurface_t *surf = &m->surfaces[i];
-			if (surf->flags & SURF_DRAWTILED)
-				continue;
-			GL_CreateSurfaceLightmap (surf, surface_index | (j > 1 ? 0x80000000u : 0), false);
-			if (j == 1)
-				R_AssignWorkgroupBounds (m, surf, submodel);
-		}
-	}
-	// Keep membership as a bitmap for native crop/upload compaction. Activation,
-	// CPU caches and a timing-independent cropped GPU refresh belong to replay.
-	return true;
 }
 
 /*
@@ -2294,7 +2174,7 @@ void GL_BuildLightmaps (void)
 			if (!(surf->flags & SURF_DRAWTILED))
 			{
 				const qboolean no_dlights = j > 1;
-				GL_CreateSurfaceLightmap (surf, surface_index | 0x80000000 * no_dlights, true);
+				GL_CreateSurfaceLightmap (surf, surface_index | 0x80000000 * no_dlights);
 				BuildSurfaceDisplayList (m, surf);
 				if (!no_dlights)
 					R_AssignWorkgroupBounds (m, surf, submodel);
@@ -2618,103 +2498,9 @@ void GL_UpdateLightmapDescriptorSets (void)
 GL_SetupLightmapCompute
 ==================
 */
-/* Stable owner/native-name match precedes record dereference. Readiness adds
- * retired GPU/resource/span checks; it does not prove new-device provenance. */
-static qboolean GL_LightmapReplayRecordValid (
-	gltexture_t *record, const char *name, enum srcformat format, int width, int height, const byte *pixels, qboolean ready)
+void GL_SetupLightmapCompute (void)
 {
-	gltexture_t *actual = TexMgr_FindTexture (cl.worldmodel, name);
-	if (!actual || actual != record || actual->source_format != format ||
-		actual->source_width != (unsigned int)width || actual->source_height != (unsigned int)height ||
-		!(actual->flags & TEXPREF_NOPICMIP) || (actual->flags & (TEXPREF_PREMULTIPLY | TEXPREF_MIPMAP | TEXPREF_WARPIMAGE)))
-		return false;
-	return !ready || TexMgr_CanReplayGeneratedImage (actual, pixels, (size_t)width * height * 4);
-}
-
-static qboolean GL_ValidateLightmapReplay (qboolean ready)
-{
-	if (!GL_CanRegenerateLightmapInputs ())
-		return false;
-	for (int i = 0; i < lightmap_count; ++i)
-	{
-		const struct lightmap_s *lm = &lightmaps[i];
-		char name[32];
-		if (ready)
-		{
-			if (!lm->surface_indices || !lm->workgroup_bounds || !lm->workgroup_bounds_buffer || !workgroup_bounds_buffer_memory.handle)
-				return false;
-			for (int j = 0; j < MAXLIGHTMAPS * 3 / 4; ++j)
-				if (!lm->lightstyle_data[j])
-					return false;
-			for (int y = 0; y < LMBLOCK_HEIGHT / LM_CULL_BLOCK_H; ++y)
-				for (int x = 0; x < LMBLOCK_WIDTH / LM_CULL_BLOCK_W; ++x)
-					if (lm->num_used_lightstyles[y][x])
-						return false; // Bitmap-to-list compaction consumes preparation once.
-		}
-		q_snprintf (name, sizeof (name), "lightmap_%07i", i);
-		if (!GL_LightmapReplayRecordValid (lm->texture, name, SRC_LIGHTMAP, LMBLOCK_WIDTH, LMBLOCK_HEIGHT, lm->data, ready))
-			return false;
-		for (int j = 0; j < MAXLIGHTMAPS * 3 / 4; ++j)
-		{
-			int width = lm->lightstyle_rectused[j + 1].w;
-			const int height = lm->lightstyle_rectused[j + 1].h;
-			if (LMBLOCK_WIDTH - width < 16)
-				width = LMBLOCK_WIDTH;
-			if (!height)
-			{
-				if (!nulltexture || lm->lightstyle_textures[j] != nulltexture)
-					return false;
-				continue; // Shared image is restored by its ordinary texture owner.
-			}
-			if (!width)
-				return false;
-			q_snprintf (name, sizeof (name), "lightstyle%d_%07i", j, i);
-			if (!GL_LightmapReplayRecordValid (lm->lightstyle_textures[j], name, SRC_RGBA, width, height, lm->lightstyle_data[j], ready))
-				return false;
-		}
-		const int width = (lm->lightstyle_rectused[0].w + 7) / 8 * 8;
-		const int height = (lm->lightstyle_rectused[0].h + 7) / 8 * 8;
-		if (!width || !height || width > LMBLOCK_WIDTH || height > LMBLOCK_HEIGHT)
-			return false;
-		q_snprintf (name, sizeof (name), "surfindices_%07i", i);
-		if (!GL_LightmapReplayRecordValid (lm->surface_indices_texture, name, SRC_SURF_INDICES, width, height, (byte *)lm->surface_indices, ready))
-			return false;
-	}
-	return true;
-}
-
-qboolean GL_CanReplayLightmapImages (void)
-{
-	return GL_ValidateLightmapReplay (false); // Before retirement/preparation/new-device creation.
-}
-
-static void GL_ActivateLightmapReplay (void)
-{
-	for (int i = 0; i < lightmap_count; ++i)
-	{
-		lightmaps[i].cached_framecount = -1; // Explicit invalid state, independent of frame timing.
-		memset (lightmaps[i].cached_light, -1, sizeof (lightmaps[i].cached_light));
-	}
-	for (int j = 1; j < MAX_MODELS; ++j)
-	{
-		qmodel_t *m = cl.model_precache[j];
-		if (!m)
-			break;
-		if (m->name[0] == '*' || m->type != mod_brush)
-			continue;
-		for (int i = 0; i < m->numsurfaces; ++i)
-		{
-			msurface_t *surf = &m->surfaces[i];
-			if (surf->flags & SURF_DRAWTILED)
-				continue;
-			memset (surf->cached_light, -1, sizeof (surf->cached_light));
-			surf->cached_dlight = false; // Complete restored base has static/style contributions only.
-		}
-	}
-}
-
-static void GL_UploadLightmapInputs (qboolean replay)
-{
+	GL_AllocateWorkgroupBoundsBuffers ();
 
 	//
 	// upload all lightmaps that were filled
@@ -2732,14 +2518,8 @@ static void GL_UploadLightmapInputs (qboolean replay)
 		char name[32];
 		q_snprintf (name, sizeof (name), "lightmap_%07i", i);
 
-		if (replay)
-		{
-			if (!TexMgr_ReplayGeneratedImage (lm->texture, lm->data, (size_t)LMBLOCK_WIDTH * LMBLOCK_HEIGHT * 4))
-				Sys_Error ("Lightmap replay readiness changed after preflight");
-		}
-		else
-			lm->texture = TexMgr_LoadImage (
-				cl.worldmodel, name, LMBLOCK_WIDTH, LMBLOCK_HEIGHT, SRC_LIGHTMAP, lm->data, "", (src_offset_t)lm->data, TEXPREF_LINEAR | TEXPREF_NOPICMIP);
+		lm->texture = TexMgr_LoadImage (
+			cl.worldmodel, name, LMBLOCK_WIDTH, LMBLOCK_HEIGHT, SRC_LIGHTMAP, lm->data, "", (src_offset_t)lm->data, TEXPREF_LINEAR | TEXPREF_NOPICMIP);
 		for (int j = 0; j < MAXLIGHTMAPS * 3 / 4; ++j)
 		{
 			q_snprintf (name, sizeof (name), "lightstyle%d_%07i", j, i);
@@ -2754,14 +2534,8 @@ static void GL_UploadLightmapInputs (qboolean replay)
 				if (size_w < LMBLOCK_WIDTH) // this is not common and is easier than handling variable strides in TexMgr_LoadImage
 					for (int row = 1; row < size_h; row++)
 						memmove (lm->lightstyle_data[j] + size_w * row * 4, lm->lightstyle_data[j] + LMBLOCK_WIDTH * row * 4, size_w * 4);
-				if (replay)
-				{
-					if (!TexMgr_ReplayGeneratedImage (lm->lightstyle_textures[j], lm->lightstyle_data[j], (size_t)size_w * size_h * 4))
-						Sys_Error ("Lightstyle replay readiness changed after preflight");
-				}
-				else
-					lm->lightstyle_textures[j] = TexMgr_LoadImage (
-						cl.worldmodel, name, size_w, size_h, SRC_RGBA, lm->lightstyle_data[j], "", (src_offset_t)lm->data, TEXPREF_NEAREST | TEXPREF_NOPICMIP);
+				lm->lightstyle_textures[j] = TexMgr_LoadImage (
+					cl.worldmodel, name, size_w, size_h, SRC_RGBA, lm->lightstyle_data[j], "", (src_offset_t)lm->data, TEXPREF_NEAREST | TEXPREF_NOPICMIP);
 			}
 			SAFE_FREE (lm->lightstyle_data[j]);
 		}
@@ -2774,15 +2548,9 @@ static void GL_UploadLightmapInputs (qboolean replay)
 			for (int row = 1; row < *size_h; row++)
 				memmove (lm->surface_indices + *size_w * row, lm->surface_indices + LMBLOCK_WIDTH * row, *size_w * 4);
 		q_snprintf (name, sizeof (name), "surfindices_%07i", i);
-		if (replay)
-		{
-			if (!TexMgr_ReplayGeneratedImage (lm->surface_indices_texture, (byte *)lm->surface_indices, (size_t)*size_w * *size_h * 4))
-				Sys_Error ("Surface-index replay readiness changed after preflight");
-		}
-		else
-			lm->surface_indices_texture = TexMgr_LoadImage (
-				cl.worldmodel, name, *size_w, *size_h, SRC_SURF_INDICES, (byte *)lm->surface_indices, "", (src_offset_t)lm->surface_indices,
-				TEXPREF_NEAREST | TEXPREF_NOPICMIP);
+		lm->surface_indices_texture = TexMgr_LoadImage (
+			cl.worldmodel, name, *size_w, *size_h, SRC_SURF_INDICES, (byte *)lm->surface_indices, "", (src_offset_t)lm->surface_indices,
+			TEXPREF_NEAREST | TEXPREF_NOPICMIP);
 		SAFE_FREE (lm->surface_indices);
 
 		for (int y = 0; y < LMBLOCK_HEIGHT / LM_CULL_BLOCK_H; y++)
@@ -2821,26 +2589,9 @@ static void GL_UploadLightmapInputs (qboolean replay)
 	// GLQuake limit was 64 textures of 128x128. Estimate how many 128x128 textures we would need
 	// given that we are using lightmap_count of LMBLOCK_WIDTH x LMBLOCK_HEIGHT
 	int i = lightmap_count * ((LMBLOCK_WIDTH / 128) * (LMBLOCK_HEIGHT / 128));
-	if (!replay && i > 64)
+	if (i > 64)
 		Con_DWarning ("%i lightmaps exceeds standard limit of 64.\n", i);
 	// johnfitz
-}
-
-void GL_SetupLightmapCompute (void)
-{
-	GL_AllocateWorkgroupBoundsBuffers ();
-	GL_UploadLightmapInputs (false);
-}
-
-qboolean GL_ReplayLightmapInputs (void)
-{
-	if (!GL_ValidateLightmapReplay (true))
-		return false; // Complete graph validation before packing, freeing or any upload.
-	GL_UploadLightmapInputs (true);
-	GL_ActivateLightmapReplay ();
-	// CPU staging/recording only. Caller drains staging before any consumer,
-	// restores descriptors and stays quiesced until full reconstruction completes.
-	return true;
 }
 
 /*
@@ -2915,8 +2666,8 @@ Caller retires the old buffers, then rebuilds all surfaces from world + all
 brush models. Ordinary vertices can be regenerated after polygon release.
 ==================
 */
-/* Shared CPU-only preflight for initial upload and the parent's pre-retirement
- * eligibility query. Do not change atlas assignments or upload globals. */
+/* Validate CPU sources before initial upload without changing atlas assignments
+ * or upload globals. */
 static qboolean GL_ValidateBModelVertexSources (uint32_t *vertex_count)
 {
 	size_t total = 0;
@@ -2976,12 +2727,6 @@ static qboolean GL_ValidateBModelVertexSources (uint32_t *vertex_count)
 	}
 	*vertex_count = (uint32_t)total;
 	return true;
-}
-
-qboolean GL_CanRebuildBModelVertexBuffer (void)
-{
-	uint32_t vertex_count;
-	return GL_ValidateBModelVertexSources (&vertex_count);
 }
 
 void GL_BuildBModelVertexBuffer (void)
@@ -3859,7 +3604,7 @@ R_BuildLightMap -- johnfitz -- revised for lit support via lordhavoc
 Combine and scale multiple lightmaps into the 8.8 format in blocklights
 ===============
 */
-static void R_BuildLightMapInternal (msurface_t *surf, byte *dest, int stride, qboolean dynamic_lights)
+void R_BuildLightMap (msurface_t *surf, byte *dest, int stride)
 {
 	int		 smax, tmax;
 	int		 size;
@@ -3867,8 +3612,7 @@ static void R_BuildLightMapInternal (msurface_t *surf, byte *dest, int stride, q
 	unsigned scale;
 	int		 maps;
 
-	if (dynamic_lights)
-		surf->cached_dlight = (surf->dlightframe == r_framecount);
+	surf->cached_dlight = (surf->dlightframe == r_framecount);
 
 	smax = (surf->extents[0] >> 4) + 1;
 	tmax = (surf->extents[1] >> 4) + 1;
@@ -3886,8 +3630,7 @@ static void R_BuildLightMapInternal (msurface_t *surf, byte *dest, int stride, q
 			for (maps = 0; maps < MAXLIGHTMAPS && surf->styles[maps] != 255; maps++)
 			{
 				scale = d_lightstylevalue[surf->styles[maps]];
-				if (dynamic_lights)
-					surf->cached_light[maps] = scale; // 8.8 fraction
+				surf->cached_light[maps] = scale; // 8.8 fraction
 				// johnfitz -- lit support via lordhavoc
 				R_AccumulateLightmap (lightmap, scale, size);
 				lightmap += size * 3;
@@ -3896,7 +3639,7 @@ static void R_BuildLightMapInternal (msurface_t *surf, byte *dest, int stride, q
 		}
 
 		// add all the dynamic lights
-		if (dynamic_lights && surf->dlightframe == r_framecount)
+		if (surf->dlightframe == r_framecount)
 			R_AddDynamicLights (surf);
 	}
 	else
@@ -3906,11 +3649,6 @@ static void R_BuildLightMapInternal (msurface_t *surf, byte *dest, int stride, q
 	}
 
 	R_StoreLightmap (dest, smax, tmax, stride);
-}
-
-void R_BuildLightMap (msurface_t *surf, byte *dest, int stride)
-{
-	R_BuildLightMapInternal (surf, dest, stride, true);
 }
 
 /*
@@ -4257,7 +3995,6 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 	{
 		struct lightmap_s *lm = &lightmaps[lightmap_index];
 		uint32_t		   modified = 0;
-		const qboolean forcefull = lm->cached_framecount == -1;
 		byte			   regions[LMBLOCK_HEIGHT / LM_CULL_BLOCK_H][LMBLOCK_WIDTH / LM_CULL_BLOCK_W]; // 1: dlights update only; 2: unconditional update
 		memset (regions, 0, sizeof (regions));
 		for (int i = 0; i < TASKS_MAX_WORKERS; ++i)
@@ -4265,7 +4002,7 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 			modified |= lm->modified[i];
 			lm->modified[i] = 0;
 		}
-		if (!forcefull && modified == 0)
+		if (modified == 0)
 			continue;
 
 		qboolean any_needs_dlight_update = false;
@@ -4274,13 +4011,6 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 		for (int y = 0; y < LMBLOCK_HEIGHT / LM_CULL_BLOCK_H; y++)
 			for (int x = 0; x < LMBLOCK_WIDTH / LM_CULL_BLOCK_W; x++)
 			{
-				if (forcefull)
-				{
-					if (x * LM_CULL_BLOCK_W >= lm->lightstyle_rectused[0].w || y * LM_CULL_BLOCK_H >= lm->lightstyle_rectused[0].h)
-						continue; // Native dispatch clipping requires a positive cropped span.
-					if (num_used_dlights > 0 && lm->block_has_submodels[y][x])
-						lm->active_dlights[y][x] = true; // Preserve removal across skipped atlas frames.
-				}
 				qboolean needs_update = false;
 				for (int i = 0; i < num_used_dlights; i++)
 				{
@@ -4322,12 +4052,6 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 						regions[y][x] = 2;
 					num_blocks += 1;
 				}
-				if (forcefull)
-				{
-					if (regions[y][x] == 0)
-						++num_blocks;
-					regions[y][x] = 2;
-				}
 				if (regions[y][x] != 2)
 					for (int i = 0; i < lm->num_used_lightstyles[y][x]; i++)
 					{
@@ -4344,7 +4068,7 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 						}
 					}
 			}
-		if (!forcefull && !any_needs_dlight_update && !(used_lightstyles & modified))
+		if (!any_needs_dlight_update && !(used_lightstyles & modified))
 			continue;
 		else
 		{

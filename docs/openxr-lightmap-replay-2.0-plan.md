@@ -1,6 +1,6 @@
 # Lightmap derived-input reconstruction
 
-Status: historical stage1/2a/2b prerequisite; unused replay paths will be removed
+Status: historical stage1/2a/2b prerequisite; unused replay paths have been removed
 under the [focused Vulkan scope disposition](openxr-device-reconstruction-2.0-plan.md#focused-astra-max-scope-disposition).
 Stage3 is not implemented; general live device replay is deferred. The earlier
 design below is superseded by the removal plan at the end. Parent:
@@ -551,3 +551,13 @@ review will compare native initial upload and updater branches. Qualification
 remains after the full implementation pass; no builds/tests/fixtures now. Full
 loaded-scene lighting and desktop/stereo acceptance remain required, while a
 new-device replay transaction is a deferred candidate.
+
+Removal source integrated. Local Astra Max personally accepted the401-line
+four-file change with no P1/P2 findings after comparing initial setup and CPU/GPU
+updaters with the pre-replay implementations. Two stale comments were then
+corrected by main; native behavior and surviving declarations were source checked.
+No deleted replay/query identifiers remain in engine source. Native initial
+packing/uploads, transient frees, shader/stereo constants, moving-submodel
+lighting, cached-light scheduling and private BSP vertex validation remain.
+git diff --check passes. No builds/tests/compiler/fixtures or device trials;
+consolidated Linux/ARM and desktop/VR qualification still follows implementation.

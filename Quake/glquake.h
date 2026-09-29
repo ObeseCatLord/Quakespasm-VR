@@ -932,22 +932,12 @@ void R_DrawIndirectBrushes_ShowTris (cb_context_t *cbx);
 void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain, qboolean opaque_only, qboolean transparent_only);
 
 void GL_BuildLightmaps (void);
-/* Quiesced CPU preparation only; successful regeneration cannot resume the old
- * renderer until reconstruction completes or the lightmap owner is discarded. */
-qboolean GL_CanRegenerateLightmapInputs (void);
-qboolean GL_RegenerateLightmapInputs (void);
-/* Source eligibility before retirement; replay additionally requires fresh CPU
- * inputs and newly bound workgroup buffers. Return does not imply GPU completion. */
-qboolean GL_CanReplayLightmapImages (void);
-qboolean GL_ReplayLightmapInputs (void);
 void GL_SetupIndirectDraws (void);
 void GL_SetupLightmapCompute (void);
 void GL_UpdateLightmapDescriptorSets (void);
 void GL_DeleteBModelVertexBuffer (void);
 void GL_DeleteBModelAccelerationStructures (void);
 void GL_BuildBModelVertexBuffer (void);
-/* CPU-only eligibility; caller retires old GPU buffers before rebuilding. */
-qboolean GL_CanRebuildBModelVertexBuffer (void);
 void GL_BuildBModelAccelerationStructures (void);
 void GL_PrepareSIMDAndParallelData (void);
 void GLMesh_UploadBuffers (
