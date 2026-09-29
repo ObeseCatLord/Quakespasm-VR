@@ -1,7 +1,6 @@
 # Generic melee fallback
 
-Status: architecture brief for Astra Max; implementation not yet authorized by
-this plan's decision record. User has requested built-in melee for uncovered
+Status: Astra Max reviewed; chosen implementation contract below. User requested built-in melee for uncovered
 mods, reducing per-mod adapters. Scope remains Linux/ARM first, 2.0 only.
 
 ## Facts and open boundary
@@ -47,3 +46,49 @@ ordinary native attack per accepted physical gesture, native cooldown and
 damage/effects retained, held-trigger and command replay behavior, death/menu/
 tracking loss reset, desktop unchanged. Contact-fidelity guarantees remain
 limited to verified adapters; headset feel testing is user-deferred.
+
+## Astra Max disposition and chosen contract
+
+| Recommendation | Disposition / main spot-check |
+| --- | --- |
+| Guarantee an input pulse, not exactly one QC attack | Adopt. Unknown QC may reject a tap during cooldown or schedule multiple effects. sv_phys maintenance retains ordinary attack levels; no synthetic retry/damage queue. |
+| Choose client input owner; omit GENERIC contact profile | Adopt. The server family pipeline would add classification and scheduling without proving native-contact fidelity. Server native QC remains authoritative over hits/damage/reach/cooldown; gesture recognition is ordinary client input. |
+| Merge during command finalization before calibration suppression | Adopt. Verified cl_main.c CL_SendCmd applies pending pose before CL_FinishMove, whose Internal routine reconstructs cmd.buttons. Add one merge hook inside that routine; preview observes but does not consume. CSQC input filters remain afterward. |
+| Exclusive small client gesture state | Adopt. Reuse accepted device/context, calibrated hand/model transforms and point velocity. Exact per-weapon adapters take priority; fallback only otherwise. Reset on model/weapon/hand/configuration/generation/context discontinuities. |
+| Classification-only schema entries must survive parsing/storage | Adopt. Verified VR_SchemaHasHeldPresentation admission at vr_weapon_schema.c501 and VR_CalibrationEntryHasFields350 otherwise discard new-only entries. Extend these existing owners. |
+| Avoid reach/ready-pose gameplay overrides | Adopt. Native animation and range remain; configurable endpoints affect gesture sensing only. No generic QC calls by name, delayed-think interception or damage replacement. |
+
+Implementation stages and ownership:
+
+1. Extend existing schema/parser/calibration storage with `melee` explicit
+   boolean override, optional `melee_base`/`melee_tip` gesture endpoints in
+   model-local MDL coordinates and bounded `melee_speed` sensitivity (metres/s).
+   A lookup supplies standard v_axe/v_axe2 convention defaults unless explicitly
+   disabled. Unknown/hybrid models require explicit opt-in. No substring or
+   directory-name classification. Selected replacement geometry uses the same
+   renderer transform; endpoints default to calibrated weapon/muzzle geometry
+   if not authored, and are gesture geometry rather than damage reach.
+2. In vr_input.c, retain only selected identity/reset generation, previous
+   accepted sample/time/point, stroke/rearm and pending synthetic intent.
+   Sample once per XR frame; reject nonfinite velocity, oversized sample gaps
+   and discontinuities. Arc/rearm prevents constant high-speed auto-fire.
+   Reuse existing context and calibration adjustment gates.
+3. Hook CL_FinishMoveInternal after ordinary buttons are reconstructed and
+   before calibration attack suppression. OR a current synthetic request;
+   consume only on final creation, including while real attack is held.
+   Existing command history/retransmission carries that finalized input;
+   previews/catch-up commands do not replay the intent.
+4. Main source review and local Astra final review. All builds/tests at the
+   end of the whole migration implementation, including ordinary unknown-mod
+   native dispatch and reset/held-trigger/replay cases.
+
+Coding slice writes: vr_weapon_schema.c/h, vr_weapon_calibration.c/h,
+vr_input.c/h and cl_input.c. Server protocol/contact/outcome code stays unchanged
+for generic behavior. Reopen if this becomes a second physical-hit solver,
+server policy or more than a small gesture state. Exact inherited adapters
+remain useful only for behavior that this generic input contract cannot supply.
+
+The earlier stronger proof wording is superseded: promise one synthetic input
+request per gesture with ordinary attack semantics. A cooldown-rejected request
+is not queued for later, and unknown custom QC may generate its own multiple
+effects. This limitation preserves mod behavior rather than inventing damage.
