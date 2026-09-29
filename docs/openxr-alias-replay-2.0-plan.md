@@ -1,6 +1,6 @@
 # Alias GPU replay prerequisite
 
-Status: historical prerequisite; unused replay/retention is being removed under
+Status: historical prerequisite; unused replay/retention has been removed under
 the focused [Vulkan scope disposition](openxr-device-reconstruction-2.0-plan.md#focused-astra-max-scope-disposition).
 General live device reconstruction is deferred. The plan below records the
 original design/review and is superseded by the removal plan at the end.
@@ -119,3 +119,12 @@ recommends this bounded deletion. Final source review follows; builds/tests
 remain deferred until full implementation is finished. End qualification checks
 native models, avatars/props, map disposal and desktop/stereo rendering; no
 device-replay test is a requirement for the deferred transaction.
+
+Restoration source integrated: thirteen added and194 removed source/header lines.
+Local Astra Max personally reviewed the complete change, native staging copy
+implementation and MDL/MD3/MD5/private-prop callers; no P1/P2 findings. Removed
+replay identifiers have no remaining source references. GPU allocations, upload
+bytes/layouts, descriptor/address handling, skin disposal and actual avatar data
+remain. Transformed upload vertices are freed after synchronous staging copies;
+indices and joints are borrowed only during their valid loader call. Source
+review and git diff --check only; builds/runtime/ARM qualification stay deferred.

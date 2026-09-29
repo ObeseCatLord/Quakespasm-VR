@@ -214,29 +214,6 @@ static qboolean GLMesh_ComputeTrackedCullQmax (const aliashdr_t *hdr, const byte
 	return true;
 }
 
-/* Final bytes are surface-owned; borrowed MD5 poses share model lifetime. */
-struct alias_gpu_upload_s
-{
-	byte *vertices, *indexes, *skeleton_indexes;
-	const byte *joints;
-	size_t vertex_size, index_size, skeleton_size, joint_size;
-	qboolean owns_joints, joints_ready;
-};
-
-static void GLMesh_FreeUpload (aliashdr_t *hdr)
-{
-	alias_gpu_upload_t *upload = hdr->gpu_upload;
-	if (!upload)
-		return;
-	SAFE_FREE (upload->vertices);
-	SAFE_FREE (upload->indexes);
-	SAFE_FREE (upload->skeleton_indexes);
-	if (upload->owns_joints)
-		Mem_Free ((void *)upload->joints);
-	Mem_Free (upload);
-	hdr->gpu_upload = NULL;
-}
-
 typedef struct
 {
 	VkBuffer				  buffer;
@@ -552,7 +529,7 @@ extern float r_avertexnormals[NUMVERTEXNORMALS][3];
 GLMesh_DeleteMeshBuffers
 ================
 */
-static void GLMesh_DeleteMeshBuffersInternal (aliashdr_t *mainhdr, qboolean dispose_cpu)
+void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
 {
 	GLMesh_FreeAvatarPropBLAS (mainhdr);
 	// Delete all surfaces:
@@ -614,18 +591,9 @@ static void GLMesh_DeleteMeshBuffersInternal (aliashdr_t *mainhdr, qboolean disp
 		hdr->joints_allocation = NULL;
 		hdr->joints_buffer_address = 0;
 		hdr->joints_set = VK_NULL_HANDLE;
-		if (dispose_cpu)
-		{
-			for (int i = 0; i < MAX_SKINS; ++i)
-				SAFE_FREE (hdr->texels[i]);
-			GLMesh_FreeUpload (hdr);
-		}
+		for (int i = 0; i < MAX_SKINS; ++i)
+			SAFE_FREE (hdr->texels[i]);
 	}
-}
-
-void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
-{
-	GLMesh_DeleteMeshBuffersInternal (mainhdr, true);
 }
 
 /*
@@ -633,18 +601,12 @@ void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
 GLMesh_UploadBuffers : Upload data for a single aliashdr_t *hdr (not it's nextsurfaces)
 ================
 */
-/* Initial creation and replay share all Vulkan buffer policy and allocation. */
-static void GLMesh_CreateBuffersFromUpload (qmodel_t *mod, aliashdr_t *hdr)
+/* Borrow loader/upload sources only until staging has copied their bytes. */
+static void GLMesh_CreateBuffersFromData (
+	qmodel_t *mod, aliashdr_t *hdr, const byte *indexes, size_t totalindexsize,
+	const byte *skeleton_indexes, size_t skeleton_index_size,
+	const byte *vbodata, size_t totalvbosize, const byte *joints, size_t totaljointssize)
 {
-	const alias_gpu_upload_t *upload = hdr->gpu_upload;
-	const size_t totalindexsize = upload->index_size;
-	const size_t skeleton_index_size = upload->skeleton_size;
-	const size_t totalvbosize = upload->vertex_size;
-	const size_t totaljointssize = upload->joint_size;
-	const byte *indexes = upload->indexes;
-	const byte *skeleton_indexes = upload->skeleton_indexes;
-	byte *vbodata = upload->vertices;
-	const byte *joints = upload->joints;
 	const int num_skeleton_indexes = hdr->num_skeleton_indexes;
 	VkResult err;
 
@@ -929,7 +891,7 @@ void GLMesh_UploadBuffers (
 	if (!indexes || !vertexes ||
 		((hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3) && !desc))
 		Sys_Error ("GLMesh_UploadBuffers: %s has missing mesh data", mod->name);
-	if (hdr->gpu_upload || hdr->vertex_buffer || hdr->index_buffer ||
+	if (hdr->vertex_buffer || hdr->index_buffer ||
 		hdr->skeleton_index_buffer || hdr->joints_buffer)
 		Sys_Error ("GLMesh_UploadBuffers: %s already owns mesh resources", mod->name);
 	hdr->num_skeleton_indexes = num_skeleton_indexes;
@@ -1031,35 +993,10 @@ void GLMesh_UploadBuffers (
 		}
 	}
 
-	/* Keep final layout bytes, rather than reparse assets or retain old GPU
-	 * addresses. The MD5 completion hook replaces its temporary pose borrow. */
-	alias_gpu_upload_t *upload = Mem_Alloc (sizeof (*upload));
-	memset (upload, 0, sizeof (*upload));
-	upload->vertices = vbodata;
-	upload->vertex_size = totalvbosize;
-	upload->indexes = Mem_Alloc (totalindexsize);
-	upload->index_size = totalindexsize;
-	memcpy (upload->indexes, indexes, totalindexsize);
-	if (skeleton_indexes && num_skeleton_indexes > 0)
-	{
-		upload->skeleton_indexes = Mem_Alloc (skeleton_index_size);
-		upload->skeleton_size = skeleton_index_size;
-		memcpy (upload->skeleton_indexes, skeleton_indexes, skeleton_index_size);
-	}
-	upload->joints = (const byte *)joints;
-	upload->joint_size = joints ? totaljointssize : 0;
-	upload->joints_ready = joints == NULL;
-	if (joints && hdr->avatar_static_prop)
-	{
-		/* Private prop upload supplies a stack-local identity pose, with
-		 * no model skeleton lifetime to borrow after this call returns. */
-		byte *owned = Mem_Alloc (totaljointssize);
-		memcpy (owned, joints, totaljointssize);
-		upload->joints = owned;
-		upload->owns_joints = upload->joints_ready = true;
-	}
-	hdr->gpu_upload = upload;
-	GLMesh_CreateBuffersFromUpload (mod, hdr);
+	GLMesh_CreateBuffersFromData (mod, hdr, (const byte *)indexes, totalindexsize,
+		(const byte *)skeleton_indexes, skeleton_index_size, vbodata, totalvbosize,
+		(const byte *)joints, totaljointssize);
+	Mem_Free (vbodata);
 }
 
 /*
@@ -1090,113 +1027,6 @@ void GLMesh_DeleteAllMeshBuffers (void)
 			GLMesh_DeleteMeshBuffers ((aliashdr_t *)m->extradata[i]);
 		}
 	}
-}
-
-/* The MD5 loader calls this before releasing its temporary skinning poses.
- * All surfaces normally reuse the one already retained model pose span. */
-void GLMesh_BindRetainedMD5Poses (qmodel_t *model)
-{
-	md5_skeleton_view_t skeleton;
-	size_t pose_count = 0, pose_bytes = 0;
-	const byte *poses = NULL;
-	if (Mod_GetMD5Skeleton (model, &skeleton) && skeleton.absolute_poses &&
-		GLMesh_CheckedSizeMul (skeleton.joint_count, skeleton.pose_count, &pose_count) &&
-		GLMesh_CheckedSizeMul (pose_count, sizeof (float[12]), &pose_bytes))
-		poses = (const byte *)skeleton.absolute_poses;
-	for (aliashdr_t *hdr = (aliashdr_t *)model->extradata[PV_MD5]; hdr; hdr = hdr->nextsurface)
-	{
-		alias_gpu_upload_t *upload = hdr->gpu_upload;
-		if (!upload || !upload->joints || upload->joints_ready)
-			continue;
-		if (poses && pose_bytes == upload->joint_size &&
-			!memcmp (poses, upload->joints, pose_bytes))
-			upload->joints = poses;
-		else
-		{
-			byte *owned = Mem_Alloc (upload->joint_size);
-			memcpy (owned, upload->joints, upload->joint_size);
-			upload->joints = owned;
-			upload->owns_joints = true;
-		}
-		upload->joints_ready = true;
-	}
-}
-
-static qboolean GLMesh_SurfaceGPUEmpty (const aliashdr_t *hdr)
-{
-	return !hdr->vertex_buffer && !hdr->index_buffer && !hdr->joints_buffer &&
-		!hdr->skeleton_index_buffer && !hdr->joints_set && !hdr->avatar_prop_blas;
-}
-
-static qboolean GLMesh_SurfaceCanReplay (const aliashdr_t *hdr)
-{
-	const alias_gpu_upload_t *upload = hdr->gpu_upload;
-	size_t index_bytes, skeleton_bytes;
-	if (hdr->numindexes == 0 && !upload)
-		return GLMesh_SurfaceGPUEmpty (hdr);
-	return hdr->numindexes > 0 && hdr->num_skeleton_indexes >= 0 &&
-		GLMesh_CheckedSizeMul ((size_t)hdr->numindexes, sizeof (unsigned short), &index_bytes) &&
-		GLMesh_CheckedSizeMul ((size_t)hdr->num_skeleton_indexes, sizeof (unsigned short), &skeleton_bytes) &&
-		upload && upload->vertices && upload->vertex_size && upload->vertex_size <= INT_MAX &&
-		upload->indexes && upload->index_size == index_bytes &&
-		upload->skeleton_size == skeleton_bytes &&
-		(!skeleton_bytes || upload->skeleton_indexes) && upload->joints_ready &&
-		(!upload->joint_size || upload->joints);
-}
-
-typedef enum { MESH_REPLAY_CHECK, MESH_REPLAY_CHECK_EMPTY, MESH_REPLAY_RETIRE, MESH_REPLAY_CREATE } mesh_replay_operation_t;
-
-/* Same ownership traversal as full model disposal; no precache-only subset or
- * second asset registry. The transaction caller controls GPU/task retirement. */
-static qboolean GLMesh_VisitReplayModels (mesh_replay_operation_t operation)
-{
-	for (int j = 0; j < mod_numknown; ++j)
-	{
-		qmodel_t *model = &mod_known[j];
-		if (model->needload || model->type != mod_alias)
-			continue;
-		for (int root_index = 0; root_index < PV_SIZE + MD5_AVATAR_PROP_COUNT; ++root_index)
-		{
-			aliashdr_t *root = root_index < PV_SIZE
-				? (aliashdr_t *)model->extradata[root_index]
-				: model->avatar_prop_gpu[root_index - PV_SIZE];
-			if (operation == MESH_REPLAY_RETIRE)
-			{
-				GLMesh_DeleteMeshBuffersInternal (root, false);
-				continue;
-			}
-			for (aliashdr_t *hdr = root; hdr; hdr = hdr->nextsurface)
-			{
-				if (!GLMesh_SurfaceCanReplay (hdr) ||
-					(operation == MESH_REPLAY_CHECK_EMPTY && !GLMesh_SurfaceGPUEmpty (hdr)))
-					return false;
-				if (operation == MESH_REPLAY_CREATE && hdr->gpu_upload && GLMesh_SurfaceGPUEmpty (hdr))
-					GLMesh_CreateBuffersFromUpload (model, hdr);
-			}
-		}
-	}
-	return true;
-}
-
-qboolean GLMesh_CanReplayAllMeshBuffers (void)
-{
-	return !isDedicated && GLMesh_VisitReplayModels (MESH_REPLAY_CHECK);
-}
-
-qboolean GLMesh_RetireAllMeshBuffers (void)
-{
-	if (!GLMesh_CanReplayAllMeshBuffers ())
-		return false;
-	return GLMesh_VisitReplayModels (MESH_REPLAY_RETIRE);
-}
-
-qboolean GLMesh_ReplayAllMeshBuffers (void)
-{
-	/* Validate every surface before the first allocation, including that no old
-	 * GPU handle remains. Shared references created during this walk are skipped. */
-	if (isDedicated || !GLMesh_VisitReplayModels (MESH_REPLAY_CHECK_EMPTY))
-		return false;
-	return GLMesh_VisitReplayModels (MESH_REPLAY_CREATE);
 }
 
 /*

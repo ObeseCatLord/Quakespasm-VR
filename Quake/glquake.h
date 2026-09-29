@@ -954,12 +954,6 @@ void GLMesh_UploadBuffers (
 	qmodel_t *mod, aliashdr_t *hdr, unsigned short *indexes, byte *vertexes, aliasmesh_t *desc, jointpose_t *joints, unsigned short *skeleton_indexes,
 	int num_skeleton_indexes);
 void GLMesh_DeleteAllMeshBuffers (void);
-/* Caller joins producers, retires entity BLAS and establishes GPU completion.
- * Deferred garbage must be drained before old heaps/descriptors are destroyed. */
-qboolean GLMesh_CanReplayAllMeshBuffers (void);
-qboolean GLMesh_RetireAllMeshBuffers (void);
-qboolean GLMesh_ReplayAllMeshBuffers (void);
-void GLMesh_BindRetainedMD5Poses (qmodel_t *model);
 void R_AllocateEntityBLAS (entity_t *e);
 void R_AllocateEntityBLASForVRIK (entity_t *e);
 void R_FreeEntityBLAS (entity_t *e);
