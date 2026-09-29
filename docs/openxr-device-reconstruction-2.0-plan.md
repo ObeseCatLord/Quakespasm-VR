@@ -1,6 +1,7 @@
 # OpenXR Vulkan device reconstruction
 
-Status: verified design brief; production reconstruction is not implemented.
+Status: local Astra Max design disposition recorded; production reconstruction
+is not implemented. Texture-retirement prerequisite passes bounded source review.
 Compatible-device late attachment already uses the separate
 [late-binding plan](openxr-late-binding-2.0-plan.md). This plan covers the
 remaining incompatible-device case without replacing vkQuake's renderer.
@@ -75,13 +76,14 @@ SDL window/input. Keep creation metadata at its existing actual Vulkan creation
 owner. Do not add a second renderer, resource registry, shadow model database,
 connection protocol or independent session state machine.
 
-For missing mesh upload arrays, compare two narrow options before coding:
-reparse immutable asset sources through existing loaders into the same model
-identity, versus retain minimal upload recipes/arrays at load time. Prefer
-reparse when it preserves CPU pointers and avatar/held recipes without a second
-model owner; retain bounded immutable input only where existing generation
-cannot be replayed safely. Neither choice has been proven yet. A complete
-asset-size RAM copy is not the default, especially for jumbo maps.
+For missing alias upload arrays, retain final transformed upload payloads in
+the existing model/surface owners and share the GPU creation implementation.
+Astra verified that reparsing replaces alias headers and breaks admitted
+immutable avatar snapshots even if the qmodel_t address survives. Reuse existing
+retained MD5 joint poses wherever lifetime permits; avoid another complete
+model source copy. Aggregate added alias RAM is not yet qualified. Regenerate
+brush inputs from retained BSP data, rather than retain whole jumbo-map GPU
+upload copies; that distinct path still needs its bounded contract and proof.
 
 Do not swap global `vulkan_globals` between two live devices. Capability,
 descriptor/layout, heap, queue and cached-handle owners are single-device.
@@ -134,6 +136,27 @@ reopen if it introduces a parallel asset/resource state machine or repeatedly
 fixes interactions between newly duplicated owners.
 
 No device reconstruction or device-loss success is claimed at this checkpoint.
-The immediate stage is the existing texture-retirement correction. Source
+The immediate next stage is the [alias replay prerequisite](openxr-alias-replay-2.0-plan.md). Source
 review and `git diff --check` are allowed now; builds/tests remain deferred by
 the user's instruction until full implementation is finished.
+
+## Local Astra Max disposition
+
+| Verified finding | Main disposition |
+| --- | --- |
+| Primary enables VR on demand; startup-only requirements lose that behavior. | Reject startup-only completion. Keep compatible adoption and implement incompatible reconstruction at existing owners. |
+| Alias loader reparsing replaces referenced headers and custom avatar admission snapshots. | Adopt retained final alias payloads/shared upload; preserve qmodel/header/held/prop identity. |
+| Brush polygons, lightmap upload arrays and compacted membership data cannot simply be replayed by calling map-load functions. | Adopt separate BSP-derived regeneration, preserving particles/lightstyles and avoiding permanent jumbo-map GPU copies. |
+| Scrolling sky sources are temporary; cubemap filename is synthesized; warp targets have no source payload. WAD3 mipmaps/palettes already survive. | Use narrow sky/warp restoration. Delete the proposed need for another WAD3 cache. No skyrooms. |
+| Joined frame boundary still has in_update_screen=true; deletion queues garbage. | Explicitly drain both slots before retiring old heaps/pools, including entity/static/private-prop and brush acceleration resources. |
+| Adoption failure conflates unavailable runtime and incompatible binding; current multiview rejection precedes rediscovery. | Add typed qualification outcomes before any destructive switch; preserve old creation metadata until actual retirement. |
+| Startup Sys_Error paths and -openxr gating are not a live fallback transaction. | Define preflight and post-retirement failure handling before activation; healthy runtime absence retains desktop. |
+| Partial resource guards, stale handles and heap CPU allocations leave unwind gaps. | Move owner-local partial cleanup before the first transaction; include FTE mappings, SSAO private layouts, command/fence/query state. |
+| Healthy wait submits staging, ignores result and marks idle; it is not lost-device proof. | Keep loss handling separate, with no new submissions after confirmed loss. |
+| Texture storage free/cleared handles patch is correct at the existing boundary. | Accept bounded three-line patch35c5cf91. No broader lifetime or reconstruction qualification implied. |
+
+Review evidence: gl_model.c:4910/5035/7446/7746/8334, gl_mesh.c:517/538,
+gl_sky.c:126/499, r_brush.c:2498/2514/2570/2664, gl_screen.c:2497,
+gl_heap.c:624, vr_openxr.cpp:1629 and gl_vidsdl.c:4686/5837. Main inspected
+the upload and deletion/retention boundaries before choosing the next write set.
+No builds, tests or live device work were performed for this review.

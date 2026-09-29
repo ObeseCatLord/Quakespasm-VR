@@ -56,10 +56,18 @@ file and cannot be inferred from the presence of calibration-only entries.
 
 ## Implementation stages
 
-1. **Stock preview correction:** two literal model paths in
-   `vr_weapon_menu_stock_entries`, copied from the current primary. No catalog
-   or gameplay change, no entity viewmodel substitution. Existing preview loader
-   and held fallback continue to own resource resolution.
+1. **Stock preview correction and required consumer adapter:** copy the two
+   literal preview paths from the primary and append a held-model path to the
+   existing entry type. Supply the eight exact native stock held paths in the
+   same stock table. Existing active/discovery consumers use that held path
+   when present, otherwise retain conventional preview alias matching. Existing
+   main-thread preview loading tries the known held fallback before a guessed
+   basename swap. No selection/ownership policy or entity viewmodel change.
+   When current schema metadata replaces a stock preview, clear its inherited
+   stock held path so a custom slot cannot be constrained by the old native
+   model. Full authored held metadata/provenance remains stage2, with shared
+   copied storage. This small consumer adapter closes the demonstrated stock
+   incompatibility without waiting for the broader catalog-policy change.
 2. **Identity and provenance:** copy the primary identity helper and adapt
    existing matching/overlay and discovery owners. Record a senior disposition
    before this coupled policy change. Keep conflicting explicit descriptors
