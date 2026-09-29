@@ -246,7 +246,10 @@ static qboolean VR_SchemaFinishEntry(vr_weapon_schema_entry_t *entry,
 		(entry->has_held_scale || entry->has_held_offset ||
 		 entry->has_muzzle_offset || entry->has_muzzle_source_offset ||
 		 entry->has_muzzle_source_viewofs || entry->has_spawn_at_self_origin ||
-		 entry->has_enhanced_held_offset || entry->has_enhanced_muzzle_offset))
+		 entry->has_enhanced_held_offset || entry->has_enhanced_muzzle_offset ||
+		 entry->melee.has_enabled || entry->melee.has_base ||
+		 entry->melee.has_tip || entry->melee.has_speed ||
+		 entry->melee.has_ready_frame))
 		memcpy(entry->viewmodel_path, entry->model_path, sizeof(entry->model_path));
 	if (!entry->model_path[0] && entry->viewmodel_path[0])
 		memcpy(entry->model_path, entry->viewmodel_path, sizeof(entry->model_path));
@@ -267,7 +270,8 @@ static qboolean VR_SchemaHasHeldPresentation(const vr_weapon_schema_entry_t *ent
 		 entry->has_muzzle_source_viewofs || entry->has_spawn_at_self_origin ||
 		 entry->has_enhanced_held_offset || entry->has_enhanced_muzzle_offset ||
 		 entry->melee.has_enabled || entry->melee.has_base ||
-		 entry->melee.has_tip || entry->melee.has_speed);
+		 entry->melee.has_tip || entry->melee.has_speed ||
+		 entry->melee.has_ready_frame);
 }
 
 static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
@@ -411,6 +415,12 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 			if (!VR_SchemaParseFloat(value, &entry->melee.speed) ||
 				entry->melee.speed < 0.25f || entry->melee.speed > 10.0f) return false;
 			entry->melee.has_speed = true;
+		}
+		else if (!strcmp(key, "melee_frame"))
+		{
+			if (!VR_SchemaParseInt(value, &entry->melee.ready_frame) ||
+				entry->melee.ready_frame < 0 || entry->melee.ready_frame > 65535) return false;
+			entry->melee.has_ready_frame = true;
 		}
 		else if (!strcmp(key, "owned_stat"))
 		{

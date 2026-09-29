@@ -13,6 +13,8 @@ typedef struct
 	qboolean has_base, has_tip;
 	float speed; // metres/second
 	qboolean has_speed;
+	int ready_frame;
+	qboolean has_ready_frame;
 } vr_melee_gesture_profile_t;
 
 typedef struct
