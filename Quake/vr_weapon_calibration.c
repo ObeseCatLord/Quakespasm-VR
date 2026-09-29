@@ -356,7 +356,8 @@ static qboolean VR_CalibrationEntryHasFields(
 		entry->has_muzzle_source_viewofs || entry->has_spawn_at_self_origin ||
 		entry->has_enhanced_held_offset ||
 		entry->has_enhanced_muzzle_offset || entry->melee.has_enabled ||
-		entry->melee.has_base || entry->melee.has_tip || entry->melee.has_speed;
+		entry->melee.has_base || entry->melee.has_tip || entry->melee.has_speed ||
+		entry->melee.has_ready_frame;
 }
 
 static qboolean VR_CalibrationEntryIsFinite(
@@ -378,7 +379,9 @@ static qboolean VR_CalibrationEntryIsFinite(
 	if ((entry->melee.has_base && !VR_CalibrationVectorIsFinite(entry->melee.base)) ||
 		(entry->melee.has_tip && !VR_CalibrationVectorIsFinite(entry->melee.tip)) ||
 		(entry->melee.has_speed && (!isfinite(entry->melee.speed) ||
-		 entry->melee.speed < 0.25f || entry->melee.speed > 10.0f)))
+		 entry->melee.speed < 0.25f || entry->melee.speed > 10.0f)) ||
+		(entry->melee.has_ready_frame &&
+		 (entry->melee.ready_frame < 0 || entry->melee.ready_frame > 65535)))
 		return false;
 	for (int axis = 0; axis < 3; ++axis)
 		if ((entry->melee.has_base && fabsf(entry->melee.base[axis]) > 4096.0f) ||
@@ -1847,6 +1850,11 @@ qboolean VR_WeaponCalibrationApplySchema(
 			calibration->melee.speed = entry->melee.speed;
 			calibration->melee.has_speed = true;
 		}
+		if (entry->melee.has_ready_frame)
+		{
+			calibration->melee.ready_frame = entry->melee.ready_frame;
+			calibration->melee.has_ready_frame = true;
+		}
 
 		if (VR_CalibrationEntryHasHeldFields(entry) &&
 			!entry->has_muzzle_offset &&
@@ -2062,15 +2070,39 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 	vr_melee_gesture_profile_t *out)
 {
+	static const char *const default_melee_models[] = {
+		"progs/v_axe.mdl",
+		"progs/v_axe2.mdl",
+		"progs/v_alkaxe20fps.mdl",
+		"progs/v_shadaxe0.mdl",
+		"progs/v_shadaxe1.mdl",
+		"progs/v_shadaxe2.mdl",
+		"progs/v_shadaxe3.mdl",
+		"progs/v_shadaxe4.mdl",
+		"progs/v_shadaxe5.mdl",
+		"progs/v_wrench.mdl",
+		"progs/ee_v_sword.mdl",
+		"progs/v_axeb.mdl",
+		"progs/v_berserk.mdl",
+	};
+	const char *default_name = model_name;
 	int slot;
 	if (!out)
 		return false;
 	memset(out, 0, sizeof(*out));
 	if (!vr_weapon_calibration_initialized || !model_name || !model_name[0])
 		return false;
-	out->enabled = !strcmp(model_name, "progs/v_axe.mdl") ||
-		!strcmp(model_name, "progs/v_axe2.mdl");
+	for (size_t i = 0; i < sizeof(vr_ad171_weapon_aliases) / sizeof(vr_ad171_weapon_aliases[0]); ++i)
+		if (!strcmp(model_name, vr_ad171_weapon_aliases[i].alias_path))
+		{
+			default_name = vr_ad171_weapon_aliases[i].ad_path;
+			break;
+		}
+	for (size_t i = 0; i < sizeof(default_melee_models) / sizeof(default_melee_models[0]); ++i)
+		if (!strcmp(default_name, default_melee_models[i]))
+			out->enabled = true;
 	out->speed = 1.0f;
+	out->ready_frame = 0;
 	slot = VR_FindCalibrationSlot(model_name);
 	if (slot >= 0)
 	{
@@ -2079,10 +2111,12 @@ qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 		if (profile->has_base) VectorCopy(profile->base, out->base);
 		if (profile->has_tip) VectorCopy(profile->tip, out->tip);
 		if (profile->has_speed) out->speed = profile->speed;
+		if (profile->has_ready_frame) out->ready_frame = profile->ready_frame;
 		out->has_enabled = profile->has_enabled;
 		out->has_base = profile->has_base;
 		out->has_tip = profile->has_tip;
 		out->has_speed = profile->has_speed;
+		out->has_ready_frame = profile->has_ready_frame;
 	}
 	return out->enabled;
 }
