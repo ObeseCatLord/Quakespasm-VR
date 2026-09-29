@@ -1,6 +1,8 @@
 # OpenXR Vulkan device reconstruction
 
-Status: local Astra Max design disposition recorded; full production reconstruction
+Status: scope reopened after the user's Vulkan-reuse question. Further device
+reconstruction implementation is paused pending the focused Astra review below.
+Earlier local Astra Max design disposition recorded; full production reconstruction
 is not implemented. Texture-retirement, alias replay and brush vertex regeneration
 prerequisites pass bounded final source review.
 Compatible-device late attachment already uses the separate
@@ -234,7 +236,7 @@ The forthcoming owner retirement will release the buffer and this allocation
 before destroying the device. Source review now; builds/tests only at the end.
 
 Source integrated: native vulkan_memory_t retention and the existing allocation
-helper replace the local allocation/manual counters. Main reviewed the nine
+helper replace the local allocation/manual counters. Main reviewed the ten
 changed source lines against R_AllocateVulkanMemory/R_FreeVulkanMemory; index
 generation and staging are unchanged, git diff --check passes. No retirement
 caller or device reconstruction is claimed; no builds/tests were run.
@@ -251,3 +253,65 @@ physical-contact modes are not imported as new policy.
 Quake/gl_vidsdl.c:920..936 retires old graphics before recreation and reuploads
 existing texture/model owners. Vulkan reconstruction follows that behavioral
 reference through vkQuake's Vulkan owners, preserving the loaded game.
+
+## Scope reassessment brief: preserve the donor renderer
+
+Trigger: the user asked why Vulkan is being changed extensively when vkQuake
+already provides a good Vulkan renderer. This is a solo-maintainer migration,
+not a request for a general live multi-device recovery framework. The migration
+must preserve desktop, native graphics and performance goals, OpenXR on the
+named targets and the actual primary VR behaviors. Avoid silently converting a
+convenient extension of those behaviors into mandatory architecture.
+
+Verified by direct source reads:
+
+- GL_OpenXRPrepareVulkan (gl_vidsdl.c:924) already performs explicit -openxr
+  startup negotiation through enable2 before GPU assets are loaded. Desktop
+  without that argument retains donor GPU selection and does not require XR.
+- GL_OpenXRAttach (:4689) and VRXR_AdoptVulkan (vr_openxr.cpp:1629) already
+  support compatible desktop-device attachment, actual creation metadata,
+  legacy Vulkan qualification and explicit session disable/re-enable. Refusal
+  preserves desktop and recommends restarting with -openxr. They do not perform
+  different-device replacement. No need to implement that path merely to
+  obtain basic OpenXR VR or preserve vkQuake's Vulkan rendering.
+- Primary master51b452c0 VR_Enabled_f/VR_Enable/VR_UpdateScreenContent enables
+  OpenVR on demand on the existing OpenGL context. This demonstrates a mode
+  toggle; it does not demonstrate live GPU migration or device-loss recovery.
+  The primary restart at gl_vidsdl.c:920 recreates GL objects after a video-mode
+  change; Vulkan VID_Restart retains its device. Different API lifecycle alone
+  is not a regression requiring a general replacement transaction.
+- Recent alias and lightmap reconstruction APIs have no production transaction
+  callers. Their existence is not functionality or a completion gate by itself.
+  Alias upload retention does add CPU memory at normal loading; assess that
+  cost explicitly rather than describe all prerequisites as inactive.
+- The original feature rows VR-001/VR-002/XR-001/XR-002 require explicit VR,
+  runtime/device compatibility and reconnect safety. Later documents added
+  full incompatible-device and Vulkan-device-loss reconstruction as parent
+  scope. That addition was agent interpretation, not a separate user request.
+
+Official source rechecked: [enable2 specification](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/khr/khr_vulkan_enable2.adoc)
+requires compatible creation/runtime GPU and supplies startup wrappers.
+[Original Vulkan binding](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/khr/khr_vulkan_enable.adoc)
+permits qualified existing bindings. Neither requires transparent live asset
+reconstruction on arbitrary runtime/GPU changes.
+
+Proposed minimal route: keep explicit VR startup, same-device mode toggles and
+compatible desktop late attachment. Incompatible API/GPU/extensions refuse
+cleanly and explain the restart route; desktop stays available. Ordinary
+desktop must not unconditionally discover XR/select its GPU. Keep donor
+rendering plus necessary multiview/pass/foveation adaptations. Defer general
+incompatible-device reconstruction and transparent device-loss recovery unless
+a concrete target/use case establishes the need. Do not claim every arbitrary
+hot-connect case supported by this route. User hardware/performance testing
+and Windows builds remain excluded; Linux/ARM qualification comes at the end.
+
+Astra contract: personally verify then challenge the framing and minimal route.
+Read-only primary/donor/current creation and toggle owners, associated scope
+rows and recent prerequisite call sites. No edits, builds/tests, nested agents
+or unrelated feature audit. Return <=850 words: necessary rendering adaptations
+versus speculative lifecycle work; precise observable limitations; recommended
+scope disposition; smallest safe dormant-helper/payload cleanup follow-up.
+Do not demand new layers to make an unused fallback complete. Main owns final
+scope judgment and writes. The separate Stage3 brush design is conditional
+acceptance with source/order/ownership issues, not authorization to continue
+through this reopened architecture decision.
