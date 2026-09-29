@@ -1252,6 +1252,7 @@ void CL_InitInput (void)
 		CL_VRWeaponContactHaptic_f);
 	Cmd_AddCommand ("+vr_weaponmenu", IN_VRWeaponMenuDown);
 	Cmd_AddCommand ("-vr_weaponmenu", IN_VRWeaponMenuUp);
+	Cmd_AddCommand ("vr_weaponlist", VR_WeaponMenu_List_f);
 	Cmd_AddCommand ("+moveup", IN_UpDown);
 	Cmd_AddCommand ("-moveup", IN_UpUp);
 	Cmd_AddCommand ("+movedown", IN_DownDown);

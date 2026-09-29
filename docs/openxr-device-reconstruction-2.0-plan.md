@@ -139,8 +139,9 @@ No device reconstruction or device-loss success is claimed at this checkpoint.
 The [alias replay prerequisite](openxr-alias-replay-2.0-plan.md) is now source-
 implemented in32ca78f7 with final local Astra acceptance, including private-prop
 joint lifetime; its new APIs are not yet wired to a live switch transaction.
-The next resource prerequisite is the bounded brush/lightmap reconstruction
-contract. Source
+The next resource prerequisite is the bounded
+[brush vertex regeneration contract](openxr-brush-vertex-replay-2.0-plan.md),
+followed by separate lightmap/derived-input reconstruction. Source
 review and `git diff --check` are allowed now; builds/tests remain deferred by
 the user's instruction until full implementation is finished.
 

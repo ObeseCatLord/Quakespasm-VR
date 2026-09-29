@@ -4,8 +4,9 @@ Status: plan preceded implementation; stage1 stock preview paths and required
 held-identity consumer adapter and association/fallback corrections pass final
 local Astra source review. Build/draw qualification remains end-of-goal work.
 Stage2 authored identity/partial-overlay consumers and stage3 own-game complete
-roster metadata pass final local Astra source review. Stage4 and full
-implementation qualification remain pending.
+roster metadata pass final local Astra source review. Stage4 native rosters,
+parent upgrades, preview-cache invalidation and diagnostics also pass final
+local Astra source review. Full implementation qualification remains pending.
 Reference: product primary `master` at
 `51b452c018273647dcf94f4628a370267ff8fa91`, read-only sibling
 `quakespasm-openvr`. The [source-update record](migration-source-updates.md)
@@ -541,3 +542,24 @@ Adopt it through the existing game-directory predicate; keep derived pairs
 unflagged. Preserve existing wwheel descriptors as whole pairs when native
 profile stat metadata is unset. No P1, new owner or architecture reopening;
 production source review remains required.
+
+## Stage4 final source acceptance
+
+Sartre personally reviewed the399-line production diff against primary51b452c0,
+the accepted brief and wwheel amendment. No P1/P2. Literal native held paths,
+AD/Enyo parent-slot variants, Alk commands/ownership, Dwell associations and
+Rogue/Hipnotic corrections are integrated. Wwheel marks only supplied fields,
+retains Enyo's known fallback and preserves missing native descriptor pairs.
+Explicit file conflicts and independent held/preview precedence remain.
+
+The existing cache compares resolved preview/held paths before its missing
+marker and clears the affected row on change. Exact-held fallback and immutable
+resolved preview copies use existing owners. Computed compatible peers replace
+stored write-only fields; BuildVisible and registered vr_weaponlist reuse the
+same ownership, active and visibility decisions. No new registry, renderer,
+loading owner or state machine; the scope fits the250–450 estimate.
+
+This closes source integration of stages1..4, not full gameplay, asset or build
+qualification. No builds/tests/fixtures ran in these stages. End-of-full-
+implementation Linux/ARM checks remain; user live VR/gaze/performance trials and
+excluded Mjolnir physical dual-state behavior are not claimed.

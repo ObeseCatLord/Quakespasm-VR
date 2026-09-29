@@ -136,15 +136,18 @@ the monolithic OpenGL wheel or create another catalog. The latest primary's
 identity helper and distinct held/preview identity now have source-integrated
 adapters with final local Astra acceptance. Own-game complete-roster metadata
 also passes final Astra source review, including calibration-save isolation of
-inherited authority. Native upgrade behavior remains **pending reconciliation**.
+inherited authority. Native roster/parent-upgrade adapters, resolved preview
+cache invalidation and vr_weaponlist also pass final local Astra source review.
 The [bounded wheel-delta plan](migration-wheel-primary-delta-2.0-plan.md)
-precedes adaptation; complete-roster metadata has an Astra design disposition,
-retaining desktop/VR wheel parity, the current renderer and all newer melee
-profile fields. Stock paths plus their required held-identity adapter are
-source-integrated with final source review accepted. Catalog matching/partial
+precedes adaptation. Stages1..4 are source-integrated with final local Astra
+acceptance, retaining desktop/VR wheel owners, the current renderer and all
+newer melee profile fields. Stock paths plus their required held-identity adapter
+are source-integrated. Catalog matching/partial
 overlays preserve authored raw fields and IDs, reject ambiguity, and learn held
-identity independently of preview. Native rosters/upgrades and diagnostic work
-remain planned. Builds and presentation
+identity independently of preview. Native upgrades remain parent slots with
+independent authored held/preview precedence; resolved path changes invalidate
+the existing cache before missing-model reuse. The diagnostic shares visibility
+with the wheel. Builds and presentation
 checks are deferred until the full implementation is finished.
 
 Separately, the [gesture-only plan](migration-gesture-only-melee-2.0-plan.md)

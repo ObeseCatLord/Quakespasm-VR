@@ -30,8 +30,6 @@ typedef struct {
 	int ammo_stat;
 	int ammo_max;
 	int ammo_max_stat;
-	int has_schema_peer;
-	int has_profile_peer;
 	/* Held identity is independent of the pickup/preview mesh. */
 	const char *viewmodel_path;
 	unsigned int schema_fields; /* successful authored keys, not inferred values */
@@ -52,6 +50,7 @@ void VR_WeaponMenu_Open (void);
 void VR_WeaponMenu_Cancel (void);
 /* Reload the optional active-game wwheel.txt catalog at game transitions. */
 void VR_WeaponMenu_ReloadGame (void);
+void VR_WeaponMenu_List_f (void);
 /* Runtime weapon discovery is called on the main thread before draw tasks.
  * Client reset drops borrowed precache/frame pointers while keeping copied
  * learned paths and discovered catalog rows until the next game reload. */
