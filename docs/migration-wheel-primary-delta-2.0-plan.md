@@ -149,3 +149,63 @@ measurement remain user-deferred.
 
 At this checkpoint the broader catalog delta is pending. No full current-primary
 wheel parity claim follows from correcting two preview paths.
+
+## Local Astra disposition (2026-09-29)
+
+Wegener reviewed the actual stock adapter at `6f6f5f4a`, against primary
+`51b452c0` held/preview matching, overlay and learning consumers. Stage1 is
+accepted with three narrow corrections: preserve a known held association when
+schema metadata repeats the same preview; clear inherited held identity when
+profile enrichment changes that preview; likewise clear it when learning
+replaces the preview. Determine change before writing shared path storage.
+These are source findings, not a claim of live asset qualification.
+
+| Stage2 decision | Disposition |
+| --- | --- |
+| Catalog initialization | Revise the proposed order: parse own-game `wwheel.txt` into the existing empty catalog first; if no valid roster, seed stock; then apply built-ins and file overlays. Parsing wwheel after seeded rows conflicts with existing duplicate-ID/count/clear policy. |
+| Authority | Only successful own-game wwheel is authoritative in this stage. Partial schema files retain omitted native rows. Complete-roster syntax remains stage3. |
+| Authored values | Track each key separately (selector, command, stat/mask halves, ammo, explicit maximum, preview, held, scale, offset). Preserve raw values through normalization; a presence bit alone cannot recover explicit zero overwritten by inferred ammo defaults. Keep parser compatibility and calibration finish behavior. |
+| Identity | Reuse primary descriptor compatibility; commands are not identity. Rank exact held match before exact preview among compatible candidates. Return MATCH/NOT_FOUND/AMBIGUOUS; ambiguity is terminal, with no fallback search or allocation. Resolve omitted descriptor halves only after unique matching. |
+| Ownership/capacity | Explicit ownership disables legacy bitmask supplements. Recompute capacity metadata when ammo type changes. |
+| Storage and IDs | Retain existing arrays and collision-checked ID allocator. Copy held paths into stable catalog storage. Calibration-only unmatched fragments create no wheel rows. |
+| Learning | Track held identity separately from preview provenance and preserve authored preview. |
+| Scope | Existing catalog/schema owners only. Complete rosters and AD/Enyo parent upgrades remain stages3/4; no new gameplay adapter. |
+
+Stage2 implementation follows this disposition, superseding the stock-first
+proposal above. End-of-full-implementation checks must cover the actual stock
+SSG consumer, partial overlays with/without wwheel, explicit zeros/defaults,
+descriptor halves/conflicts/ambiguity, stable IDs and calibration persistence.
+No builds/tests have been performed for this slice.
+
+### Stage2 parser prerequisite: provenance before normalization
+
+Verified directly in primary `master51b452c0` `vr.c:8930..9025`: authored
+wheel keys set field bits at token parsing, while overlay at `8785..8819` only
+replaces those fields. Current shared `VR_SchemaFinishEntry` infers held/preview
+aliases and active-to-owned descriptors for calibration; the `ammo` token also
+fills a zero maximum before finishing. Calibration parse/save consumers rely
+on that existing finished view. A presence bit added afterward cannot restore
+an explicit zero maximum, an explicit empty preview, or an owned-mask half
+that finishing replaces. This is the demonstrated narrow incompatibility.
+
+Proposed adapter: append one parser-owned wheel declaration snapshot to the
+existing schema entry: per-key presence plus raw preview/held, selector/command,
+ownership/active stat and mask halves, ammo type/maximum, scale/offset. Capture
+before finishing; an explicit ammo maximum is recorded when read so later
+inference cannot overwrite it. The existing parser signature, acceptance,
+staged atomic commit and finished calibration values remain unchanged. No new
+text scan, parser, runtime catalog or persistent model owner. The subsequent
+wheel merge reads this metadata; calibration keeps reading current fields.
+Expected parser/header change under120 lines, followed by the reviewed existing
+wheel consumers. No production partial-overlay behavior changes in the parser
+prerequisite alone.
+
+Alternative considered: a new raw-parse mode/API returning unfinished entries.
+It reduces duplicated scalar storage, but risks diverging validation/filtering
+and presents two meanings for the same existing entry. A parallel parser is
+rejected. The snapshot duplicates only declaration data (bounded64 entries),
+not catalog state or identity policy. Reopen if it requires calibrator edits or
+another registry. Local Astra must disposition this representation before edits.
+End-of-goal acceptance includes unchanged calibration outputs/failure atomicity,
+per-key omission, explicit zeros/defaults/empty paths, both ammo-max token orders,
+and no inferred alias/ownership marked authored. No builds/tests now.
