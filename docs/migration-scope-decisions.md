@@ -36,3 +36,17 @@ opt out, with a valid saved opt-out retained. Desktop transmission retains its
 existing opt-in behavior. Local microphone reflections remain independent.
 The [bounded voice plan](voice-default-device-2.0-plan.md) records reuse of the
 existing SDL capture/settings owners and mode-transition behavior.
+
+## Remaining migration work and platform order (2026-09-29)
+
+The user authorized continuing the remaining migration steps, copying existing
+implementations and adapting their boundaries. Mjolnir's dual-state weapons
+are excluded from this implementation goal: do not expand its combined native
+trigger/physical-contact modes (including the projectile/stab and charged
+hybrid adapters) to close the inventory. Ordinary weapon presentation, native
+trigger play, Mjolnir map compatibility and large-map performance remain required.
+
+Windows builds remain deferred. Complete implementation before consolidated
+verification; use this Linux machine and the authorized Foundry Linux ARM host
+for that verification. Do not deploy to or modify its running game/server merely
+to build. Windows remains a release target, not a required build in this pass.
