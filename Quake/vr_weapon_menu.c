@@ -443,12 +443,13 @@ static void VR_WeaponMenu_ApplySchemaMetadata (
 
 	if (model_path[0])
 	{
+		/* Compare before replacing shared path storage. Repeating a native
+		 * preview must keep its known, independently named held model. */
+		if (!entry->model_path || q_strcasecmp (entry->model_path, model_path))
+			entry->viewmodel_path = NULL;
 		q_strlcpy (vr_weapon_menu_schema_models[index], model_path,
 			sizeof (vr_weapon_menu_schema_models[index]));
 		entry->model_path = vr_weapon_menu_schema_models[index];
-		/* An authored replacement must not inherit a native stock held path.
-		 * Authored held/preview provenance is reconciled in the next slice. */
-		entry->viewmodel_path = NULL;
 		vr_weapon_menu_model_provenance[index] = VR_WEAPON_MENU_MODEL_FILE;
 		if (entry->label == vr_weapon_menu_wwheel_labels[index])
 			VR_WeaponMenu_SchemaLabel (vr_weapon_menu_wwheel_labels[index],
@@ -741,6 +742,9 @@ static qboolean VR_WeaponMenu_AddProfileEntry (
 					(!existing->model_path || !existing->model_path[0] ||
 					 VR_WeaponMenu_IsStockModelPath (existing->model_path)))
 				{
+					if (!existing->model_path ||
+						q_strcasecmp (existing->model_path, profile->model_path))
+						existing->viewmodel_path = NULL;
 					existing->model_path = profile->model_path;
 					vr_weapon_menu_model_provenance[i] =
 						VR_WEAPON_MENU_MODEL_PROFILE;
@@ -1438,6 +1442,8 @@ static void VR_WeaponMenu_LearnSchemaModel (size_t index,
 		vr_weapon_menu_model_provenance[index] == VR_WEAPON_MENU_MODEL_LEARNED ||
 		!strcmp (vr_weapon_menu_runtime_models[index], model_path))
 		return;
+	if (!entry->model_path || q_strcasecmp (entry->model_path, model_path))
+		entry->viewmodel_path = NULL;
 	q_strlcpy (vr_weapon_menu_runtime_models[index], model_path,
 		sizeof (vr_weapon_menu_runtime_models[index]));
 	entry->model_path = vr_weapon_menu_runtime_models[index];
@@ -1603,10 +1609,11 @@ void VR_WeaponMenu_PrepareModels (void)
 			if (entry->viewmodel_path && entry->viewmodel_path[0])
 				model = Mod_ForName (entry->viewmodel_path, false);
 		}
-		if (!model || model->type != mod_alias)
+		if ((!model || model->type != mod_alias) &&
+			(!entry->viewmodel_path || !entry->viewmodel_path[0]))
 		{
-			/* The inherited wheel uses the viewmodel when a mod omits its
-			 * pickup g_ mesh. Keep that fallback on the load owner. */
+			/* Use a provisional basename only without known held identity;
+			 * a missing known model must not select a different weapon. */
 			char viewmodel[MAX_QPATH];
 			char *pickup;
 			q_strlcpy (viewmodel, path, sizeof (viewmodel));

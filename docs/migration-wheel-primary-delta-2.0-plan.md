@@ -209,3 +209,11 @@ another registry. Local Astra must disposition this representation before edits.
 End-of-goal acceptance includes unchanged calibration outputs/failure atomicity,
 per-key omission, explicit zeros/defaults/empty paths, both ammo-max token orders,
 and no inferred alias/ownership marked authored. No builds/tests now.
+
+The stage1 source review additionally verified primary `VR_WeaponPreviewModel`
+(`vr.c:12162..12188`): guessed g_/v_ basename fallback is permitted only when
+held identity is absent. Adopted at `VR_WeaponMenu_PrepareModels`; if both known
+super-shotgun preview and held meshes are missing, do not guess the regular
+shotgun. The three association-lifetime corrections are source-accepted; the
+remaining fallback guard receives a bounded final check. Asset availability
+and actual drawing are end-of-goal qualification, not inferred source results.
