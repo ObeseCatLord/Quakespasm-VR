@@ -5,6 +5,16 @@
 
 #define VR_WEAPON_SCHEMA_MAX_ENTRIES 64
 
+/* Gesture sensing only: native QC still owns attack range, timing and damage. */
+typedef struct
+{
+	qboolean enabled, has_enabled;
+	vec3_t base, tip;
+	qboolean has_base, has_tip;
+	float speed; // metres/second
+	qboolean has_speed;
+} vr_melee_gesture_profile_t;
+
 typedef struct
 {
 	int bitmask;
@@ -36,6 +46,7 @@ typedef struct
 	qboolean has_enhanced_held_offset;
 	vec3_t enhanced_muzzle_offset;
 	qboolean has_enhanced_muzzle_offset;
+	vr_melee_gesture_profile_t melee;
 } vr_weapon_schema_entry_t;
 
 qboolean VR_WeaponSchemaParse(const char *text,

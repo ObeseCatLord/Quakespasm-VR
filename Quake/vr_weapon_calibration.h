@@ -36,6 +36,9 @@ qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 										  vec3_t out);
 qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out);
 qboolean VR_WeaponCalibrationStockRangedViewmodel(const char *name);
+/* Generic fallback convention/override; does not authorize physical damage. */
+qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
+	vr_melee_gesture_profile_t *out);
 void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 	int weapon_bit, const vec3_t angles, float viewheight, vec3_t out);
 

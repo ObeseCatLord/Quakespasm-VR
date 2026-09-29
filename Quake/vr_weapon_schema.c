@@ -265,7 +265,9 @@ static qboolean VR_SchemaHasHeldPresentation(const vr_weapon_schema_entry_t *ent
 		(entry->has_held_scale || entry->has_held_offset ||
 		 entry->has_muzzle_offset || entry->has_muzzle_source_offset ||
 		 entry->has_muzzle_source_viewofs || entry->has_spawn_at_self_origin ||
-		 entry->has_enhanced_held_offset || entry->has_enhanced_muzzle_offset);
+		 entry->has_enhanced_held_offset || entry->has_enhanced_muzzle_offset ||
+		 entry->melee.has_enabled || entry->melee.has_base ||
+		 entry->melee.has_tip || entry->melee.has_speed);
 }
 
 static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
@@ -298,6 +300,7 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 			!strcmp(key, "muzzle_offset") ||
 			!strcmp(key, "enhanced_held_offset") ||
 			!strcmp(key, "enhanced_muzzle_offset") ||
+			!strcmp(key, "melee_base") || !strcmp(key, "melee_tip") ||
 			!strcmp(key, "muzzle_source_offset"))
 		{
 			if (!VR_SchemaReadValue(parser, value, sizeof(value)))
@@ -330,6 +333,16 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 			{
 				if (!VR_SchemaReadVector(parser, value, entry->enhanced_muzzle_offset)) return false;
 				entry->has_enhanced_muzzle_offset = true;
+			}
+			else if (!strcmp(key, "melee_base") || !strcmp(key, "melee_tip"))
+			{
+				const qboolean base = !strcmp(key, "melee_base");
+				vec_t *point = base ? entry->melee.base : entry->melee.tip;
+				if (!VR_SchemaReadVector(parser, value, point)) return false;
+				for (int axis = 0; axis < 3; ++axis)
+					if (fabsf(point[axis]) > 4096.0f) return false;
+				if (base) entry->melee.has_base = true;
+				else entry->melee.has_tip = true;
 			}
 			else
 			{
@@ -385,6 +398,19 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 			if (!VR_SchemaParseInt(value, &enabled)) return false;
 			entry->spawn_at_self_origin = enabled != 0;
 			entry->has_spawn_at_self_origin = true;
+		}
+		else if (!strcmp(key, "melee"))
+		{
+			int enabled;
+			if (!VR_SchemaParseInt(value, &enabled) || (enabled != 0 && enabled != 1)) return false;
+			entry->melee.enabled = enabled != 0;
+			entry->melee.has_enabled = true;
+		}
+		else if (!strcmp(key, "melee_speed"))
+		{
+			if (!VR_SchemaParseFloat(value, &entry->melee.speed) ||
+				entry->melee.speed < 0.25f || entry->melee.speed > 10.0f) return false;
+			entry->melee.has_speed = true;
 		}
 		else if (!strcmp(key, "owned_stat"))
 		{

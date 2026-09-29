@@ -44,6 +44,7 @@ typedef struct
 	qboolean muzzle_source_viewofs;
 	qboolean has_spawn_at_self_origin;
 	qboolean spawn_at_self_origin;
+	vr_melee_gesture_profile_t melee;
 } vr_weapon_calibration_slot_t;
 
 cvar_t vr_weapon_offset[VR_WEAPON_CALIBRATION_MAX_SLOTS *
@@ -354,7 +355,8 @@ static qboolean VR_CalibrationEntryHasFields(
 		entry->has_muzzle_offset || entry->has_muzzle_source_offset ||
 		entry->has_muzzle_source_viewofs || entry->has_spawn_at_self_origin ||
 		entry->has_enhanced_held_offset ||
-		entry->has_enhanced_muzzle_offset;
+		entry->has_enhanced_muzzle_offset || entry->melee.has_enabled ||
+		entry->melee.has_base || entry->melee.has_tip || entry->melee.has_speed;
 }
 
 static qboolean VR_CalibrationEntryIsFinite(
@@ -373,6 +375,15 @@ static qboolean VR_CalibrationEntryIsFinite(
 		 !VR_CalibrationVectorIsFinite(entry->enhanced_muzzle_offset)))
 		return false;
 
+	if ((entry->melee.has_base && !VR_CalibrationVectorIsFinite(entry->melee.base)) ||
+		(entry->melee.has_tip && !VR_CalibrationVectorIsFinite(entry->melee.tip)) ||
+		(entry->melee.has_speed && (!isfinite(entry->melee.speed) ||
+		 entry->melee.speed < 0.25f || entry->melee.speed > 10.0f)))
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+		if ((entry->melee.has_base && fabsf(entry->melee.base[axis]) > 4096.0f) ||
+			(entry->melee.has_tip && fabsf(entry->melee.tip[axis]) > 4096.0f))
+			return false;
 	return true;
 }
 
@@ -674,6 +685,7 @@ static qboolean VR_CalibrationWriteUpdatedBlock(
 			!strcmp(key, "enhanced_mp_held_offset") ||
 			!strcmp(key, "enhanced_muzzle_offset") ||
 			!strcmp(key, "enhanced_mp_muzzle_offset") ||
+			!strcmp(key, "melee_base") || !strcmp(key, "melee_tip") ||
 			!strcmp(key, "muzzle_source_offset") ? 3 : 1;
 		selected = VR_CalibrationLineIsMultiplayerKey(key, strlen(key)) || (enhanced_format ?
 			VR_CalibrationLineIsEnhancedKey(key, strlen(key)) :
@@ -1815,6 +1827,26 @@ qboolean VR_WeaponCalibrationApplySchema(
 			VR_ActivateCalibrationSlot(slot, entry->viewmodel_path);
 		}
 		calibration = &vr_weapon_calibration_slots[slot];
+		if (entry->melee.has_enabled)
+		{
+			calibration->melee.enabled = entry->melee.enabled;
+			calibration->melee.has_enabled = true;
+		}
+		if (entry->melee.has_base)
+		{
+			VectorCopy(entry->melee.base, calibration->melee.base);
+			calibration->melee.has_base = true;
+		}
+		if (entry->melee.has_tip)
+		{
+			VectorCopy(entry->melee.tip, calibration->melee.tip);
+			calibration->melee.has_tip = true;
+		}
+		if (entry->melee.has_speed)
+		{
+			calibration->melee.speed = entry->melee.speed;
+			calibration->melee.has_speed = true;
+		}
 
 		if (VR_CalibrationEntryHasHeldFields(entry) &&
 			!entry->has_muzzle_offset &&
@@ -2025,6 +2057,34 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 	}
 
 	return true;
+}
+
+qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
+	vr_melee_gesture_profile_t *out)
+{
+	int slot;
+	if (!out)
+		return false;
+	memset(out, 0, sizeof(*out));
+	if (!vr_weapon_calibration_initialized || !model_name || !model_name[0])
+		return false;
+	out->enabled = !strcmp(model_name, "progs/v_axe.mdl") ||
+		!strcmp(model_name, "progs/v_axe2.mdl");
+	out->speed = 1.0f;
+	slot = VR_FindCalibrationSlot(model_name);
+	if (slot >= 0)
+	{
+		const vr_melee_gesture_profile_t *profile = &vr_weapon_calibration_slots[slot].melee;
+		if (profile->has_enabled) out->enabled = profile->enabled;
+		if (profile->has_base) VectorCopy(profile->base, out->base);
+		if (profile->has_tip) VectorCopy(profile->tip, out->tip);
+		if (profile->has_speed) out->speed = profile->speed;
+		out->has_enabled = profile->has_enabled;
+		out->has_base = profile->has_base;
+		out->has_tip = profile->has_tip;
+		out->has_speed = profile->has_speed;
+	}
+	return out->enabled;
 }
 
 qboolean VR_WeaponCalibrationLookupHeld(const char *model_name,
