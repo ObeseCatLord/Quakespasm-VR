@@ -384,3 +384,18 @@ is not indicated. Existing GL_SetupIndirectDraws can then consume retained CPU
 commands/dependencies after its own GPU fields have been retired and cleared.
 These are source checkpoints; a bounded retirement/recreation contract and local
 Astra disposition are still required before any stage3 production edits.
+
+## Stage2b staging visibility verification
+
+Direct source check: TexMgr_LoadImage32's individual image transition names
+fragment sampling, but gl_rmisc.c R_SubmitStagingBuffer675..680 already adds a
+shared TRANSFER_WRITE to MEMORY_READ|MEMORY_WRITE barrier, TRANSFER to ALL_COMMANDS,
+before each staging submission on the existing graphics queue. Reuse that owner;
+no second replay barrier or uploader flag is indicated. Parent activation must
+actually submit these ordered staging commands before compute/graphics consumers.
+The memory dependency requirement follows the official [pipeline barrier
+sample](https://docs.vulkan.org/samples/latest/samples/performance/pipeline_barriers/README.html);
+[queue idle](https://docs.vulkan.org/refpages/latest/refpages/source/vkQueueWaitIdle.html)
+establishes host-observed completion and is not the generated upload API's
+return guarantee. This source finding resolves the tentative barrier question;
+full transaction/validation qualification still follows implementation.
