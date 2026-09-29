@@ -61,6 +61,10 @@ FB/META. A runtime's extension list never substitutes for actual GPU support.
 1. **Select one device feature family.** Probe both Vulkan candidates at device
    creation. Startup XR prefers FB/META when the runtime advertises eye-profile
    support, the GPU has FDM and current settings permit its density pass.
+   Read the existing `r_width`/`r_height` settings alongside FSAA before
+   device selection; otherwise a saved reduced render size is applied only
+   after an FB/META device has already precluded KHR. Later command changes
+   still cannot change the selected feature family without device recreation.
    Otherwise select KHR if the GPU qualifies. Ordinary desktop creation favors
    KHR when present because no runtime has been discovered yet; explicit
    `-openxr` startup can choose FB/META. If KHR is absent, retain FDM device
