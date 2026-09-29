@@ -1,7 +1,8 @@
 # Current-primary weapon-wheel reconciliation
 
-Status: plan preceded implementation; stage1 stock paths are source-adapted,
-with build/draw qualification deferred. Stages2..4 remain pending.
+Status: plan preceded implementation; stage1 stock preview paths are copied,
+but source inspection reopened their held-identity integration before
+qualification. Stages2..4 remain pending.
 Reference: product primary `master` at
 `51b452c018273647dcf94f4628a370267ff8fa91`, read-only sibling
 `quakespasm-openvr`. The [source-update record](migration-source-updates.md)
@@ -77,6 +78,52 @@ file and cannot be inferred from the presence of calibration-only entries.
 Stages2..4 need a verified implementation brief and local Astra review; the
 two-path correction does not decide those architectures. Coding delegation
 must use disjoint ownership and leave the primary branch and user edits intact.
+
+## Verified next-slice brief: identity and partial overlays
+
+Source inspection after the two literal path copies demonstrates why the
+primary's adjacent held-identity separation is necessary: `EntryActive` and
+`FindDiscoveredModel` currently compare a held model to the preview. Native
+super-shotgun `v_shot2.mdl` is not a basename alias of its actual pickup
+`g_shot.mdl`; substituting preview paths alone can lose active highlighting and
+create a duplicate discovery row. Do not qualify stage1 independently.
+
+The proposed tightly coupled write set is `vr_weapon_menu.c/.h`,
+`vr_weapon_catalog.h` and `vr_weapon_schema.c/.h`. Keep current catalog arrays,
+stable IDs, generation and prepared assets; no new registry or parser. Reuse the
+primary's identity helper. Add distinct held identity to the existing public
+entry, with stable copied storage at the same catalog owner for authored or
+learned strings. Existing stock definitions supply exact held paths. Main-thread
+matching/discovery checks held identity, and main-thread preview loading tries
+the explicit held fallback before provisional `g_`/`v_` names. Frame data remains
+immutable during rendering; no per-task loading or new gameplay model owner.
+
+The shared parser needs authored wheel-field presence (command, ownership,
+active, ammo, preview, held identity, scale, offset and ammo maximum) because
+default scale1/offset0 cannot identify an omitted field. Mark presence only when
+parsed, not when `FinishEntry` infers model aliases or active-to-owned fallback.
+Preserve the existing calibration finish behavior for its consumers. The wheel
+must not treat that inferred ownership as an explicit descriptor. Reuse presence
+when merging file overlays, retaining native values for omitted fields and
+explicit values, including scale1/offset0, when supplied.
+
+Catalog initialization should form stock/built-in native definitions first,
+then enrich with own-game file declarations and native wwheel fields. Explicit
+vr_weapons fields have precedence; wwheel can supply missing selector/command/
+ammo/ownership but cannot erase authored geometry or incompatible descriptors.
+Do not broadly infer inventory from active-only declarations merely because the
+calibration parser retains that historical fallback. Ambiguous overlay matches
+must stop that overlay without allocating a duplicate via another first-match
+path. Identity conflicts retain distinct entries even with a shared impulse.
+Profile stock-replacement is deliberate fallback replacement, not permission
+to merge two conflicting explicit schemas.
+
+This brief does not authorize complete-roster syntax or AD/Enyo variants yet;
+those remain stages3/4. Before implementation, local Astra must decide whether
+this initialization-order adapter fits existing catalog ownership and specify
+any smaller boundary. End-of-goal checks must cover observed stock
+`v_shot2`/`g_shot`, explicit different held/preview names, calibration-only
+partial overlays, conflicting descriptors and stable IDs, not just helper tests.
 
 ## End-of-implementation acceptance
 
