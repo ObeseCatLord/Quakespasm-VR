@@ -47,8 +47,8 @@ behavioral reference, not permission to copy its OpenGL context implementation.
 
 ## Minimal adapters and staged implementation
 
-1. **Existing-record memory upload prerequisite.** Share TexMgr_ReloadImage's
-   final native-format upload switch in one private helper. Add one thin
+1. **Existing-record memory upload prerequisite.** Call the existing native
+   upload functions directly, leaving ordinary reload unchanged. Add one thin
    generated-image API accepting a live texture record and a borrowed CPU pixel
    span. Limit it to SRC_LIGHTMAP, SRC_RGBA and SRC_SURF_INDICES; reject invalid
    record/data/dimensions/unsupported format before mutation. Preserve source
@@ -136,3 +136,22 @@ and deterministically regenerated under this owner, not mistaken for live
 entity state. Cache invalidation must account for the modified==0 early exit
 in GPU updating at3983 and CPU per-surface lightstyle caches; resetting cached
 values alone does not establish a complete first-frame refresh.
+
+## Stage1 local Astra design disposition
+
+Reviewer: local gpt-6-astra / max, personally verified against a1c1be9f,
+primary51b452c0 and donor4bc898f2; no nested delegation or execution checks.
+Conditional acceptance with these adopted constraints precedes production:
+
+| Finding | Disposition |
+| --- | --- |
+| Native upload can mutate borrowed pixels or skip warp payloads | Restrict to NOPICMIP, no PREMULTIPLY/MIPMAP/WARPIMAGE, dimensions within device limits; preserve flags around native alpha detection. No persistent or transient extra copy. |
+| Native deletion uses the current device and skips null image views | Require all existing GPU fields cleared by the parent before entry; reject inconsistent or live handles without mutation. |
+| Signed staging arithmetic and truncated input | Add size_t data_bytes; overflow-safe source dimensions times four bounded by INT_MAX. Caller verifies atlas record identity, exact shape/format and readability. Skip shared nulltexture planes. |
+| Record and pixel lifetime | Check active-list membership under the existing mutex before dereferencing; owner must keep record and pixels stable throughout quiesced reconstruction. Membership is not proof of ownership or protection against recycled records. |
+| Success is not GPU completion | False means preflight rejection. Assert native image/view/allocation/sampled descriptor and lightmap target view after normal return; framebuffer/storage descriptor remain null. Native fatal failures stay fatal. CPU input can be released after staging copy returns. |
+| Optional shared upload switch adds unnecessary scope | Delete that extraction; reuse TexMgr_LoadLightmap/LoadImage32 directly, preserve ordinary reload verbatim. |
+
+Revised expected source size: 80–110 lines including declaration/comments.
+Stages2/3 still require their own verified briefs and dispositions. End-of-goal
+validation remains deferred, including the complete parent transaction.
