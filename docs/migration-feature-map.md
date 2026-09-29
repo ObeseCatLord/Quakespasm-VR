@@ -445,6 +445,12 @@ The [compatible-device late attachment checkpoint](openxr-late-binding-2.0-plan.
 now adds ordinary desktop explicit XR discovery and instance-loss rediscovery
 on retained Vulkan handles, with actual creation metadata and original-Vulkan
 qualification. This is bounded progress for VR-001/VR-002/XR-001/XR-002, not
-completion of these whole behaviors: incompatible-device reconstruction and
-late foveation readiness remain implementation scope, and current software
-checks do not prove loaded-scene or actual six-set GPU output.
+completion of these whole behaviors; current software checks do not prove
+loaded-scene or actual six-set GPU output. The later
+[focused Vulkan scope disposition](openxr-device-reconstruction-2.0-plan.md#focused-astra-max-scope-disposition)
+defers general live incompatible-device replacement and device-loss recovery.
+Keep explicit OpenXR startup, compatible late attachment and same-device
+session/mode transitions, documenting restart requirements for incompatible
+bindings. This preserves requested rendering/runtime targets rather than
+requiring a second renderer lifecycle. Foveation and final qualification remain
+required; primary mode-toggle behavior is still the acceptance reference.

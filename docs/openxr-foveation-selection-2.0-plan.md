@@ -211,3 +211,13 @@ uses RG8 as an example of a supported format; required GPU RG8 support does not
 by itself identify a runtime-owned image's format. No new inference qualifies
 the borrowed-image contract here. Existing fallback/protected full-rate behavior
 and user exclusions remain; no FDM tests or policy changes in this checkpoint.
+
+
+Valve primary-source follow-up: its
+[Unity foveation feature](https://github.com/ValveSoftware/Unity/blob/main/com.valvesoftware.openxr.utils/Runtime/Features/ValveOpenXRFoveatedRenderingFeature.cs)
+requests the same six FB/META extensions and exposes level, eye mode and valid
+per-eye center queries. Its Vulkan image work is delegated to UnityOpenXR
+imports, so it supplies no additional borrowed-image format/layer/layout
+contract. Its [package documentation](https://github.com/ValveSoftware/Unity/blob/main/com.valvesoftware.openxr.utils/Documentation~/index.md)
+notes a Unity2022.3 MSAA limitation; that is not evidence to disable vkQuake
+MSAA or its native task graph. No production foveation policy changes or tests.

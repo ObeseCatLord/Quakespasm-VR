@@ -1,7 +1,10 @@
 # Lightmap derived-input reconstruction
 
-Status: stage1, stage2a and stage2b source integrated with final local Astra
-acceptance; stage3 GPU owner brief awaits disposition. Full device replay remains open. This preserves the parent [device reconstruction contract](openxr-device-reconstruction-2.0-plan.md),
+Status: historical stage1/2a/2b prerequisite; unused replay paths will be removed
+under the [focused Vulkan scope disposition](openxr-device-reconstruction-2.0-plan.md#focused-astra-max-scope-disposition).
+Stage3 is not implemented; general live device replay is deferred. The earlier
+design below is superseded by the removal plan at the end. Parent:
+[device reconstruction contract](openxr-device-reconstruction-2.0-plan.md),
 with the [brush vertex prerequisite](openxr-brush-vertex-replay-2.0-plan.md)
 already source integrated. Only2.0 edits; primary, donor and game assets remain
 read-only. No builds/tests until the entire implementation is finished.
@@ -512,3 +515,39 @@ No production parent callers were added; new bound workgroups, descriptors,
 shared placeholder and ordered staging drain remain caller obligations. Main
 reviewed the diff and git diff --check passed. No builds/tests/fixtures/compiler
 commands ran; end-of-full-implementation qualification remains outstanding.
+
+
+## Unused lightmap replay removal plan (before implementation)
+
+The focused Astra scope review recommends deleting unused reconstruction-only
+paths separately from the alias memory correction. Direct call-site inspection
+confirms no production initiator for GL_RegenerateLightmapInputs or
+GL_ReplayLightmapInputs; generated-image replay is used only by that unused
+lightmap path. The cache-invalid sentinel is set only by its activation helper.
+
+Preserve vkQuake's initial atlas construction, surface data, lightstyle packing,
+workgroup bounds, native texture records, GPU updater and desktop/VR lighting.
+Retain the shared initial transient allocation/free helpers, checked lighting
+loader sizes/header reads and private brush vertex validation/calculation used
+by initial uploads and the reduced-CPU-polygon design. No whole-map mirrors or
+new lifecycle layer. The model lightdata length/allocation metadata remains at
+its current owner; it has no extra payload allocation.
+
+Remove the CPU regeneration eligibility/preparation entries, generated-record
+eligibility/upload entries, image replay validation/activation and public
+headers. Delete the now-unused public brush vertex eligibility wrapper, retaining
+its private validator and the actual native upload. Collapse the lightmap
+upload replay flag and static-only CPU-lightmap flag back to the native initial
+paths: ordinary R_BuildLightMap updates native caches/dlights as before. Remove
+replay-only forcefull branches/sentinel checks from the GPU updater, retaining
+all earlier stereo, movable-submodel, lightstyle and dlight scheduling logic.
+Keep original upload crop/row compaction/packing and staging barriers unchanged.
+
+Write scope: Quake/r_brush.c, gl_texmgr.c/h, glquake.h and these docs. Main owns
+integration. Expected350–500 changed lines, mostly deletion. No models/avatars,
+shader algorithms, texture loaders, allocator or map-reset replacement. Astra's
+scope disposition authorizes the smaller owner design; final bounded source
+review will compare native initial upload and updater branches. Qualification
+remains after the full implementation pass; no builds/tests/fixtures now. Full
+loaded-scene lighting and desktop/stereo acceptance remain required, while a
+new-device replay transaction is a deferred candidate.
