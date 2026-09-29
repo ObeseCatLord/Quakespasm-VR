@@ -159,6 +159,7 @@ static vulkan_memory_t dyn_vertex_buffer_memory;
 static vulkan_memory_t dyn_index_buffer_memory;
 static vulkan_memory_t dyn_uniform_buffer_memory;
 static vulkan_memory_t dyn_storage_buffer_memory;
+static vulkan_memory_t fan_index_buffer_memory;
 extern vulkan_memory_t frame_upload_buffers_memory;
 static dynbuffer_t	   dyn_vertex_buffers[NUM_DYNAMIC_BUFFERS];
 static dynbuffer_t	   dyn_index_buffers[NUM_DYNAMIC_BUFFERS];
@@ -1030,7 +1031,6 @@ R_InitFanIndexBuffer
 static void R_InitFanIndexBuffer ()
 {
 	VkResult	   err;
-	VkDeviceMemory memory;
 	const int	   bufferSize = sizeof (uint16_t) * FAN_INDEX_BUFFER_SIZE;
 
 	ZEROED_STRUCT (VkBufferCreateInfo, buffer_create_info);
@@ -1052,13 +1052,9 @@ static void R_InitFanIndexBuffer ()
 	memory_allocate_info.allocationSize = memory_requirements.size;
 	memory_allocate_info.memoryTypeIndex = GL_MemoryTypeFromProperties (memory_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0);
 
-	Atomic_IncrementUInt32 (&num_vulkan_dynbuf_allocations);
-	Atomic_AddUInt64 (&total_device_vulkan_allocation_size, memory_requirements.size);
-	err = vkAllocateMemory (vulkan_globals.device, &memory_allocate_info, NULL, &memory);
-	if (err != VK_SUCCESS)
-		Sys_Error ("vkAllocateMemory failed with code %i", (int)err);
+	R_AllocateVulkanMemory (&fan_index_buffer_memory, &memory_allocate_info, VULKAN_MEMORY_TYPE_DEVICE, &num_vulkan_dynbuf_allocations);
 
-	err = vkBindBufferMemory (vulkan_globals.device, vulkan_globals.fan_index_buffer, memory, 0);
+	err = vkBindBufferMemory (vulkan_globals.device, vulkan_globals.fan_index_buffer, fan_index_buffer_memory.handle, 0);
 	if (err != VK_SUCCESS)
 		Sys_Error ("vkBindBufferMemory failed with code %i", (int)err);
 

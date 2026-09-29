@@ -233,6 +233,12 @@ source lines; no new resource registry, retirement caller or submission policy.
 The forthcoming owner retirement will release the buffer and this allocation
 before destroying the device. Source review now; builds/tests only at the end.
 
+Source integrated: native vulkan_memory_t retention and the existing allocation
+helper replace the local allocation/manual counters. Main reviewed the nine
+changed source lines against R_AllocateVulkanMemory/R_FreeVulkanMemory; index
+generation and staging are unchanged, git diff --check passes. No retirement
+caller or device reconstruction is claimed; no builds/tests were run.
+
 ## Primary reference check
 
 The actual read-only primary master51b452c0 was reread for this continuation:
