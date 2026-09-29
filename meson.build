@@ -565,4 +565,5 @@ executable(
     c_args : cflags,
     cpp_args : cpp.get_supported_arguments('-Wno-missing-field-initializers'),
     c_pch : 'Quake/quakedef.h',
+    install : true,
     win_subsystem : 'windows')
