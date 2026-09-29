@@ -959,15 +959,24 @@ typedef struct {
   qboolean from_schema;
   qboolean use_item_ownership;
   char learned_model_path[MAX_QPATH]; // Owned storage for selector-only schemas.
+  char viewmodel_path[MAX_QPATH]; // Identity, independent of wheel preview.
+  unsigned int schema_fields;
 } vr_dyn_weapon_t;
+
+enum {
+  VR_SCHEMA_COMMAND = 1, VR_SCHEMA_OWNERSHIP = 2, VR_SCHEMA_ACTIVE = 4,
+  VR_SCHEMA_AMMO = 8, VR_SCHEMA_PREVIEW = 16, VR_SCHEMA_SCALE = 32,
+  VR_SCHEMA_OFFSET = 64, VR_SCHEMA_VIEWMODEL = 128, VR_SCHEMA_AMMO_MAX = 256
+};
+static unsigned int vr_schema_wheel_fields[MAX_VR_WEAPONS];
 
 #define MAX_DYN_WEAPONS 128
 static vr_dyn_weapon_t dyn_weapons[MAX_DYN_WEAPONS] = {
     {4096, 1, "progs/g_axe.mdl", 0, false, 1.0f, {0, 0, 0}, false,
      -1, 0, -1, 0, -1, 0, false, false, true}, // IT_AXE (pickup model)
-    {1, 2, "progs/g_shot.mdl", 0, false, 1.0f, {0, 0, 0}, false,
+    {1, 2, "progs/v_shot.mdl", 0, false, 1.0f, {0, 0, 0}, false,
      -1, 0, -1, 0, STAT_SHELLS, 100, false, false, true}, // IT_SHOTGUN
-    {2, 3, "progs/g_shot2.mdl", 0, false, 1.0f, {0, 0, 0}, false,
+    {2, 3, "progs/g_shot.mdl", 0, false, 1.0f, {0, 0, 0}, false,
      -1, 0, -1, 0, STAT_SHELLS, 100, false, false, true}, // IT_SUPER_SHOTGUN
     {4, 4, "progs/g_nail.mdl", 0, false, 1.0f, {0, 0, 0}, false,
      -1, 0, -1, 0, STAT_NAILS, 200, false, false, true}, // IT_NAILGUN
@@ -984,11 +993,11 @@ static int num_dyn_weapons = 8;
 static qboolean rogue_weapons_added = false;
 static qboolean hipnotic_weapons_added = false;
 static qboolean dwell_weapons_added = false;
-/* A non-empty wwheel.txt is the mod's authoritative weapon roster.  Once
+/* A complete native profile or own-game roster is authoritative. Once
  * present, generic stock fallbacks may help supply a model for a declared
  * slot, but undeclared stock entries must never leak into the wheel merely
  * because the mod reuses their STAT_ITEMS bits for something else. */
-static qboolean vr_has_authoritative_wwheel = false;
+static qboolean vr_has_authoritative_roster = false;
 static vr_weapon_catalog_t vr_weapon_catalog;
 static int dwell_weapon_indices[3] = {-1, -1, -1};
 double vr_next_weapon_switch_time = 0; // Debounce for switching
@@ -1065,7 +1074,8 @@ static void VR_InitDynWeapon(vr_dyn_weapon_t *w) {
 }
 
 static qboolean VR_DynWeaponHasModelDiscriminator(const vr_dyn_weapon_t *w) {
-  return (w->model_path && w->model_path[0]) || w->model_index > 0;
+  return (w->model_path && w->model_path[0]) || w->viewmodel_path[0] ||
+         w->learned_model_path[0] || w->model_index > 0;
 }
 
 static int VR_DynWeaponTrustedItemBits(void) {
@@ -1183,28 +1193,22 @@ static void VR_ApplyDwellWeaponMetadata(vr_dyn_weapon_t *w, int active) {
 
   impulse = VR_DwellImpulseForActive(active);
   owned_mask = VR_DwellOwnedMaskForActive(active);
-  if (owned_mask > 0) {
+  if (owned_mask > 0 && !(w->schema_fields & VR_SCHEMA_OWNERSHIP)) {
     w->owned_stat = STAT_VR_MODITEMS;
     w->owned_mask = owned_mask;
-    if (impulse > 0)
-      w->impulse = impulse;
   }
+  if (impulse > 0 && !(w->schema_fields & VR_SCHEMA_COMMAND))
+    w->impulse = impulse;
 
   ammo_stat = VR_DwellAmmoForActive(active, &ammo_max);
-  if (ammo_stat >= 0) {
+  if (ammo_stat >= 0 && !(w->schema_fields & VR_SCHEMA_AMMO))
     w->ammo_stat = ammo_stat;
+  if (ammo_stat >= 0 && !(w->schema_fields & VR_SCHEMA_AMMO_MAX))
     w->ammo_max = ammo_max;
-  }
 }
 
 static qboolean VR_FindWeaponOwnedStatForActive(int active, int *owned_stat,
                                                 int *owned_mask) {
-  static const int ownership_stats[] = {
-      STAT_VR_WEAPONS,  STAT_VR_ITEMS2,  STAT_VR_MODITEMS,
-      STAT_VR_WEAPON2, STAT_VR_WEAPONS2,
-  };
-  size_t i;
-
   if (!active)
     return false;
 
@@ -1219,45 +1223,120 @@ static qboolean VR_FindWeaponOwnedStatForActive(int active, int *owned_stat,
     }
   }
 
-  for (i = 0; i < sizeof(ownership_stats) / sizeof(ownership_stats[0]); i++) {
-    int stat = ownership_stats[i];
-    if (cl.stats[stat] & active) {
-      if (owned_stat)
-        *owned_stat = stat;
-      if (owned_mask)
-        *owned_mask = active;
-      return true;
+  /* Arbitrary mod fields need an explicit declaration. Their masks need not
+   * match the active selector; modifiers, keys and weapon2 are not inventory. */
+  return false;
+}
+
+static vr_weapon_catalog_identity_t VR_DynWeaponIdentity(
+    const vr_dyn_weapon_t *w) {
+  vr_weapon_catalog_identity_t id = {
+      w->bitmask, w->owned_stat, w->owned_mask, w->active_stat, w->active_mask};
+  /* Implicit stock ownership is a fallback, not an explicit conflicting
+   * declaration. A verified profile may replace it with a custom stat. */
+  return id;
+}
+
+static qboolean VR_DynWeaponsShareSlot(const vr_dyn_weapon_t *a,
+                                      const vr_dyn_weapon_t *b) {
+  return VR_WeaponCatalog_IdentitiesCompatible(VR_DynWeaponIdentity(a),
+                                               VR_DynWeaponIdentity(b));
+}
+
+static const char *VR_DynWeaponViewmodel(const vr_dyn_weapon_t *w) {
+  if (w->game_profile && VR_GameDirIs("enyo") && w->bitmask == 4 &&
+      !(w->schema_fields & VR_SCHEMA_VIEWMODEL))
+    return (cl.stats[STAT_VR_WEAPONS] & 16384) ? "progs/ee_v_av72.mdl" :
+                                               "progs/ee_v_smgs.mdl";
+  if (w->game_profile && !(w->schema_fields & VR_SCHEMA_VIEWMODEL) &&
+      VR_GameDirIs("ad")) {
+    int modifiers = cl.stats[STAT_VR_MODITEMS];
+    switch (w->bitmask) {
+    case IT_AXE:
+      return (modifiers & 128) ? "progs/v_ghook.mdl" :
+             (modifiers & 4096) ? "progs/v_shadaxe3.mdl" :
+                                  "progs/v_shadaxe0.mdl";
+    case IT_SUPER_SHOTGUN:
+      return (modifiers & 2) ? "progs/v_shot3.mdl" : "progs/v_shot2.mdl";
+    case IT_LIGHTNING:
+      return (modifiers & 64) ? "progs/v_plasma.mdl" : "progs/v_light.mdl";
     }
   }
+  return w->viewmodel_path;
+}
 
-  return false;
+static const char *VR_DynWeaponPreviewPath(const vr_dyn_weapon_t *w) {
+  if (!w->game_profile && (w->schema_fields & VR_SCHEMA_VIEWMODEL) &&
+      !(w->schema_fields & VR_SCHEMA_PREVIEW))
+    return w->viewmodel_path;
+  if (w->game_profile && VR_GameDirIs("enyo") && w->bitmask == 4 &&
+      !(w->schema_fields & VR_SCHEMA_PREVIEW))
+    return (cl.stats[STAT_VR_WEAPONS] & 16384) ? "progs/ee_g_av72.mdl" :
+                                               "progs/ee_g_smgs.mdl";
+  if (w->game_profile && !(w->schema_fields & VR_SCHEMA_PREVIEW) &&
+      VR_GameDirIs("ad")) {
+    int modifiers = cl.stats[STAT_VR_MODITEMS];
+    switch (w->bitmask) {
+    case IT_AXE:
+      return (modifiers & 128) ? "progs/g_ghook.mdl" :
+             (modifiers & 4096) ? "progs/g_shadaxe.mdl" : "progs/g_axe.mdl";
+    case IT_SUPER_SHOTGUN:
+      return (modifiers & 2) ? "progs/g_shot3.mdl" : "progs/g_shot2.mdl";
+    case IT_LIGHTNING:
+      return (modifiers & 64) ? "progs/g_plasma.mdl" : "progs/g_light.mdl";
+    }
+  }
+  return w->model_path;
 }
 
 static qboolean VR_DynWeaponModelMatches(const vr_dyn_weapon_t *w,
                                          const char *model_path,
                                          int model_index) {
+  if ((!model_path || !model_path[0]) && model_index > 0 &&
+      model_index < MAX_MODELS && cl.model_precache[model_index])
+    model_path = cl.model_precache[model_index]->name;
   qboolean query_has_model =
       (model_path && model_path[0]) || model_index > 0;
 
   if (!query_has_model || !VR_DynWeaponHasModelDiscriminator(w))
     return true;
+  if ((!w->model_path || !w->model_path[0]) && w->learned_model_path[0] && model_path)
+    return !q_strcasecmp(w->learned_model_path,model_path);
+  if (model_path && w->game_profile &&
+      !(w->schema_fields & VR_SCHEMA_VIEWMODEL)) {
+    if (VR_GameDirIs("enyo") && w->bitmask == 4 &&
+        (!q_strcasecmp(model_path,"progs/ee_v_smgs.mdl") ||
+         !q_strcasecmp(model_path,"progs/ee_v_av72.mdl")))
+      return true;
+    if (VR_GameDirIs("ad") &&
+        ((w->bitmask == IT_AXE && !q_strcasecmp(model_path,"progs/v_ghook.mdl")) ||
+         (w->bitmask == IT_SUPER_SHOTGUN &&
+          (!q_strcasecmp(model_path,"progs/v_shot2.mdl") ||
+           !q_strcasecmp(model_path,"progs/v_shot3.mdl"))) ||
+         (w->bitmask == IT_LIGHTNING &&
+          (!q_strcasecmp(model_path,"progs/v_light.mdl") ||
+           !q_strcasecmp(model_path,"progs/v_plasma.mdl")))))
+      return true;
+    if (VR_GameDirIs("ad") && w->bitmask == IT_AXE &&
+        !q_strncasecmp(model_path, "progs/v_shadaxe", 15) &&
+        model_path[15] >= '0' && model_path[15] <= '5' &&
+        !q_strcasecmp(model_path + 16, ".mdl"))
+      return true;
+    if (VR_IsDwellGame() &&
+        ((w->bitmask == IT_AXE && !q_strcasecmp(model_path,"progs/v_axeb.mdl")) ||
+         (w->bitmask == IT_SUPER_NAILGUN &&
+          !q_strcasecmp(model_path,"progs/v_nail3.mdl"))))
+      return true;
+  }
+  if (model_path && model_path[0] && w->viewmodel_path[0])
+    return !q_strcasecmp(model_path, VR_DynWeaponViewmodel(w)) ||
+           (w->model_path && !q_strcasecmp(model_path, w->model_path));
   if (model_path && model_path[0] && w->model_path && w->model_path[0] &&
       VR_WeaponCatalog_ModelPathsMatch(model_path, w->model_path))
     return true;
   if (model_index > 0 && w->model_index == model_index)
     return true;
   return false;
-}
-
-static qboolean VR_ModelIndexMatchesPath(int model_index, const char *path) {
-  qmodel_t *model;
-
-  if (model_index <= 0 || model_index >= MAX_MODELS || !path || !path[0])
-    return false;
-  model = cl.model_precache[model_index];
-  if (!model || !model->name[0])
-    return false;
-  return VR_WeaponCatalog_ModelPathsMatch(model->name, path);
 }
 
 static const char *VR_ModelPathForIndex(int model_index) {
@@ -1313,22 +1392,14 @@ static int VR_FindDynWeapon(int bitmask, int owned_stat, int owned_mask,
                             const char *model_path, int model_index) {
   const qboolean query_has_model =
       (model_path && model_path[0]) || model_index > 0;
+  vr_weapon_catalog_identity_t query = {
+      bitmask, owned_stat, owned_mask, active_stat, active_mask};
   int fallback = -1;
   int profile = -1;
 
   for (int i = 0; i < num_dyn_weapons; i++) {
-    qboolean selector_match = false;
-
-    if (bitmask && dyn_weapons[i].bitmask == bitmask)
-      selector_match = true;
-    if (owned_stat >= 0 && dyn_weapons[i].owned_stat == owned_stat &&
-        dyn_weapons[i].owned_mask == owned_mask)
-      selector_match = true;
-    if (active_stat >= 0 && dyn_weapons[i].active_stat == active_stat &&
-        dyn_weapons[i].active_mask == active_mask)
-      selector_match = true;
-
-    if (!selector_match ||
+    if (!VR_WeaponCatalog_IdentitiesCompatible(
+            query, VR_DynWeaponIdentity(&dyn_weapons[i])) ||
         !VR_DynWeaponModelMatches(&dyn_weapons[i], model_path, model_index))
       continue;
 
@@ -1350,8 +1421,12 @@ static int VR_FindDynWeapon(int bitmask, int owned_stat, int owned_mask,
   return profile >= 0 ? profile : fallback;
 }
 
-static int VR_FindDynWeaponForActive(int active, int model_index) {
-  int schema_match = -1;
+static int VR_FindDynWeaponForActive(int active, int model_index,
+                                    qboolean *is_ambiguous = NULL) {
+  if (is_ambiguous) *is_ambiguous = false;
+  int match = -1, rank = -1;
+  qboolean ambiguous = false;
+  const char *model = VR_ModelPathForIndex(model_index);
 
   for (int i = 0; i < num_dyn_weapons; i++) {
     vr_dyn_weapon_t *w = &dyn_weapons[i];
@@ -1367,38 +1442,40 @@ static int VR_FindDynWeaponForActive(int active, int model_index) {
 
     if (!active_match)
       continue;
-    /*
-     * wwheel.txt identifies a weapon by its active selector, but does not
-     * authoritatively identifies the slot by its active selector.  Once that
-     * entry is observed, learn the current viewmodel even when its provisional
-     * display model came from a stock fallback.  Otherwise a custom weapon
-     * which reuses a vanilla bit creates a second entry and leaves the wrong
-     * vanilla model visible.  Keep this limited to schema entries: non-schema
-     * selectors are commonly reused by unrelated mod weapons.
-     */
-    if (w->from_schema) {
-      if (schema_match < 0)
-        schema_match = i;
+    qboolean model_match = VR_DynWeaponModelMatches(w, model, model_index);
+    /* A selector-only schema can learn its held model. A declared held model
+     * or verified profile must match; never attribute a conflicting model to
+     * the first same-bit schema. Exact aliases work after each map/variant. */
+    qboolean strict_held = w->game_profile ||
+                           (w->schema_fields & VR_SCHEMA_VIEWMODEL);
+    if (!model_match && (!w->from_schema || strict_held))
       continue;
+    int model_class = !VR_DynWeaponHasModelDiscriminator(w) ? 1 :
+                      model_match ? (strict_held ? 3 : 2) : 0;
+    int candidate_rank = model_class * 16 +
+                         (w->from_schema ? 3 : w->game_profile ? 2 : 1);
+    if (w->owned_stat >= 0) {
+      int inventory = w->owned_stat == STAT_ITEMS ? VR_ClientItemBits()
+                                                  : cl.stats[w->owned_stat];
+      if (w->owned_mask ? (inventory & w->owned_mask) != 0 : inventory != 0)
+        candidate_rank += 4;
     }
-    if (w->model_index > 0 && w->model_index == model_index)
-      return i;
-    if (w->model_index == 0 && VR_ModelIndexMatchesPath(model_index,
-                                                        w->model_path))
-      return i;
+    if (candidate_rank > rank) {
+      match = i;
+      rank = candidate_rank;
+      ambiguous = false;
+    } else if (candidate_rank == rank &&
+               !VR_DynWeaponsShareSlot(w, &dyn_weapons[match])) {
+      ambiguous = true;
+    }
   }
-
-  if (schema_match >= 0)
-    return schema_match;
-
-  /*
-   * A matching active bit alone is not an identity.  Mods freely reuse those
-   * bits, so accepting a model mismatch here could make an observed weapon
-   * inherit a stock/profile impulse.  Leave it as an unselectable observation
-   * until a profile or vr_weapons.txt identifies it explicitly.
-   */
-  return -1;
+  if (is_ambiguous) *is_ambiguous = ambiguous;
+  return ambiguous ? -1 : match;
 }
+
+static vr_dyn_weapon_t *VR_SchemaWeaponSlot(const vr_weapon_cmd_t *schema,
+                                           qboolean *is_ambiguous = NULL,
+                                           qboolean declarations_only = false);
 
 static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
     int bitmask, int impulse, const char *model_path, int model_index,
@@ -1409,6 +1486,20 @@ static vr_dyn_weapon_t *VR_AddOrUpdateDynWeapon(
                                active_mask, model_path, model_index);
   vr_dyn_weapon_t *w;
   qboolean preserve_schema;
+
+  if (!from_schema && !discovered) {
+    /* Profile refreshes enrich the canonical slot even when a file changed
+     * its preview. They must not append a hidden duplicate on every map. */
+    vr_weapon_cmd_t query = {};
+    query.bitmask=bitmask; query.owned_stat=owned_stat; query.owned_mask=owned_mask;
+    query.active_stat=active_stat; query.active_mask=active_mask;
+    if (model_path) q_strlcpy(query.model_path,model_path,sizeof(query.model_path));
+    qboolean ambiguous;
+    vr_dyn_weapon_t *existing=VR_SchemaWeaponSlot(&query,&ambiguous,true);
+    if (ambiguous) return NULL;
+    if (existing)
+      index=(int)(existing-dyn_weapons);
+  }
 
   if (index >= 0) {
     w = &dyn_weapons[index];
@@ -1522,7 +1613,9 @@ static void VR_AddDwellWeaponDefaults(void) {
     w = &dyn_weapons[i];
     if (!w->model_path || !w->model_path[0])
       continue;
-    if ((w->bitmask == IT_SHOTGUN &&
+    if ((w->bitmask == IT_AXE &&
+         !q_strcasecmp(w->model_path,"progs/g_axe.mdl")) ||
+        (w->bitmask == IT_SHOTGUN &&
          !q_strcasecmp(w->model_path, "progs/g_shotgn.mdl")) ||
         (w->bitmask == IT_SUPER_SHOTGUN &&
          !q_strcasecmp(w->model_path, "progs/g_shot.mdl")) ||
@@ -1538,6 +1631,23 @@ static void VR_AddDwellWeaponDefaults(void) {
          !q_strcasecmp(w->model_path, "progs/g_light.mdl")) ||
         w->bitmask == 128 || w->bitmask == 256 || w->bitmask == 512)
       w->game_profile = true;
+    if (w->game_profile && !(w->schema_fields & VR_SCHEMA_VIEWMODEL)) {
+      const char *held = NULL;
+      switch (w->bitmask) {
+      case IT_AXE: held="progs/v_axe2.mdl"; break;
+      case 1: held="progs/v_shot.mdl"; break;
+      case 2: held="progs/v_shot2.mdl"; break;
+      case 4: held="progs/v_nail.mdl"; break;
+      case 8: held="progs/v_nail2.mdl"; break;
+      case 16: held="progs/v_rock.mdl"; break;
+      case 32: held="progs/v_rock2.mdl"; break;
+      case 64: held="progs/v_light.mdl"; break;
+      case 128: held="progs/v_shot3.mdl"; break;
+      case 256: held="progs/v_rail.mdl"; break;
+      case 512: held="progs/v_rifle.mdl"; break;
+      }
+      if (held) q_strlcpy(w->viewmodel_path,held,sizeof(w->viewmodel_path));
+    }
   }
 
   dwell_weapons_added = true;
@@ -1554,8 +1664,67 @@ static void VR_AddBuiltinWeaponDefault(int bitmask, int impulse,
       owned_stat, owned_mask, active_stat, active_mask, ammo_stat, ammo_max,
       false);
 
-  if (w)
+  if (w) {
     w->game_profile = true;
+    /* Verified native pickups in these families use .weapons, not .items.
+     * Their custom bits overlap armor/ammo and must never use stock guesses. */
+    if ((VR_GameDirIs("alk") || VR_GameDirIs("limjam") || VR_GameDirIs("enyo")) &&
+        !(w->schema_fields & VR_SCHEMA_OWNERSHIP)) {
+      w->owned_stat = STAT_VR_WEAPONS;
+      w->owned_mask = bitmask;
+    }
+    if (!(w->schema_fields & VR_SCHEMA_VIEWMODEL)) {
+      const char *held = NULL;
+      if (VR_GameDirIs("alk") || VR_GameDirIs("limjam")) {
+        switch (bitmask) {
+        case 4096: held="progs/v_alkaxe20fps.mdl"; break;
+        case 1: held="progs/v_shot40fps.mdl"; break;
+        case 2: held="progs/v_shot2_40fps.mdl"; break;
+        case 4: held="progs/v_nail_alk40fps.mdl"; break;
+        case 8: held="progs/v_nail3.mdl"; break;
+        case 16: held="progs/v_rock_40fps.mdl"; break;
+        case 32: held="progs/v_rock2_40fps.mdl"; break;
+        case 64: held="progs/v_light.mdl"; break;
+        case 256: held="progs/v_saw.mdl"; break;
+        case 512: held="progs/v_plasma.mdl"; break;
+        case 1024: held="progs/v_laserg40fps.mdl"; break;
+        case 8192: held="progs/v_mine_40fps.mdl"; break;
+        }
+      } else if (model_path && !q_strncasecmp(model_path,"progs/ee_g_",11)) {
+        q_strlcpy(w->viewmodel_path,model_path,sizeof(w->viewmodel_path));
+        w->viewmodel_path[9]='v';
+      } else if (model_path) {
+        q_strlcpy(w->viewmodel_path,model_path,sizeof(w->viewmodel_path));
+        char *g=strstr(w->viewmodel_path,"/g_");
+        if (g) g[1]='v';
+      }
+      if (held) q_strlcpy(w->viewmodel_path,held,sizeof(w->viewmodel_path));
+    }
+  }
+}
+
+static void VR_AddADWeaponDefaults(void) {
+  if (!VR_GameDirIs("ad")) return;
+  static const struct { int bit, impulse, ammo, max; const char *pickup, *held; }
+      slots[] = {
+    {IT_AXE,1,-1,0,"progs/g_axe.mdl","progs/v_shadaxe0.mdl"},
+    {1,2,STAT_SHELLS,100,"progs/g_shot1.mdl","progs/v_shot.mdl"},
+    {2,3,STAT_SHELLS,100,"progs/g_shot2.mdl","progs/v_shot2.mdl"},
+    {4,4,STAT_NAILS,200,"progs/g_nail.mdl","progs/v_nail.mdl"},
+    {8,5,STAT_NAILS,200,"progs/g_nail2.mdl","progs/v_nail2.mdl"},
+    {16,6,STAT_ROCKETS,100,"progs/g_rock.mdl","progs/v_rock.mdl"},
+    {32,7,STAT_ROCKETS,100,"progs/g_rock2.mdl","progs/v_rock2.mdl"},
+    {64,8,STAT_CELLS,100,"progs/g_light.mdl","progs/v_light.mdl"}
+  };
+  for (const auto &s : slots) {
+    VR_AddBuiltinWeaponDefault(s.bit, s.impulse, s.pickup, STAT_ITEMS, s.bit,
+                               STAT_ACTIVEWEAPON, s.bit, s.ammo, s.max, 1.0f);
+    int i = VR_FindDynWeapon(s.bit, STAT_ITEMS, s.bit, STAT_ACTIVEWEAPON,
+                             s.bit, s.pickup, 0);
+    if (i >= 0 && !(dyn_weapons[i].schema_fields & VR_SCHEMA_VIEWMODEL))
+      q_strlcpy(dyn_weapons[i].viewmodel_path, s.held,
+                 sizeof(dyn_weapons[i].viewmodel_path));
+  }
 }
 
 static void VR_AddAlkalineWeaponDefaults(void) {
@@ -1578,13 +1747,13 @@ static void VR_AddAlkalineWeaponDefaults(void) {
                              STAT_ROCKETS, 100, 1.0f);
   VR_AddBuiltinWeaponDefault(64, 228, "progs/g_light.mdl", -1, 0, -1, 0,
                              STAT_CELLS, 100, 1.0f);
-  VR_AddBuiltinWeaponDefault(256, 224, "progs/g_saw.mdl", -1, 0, -1, 0,
+  VR_AddBuiltinWeaponDefault(256, 226, "progs/g_saw.mdl", -1, 0, -1, 0,
                              -1, 0, 1.0f);
   VR_AddBuiltinWeaponDefault(512, 227, "progs/g_plasma.mdl", -1, 0, -1, 0,
                              STAT_CELLS, 100, 1.0f);
   VR_AddBuiltinWeaponDefault(1024, 225, "progs/g_laserg.mdl", -1, 0, -1, 0,
                              STAT_CELLS, 100, 1.0f);
-  VR_AddBuiltinWeaponDefault(8192, 226, "progs/g_mine.mdl", -1, 0, -1, 0,
+  VR_AddBuiltinWeaponDefault(8192, 229, "progs/g_mine.mdl", -1, 0, -1, 0,
                              STAT_ROCKETS, 100, 1.0f);
 }
 
@@ -1599,8 +1768,6 @@ static void VR_AddEnyoWeaponDefaults(void) {
   VR_AddBuiltinWeaponDefault(2, 3, "progs/ee_g_sgun.mdl", -1, 0, -1, 0,
                              STAT_SHELLS, 100, 1.0f);
   VR_AddBuiltinWeaponDefault(4, 4, "progs/ee_g_smgs.mdl", -1, 0, -1, 0,
-                             STAT_NAILS, 200, 1.0f);
-  VR_AddBuiltinWeaponDefault(1024, 5, "progs/ee_g_av72.mdl", -1, 0, -1, 0,
                              STAT_NAILS, 200, 1.0f);
   VR_AddBuiltinWeaponDefault(8, 5, "progs/ee_g_plasma.mdl", -1, 0, -1, 0,
                              STAT_CELLS, 100, 1.0f);
@@ -1671,13 +1838,46 @@ static void VR_AddMG3WeaponDefaults(void) {
                              -1, 0, STAT_CELLS, 100, 1.0f);
 }
 
+static void VR_AddExpansionWeaponDefaults(void) {
+  dyn_weapons[0].bitmask = rogue ? RIT_AXE : IT_AXE;
+  if (rogue && !rogue_weapons_added) {
+    static const struct { int bit, impulse, ammo, max; const char *model; } extras[] = {
+      {RIT_LAVA_NAILGUN,60,STAT_NAILS,200,"progs/v_lava.mdl"},
+      {RIT_LAVA_SUPER_NAILGUN,61,STAT_NAILS,200,"progs/v_lava2.mdl"},
+      {RIT_MULTI_GRENADE,62,STAT_ROCKETS,100,"progs/v_multi.mdl"},
+      {RIT_MULTI_ROCKET,63,STAT_ROCKETS,100,"progs/v_multi2.mdl"},
+      {RIT_PLASMA_GUN,64,STAT_CELLS,100,"progs/v_plasma.mdl"}
+    };
+    for (const auto &e : extras)
+      VR_AddBuiltinWeaponDefault(e.bit,e.impulse,e.model,STAT_ITEMS,e.bit,
+          STAT_ACTIVEWEAPON,e.bit,e.ammo,e.max,1.0f);
+    rogue_weapons_added=true;
+  }
+  if (hipnotic && !hipnotic_weapons_added) {
+    VR_AddBuiltinWeaponDefault(HIT_MJOLNIR,1,"progs/g_hammer.mdl",STAT_ITEMS,
+        HIT_MJOLNIR,STAT_ACTIVEWEAPON,HIT_MJOLNIR,-1,0,1.0f);
+    VR_AddBuiltinWeaponDefault(HIT_LASER_CANNON,8,"progs/g_laserg.mdl",STAT_ITEMS,
+        HIT_LASER_CANNON,STAT_ACTIVEWEAPON,HIT_LASER_CANNON,STAT_CELLS,100,1.0f);
+    VR_AddBuiltinWeaponDefault(HIT_PROXIMITY_GUN,6,"progs/g_prox.mdl",STAT_ITEMS,
+        HIT_PROXIMITY_GUN,STAT_ACTIVEWEAPON,HIT_PROXIMITY_GUN,STAT_ROCKETS,100,1.0f);
+    hipnotic_weapons_added=true;
+  }
+}
+
 static void VR_AddBuiltinWeaponDefaults(void) {
+  VR_AddExpansionWeaponDefaults();
+  VR_AddADWeaponDefaults();
   VR_AddDwellWeaponDefaults();
   VR_AddAlkalineWeaponDefaults();
   VR_AddEnyoWeaponDefaults();
   VR_AddQBJ3WeaponDefaults();
   VR_AddMjolnirWeaponDefaults();
   VR_AddMG3WeaponDefaults();
+  /* These verified profiles enumerate their complete native weapon families.
+   * Partial third-party calibration/command overlays are not complete rosters. */
+  if (VR_GameDirIs("ad") || VR_GameDirIs("alk") || VR_GameDirIs("limjam") ||
+      VR_GameDirIs("enyo") || VR_GameDirIs("qbj3") || VR_IsDwellGame())
+    vr_has_authoritative_roster = true;
 }
 
 static vr_weapon_catalog_source_t
@@ -1726,10 +1926,14 @@ static qboolean VR_WeaponIsActive(const vr_dyn_weapon_t *w) {
 
   if (!active)
     return false;
-  if (w->model_index > 0 && cl.stats[STAT_WEAPON] > 0 &&
-      w->model_index != cl.stats[STAT_WEAPON])
-    return false;
-  return true;
+  /* Unknown custom held models may retain the compatibility slot's selector.
+   * Recognize its selection without assigning that model to stock metadata. */
+  if (VR_DynWeaponCatalogSource(w) == VR_WEAPON_CATALOG_SOURCE_STOCK &&
+      VR_DynWeaponCanUseItemOwnership(w) && (VR_ClientItemBits() & w->bitmask))
+    return true;
+  int i = VR_FindDynWeaponForActive(cl.stats[STAT_ACTIVEWEAPON],
+                                   cl.stats[STAT_WEAPON]);
+  return i == (int)(w - dyn_weapons);
 }
 
 static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
@@ -1747,9 +1951,6 @@ static qboolean VR_WeaponIsOwned(const vr_dyn_weapon_t *w) {
      */
     return owned || VR_WeaponIsActive(w);
   }
-
-  if (w->bitmask && (cl.stats[STAT_VR_WEAPONS] & w->bitmask))
-    return true;
 
   /*
    * Only stock/expansion weapon bits may use STAT_ITEMS ownership. Several
@@ -1858,10 +2059,10 @@ static void VR_ResetDynWeaponsToBase(void) {
 
   VR_AddOrUpdateDynWeapon(4096, 1, "progs/g_axe.mdl", 0, false, 1.0f,
                           vec3_origin, false, -1, 0, -1, 0, -1, 0, false);
-  VR_AddOrUpdateDynWeapon(IT_SHOTGUN, 2, "progs/g_shot.mdl", 0, false, 1.0f,
+  VR_AddOrUpdateDynWeapon(IT_SHOTGUN, 2, "progs/v_shot.mdl", 0, false, 1.0f,
                           vec3_origin, false, -1, 0, -1, 0, STAT_SHELLS, 100,
                           false);
-  VR_AddOrUpdateDynWeapon(IT_SUPER_SHOTGUN, 3, "progs/g_shot2.mdl", 0, false,
+  VR_AddOrUpdateDynWeapon(IT_SUPER_SHOTGUN, 3, "progs/g_shot.mdl", 0, false,
                           1.0f, vec3_origin, false, -1, 0, -1, 0,
                           STAT_SHELLS, 100, false);
   VR_AddOrUpdateDynWeapon(IT_NAILGUN, 4, "progs/g_nail.mdl", 0, false, 1.0f,
@@ -1879,6 +2080,12 @@ static void VR_ResetDynWeaponsToBase(void) {
   VR_AddOrUpdateDynWeapon(IT_LIGHTNING, 8, "progs/g_light.mdl", 0, false,
                           1.0f, vec3_origin, false, -1, 0, -1, 0, STAT_CELLS,
                           100, false);
+  static const char *held[] = {"progs/v_axe.mdl", "progs/v_shot.mdl",
+      "progs/v_shot2.mdl", "progs/v_nail.mdl", "progs/v_nail2.mdl",
+      "progs/v_rock.mdl", "progs/v_rock2.mdl", "progs/v_light.mdl"};
+  for (int i = 0; i < 8; ++i)
+    q_strlcpy(dyn_weapons[i].viewmodel_path, held[i],
+               sizeof(dyn_weapons[i].viewmodel_path));
 }
 
 // Unused variables, marking them explicitly or removing them later
@@ -8539,10 +8746,107 @@ void VID_VR_Init() {
     Cvar_SetQuick(&vr_enabled, "1");
 }
 
+static vr_dyn_weapon_t *VR_SchemaWeaponSlot(const vr_weapon_cmd_t *schema,
+                                           qboolean *is_ambiguous,
+                                           qboolean declarations_only) {
+  if (is_ambiguous) *is_ambiguous = false;
+  vr_dyn_weapon_t query;
+  VR_InitDynWeapon(&query);
+  query.bitmask = schema->bitmask;
+  query.owned_stat = schema->owned_stat;
+  query.owned_mask = schema->owned_mask;
+  query.active_stat = schema->active_stat;
+  query.active_mask = schema->active_mask;
+  int best = -1, rank = -1;
+  qboolean ambiguous = false;
+  for (int i = 0; i < num_dyn_weapons; ++i) {
+    vr_dyn_weapon_t *w = &dyn_weapons[i];
+    if (declarations_only && !w->from_schema && !w->game_profile) continue;
+    if (VR_DynWeaponCatalogSource(w) == VR_WEAPON_CATALOG_SOURCE_DISCOVERED ||
+        !VR_DynWeaponsShareSlot(w, &query)) continue;
+    qboolean held_exact = schema->viewmodel_path[0] && w->viewmodel_path[0] &&
+        !q_strcasecmp(schema->viewmodel_path,w->viewmodel_path);
+    qboolean preview_exact = schema->model_path[0] && w->model_path &&
+        !q_strcasecmp(schema->model_path,w->model_path);
+    int r = (held_exact ? 2 : preview_exact ? 1 : 0) * 4 +
+            (w->from_schema ? 3 : w->game_profile ? 2 : 1);
+    if (r > rank) { best=i; rank=r; ambiguous=false; }
+    else if (r == rank) ambiguous=true;
+  }
+  if (ambiguous) {
+    if (is_ambiguous) *is_ambiguous = true;
+    Con_Printf("VR: ambiguous weapon schema selector %d; declare ownership and held model\n",
+               schema->bitmask);
+    return NULL;
+  }
+  return best >= 0 ? &dyn_weapons[best] : NULL;
+}
+
+static void VR_ApplyWeaponSchema(const vr_weapon_cmd_t *schema,
+                                unsigned int fields) {
+  qboolean ambiguous;
+  vr_dyn_weapon_t *w = VR_SchemaWeaponSlot(schema, &ambiguous);
+  if (ambiguous) return;
+  if (!w) {
+    /* The identity search above is authoritative. Do not fall through a
+     * second, model-first search which can choose a conflicting first row. */
+    if (num_dyn_weapons >= MAX_DYN_WEAPONS) {
+      Con_Printf("VR: Too many weapon wheel entries (max %d)\n",MAX_DYN_WEAPONS);
+      return;
+    }
+    w = &dyn_weapons[num_dyn_weapons++];
+    VR_InitDynWeapon(w);
+  }
+  /* Missing file fields enrich, rather than erase, an existing known slot. */
+  if (schema->bitmask) w->bitmask=schema->bitmask;
+  if (fields & VR_SCHEMA_COMMAND) w->impulse=schema->impulse;
+  if (fields & VR_SCHEMA_OWNERSHIP) {
+    w->owned_stat=schema->owned_stat; w->owned_mask=schema->owned_mask;
+  }
+  if (fields & VR_SCHEMA_ACTIVE) {
+    w->active_stat=schema->active_stat; w->active_mask=schema->active_mask;
+  }
+  if (fields & VR_SCHEMA_AMMO) w->ammo_stat=schema->ammo_stat;
+  if (fields & VR_SCHEMA_AMMO_MAX) w->ammo_max=schema->ammo_max;
+  if (fields & VR_SCHEMA_PREVIEW) w->model_path=schema->model_path;
+  if (fields & VR_SCHEMA_VIEWMODEL)
+    q_strlcpy(w->viewmodel_path,schema->viewmodel_path,sizeof(w->viewmodel_path));
+  if (fields & VR_SCHEMA_SCALE) w->scale=schema->scale;
+  if (fields & VR_SCHEMA_OFFSET) {
+    VectorCopy(schema->offset,w->offset); w->has_offset=schema->has_offset;
+  }
+  w->from_schema=true;
+  w->schema_fields |= fields;
+}
+
+static void VR_NormalizeLegacyWeaponSchema(vr_weapon_cmd_t *w,
+                                           unsigned int *fields) {
+  /* Correct only the demonstrated old engine-generated definitions. Explicit
+   * custom ownership/commands outside these signatures remain untouched. */
+  if (VR_GameDirIs("alk") || VR_GameDirIs("limjam")) {
+    if (w->bitmask == 256 && w->impulse == 224 &&
+        !q_strcasecmp(w->model_path,"progs/g_saw.mdl")) w->impulse=226;
+    if (w->bitmask == 8192 && w->impulse == 226 &&
+        !q_strcasecmp(w->model_path,"progs/g_mine.mdl")) w->impulse=229;
+  }
+  if (VR_GameDirIs("enyo") && w->bitmask == 1024 && w->impulse == 5 &&
+      w->owned_stat < 0 && !q_strcasecmp(w->model_path,"progs/ee_g_av72.mdl")) {
+    /* AV72 is an upgrade of the bit-4 SMG slot, not a bit-1024 weapon.
+     * Keep any held calibration, but discard its obsolete wheel declaration. */
+    w->bitmask=0;
+    *fields=0;
+  }
+  if (VR_GameDirIs("enyo") && w->bitmask == 4 && w->owned_stat < 0 &&
+      !q_strcasecmp(w->model_path,"progs/ee_g_smgs.mdl") &&
+      (!w->viewmodel_path[0] || !q_strcasecmp(w->viewmodel_path,"progs/ee_v_smgs.mdl")))
+    *fields &= ~(VR_SCHEMA_PREVIEW | VR_SCHEMA_VIEWMODEL);
+}
+
 void VR_LoadWeaponSchema(void) {
   char *data;
   char *start;
   char key[64];
+  unsigned int path_id = 0;
   float global_held_scale = 1.0f;
   vec3_t global_held_offset = {0, 0, 0};
   vec3_t global_muzzle_offset = {0, 0, 0};
@@ -8555,6 +8859,7 @@ void VR_LoadWeaponSchema(void) {
   qboolean has_global_mp_muzzle_offset = false;
 
   num_vr_weapons = 0;
+  memset(vr_schema_wheel_fields,0,sizeof(vr_schema_wheel_fields));
   memset(vr_schema_enhanced_held_offset, 0,
          sizeof(vr_schema_enhanced_held_offset));
   memset(vr_schema_has_enhanced_held_offset, 0,
@@ -8574,7 +8879,8 @@ void VR_LoadWeaponSchema(void) {
 
   // Try to load vr_weapons.txt from the active search path. This is freed
   // below, so it must come from the zone allocator rather than temp hunk.
-  data = (char *)COM_LoadZoneFile("vr_weapons.txt", NULL);
+  data = (char *)COM_LoadZoneFile("vr_weapons.txt", &path_id);
+  const qboolean own_game = com_searchpaths && path_id == com_searchpaths->path_id;
   if (!data) {
     DebugLog("VR: no vr_weapons.txt found for %s\n", com_gamedir);
     return;
@@ -8586,7 +8892,11 @@ void VR_LoadWeaponSchema(void) {
     if (!start || !com_token[0])
       break;
 
-    if (!Q_strcmp(com_token, "{")) {
+    if (!Q_strcmp(com_token,"roster")) {
+      start=(char *)COM_Parse(start);
+      if (own_game && !q_strcasecmp(com_token,"complete"))
+        vr_has_authoritative_roster=true;
+    } else if (!Q_strcmp(com_token, "{")) {
       if (num_vr_weapons >= MAX_VR_WEAPONS) {
         Con_Printf("VR: Too many weapons in vr_weapons.txt (max %d)\n",
                    MAX_VR_WEAPONS);
@@ -8595,6 +8905,7 @@ void VR_LoadWeaponSchema(void) {
 
       vr_weapon_cmd_t *w = &vr_weapons[num_vr_weapons];
       memset(w, 0, sizeof(*w));
+      vr_schema_wheel_fields[num_vr_weapons]=0;
       w->scale = 1.0f; // Default scale
       w->held_scale = 1.0f;
       w->owned_stat = -1;
@@ -8614,15 +8925,20 @@ void VR_LoadWeaponSchema(void) {
         if (!Q_strcmp(key, "bitmask")) {
           w->bitmask = Q_atoi(com_token);
         } else if (!Q_strcmp(key, "model")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_PREVIEW;
           Q_strncpy(w->model_path, com_token, sizeof(w->model_path));
         } else if (!Q_strcmp(key, "viewmodel") ||
                    !Q_strcmp(key, "held_model")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_VIEWMODEL;
           Q_strncpy(w->viewmodel_path, com_token, sizeof(w->viewmodel_path));
         } else if (!Q_strcmp(key, "impulse")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_COMMAND;
           w->impulse = Q_atoi(com_token);
         } else if (!Q_strcmp(key, "scale")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_SCALE;
           w->scale = Q_atof(com_token);
         } else if (!Q_strcmp(key, "offset")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_OFFSET;
           w->offset[0] = Q_atof(com_token);
           start = (char *)COM_Parse(start);
           w->offset[1] = Q_atof(com_token);
@@ -8717,21 +9033,27 @@ void VR_LoadWeaponSchema(void) {
           w->spawn_at_self_origin = Q_atoi(com_token) != 0;
           w->has_spawn_at_self_origin = true;
         } else if (!Q_strcmp(key, "owned_stat")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_OWNERSHIP;
           w->owned_stat = VR_ParseStatName(com_token, NULL);
         } else if (!Q_strcmp(key, "owned_mask")) {
           w->owned_mask = Q_atoi(com_token);
         } else if (!Q_strcmp(key, "active_stat")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_ACTIVE;
           w->active_stat = VR_ParseStatName(com_token, NULL);
         } else if (!Q_strcmp(key, "active_mask")) {
           w->active_mask = Q_atoi(com_token);
         } else if (!Q_strcmp(key, "ammo")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_AMMO;
           int default_max = 0;
           w->ammo_stat = VR_ParseStatName(com_token, &default_max);
           if (!w->ammo_max)
             w->ammo_max = default_max;
+          if (default_max) vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_AMMO_MAX;
         } else if (!Q_strcmp(key, "ammo_stat")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_AMMO;
           w->ammo_stat = VR_ParseStatName(com_token, NULL);
         } else if (!Q_strcmp(key, "ammo_max")) {
+          vr_schema_wheel_fields[num_vr_weapons] |= VR_SCHEMA_AMMO_MAX;
           w->ammo_max = Q_atoi(com_token);
         }
       }
@@ -8854,6 +9176,7 @@ void VR_LoadWeaponSchema(void) {
   // Precache models
   for (int i = 0; i < num_vr_weapons; i++) {
     vr_weapon_cmd_t *w = &vr_weapons[i];
+    VR_NormalizeLegacyWeaponSchema(w,&vr_schema_wheel_fields[i]);
     if (w->model_path[0])
       Mod_ForName(w->model_path, false);
     if (w->viewmodel_path[0] &&
@@ -8897,11 +9220,8 @@ void VR_LoadWeaponSchema(void) {
     if (w->viewmodel_path[0] && vr_schema_has_enhanced_mp_muzzle_offset[i])
       VR_RegisterEnhancedMPMuzzleOffset(
           w->viewmodel_path, vr_schema_enhanced_mp_muzzle_offset[i]);
-    if (w->bitmask || w->owned_stat >= 0 || w->active_stat >= 0)
-      VR_AddOrUpdateDynWeapon(w->bitmask, w->impulse, w->model_path, 0, false,
-                              w->scale, w->offset, w->has_offset,
-                              w->owned_stat, w->owned_mask, w->active_stat,
-                              w->active_mask, w->ammo_stat, w->ammo_max, true);
+    if (own_game && (w->bitmask || w->owned_stat >= 0 || w->active_stat >= 0))
+      VR_ApplyWeaponSchema(w,vr_schema_wheel_fields[i]);
   }
 }
 
@@ -8930,6 +9250,43 @@ static qboolean VR_WWheelAmmoFromEntVar(int entvaroffs, int *ammo_stat,
   default:
     return false;
   }
+}
+
+static qboolean VR_ApplyWWheelSlot(int weaponnum, int impulse,
+                                 int ammo_stat, int ammo_max) {
+  /* The rerelease Rogue roster accidentally gives its final axe slot the
+   * Lava Nailgun bit. Its distinct native command makes this unambiguous. */
+  if (rogue && weaponnum == RIT_LAVA_NAILGUN && impulse == 1)
+    weaponnum = RIT_AXE;
+  vr_weapon_cmd_t slot = {};
+  slot.bitmask = weaponnum;
+  slot.impulse = impulse;
+  slot.owned_stat = -1;
+  slot.owned_mask = weaponnum;
+  slot.active_stat = -1;
+  slot.ammo_stat = ammo_stat;
+  slot.ammo_max = ammo_max;
+  qboolean ambiguous;
+  vr_dyn_weapon_t *existing = VR_SchemaWeaponSlot(&slot, &ambiguous);
+  if (ambiguous) return false;
+  slot.owned_stat = VR_GameDirIs("enyo") ? STAT_VR_WEAPONS : STAT_ITEMS;
+  slot.active_stat = STAT_ACTIVEWEAPON;
+  slot.active_mask = weaponnum;
+  unsigned int fields = VR_SCHEMA_COMMAND | VR_SCHEMA_OWNERSHIP |
+      VR_SCHEMA_ACTIVE | VR_SCHEMA_AMMO | VR_SCHEMA_AMMO_MAX;
+  if (existing) {
+    fields &= ~existing->schema_fields;
+    if (existing->owned_stat >= 0) {
+      slot.owned_stat = existing->owned_stat;
+      slot.owned_mask = existing->owned_mask;
+    }
+    if (existing->schema_fields & VR_SCHEMA_ACTIVE) {
+      slot.active_stat = existing->active_stat;
+      slot.active_mask = existing->active_mask;
+    }
+  }
+  VR_ApplyWeaponSchema(&slot, fields);
+  return true;
 }
 
 static void VR_LoadWWheelSchema(void) {
@@ -8969,11 +9326,7 @@ static void VR_LoadWWheelSchema(void) {
         ammo_stat = -1;                                                    \
         ammo_max = 0;                                                      \
       }                                                                    \
-      if (VR_AddOrUpdateDynWeapon(weaponnum, impulse, NULL, 0, false, 1.0f, \
-                                  vec3_origin, false, STAT_ITEMS, weaponnum, \
-                                  STAT_ACTIVEWEAPON, weaponnum, ammo_stat,   \
-                                  ammo_max, true))                            \
-        ++loaded;                                                            \
+      if (VR_ApplyWWheelSlot(weaponnum,impulse,ammo_stat,ammo_max)) ++loaded; \
     }                                                                      \
     weaponnum = 0;                                                         \
     impulse = 0;                                                           \
@@ -9056,7 +9409,7 @@ static void VR_LoadWWheelSchema(void) {
   }
   VR_COMMIT_WWHEEL_SLOT();
   Z_Free(data);
-  vr_has_authoritative_wwheel = loaded > 0;
+  vr_has_authoritative_roster |= loaded > 0;
   Con_Printf("VR: Loaded %d weapon slots from wwheel.txt\n", loaded);
 #undef VR_COMMIT_WWHEEL_SLOT
 }
@@ -9090,7 +9443,7 @@ void VR_InitGame() {
   VR_ResetWeaponGameTransitionState();
   VR_WeaponCatalog_Reset(&vr_weapon_catalog);
   VR_ResetDynWeaponsToBase();
-  vr_has_authoritative_wwheel = false;
+  vr_has_authoritative_roster = false;
   /* Profile metadata is the fallback.  A matching file schema wins below. */
   VR_AddBuiltinWeaponDefaults();
   InitAllWeaponCVars();
@@ -11512,7 +11865,12 @@ void VR_TrackWeapons(void) {
    * QuakeC impulse or suppress an otherwise selectable fallback. */
   VR_WeaponCatalog_Observe(&vr_weapon_catalog, active, model_idx);
 
-  int found = VR_FindDynWeaponForActive(active, model_idx);
+  qboolean ambiguous;
+  int found = VR_FindDynWeaponForActive(active, model_idx, &ambiguous);
+  if (ambiguous) {
+    VR_ContinueWeaponSelection();
+    return;
+  }
   vr_dyn_weapon_t *w = (found >= 0) ? &dyn_weapons[found] : NULL;
 
   // Learned info for existing weapon
@@ -11520,7 +11878,12 @@ void VR_TrackWeapons(void) {
     /* Selector-only file rosters know the command and ownership but omit a
      * display model. Once observed, retain its name across map precaches,
      * not a pointer into the old map's model table. */
-    if (w->from_schema && (!w->model_path || !w->model_path[0])) {
+    if (w->from_schema && !w->game_profile &&
+        !(w->schema_fields & VR_SCHEMA_VIEWMODEL)) {
+      q_strlcpy(w->viewmodel_path,model_path,sizeof(w->viewmodel_path));
+    }
+    if (w->from_schema && !w->game_profile &&
+        !(w->schema_fields & VR_SCHEMA_PREVIEW)) {
       q_strlcpy(w->learned_model_path, model_path,
                 sizeof(w->learned_model_path));
       w->model_path = w->learned_model_path;
@@ -11540,7 +11903,7 @@ void VR_TrackWeapons(void) {
     }
   }
   // Fully new weapon from a mod (not in base table)
-  else if (num_dyn_weapons < MAX_DYN_WEAPONS) {
+  else {
     int owned_stat = -1;
     int owned_mask = 0;
 
@@ -11549,11 +11912,25 @@ void VR_TrackWeapons(void) {
     // Discovery may identify an unknown weapon, but its selection command is
     // intentionally left unset. QuakeC impulse namespaces are arbitrary, so
     // only a schema or built-in mod definition can safely supply that command.
-    w = VR_AddOrUpdateDynWeapon(active, 0, NULL, model_idx, true, 1.0f,
-                                vec3_origin, false, owned_stat, owned_mask, -1,
-                                0, -1, 0, false);
-    if (!w)
-      return;
+    /* Reuse only an observation of this exact held path. A failed/ambiguous
+     * declaration match must never fall into a broader first-match merger. */
+    for (int i=0;i<num_dyn_weapons;i++) {
+      vr_dyn_weapon_t *observation=&dyn_weapons[i];
+      if (VR_DynWeaponCatalogSource(observation)==VR_WEAPON_CATALOG_SOURCE_DISCOVERED &&
+          observation->bitmask==active &&
+          !q_strcasecmp(observation->learned_model_path,model_path)) {
+        w=observation; break;
+      }
+    }
+    if (!w) {
+      if (num_dyn_weapons >= MAX_DYN_WEAPONS) {
+        VR_ContinueWeaponSelection(); return;
+      }
+      w=&dyn_weapons[num_dyn_weapons++]; VR_InitDynWeapon(w);
+    }
+    w->bitmask=active; w->model_index=model_idx; w->discovered=true;
+    w->owned_stat=owned_stat; w->owned_mask=owned_mask;
+    q_strlcpy(w->learned_model_path,model_path,sizeof(w->learned_model_path));
 
     Con_DPrintf("VR: Discovered mod weapon bitmask %d model %d impulse %d owned_stat %d\n",
                 active, model_idx, w->impulse, owned_stat);
@@ -11585,42 +11962,6 @@ void VR_ResetWeaponTracking(void) {
       dyn_weapons[i].discovered = false;
   }
 
-  // Rogue expansion uses different bitmasks: RIT_AXE=2048, and reuses
-  // 4096 for RIT_LAVA_NAILGUN. Fix up the axe entry accordingly.
-  dyn_weapons[0].bitmask = rogue ? 2048 : 4096;
-
-  // Add expansion-specific weapons to the table (once) so they have proper
-  // model paths and impulses instead of relying on dynamic discovery.
-  if (rogue && !rogue_weapons_added) {
-    VR_AddOrUpdateDynWeapon(RIT_LAVA_NAILGUN, 4, "progs/g_nail.mdl", 0,
-                            false, 1.0f, vec3_origin, false, -1, 0, -1, 0,
-                            STAT_NAILS, 200, false);
-    VR_AddOrUpdateDynWeapon(RIT_LAVA_SUPER_NAILGUN, 5, "progs/g_nail2.mdl", 0,
-                            false, 1.0f, vec3_origin, false, -1, 0, -1, 0,
-                            STAT_NAILS, 200, false);
-    VR_AddOrUpdateDynWeapon(RIT_MULTI_GRENADE, 6, "progs/g_rock.mdl", 0,
-                            false, 1.0f, vec3_origin, false, -1, 0, -1, 0,
-                            STAT_ROCKETS, 100, false);
-    VR_AddOrUpdateDynWeapon(RIT_MULTI_ROCKET, 7, "progs/g_rock2.mdl", 0,
-                            false, 1.0f, vec3_origin, false, -1, 0, -1, 0,
-                            STAT_ROCKETS, 100, false);
-    VR_AddOrUpdateDynWeapon(RIT_PLASMA_GUN, 8, "progs/g_light.mdl", 0, false,
-                            1.0f, vec3_origin, false, -1, 0, -1, 0,
-                            STAT_CELLS, 100, false);
-    rogue_weapons_added = true;
-  }
-  if (hipnotic && !hipnotic_weapons_added) {
-    VR_AddOrUpdateDynWeapon(HIT_MJOLNIR, 1, "progs/g_hammer.mdl", 0, false,
-                            1.0f, vec3_origin, false, -1, 0, -1, 0, -1, 0,
-                            false);
-    VR_AddOrUpdateDynWeapon(HIT_LASER_CANNON, 8, "progs/g_laserg.mdl", 0,
-                            false, 1.0f, vec3_origin, false, -1, 0, -1, 0,
-                            STAT_CELLS, 100, false);
-    VR_AddOrUpdateDynWeapon(HIT_PROXIMITY_GUN, 6, "progs/g_prox.mdl", 0,
-                            false, 1.0f, vec3_origin, false, -1, 0, -1, 0,
-                            STAT_ROCKETS, 100, false);
-    hipnotic_weapons_added = true;
-  }
   VR_AddBuiltinWeaponDefaults();
 
   // Keep known weapon definitions across map loads; observations are map-local.
@@ -11632,6 +11973,7 @@ typedef enum {
   VR_WEAPON_HIDDEN_DWELL_ONLY,
   VR_WEAPON_HIDDEN_PROFILE_FALLBACK,
   VR_WEAPON_HIDDEN_SCHEMA_FALLBACK,
+  VR_WEAPON_HIDDEN_KNOWN_SLOT,
   VR_WEAPON_HIDDEN_UNOWNED
 } vr_weapon_visibility_t;
 
@@ -11641,6 +11983,7 @@ VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
   qboolean active;
   qboolean has_schema_peer = false;
   qboolean has_profile_peer = false;
+  qboolean has_stock_peer = false;
   vr_weapon_catalog_source_t source;
 
   if (w->discovered && (w->model_index <= 0 ||
@@ -11658,23 +12001,32 @@ VR_WeaponVisibility(const vr_dyn_weapon_t *w) {
    * This leaves only one canonical entry for a reused item bit, while model
    * mismatches discovered at runtime remain separate and unselectable.
    */
-  if (w->bitmask) {
+  {
     for (int i = 0; i < num_dyn_weapons; i++) {
       const vr_dyn_weapon_t *other = &dyn_weapons[i];
 
-      if (other == w || other->bitmask != w->bitmask)
+      if (other == w || !VR_DynWeaponsShareSlot(other,w))
         continue;
       if (other->from_schema)
         has_schema_peer = true;
       if (other->game_profile)
         has_profile_peer = true;
+      if (!vr_has_authoritative_roster &&
+          VR_DynWeaponCatalogSource(other) == VR_WEAPON_CATALOG_SOURCE_STOCK &&
+          VR_WeaponIsOwned(other))
+        has_stock_peer = true;
     }
   }
 
   owned = VR_WeaponIsOwned(w);
   active = VR_WeaponIsActive(w);
   source = VR_DynWeaponCatalogSource(w);
-  if (!VR_WeaponCatalog_ShouldExpose(source, vr_has_authoritative_wwheel,
+  /* Model-only observations are diagnostic, not a second selectable row for
+   * a slot already covered by the compatibility roster. Never compact rows:
+   * open-menu retention and selection retries retain their catalogue index. */
+  if (source == VR_WEAPON_CATALOG_SOURCE_DISCOVERED && has_stock_peer)
+    return VR_WEAPON_HIDDEN_KNOWN_SLOT;
+  if (!VR_WeaponCatalog_ShouldExpose(source, vr_has_authoritative_roster,
                                      has_schema_peer, has_profile_peer, owned,
                                      active)) {
     if (!owned && !active)
@@ -11708,6 +12060,8 @@ VR_WeaponVisibilityName(vr_weapon_visibility_t visibility) {
     return "schema-fallback";
   case VR_WEAPON_HIDDEN_UNOWNED:
     return "unowned";
+  case VR_WEAPON_HIDDEN_KNOWN_SLOT:
+    return "known-slot-observation";
   default:
     return "unknown";
   }
@@ -11799,13 +12153,40 @@ static int VR_WeaponSelectionImpulse(const vr_dyn_weapon_t *w) {
   if (!w->from_schema && !w->game_profile && !w->use_item_ownership)
     return 0;
 
-  if (VR_IsDwellGame()) {
+  if (VR_IsDwellGame() && !(w->schema_fields & VR_SCHEMA_COMMAND)) {
     impulse = VR_DwellImpulseForActive(w->bitmask);
     if (impulse > 0)
       return impulse;
   }
 
   return w->impulse;
+}
+
+static qmodel_t *VR_WeaponPreviewModel(const vr_dyn_weapon_t *w) {
+  const char *path=VR_DynWeaponPreviewPath(w);
+  const char *held=VR_DynWeaponViewmodel(w);
+  qmodel_t *model=NULL;
+  /* File preview > current native profile variant > held fallback. Observing
+   * a viewmodel never replaces a declared pickup model or its scale/offset. */
+  if (path && path[0]) model=Mod_ForName(path,false);
+  if (model && model->type==mod_alias) return model;
+  if (held && held[0]) model=Mod_ForName(held,false);
+  if (model && model->type==mod_alias) return model;
+  if (w->discovered && w->model_index>0 &&
+      VR_ModelIndexLooksWeapon(w->model_index)) {
+    model=cl.model_precache[w->model_index];
+    if (model && model->type==mod_alias) return model;
+  }
+  if (path && path[0] && (!held || !held[0])) {
+    char fallback[MAX_QPATH];
+    q_strlcpy(fallback,path,sizeof(fallback));
+    char *g=strstr(fallback,"/g_");
+    if (g) {
+      g[1]='v'; model=Mod_ForName(fallback,false);
+      if (model && model->type==mod_alias) return model;
+    }
+  }
+  return NULL;
 }
 
 static int VR_GetWeaponMenuPlayers(int *out, int max) {
@@ -12472,27 +12853,7 @@ static void VR_RunWeaponMenu(qboolean draw) {
 
       vr_dyn_weapon_t *w = visible[w_index];
 
-      // Load learned/schema models first so mods can replace vanilla slots.
-      qmodel_t *mdl = NULL;
-      if ((w->discovered || w->from_schema) && w->model_index > 0 &&
-          w->model_index < MAX_MODELS &&
-          VR_ModelIndexLooksWeapon(w->model_index)) {
-        mdl = cl.model_precache[w->model_index];
-      }
-      if ((!mdl || mdl->type != mod_alias) && w->model_path) {
-        mdl = Mod_ForName(w->model_path, false);
-        // If pickup model not found, try viewmodel as fallback
-        if (!mdl || mdl->type != mod_alias) {
-          // Replace g_ with v_ for viewmodel fallback
-          char vmodel[64];
-          q_strlcpy(vmodel, w->model_path, sizeof(vmodel));
-          char *g_pos = strstr(vmodel, "/g_");
-          if (g_pos) {
-            g_pos[1] = 'v';
-            mdl = Mod_ForName(vmodel, false);
-          }
-        }
-      }
+      qmodel_t *mdl = VR_WeaponPreviewModel(w);
       if (!mdl || mdl->type != mod_alias) {
         // We still increment the assigned index so the wheel spacing isn't
         // ruined by a missing model
