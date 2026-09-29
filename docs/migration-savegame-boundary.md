@@ -1,5 +1,14 @@
 # Multiplayer save migration boundary
 
+Current local/restored movement evidence is recorded in the
+[local/load checkpoint](predictive-local-load-2.0-plan.md). Actual v5 private
+fastload/autofastload uses reconnect isolation; v7 restored first-player movement,
+pending-save refusal, second named payload restoration and stale-ground native
+fallback pass Linux software checks and final Astra Max source review. These
+checks use prepared renderer resources and a synthetic second endpoint; they do
+not close the wider save matrix described below. The earlier sections retain
+their original planning/checkpoint chronology.
+
 The current vkQuake loader in `Quake/host_cmd.c` owns legacy version 5 and KEX
 version 6 saves, including KEX mod selection, extended precaches, fastload, and
 the existing QuakeC entity/global parser. `Quake/savegame_dialect.h` already

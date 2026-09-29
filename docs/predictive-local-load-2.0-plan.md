@@ -1,7 +1,7 @@
 # Local and restored private movement
 
-Status: implemented; local Astra Max design review incorporated below. Final
-implementation review is in progress; Linux software checks are recorded below.
+Status: implemented and accepted by final local Astra Max review. Linux
+software checks and their scope limits are recorded below.
 This is a bounded continuation of the complete migration goal, not completion
 of the inventory. [Current scope exclusions](migration-scope-decisions.md) apply.
 
@@ -148,3 +148,19 @@ uses the established synthetic endpoint and actual named spawn/begin. Renderer
 resources are prepared; complete graphical serverinfo, physical OpenXR and the
 wider reverse-order/dead-player/late-join/save-dialect matrix remain outside this
 bounded evidence. The full migration goal remains open.
+
+## Final Astra Max disposition
+
+Dirac verified effective `gpt-6-astra` / `max` from runtime model/effort settings
+and reviewed the final source read-only. Main spot-checked its cited reset,
+pending-command, admission, connection and load boundaries against the committed
+implementation. The review found no production blocker and approved this bounded
+slice. It did not independently execute the software matrix.
+
+| Recommendation / qualification | Disposition |
+| --- | --- |
+| Keep the reviewed connection/load/admission adapter | Adopted: no additional state machine or production change required. |
+| Prepared client defaults alone cannot prove reset | Repaired: execute actual CL_ClearState and inspect history/clock/metadata before prepared resources replace state. |
+| Replay after full completion alone cannot prove outstanding input prediction | Repaired: stock local case predicts an actual unconsumed socket command and compares it to subsequent authoritative host completion. |
+| Public fastload assertions establish cursor rather than bytewise journal preservation | Adopted wording refinement: report socket, signon and sequence cursor preservation. Public production sender/load behavior remains unchanged. |
+| Keep graphical cleanup, second endpoint transport and wider restoration evidence limits explicit | Adopted: retained above and in tests/README.md. These are not discovered production defects. |

@@ -34,7 +34,7 @@ preserve position/ammo while reconnect discards queued and retained old input.
 The stock local case also leaves a command outstanding on the actual socket,
 replays it from the received snapshot, requires visible predicted displacement,
 and compares prediction with subsequent authoritative completion within0.125units.
-Public fastload retains its socket/signon/journal and reaches the original
+Public fastload retains its socket/signon/sequence cursor and reaches the original
 graphics cleanup boundary; graphical cleanup itself is not qualified.
 
 Actual v7 cases restore the first named identity and move it while the second
