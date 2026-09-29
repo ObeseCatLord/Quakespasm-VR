@@ -372,3 +372,88 @@ Final bounded source review follows these corrections. Identity/overlay source
 acceptance does not prove actual selection, render/asset availability or full
 native rosters. Complete-roster/upgrade work and end-of-goal Linux/ARM checks
 remain required. No builds/tests/fixtures have run for this stage.
+
+The four corrections and provenance deletion are now integrated. Final source
+scope is789 changed lines against the400–750 estimate; the39-line overrun is
+bounded to sharing the existing activation predicate, preserving/resetting
+existing comparison inputs, and deleting the obsolete provenance enum/array
+and writers. It adds no new owner or architecture. Final Astra review must
+challenge that interpretation and confirm the corrected source paths. The
+capacity fallback remains stored exactly, including explicit zero, while
+current-type runtime capacity retains primary precedence.
+
+## Stage4 verified brief: native rosters, variants and diagnostics
+
+This is planning, not stage4 implementation or acceptance. Direct read-only
+reference remains primary master `51b452c0`, not old feature-map assumptions.
+`vr.c:1562..1887` supplies current native definitions; `1245..1340` resolves
+held/preview variants and model discriminators; `11980..12143` applies peer
+visibility and prints `vr_weaponlist`. The current 2.0 tables and consumers in
+`vr_weapon_menu.c` demonstrate these remaining mismatches:
+
+- AD's eight-slot native roster is absent. Copy its exact pickup/held pairs,
+  commands and ITEMS/ACTIVEWEAPON descriptors. Only primary's existing exact
+  `ad` inventory gate is established by this evidence. AD asset/calibration
+  family detection proves geometry, not another mod's QuakeC inventory or
+  upgrade flags; do not expand gameplay gates from that signal.
+- Dwell's axe held identity is v_axe2; its other exact held paths and permitted
+  v_axeb/v_nail3 variants must survive profile construction. The current table
+  lacks the axe profile. Retain existing primary Dwell-family gating.
+- Alk/limjam use WEAPONS ownership, including stock-looking bits that overlap
+  unrelated ITEMS. Copy native held paths (including 20/40fps names); correct
+  saw impulse to226 and mine to229 from the actual primary table. Enyo also
+  uses WEAPONS, and its launcher previews spell glaunch/rlaunch.
+- Enyo's AV72 is an upgrade of selector4 using WEAPONS flag16384, not the
+  current independent selector1024/impulse5 row. AD axe grapple/shadow variants,
+  SSG Widowmaker and lightning plasma use MODITEMS128/4096,2,64 respectively.
+  They change held/preview paths without allocating slots or altering native
+  parent ownership/commands. Explicit held and preview keys independently win.
+- Primary marks ad, alk/limjam, enyo, qbj3 and Dwell verified complete. Preserve
+  current wwheel and complete-file authority under the existing catalog flag.
+  Do not mark partial Mjolnir/MG3/expansion additions complete. Physical dual-
+  state Mjolnir behavior remains outside scope.
+- Current peer fields are not computed; primary compares descriptor identity
+  before suppressing fallback rows and known-slot observations. Current2.0
+  also lacks `vr_weaponlist`, which exposes these exact decisions to users.
+
+Minimal adapter: extend the existing native profile row with its known held
+path and update its literal tables, rather than add another roster registry.
+Use primary's existing native variant switch in two small path-resolution
+helpers within this same catalog owner. Pass current stats where needed; do
+not mutate schema fields, IDs, source provenance or commands on upgrade change.
+Reuse those helpers at active/discovery matching and main-thread preview loads.
+Accept primary's known model variants only for native profiles without authored
+held keys; no arbitrary basename inference of upgrade ownership.
+
+The existing preview cache is indexed by stable row and remembers missing
+models (`PrepareModels:1576`). A variant can change without a game/session
+generation change. Retain the resolved preview/held pair in that cache and
+clear just that row's model/geometry/missing marker when either path changes;
+load through existing Mod_ForName before worker preparation. Copy resolved
+preview strings into the existing immutable frame storage (`:2127`). No loader
+or renderer branch, second model cache, asynchronous catalog mutation or new
+per-frame allocation. Validate cache/fallback selection against the same paths
+used by active/discovery matching, including independently authored overrides.
+
+Extract the current visible-row decision once for the existing BuildVisible
+consumer and new diagnostic command. Compute compatible source peers using the
+copied primary identity helper, preserving conflicting declared identities and
+stable rows; hide observed duplicates of an owned non-authoritative stock slot
+as primary does. Register the diagnostic next to existing weapon-menu commands
+in `cl_input.c`, with one public declaration in `vr_weapon_menu.h`. It must use
+the same ownership/active/visibility functions, not reimplement selection or
+load assets. Diagnostic output includes source/visibility reason, selector,
+command, ownership/active stat/mask/value, held and resolved preview paths.
+
+Write set: `vr_weapon_menu.c/.h`, bounded command registration in `cl_input.c`.
+Expected250–450 changed lines. Separate inventory/upgrade state, AD gameplay
+gates inferred from identical meshes, or repeated per-mod gameplay additions
+requires reopening. Existing calibration, native QC, rendering, networking,
+loading and immutable frame owners remain reusable. Local Astra must review
+this verified brief before stage4 production changes.
+
+After all implementation: qualify literal native roster/command/held tables,
+partial authored overrides, empty ownership, parent upgrades while wheel is
+open, missing preview with exact held fallback, source peer conflicts,
+observed known slots, game/map reset and diagnostic/visible-row agreement.
+User-owned live VR/performance tests remain outside the implementation goal.
