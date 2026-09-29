@@ -1,7 +1,7 @@
 # OpenXR session recovery on the existing Vulkan binding
 
-Status: design accepted with adaptations before production edits; implementation
-and final local review pending.
+Status: implemented with passing bounded Linux checks; final local Astra source
+review pending.
 This advances VR-001/VR-002/XR-002 within the full migration. It does not remove
 ordinary desktop hot-connect or instance-loss recovery from the parent scope.
 Current scope exclusions and user-deferred live/device/platform/performance
@@ -68,6 +68,8 @@ must state their limits. The user performs live testing later.
    after normal retirement; preserve original stop reason. Escalation to
    instance loss/failure remains destructive. Positive SESSION_LOSS_PENDING
    from frame calls must retain its proper reason rather than become FAILURE.
+   Source inspection confirmed that WaitFrame already invokes `sayf`, which
+   classifies that positive result correctly; no new classification was needed.
 3. At every new attachment, including healthy disable/re-enable, poll pending instance events,
    query the current HMD system, and require the same system, compatible API
    minimum and same runtime-selected physical device. Preserve original
@@ -120,3 +122,38 @@ Read-only source and official-rule verification completed before critique.
 The P1 design gaps are resolved by these changes to the plan. Actual device
 health, physical reconnect behavior and graphics completion remain live-test
 unknowns, which the user has deferred; software evidence must not imply them.
+
+## Implementation and bounded verification
+
+- The existing `VulkanBinding` records the API version selected at its successful
+  enable2 creation wrapper. Every attachment polls events, verifies its existing
+  queue, then directly queries the current system, API minimum and runtime GPU.
+  Temporary query outputs leave the original provenance unchanged on rejection.
+- Session-only LOSS_PENDING and EXITING retire through the existing owner and
+  preserve binding eligibility. Failed DestroySession abandons the entire
+  backend setup. Instance loss still destroys that setup. No graphics device is
+  reconstructed and renderer-owned handles are never transferred.
+- `VRXR_VulkanRetryAvailable` is observational. The command permits explicit
+  retries only when backend eligibility exists. The existing pending transition
+  block was factored as `GL_OpenXRApplySessionChange`, retaining the same order
+  at the beginning of GL_BeginRendering. Attachment remains latched until a
+  fresh command reaches that boundary. No retry scheduler was added.
+
+Consolidated software checks (2026-09-29 UTC):
+
+| Check | Result and scope |
+| --- | --- |
+| Linux SDL3 Make engine | Pass, warnings treated as errors. |
+| `openxr_session_recovery_fixture.cpp` | Pass: actual backend creation wrappers/session/frame owners with simulated runtime/Vulkan dispatch. Loss event/error/positive WaitFrame, ReleaseSwapchainImage and EndFrame results; explicit successful new frames; no automatic recreation; stale old events; healthy detach with changed system; missing/changed system, API/GPU rejection; failed session destruction and instance escalation; retirement order and balanced queue callbacks. |
+| `openxr_enable_fixture.c` | Pass: actual command/transition/attach/retirement owners, repeated desktop iterations after EXITING, explicit retry and ordinary disable. Actual empty render-resource cleanup runs against a prepared idle device; runtime availability/attachment, donor destructor and input/camera calls are spies. No actual GPU work is submitted. |
+| Existing Vulkan boundary fixture | Pass: version/provenance, borrowed-image access, queue locking and failure unwind. Its main explicitly returns0 so the recovery fixture can reuse its helpers. |
+| Existing stereo camera fixture | Pass: reference invalidation, fresh camera preparation, paused/reference/LOCAL/body-height paths. Four disabled optional FBT/weapon-adjustment stubs repair standalone linking after newer ports. |
+| Focused input continuity fixture | ASan/UBSan pass with leak scanning disabled for sandbox: actual motion reset, GateAndReleaseAll and Neutral helpers release held triggers, preserve appropriate latches and reject held/nonfinite input. |
+
+The older broad `vr_input_fixture.c` does not currently link standalone because
+later FBT, akimbo and UI dependencies lack fixture seams. The focused checks do
+not substitute for full `VR_InputCommands` dispatch, combined renderer/input/
+runtime integration, live controller reconnect or GPU completion. This is a
+recorded verification limitation, not a newly implemented input owner or a
+claim that the entire migration is finished. Ordinary desktop hot-connect and
+full instance/device recovery still require their own shared-owner decisions.

@@ -20,6 +20,13 @@ static int chase_traces;
 static int motion_invalidations;
 void VR_InputInvalidateMotion (void) { ++motion_invalidations; }
 void VR_InputApplyPending (usercmd_t *cmd) { (void)cmd; }
+/* Optional calibration/UI owners are outside this camera fixture. */
+qboolean VR_InputFBTCalibrationVisualSnapshot (const vrxr_frame_t *frame,
+ vr_input_fbt_visual_snapshot_t *snapshot) { (void)frame; (void)snapshot; return false; }
+void VR_WeaponCalibrationAdjustCancel (void) {}
+int VR_InputDominantPhysicalHand (void) { return 1; }
+qboolean VR_WeaponCalibrationAdjustPresentation (vec3_t origin, vec3_t angles)
+{ (void)origin; (void)angles; return false; }
 qboolean SV_RecursiveHullCheck (hull_t *hull, vec3_t p1, vec3_t p2, trace_t *trace, unsigned int hitcontents)
 {
 	// Run the real chase calculation with a known collision point, followed

@@ -1,5 +1,40 @@
 # Migration boundary fixtures
 
+## Explicit OpenXR session recovery
+
+`openxr_session_recovery_fixture.cpp` reuses the Vulkan boundary fixture's
+helpers and runs the actual backend creation/session/frame owners with fake
+runtime and Vulkan dispatch. It checks session loss/EXITING without automatic
+restart, explicit recovery, loss during wait/release/end, healthy detach with
+changed hardware, stale session events, API/GPU/system rejection, failed session
+destruction, instance escalation, retirement order and queue-lock balance.
+
+`openxr_enable_fixture.c` includes the actual renderer source and exercises its
+command, frame-transition, attachment and retirement owners. Repeated desktop
+iterations after EXITING cannot attach; a fresh command schedules re-enable.
+Retirement restores desktop dimensions and clears the old frame/reference.
+Ordinary disable invokes input release. Runtime attachment/eligibility and
+camera/input/destructor calls are spies; render resources are empty and the
+device is prepared idle. It submits no GPU work. Separate camera/input-helper
+fixtures cover reference preparation, held-key release and neutral gates; this
+does not prove complete renderer/input/runtime integration or a live headset.
+
+```sh
+c++ -std=c++14 -DUSE_SDL3 -Wall -Wextra -Werror \
+  -Wno-missing-field-initializers tests/openxr_session_recovery_fixture.cpp \
+  $(pkg-config --cflags --libs sdl3) -o /tmp/qsvr-openxr-session-recovery
+/tmp/qsvr-openxr-session-recovery
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
+  -ffunction-sections -fdata-sections tests/openxr_enable_fixture.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lvulkan -lm \
+  -o /tmp/qsvr-openxr-enable
+/tmp/qsvr-openxr-enable
+```
+
+Require `OPENXR_SESSION_RECOVERY_PASSED` and `OPENXR_ENABLE_PASSED`.
+See the [plan and recorded review](../docs/openxr-session-recovery-2.0-plan.md)
+for retained-binding boundaries and broader recovery work.
+
 ## Local private movement and restored identities
 
 `local_load_native_fixture.c` uses actual paired loopback transport for the
@@ -1717,6 +1752,9 @@ accumulator with prepared gameplay context and mapping/UI boundaries. It checks
 the first new HMD sample becomes a baseline, subsequent displacement is kept,
 pending contact/Gorilla/turn work is dropped, analog neutral/snap latches are
 retained for network recovery, and full tracking invalidation still gates them.
+It also executes the actual GateAndReleaseAll and Neutral helpers: both held
+triggers release and remain neutral-gated; a held trigger or stick is rejected
+until a neutral active input sample. Key_Event is a recording sink.
 It does not execute the complete held-stick/button/contact submission pipeline
 or a headset runtime; the old broad input fixture's dependencies remain separate.
 

@@ -134,6 +134,7 @@ struct VulkanBinding {
 	VkInstance instance;
 	VkPhysicalDevice physicalDevice;
 	VkDevice device;
+	uint32_t apiVersion;
 	XrGraphicsRequirementsVulkan2KHR requirements;
 	std::vector<VulkanQueue> queues;
 	VkFormat format;
@@ -149,7 +150,7 @@ struct VulkanBinding {
 	void (*unlockQueue)(void *);
 	void *queueOwner;
 	VulkanBinding() : getProc(0), instance(VK_NULL_HANDLE), physicalDevice(VK_NULL_HANDLE),
-		device(VK_NULL_HANDLE), requirements(), format(VK_FORMAT_UNDEFINED), extraUsage(0), optionalTransferSourceUnsupported(false), arrayLayers(1), densityMaps(false), fragmentDensityMapEnabled(false), densityImageFlags(0), retireImages(0), owner(0), lockQueue(0), unlockQueue(0), queueOwner(0) {}
+		device(VK_NULL_HANDLE), apiVersion(0), requirements(), format(VK_FORMAT_UNDEFINED), extraUsage(0), optionalTransferSourceUnsupported(false), arrayLayers(1), densityMaps(false), fragmentDensityMapEnabled(false), densityImageFlags(0), retireImages(0), owner(0), lockQueue(0), unlockQueue(0), queueOwner(0) {}
 };
 struct State {
 	LoaderHandle loader;
@@ -953,7 +954,7 @@ static void poll_events() {
 		}
 	}
 }
-static void destroy_session_resources() {
+static bool destroy_session_resources() {
 	const bool unwaited=(g.chain[0].acquired && !g.chain[0].waited) ||
 	                    (g.chain[1].acquired && !g.chain[1].waited);
 	/* The renderer must join CPU callbacks, retire GPU work, and destroy its
@@ -982,7 +983,11 @@ static void destroy_session_resources() {
 	if(g.viewSpace && g.xr.DestroySpace) g.xr.DestroySpace(g.viewSpace);
 	if(g.appSpace && g.xr.DestroySpace) g.xr.DestroySpace(g.appSpace);
 	if(g.xdevList && g.xr.DestroyXDevList) g.xr.DestroyXDevList(g.xdevList);
-	if(g.session && g.xr.DestroySession) g.xr.DestroySession(g.session);
+	const bool destroyed=!g.session || !g.xr.DestroySession || ok("xrDestroySession",g.xr.DestroySession(g.session));
+	if(!destroyed) {
+		g.terminal=true;
+		if(g.stopReason==VRXR_STOP_NONE) g.stopReason=VRXR_STOP_FAILURE;
+	}
 	if(g.gazeActions && g.xr.DestroyActionSet) g.xr.DestroyActionSet(g.gazeActions);
 	if(g.actions && g.xr.DestroyActionSet) g.xr.DestroyActionSet(g.actions);
 	// Reset only session state. Discovery/dispatch and helper-created Vulkan
@@ -1013,6 +1018,7 @@ static void destroy_session_resources() {
 	g.vk.format=VK_FORMAT_UNDEFINED; g.vk.extraUsage=0;
 	g.vk.optionalTransferSourceUnsupported=false;
 	g.vk.arrayLayers=1; g.vk.densityMaps=false; g.vk.densityImageFlags=0; g.vk.retireImages=0; g.vk.owner=0;
+	return destroyed;
 }
 static void destroy_resources() {
 	destroy_session_resources();
@@ -1025,9 +1031,11 @@ static void destroy_resources() {
 }
 
 static void destroy_stopped_runtime() {
-	if(g.useVulkan && g.stopReason==VRXR_STOP_EXITING) {
-		destroy_session_resources();
-		if(g.stopReason==VRXR_STOP_EXITING) { g.terminal=false; return; }
+	if(g.useVulkan && (g.stopReason==VRXR_STOP_EXITING || g.stopReason==VRXR_STOP_SESSION_LOST)) {
+		const bool destroyed=destroy_session_resources();
+		if(destroyed && (g.stopReason==VRXR_STOP_EXITING || g.stopReason==VRXR_STOP_SESSION_LOST)) {
+			g.terminal=false; return;
+		}
 	}
 	destroy_resources();
 }
@@ -1337,7 +1345,7 @@ extern "C" int VRXR_CreateVulkanInstance(PFN_vkGetInstanceProcAddr get_proc,
 	VkResult result=VK_ERROR_INITIALIZATION_FAILED;
 	XrResult xrResult=g.xr.CreateVulkanInstance(g.instance,&create,instance,&result);
 	if(!vulkan_result("xrCreateVulkanInstanceKHR",xrResult,result) || !*instance) return 0;
-	g.vk.getProc=get_proc; g.vk.instance=*instance; return 1;
+	g.vk.getProc=get_proc; g.vk.instance=*instance; g.vk.apiVersion=version; return 1;
 }
 extern "C" VkPhysicalDevice VRXR_VulkanPhysicalDevice(VkInstance instance) {
 	if(!g.useVulkan || !g.instance || g.terminal || !instance || instance!=g.vk.instance) return VK_NULL_HANDLE;
@@ -1386,8 +1394,32 @@ extern "C" int VRXR_SetVulkanQueueCallbacks(void (*lock)(void *), void (*unlock)
 extern "C" void VRXR_DetachVulkan(void) {
 	if(!g.useVulkan) return;
 	if(g.terminal) { destroy_stopped_runtime(); return; }
-	destroy_session_resources();
+	if(!destroy_session_resources()) { destroy_resources(); return; }
 	if(g.terminal) destroy_stopped_runtime();
+}
+extern "C" int VRXR_VulkanRetryAvailable(void) {
+	return g.useVulkan && g.instance && !g.session && !g.terminal &&
+		g.vk.instance && g.vk.physicalDevice && g.vk.device && g.vk.apiVersion &&
+		(g.stopReason==VRXR_STOP_NONE || g.stopReason==VRXR_STOP_EXITING ||
+		 g.stopReason==VRXR_STOP_SESSION_LOST) ? 1 : 0;
+}
+static bool qualify_vulkan_binding() {
+	XrSystemGetInfo systemInfo={XR_TYPE_SYSTEM_GET_INFO};
+	systemInfo.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+	XrSystemId system=XR_NULL_SYSTEM_ID;
+	if(!ok("xrGetSystem on attachment",g.xr.GetSystem(g.instance,&systemInfo,&system))) return false;
+	if(system!=g.system) { say("OpenXR: system changed; restart to select a new Vulkan binding"); return false; }
+	XrGraphicsRequirementsVulkan2KHR requirements={XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN2_KHR};
+	if(!ok("xrGetVulkanGraphicsRequirements2KHR on attachment",g.xr.VulkanRequirements(g.instance,system,&requirements))) return false;
+	const XrVersion selected=XR_MAKE_VERSION(VK_API_VERSION_MAJOR(g.vk.apiVersion),VK_API_VERSION_MINOR(g.vk.apiVersion),0);
+	const XrVersion minimum=XR_MAKE_VERSION(XR_VERSION_MAJOR(requirements.minApiVersionSupported),XR_VERSION_MINOR(requirements.minApiVersionSupported),0);
+	if(!g.vk.apiVersion || selected<minimum) { say("OpenXR: Vulkan API requirements changed; restart to select a new binding"); return false; }
+	XrVulkanGraphicsDeviceGetInfoKHR info={XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR};
+	info.systemId=system; info.vulkanInstance=g.vk.instance;
+	VkPhysicalDevice physical=VK_NULL_HANDLE;
+	if(!ok("xrGetVulkanGraphicsDevice2KHR on attachment",g.xr.VulkanGraphicsDevice(g.instance,&info,&physical))) return false;
+	if(!physical || physical!=g.vk.physicalDevice) { say("OpenXR: selected GPU changed; restart to select a new Vulkan binding"); return false; }
+	return true;
 }
 extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
                                  VkImageUsageFlags extra_image_usage, uint32_t array_layers,
@@ -1405,7 +1437,6 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 		VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM;
 	if((density_image_flags & ~allowed_density_image_flags) ||
 	   (density_image_flags && (!density_maps || !g.vulkanSwapchainImageFlagsSupported))) return 0;
-	g.stopReason=VRXR_STOP_NONE; // this explicit attachment attempt starts a new outcome
 	// The runtime may have gone away while VR was disabled. Do not create a
 	// session until pending instance events have been processed.
 	poll_events();
@@ -1423,6 +1454,10 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 	if(queue_family>=count || !(families[queue_family].queueFlags&VK_QUEUE_GRAPHICS_BIT)) return 0;
 	const VkImageUsageFlags allowed=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
 	if(extra_image_usage&~allowed) return 0;
+	if(!qualify_vulkan_binding()) {
+		if(g.terminal) destroy_stopped_runtime();
+		return 0;
+	}
 	g.vk.extraUsage=0;
 	g.vk.optionalTransferSourceUnsupported=false;
 	if(extra_image_usage&VK_IMAGE_USAGE_TRANSFER_SRC_BIT) g.vk.extraUsage|=XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
@@ -1434,6 +1469,7 @@ extern "C" int VRXR_AttachVulkan(uint32_t queue_family, uint32_t queue_index,
 	binding.instance=g.vk.instance; binding.physicalDevice=g.vk.physicalDevice; binding.device=g.vk.device;
 	binding.queueFamilyIndex=queue_family; binding.queueIndex=queue_index;
 	XrSessionCreateInfo create={XR_TYPE_SESSION_CREATE_INFO}; create.systemId=g.system; create.next=&binding;
+	g.stopReason=VRXR_STOP_NONE; // a qualified session attempt starts a new outcome
 	if(!ok("xrCreateSession Vulkan",g.xr.CreateSession(g.instance,&create,&g.session)) || !finish_session() || g.terminal) {
 		/* A mirror's transfer source is optional. Keep the same density-map
 		 * profile on this retry; only then consider the existing density fallback. */

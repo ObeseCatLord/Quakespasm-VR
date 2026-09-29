@@ -4670,8 +4670,8 @@ static void GL_OpenXRAttach (void)
 	Con_Printf ("OpenXR stereo session attached: %ux%u per eye.\n", width, height);
 }
 
-/* The Vulkan device is selected against OpenXR at startup. Toggle only its
- * session here; rediscovery after a lost runtime needs a new device binding. */
+/* Toggle a session on the startup-selected binding. Explicit reattachment
+ * validates the current system/API/GPU; instance loss needs a new binding. */
 static void GL_OpenXREnable_f (void)
 {
 	const char *value = Cmd_Argv (1);
@@ -4686,7 +4686,7 @@ static void GL_OpenXREnable_f (void)
 		return;
 	}
 	const qboolean enable = value[0] == '1';
-	if (enable && VRXR_StopReason () != VRXR_STOP_NONE)
+	if (enable && VRXR_StopReason () != VRXR_STOP_NONE && !VRXR_VulkanRetryAvailable ())
 	{
 		Con_Printf ("OpenXR runtime stopped; restart with -openxr to select a fresh system/device.\n");
 		return;
@@ -5037,7 +5037,7 @@ static void GL_UploadFragmentShadingRateMap (void)
 #endif
 }
 
-qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *width, int *height)
+static void GL_OpenXRApplySessionChange (void)
 {
 	if (openxr_session_change_pending)
 	{
@@ -5052,6 +5052,11 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		openxr_attach_attempted = false;
 		openxr_session_change_pending = false;
 	}
+}
+
+qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_task, int *width, int *height)
+{
+	GL_OpenXRApplySessionChange ();
 	GL_OpenXRAttach ();
 	if (!use_tasks || vulkan_globals.stereo_active)
 		GL_SynchronizeEndRenderingTask ();

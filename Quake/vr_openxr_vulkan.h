@@ -76,6 +76,10 @@ VkFormat VRXR_VulkanColorFormat(void);
  * Idempotent. Terminal loss may require full teardown instead. Reenable uses
  * AttachVulkan explicitly; Shutdown still abandons the entire setup. */
 void VRXR_DetachVulkan(void);
+/* Observational eligibility for explicit reenable after a session-only stop.
+ * Does not poll the runtime, validate current hardware or create resources.
+ * AttachVulkan requalifies the original system/API/GPU on every attachment. */
+int VRXR_VulkanRetryAvailable(void);
 
 typedef struct {
   VkImage image;

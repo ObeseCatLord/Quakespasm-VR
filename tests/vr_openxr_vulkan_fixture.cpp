@@ -255,4 +255,5 @@ int main() {
  assert(!g.session && !g.frameBegun);
  VRXR_Shutdown();assert(retirement==1 && !g.vk.lockQueue && !g.vk.unlockQueue && !g.vk.queueOwner);
  puts("OpenXR Vulkan boundary: creation/version/provenance, image ownership, queue locking, failure unwind and begun-frame retirement passed");
+ return 0;
 }
