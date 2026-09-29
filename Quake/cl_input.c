@@ -573,6 +573,7 @@ static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 		bits |= 1;
 	if (isfinal)
 		in_attack.state &= ~2;
+	bits = VR_InputMergeMeleeAttack (bits, isfinal);
 	if (VR_InputSuppressUncalibratedAttack (cmd))
 		bits &= ~1u;
 

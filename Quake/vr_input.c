@@ -157,6 +157,23 @@ static qboolean vr_input_gorilla_discontinuity = true;
 static vec3_t vr_input_roomscale_last_position;
 static qboolean vr_input_roomscale_position_valid;
 
+/* Generic fallback owns input intent only; native QC still owns combat. */
+typedef struct
+{
+	qboolean valid, consumed, pending;
+	qmodel_t *model;
+	aliashdr_t *geometry;
+	int modelindex, weapon, skin, hand, controller_profile, endpoint;
+	unsigned int generation;
+	vr_melee_gesture_profile_t profile;
+	vec3_t held, muzzle, previous[2], direction;
+	float held_scale, gun_scale, gun_pitch, units;
+	double sample_time, intent_time;
+	uint64_t sample_id;
+	float arc;
+} vr_input_generic_melee_t;
+static vr_input_generic_melee_t vr_input_generic_melee;
+
 static vr_fbt_manager_t vr_input_fbt_manager;
 static qboolean vr_input_fbt_initialized;
 static vr_fbt_profile_t vr_input_fbt_profile;
@@ -1845,6 +1862,201 @@ static qboolean VR_InputContactPointSpeed (const vrxr_device_t *device,
 		isfinite (rotational_velocity[1]) && isfinite (rotational_velocity[2]) &&
 		VR_InputWireVec (point_velocity) && isfinite (*speed) && *speed >= 0.0f &&
 		*speed <= VR_INPUT_CONTACT_SPEED_MAX;
+}
+
+static qboolean VR_InputGenericMeleeIdentity (const vrxr_frame_t *frame,
+	vr_input_generic_melee_t *identity)
+{
+	qmodel_t *exact_model;
+	aliashdr_t *exact_geometry;
+	stockaxe_edge_t edge;
+	int exact_index, exact_skin;
+	const int hand = VR_InputDominantPhysicalHand ();
+	const int modelindex = cl.stats[STAT_WEAPON];
+
+	memset (identity, 0, sizeof (*identity));
+	if (!VR_InputMotionContextAccepted (frame) || !frame->sample_id ||
+		!frame->should_render || frame->reference_changed ||
+		!isfinite (frame->sample_time_seconds) ||
+		!isfinite (vr_immersive_melee.value) || vr_immersive_melee.value == 0 ||
+		!VR_InputControllerAim () || !V_TrackedSessionActive () || CL_AngleLocked () ||
+		VR_WeaponMenu_IsOpenVR () || VR_WeaponCalibrationAdjustActive () ||
+		hand < 0 || hand > 1 || !VR_InputHandAccepted (frame, hand) ||
+		!frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
+		frame->devices[0].hand != -1 ||
+		!frame->devices[hand + 1].valid || !frame->devices[hand + 1].tracked ||
+		frame->devices[hand + 1].kind != VRXR_DEVICE_HAND ||
+		frame->devices[hand + 1].hand != hand || cl.stats[STAT_HEALTH] <= 0 ||
+		!cl.worldmodel || cl.worldmodel->needload || !cl.entities ||
+		cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
+		modelindex < 1 || modelindex >= MAX_MODELS || cl.viewent.skinnum < 0)
+		return false;
+	/* An admitted exact-contact weapon has one combat input owner. */
+	if ((VR_InputMeleeAuthorized () && VR_InputSelectedStockAxe (&exact_index,
+		&exact_model, &exact_skin, &exact_geometry, &edge)) ||
+		(VR_InputHeldMeleeAuthorized () && VR_InputSelectedHeldMelee (&exact_index,
+		&exact_model, &exact_skin, &exact_geometry)) ||
+		(cl.pendingcmd.vr_contact.flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE))
+		return false;
+	identity->model = cl.model_precache[modelindex];
+	if (!identity->model || identity->model->needload ||
+		identity->model->type != mod_alias || identity->model != cl.viewent.model ||
+		!VR_WeaponCalibrationLookupMelee (identity->model->name, &identity->profile))
+		return false;
+	identity->geometry = (aliashdr_t *)Mod_Extradata_CheckSkin (identity->model, cl.viewent.skinnum);
+	if (!identity->geometry ||
+		!VR_WeaponCalibrationLookupHeld (identity->model->name,
+			identity->geometry->poseverttype == PV_MD5 ||
+			identity->geometry->poseverttype == PV_MD5_8,
+			identity->held, &identity->held_scale) ||
+		!VR_WeaponCalibrationCurrentMuzzle (identity->muzzle))
+		return false;
+	identity->gun_scale = vr_gunmodelscale.value;
+	identity->gun_pitch = vr_gunmodelpitch.value;
+	identity->units = V_VRUnitsPerMetre ();
+	if (!isfinite (identity->units) || identity->units <= 0 ||
+		!isfinite (identity->gun_scale) || identity->gun_scale <= 0 ||
+		!isfinite (identity->gun_pitch))
+		return false;
+	identity->modelindex = modelindex;
+	identity->weapon = cl.stats[STAT_ACTIVEWEAPON];
+	identity->skin = cl.viewent.skinnum;
+	identity->hand = hand;
+	identity->controller_profile = frame->hands[hand].profile;
+	identity->generation = vr_input_reset_generation;
+	identity->valid = true;
+	return true;
+}
+
+static qboolean VR_InputGenericMeleeSameIdentity (const vr_input_generic_melee_t *a,
+	const vr_input_generic_melee_t *b)
+{
+	return a->valid && b->valid && a->model == b->model && a->geometry == b->geometry &&
+		a->modelindex == b->modelindex && a->weapon == b->weapon &&
+		a->skin == b->skin && a->hand == b->hand &&
+		a->controller_profile == b->controller_profile && a->generation == b->generation &&
+		!memcmp (&a->profile, &b->profile, sizeof (a->profile)) &&
+		!memcmp (a->held, b->held, sizeof (a->held)) &&
+		!memcmp (a->muzzle, b->muzzle, sizeof (a->muzzle)) &&
+		a->held_scale == b->held_scale && a->gun_scale == b->gun_scale &&
+		a->gun_pitch == b->gun_pitch && a->units == b->units;
+}
+
+static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame)
+{
+	vr_input_generic_melee_t identity;
+	stockaxe_edge_t edge = {0};
+	vec3_t render[2], offsets[2], points[2], motion[2], direction;
+	vec3_t grip, angles;
+	float yaw, mapping_yaw, speed[2], point_motion, metres;
+	double seconds;
+	int endpoint;
+
+	if (!VR_InputGenericMeleeIdentity (frame, &identity) ||
+		!V_TrackedPresentationYaw (&yaw) || !V_TrackedMappingYaw (&mapping_yaw) ||
+		!V_TrackedHandBodyOffset (identity.hand, grip) ||
+		!V_TrackedPresentationHandAngles (identity.hand, angles))
+		goto reset;
+	if (identity.profile.has_base || identity.profile.has_tip)
+	{
+		edge.valid = true;
+		VectorCopy (identity.profile.base, edge.base);
+		VectorCopy (identity.profile.tip, edge.tip);
+		if (!VR_InputStockAxeRenderEdgeOffsets (identity.hand, identity.geometry,
+			&edge, render[0], render[1]))
+			goto reset;
+	}
+	if (!identity.profile.has_base)
+		VectorCopy (vec3_origin, render[0]);
+	if (!identity.profile.has_tip &&
+		!VR_LocomotionMuzzleOffsetToWorld (identity.muzzle, angles,
+			identity.gun_scale, identity.gun_pitch, render[1]))
+		goto reset;
+	for (int point = 0; point < 2; ++point)
+	{
+		if (!VR_InputRenderOffsetToBody (render[point], yaw, mapping_yaw, offsets[point]) ||
+			VectorLength (offsets[point]) > 96.0f ||
+			!VR_InputContactPointSpeed (&frame->devices[identity.hand + 1],
+				offsets[point], mapping_yaw, identity.units, &speed[point]))
+			goto reset;
+		VectorAdd (grip, offsets[point], points[point]);
+		if (!VR_InputWireVec (points[point]))
+			goto reset;
+	}
+	if (!VR_InputGenericMeleeSameIdentity (&identity, &vr_input_generic_melee))
+		vr_input_generic_melee = identity;
+	else if (vr_input_generic_melee.sample_id == frame->sample_id)
+		return;
+	seconds = frame->sample_time_seconds - vr_input_generic_melee.sample_time;
+	if (!vr_input_generic_melee.sample_id || seconds <= 0 || seconds > 0.1)
+	{
+		vr_input_generic_melee.arc = 0;
+		vr_input_generic_melee.consumed = false;
+		vr_input_generic_melee.pending = false;
+		goto baseline;
+	}
+	VectorSubtract (points[0], vr_input_generic_melee.previous[0], motion[0]);
+	VectorSubtract (points[1], vr_input_generic_melee.previous[1], motion[1]);
+	endpoint = VectorLength (motion[1]) > VectorLength (motion[0]) ? 1 : 0;
+	point_motion = VectorLength (motion[endpoint]);
+	metres = point_motion / identity.units;
+	if (!isfinite (metres) || metres > 2.0f * fmaxf (speed[0], speed[1]) * seconds + 0.01f)
+		goto reset;
+	VectorCopy (motion[endpoint], direction);
+	VectorNormalize (direction);
+	if (fmaxf (speed[0], speed[1]) < 0.25f ||
+		(vr_input_generic_melee.consumed && point_motion > 0.0001f &&
+		 endpoint == vr_input_generic_melee.endpoint &&
+		 DotProduct (direction, vr_input_generic_melee.direction) < -0.25f))
+	{
+		vr_input_generic_melee.arc = 0;
+		vr_input_generic_melee.consumed = false;
+	}
+	if (!vr_input_generic_melee.consumed && fmaxf (speed[0], speed[1]) >= 0.25f)
+	{
+		vr_input_generic_melee.arc += metres;
+		if (vr_input_generic_melee.arc >= 0.03f &&
+			point_motion > 0.0001f &&
+			fmaxf (speed[0], speed[1]) >= identity.profile.speed)
+		{
+			vr_input_generic_melee.pending = true;
+			vr_input_generic_melee.intent_time = frame->sample_time_seconds;
+			vr_input_generic_melee.consumed = true;
+			vr_input_generic_melee.endpoint = endpoint;
+			VectorCopy (direction, vr_input_generic_melee.direction);
+		}
+	}
+baseline:
+	memcpy (vr_input_generic_melee.previous, points, sizeof (points));
+	vr_input_generic_melee.sample_id = frame->sample_id;
+	vr_input_generic_melee.sample_time = frame->sample_time_seconds;
+	return;
+reset:
+	memset (&vr_input_generic_melee, 0, sizeof (vr_input_generic_melee));
+}
+
+unsigned int VR_InputMergeMeleeAttack (unsigned int buttons, qboolean isfinal)
+{
+	vr_input_generic_melee_t identity;
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	double age;
+	if (!vr_input_generic_melee.pending)
+		return buttons;
+	if (!VR_InputGenericMeleeIdentity (frame, &identity) ||
+		!VR_InputGenericMeleeSameIdentity (&identity, &vr_input_generic_melee))
+	{
+		memset (&vr_input_generic_melee, 0, sizeof (vr_input_generic_melee));
+		return buttons;
+	}
+	age = frame->sample_time_seconds - vr_input_generic_melee.intent_time;
+	if (!isfinite (age) || age < 0 || age > 0.1)
+	{
+		vr_input_generic_melee.pending = false;
+		return buttons;
+	}
+	if (isfinal)
+		vr_input_generic_melee.pending = false;
+	return buttons | BUTTON_ATTACK;
 }
 
 static qboolean VR_InputPrepareCollisionContact (usercmd_t *pending,
@@ -4705,6 +4917,7 @@ void VR_InputMove (usercmd_t *pending)
 	}
 	VR_InputPrepareGorillaSample (pending, frame);
 	VR_InputPreparePrivatePose (pending, dominant, dominant_accepted);
+	VR_InputPrepareGenericMelee (frame);
 }
 
 void VR_InputApplyPending (usercmd_t *cmd)
@@ -4827,6 +5040,7 @@ void VR_InputCommitGorillaCommand (const usercmd_t *cmd)
  * adds the stronger neutral-stick gate below. */
 void VR_InputResetMotionContinuity (void)
 {
+	memset (&vr_input_generic_melee, 0, sizeof (vr_input_generic_melee));
 	VR_InputClearPendingRecord (&cl.pendingcmd);
 	vr_input_contact_discontinuity = true;
 	vr_input_gorilla_discontinuity = true;

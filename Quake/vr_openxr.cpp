@@ -1359,6 +1359,7 @@ extern "C" int VRXR_BeginFrame(vrxr_frame_t *frame) {
 	if(g.shouldRender && !begin_images()) { VRXR_AbortFrame(); return -1; }
 	if(++g_sample_id == 0) ++g_sample_id;
 	frame->sample_id=g_sample_id;
+	frame->sample_time_seconds=static_cast<double>(g.frameState.predictedDisplayTime)*1e-9;
 	return 1;
 }
 

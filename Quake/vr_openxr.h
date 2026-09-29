@@ -41,6 +41,7 @@ typedef struct {
 typedef struct {
   int should_render, focused, reference_changed;
   uint64_t sample_id; /* nonzero identity of one completed xrWaitFrame sample */
+  double sample_time_seconds; /* predicted display time; runtime clock, deltas only */
   /* App reference space has runtime floor semantics (STAGE or LOCAL_FLOOR), never LOCAL. */
   int floor_referenced;
   vrxr_device_t devices[VRXR_MAX_DEVICES];
