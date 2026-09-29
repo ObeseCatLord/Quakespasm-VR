@@ -341,6 +341,7 @@ typedef struct mtriangle_s
 
 typedef struct aliashdr_s		  aliashdr_t;
 typedef struct glheapallocation_s glheapallocation_t;
+typedef struct alias_gpu_upload_s alias_gpu_upload_t;
 
 typedef enum
 {
@@ -414,6 +415,8 @@ typedef struct aliashdr_s
 	int					num_skeleton_indexes;
 	VkBuffer			skeleton_index_buffer;
 	glheapallocation_t *skeleton_index_allocation;
+	/* Immutable replay inputs, owned at the existing alias surface lifetime. */
+	alias_gpu_upload_t *gpu_upload;
 	maliasframedesc_t	frames[1]; // variable sized
 } aliashdr_t;
 

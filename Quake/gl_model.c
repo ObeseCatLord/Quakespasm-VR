@@ -7488,6 +7488,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	mod->type = mod_alias;
 	mod->extradata[PV_MD5] = (byte *)outhdr;
 	mod->md5_skeleton = retained_skeleton;
+	/* Finish replay ownership before the temporary skinning poses are freed. */
+	GLMesh_BindRetainedMD5Poses (mod);
 	mod->avatar_bind_surfaces = bind_surfaces;
 	memcpy (mod->avatar_props, ranger_props, sizeof (ranger_props));
 	memcpy (mod->avatar_prop_gpu, ranger_prop_gpu, sizeof (ranger_prop_gpu));

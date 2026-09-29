@@ -214,6 +214,29 @@ static qboolean GLMesh_ComputeTrackedCullQmax (const aliashdr_t *hdr, const byte
 	return true;
 }
 
+/* Final bytes are surface-owned; borrowed MD5 poses share model lifetime. */
+struct alias_gpu_upload_s
+{
+	byte *vertices, *indexes, *skeleton_indexes;
+	const byte *joints;
+	size_t vertex_size, index_size, skeleton_size, joint_size;
+	qboolean owns_joints, joints_ready;
+};
+
+static void GLMesh_FreeUpload (aliashdr_t *hdr)
+{
+	alias_gpu_upload_t *upload = hdr->gpu_upload;
+	if (!upload)
+		return;
+	SAFE_FREE (upload->vertices);
+	SAFE_FREE (upload->indexes);
+	SAFE_FREE (upload->skeleton_indexes);
+	if (upload->owns_joints)
+		Mem_Free ((void *)upload->joints);
+	Mem_Free (upload);
+	hdr->gpu_upload = NULL;
+}
+
 typedef struct
 {
 	VkBuffer				  buffer;
@@ -529,7 +552,7 @@ extern float r_avertexnormals[NUMVERTEXNORMALS][3];
 GLMesh_DeleteMeshBuffers
 ================
 */
-void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
+static void GLMesh_DeleteMeshBuffersInternal (aliashdr_t *mainhdr, qboolean dispose_cpu)
 {
 	GLMesh_FreeAvatarPropBLAS (mainhdr);
 	// Delete all surfaces:
@@ -591,9 +614,18 @@ void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
 		hdr->joints_allocation = NULL;
 		hdr->joints_buffer_address = 0;
 		hdr->joints_set = VK_NULL_HANDLE;
-		for (int i = 0; i < MAX_SKINS; ++i)
-			SAFE_FREE (hdr->texels[i]);
+		if (dispose_cpu)
+		{
+			for (int i = 0; i < MAX_SKINS; ++i)
+				SAFE_FREE (hdr->texels[i]);
+			GLMesh_FreeUpload (hdr);
+		}
 	}
+}
+
+void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
+{
+	GLMesh_DeleteMeshBuffersInternal (mainhdr, true);
 }
 
 /*
@@ -601,123 +633,20 @@ void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
 GLMesh_UploadBuffers : Upload data for a single aliashdr_t *hdr (not it's nextsurfaces)
 ================
 */
-void GLMesh_UploadBuffers (
-	qmodel_t *mod, aliashdr_t *hdr, unsigned short *indexes, byte *vertexes, aliasmesh_t *desc, jointpose_t *joints, unsigned short *skeleton_indexes,
-	int num_skeleton_indexes)
+/* Initial creation and replay share all Vulkan buffer policy and allocation. */
+static void GLMesh_CreateBuffersFromUpload (qmodel_t *mod, aliashdr_t *hdr)
 {
-	size_t	 totalvbosize = 0;
-	size_t	 vertex_data_size = 0;
-	size_t	 st_data_size = 0;
-	size_t	 totalindexsize = 0;
-	size_t	 totaljointssize = 0;
-	size_t	 skeleton_index_size = 0;
-	size_t	 input_vertex_count;
-	size_t	 output_vertex_count;
-	size_t	 numverts;
-	size_t	 numindexes;
+	const alias_gpu_upload_t *upload = hdr->gpu_upload;
+	const size_t totalindexsize = upload->index_size;
+	const size_t skeleton_index_size = upload->skeleton_size;
+	const size_t totalvbosize = upload->vertex_size;
+	const size_t totaljointssize = upload->joint_size;
+	const byte *indexes = upload->indexes;
+	const byte *skeleton_indexes = upload->skeleton_indexes;
+	byte *vbodata = upload->vertices;
+	const byte *joints = upload->joints;
+	const int num_skeleton_indexes = hdr->num_skeleton_indexes;
 	VkResult err;
-	if (!hdr)
-		return;
-	hdr->tracked_cull_qmax = 0.0;
-	hdr->tracked_cull_qmax_valid = false;
-
-	if (hdr->numverts <= 0 || hdr->numverts_vbo <= 0 ||
-		(size_t)hdr->numverts > (size_t)UINT16_MAX + 1 || (size_t)hdr->numverts_vbo > (size_t)UINT16_MAX + 1 ||
-		hdr->numindexes < 0 || num_skeleton_indexes < 0 ||
-		hdr->numframes < 0 || hdr->numjoints < 0)
-		Sys_Error ("GLMesh_UploadBuffers: %s has invalid mesh dimensions", mod->name);
-	numverts = (size_t)hdr->numverts_vbo;
-	numindexes = (size_t)hdr->numindexes;
-	if (!GLMesh_CheckedSizeMul (numindexes, sizeof (*indexes), &totalindexsize))
-		Sys_Error ("GLMesh_UploadBuffers: %s index buffer is too large", mod->name);
-	if (skeleton_indexes && num_skeleton_indexes > 0 &&
-		!GLMesh_CheckedSizeMul ((size_t)num_skeleton_indexes, sizeof (*skeleton_indexes), &skeleton_index_size))
-		Sys_Error ("GLMesh_UploadBuffers: %s skeleton index buffer is too large", mod->name);
-
-	switch (hdr->poseverttype)
-	{
-	case PV_QUAKE1:
-	{
-		if (hdr->numposes <= 0 ||
-			!GLMesh_CheckedSizeMul ((size_t)hdr->numverts, (size_t)hdr->numposes, &input_vertex_count) ||
-			input_vertex_count > SIZE_MAX / sizeof (trivertx_t) ||
-			!GLMesh_CheckedSizeMul (numverts, (size_t)hdr->numposes, &output_vertex_count) ||
-			!GLMesh_CheckedSizeMul (output_vertex_count, sizeof (meshxyz_t), &vertex_data_size))
-			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MDL vertex data", mod->name);
-	}
-	break;
-	case PV_QUAKE3:
-	{
-		if (hdr->numframes <= 0 ||
-			!GLMesh_CheckedSizeMul ((size_t)hdr->numverts, (size_t)hdr->numframes, &input_vertex_count) ||
-			input_vertex_count > SIZE_MAX / sizeof (md3XyzNormal_t) ||
-			!GLMesh_CheckedSizeMul (numverts, (size_t)hdr->numframes, &output_vertex_count) ||
-			!GLMesh_CheckedSizeMul (output_vertex_count, sizeof (meshxyz_t), &vertex_data_size))
-			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD3 vertex data", mod->name);
-	}
-	break;
-	case PV_MD5:
-	{
-		if (hdr->numposes != 1 ||
-			!GLMesh_CheckedSizeMul (numverts, sizeof (md5vert_t), &vertex_data_size))
-			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD5 vertex data", mod->name);
-	}
-	break;
-	case PV_MD5_8:
-	{
-		if (hdr->numposes != 1 ||
-			!GLMesh_CheckedSizeMul (numverts, sizeof (md5vert8_t), &vertex_data_size))
-			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD5_8 vertex data", mod->name);
-	}
-	break;
-	default:
-		Sys_Error ("GLMesh_UploadBuffers: %s has an invalid pose vertex type", mod->name);
-	}
-
-	if (joints)
-	{
-		size_t joint_pose_count;
-		if (hdr->numframes <= 0 || hdr->numjoints <= 0 ||
-			!GLMesh_CheckedSizeMul ((size_t)hdr->numframes, (size_t)hdr->numjoints, &joint_pose_count) ||
-			!GLMesh_CheckedSizeMul (joint_pose_count, sizeof (jointpose_t), &totaljointssize))
-			Sys_Error ("GLMesh_UploadBuffers: %s joint buffer is too large", mod->name);
-	}
-	else if (hdr->numframes > 0 && hdr->numjoints > 0)
-	{
-		size_t joint_pose_count;
-		if (!GLMesh_CheckedSizeMul ((size_t)hdr->numframes, (size_t)hdr->numjoints, &joint_pose_count) ||
-			!GLMesh_CheckedSizeMul (joint_pose_count, sizeof (jointpose_t), &totaljointssize))
-			Sys_Error ("GLMesh_UploadBuffers: %s joint data is too large", mod->name);
-	}
-
-	if (hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3)
-	{
-		// reserve room from ST data starting at vbostofs.
-		if (vertex_data_size > INT_MAX ||
-			!GLMesh_CheckedSizeMul (numverts, sizeof (meshst_t), &st_data_size) ||
-			!GLMesh_CheckedSizeAdd (vertex_data_size, st_data_size, &totalvbosize))
-			Sys_Error ("GLMesh_UploadBuffers: %s vertex buffer is too large", mod->name);
-	}
-	else
-		totalvbosize = vertex_data_size;
-	if (totalvbosize > INT_MAX)
-		Sys_Error ("GLMesh_UploadBuffers: %s vertex buffer exceeds the int offset limit", mod->name);
-	if (hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3)
-		hdr->vbostofs = (int)vertex_data_size;
-
-	if (GLMesh_ComputeTrackedCullQmax (hdr, vertexes, &hdr->tracked_cull_qmax))
-		hdr->tracked_cull_qmax_valid = true;
-
-	if (isDedicated)
-		return;
-	if (!numindexes)
-		return;
-	if (!totalvbosize)
-		return;
-	if (!indexes || !vertexes ||
-		((hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3) && !desc))
-		Sys_Error ("GLMesh_UploadBuffers: %s has missing mesh data", mod->name);
-	hdr->num_skeleton_indexes = num_skeleton_indexes;
 
 	{
 		// Allocate index buffer & upload to GPU
@@ -782,103 +711,6 @@ void GLMesh_UploadBuffers (
 			Sys_Error ("vkBindBufferMemory failed with code %i", (int)err);
 
 		R_StagingUploadBuffer (hdr->skeleton_index_buffer, skeleton_index_size, (byte *)skeleton_indexes);
-	}
-
-	// create the vertex buffer (empty)
-	TEMP_ALLOC (byte, vbodata, totalvbosize);
-
-	// fill in the vertices of the buffer
-	size_t vertofs = 0;
-
-	switch (hdr->poseverttype)
-	{
-	case PV_QUAKE1:
-		for (int f = 0; f < hdr->numposes; f++) // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
-		{
-			meshxyz_t		 *xyz = (meshxyz_t *)vbodata + vertofs;
-			const trivertx_t *tv = (trivertx_t *)vertexes + ((size_t)hdr->numverts * (size_t)f);
-			vertofs += hdr->numverts_vbo;
-
-			for (int v = 0; v < hdr->numverts_vbo; v++)
-			{
-				trivertx_t trivert = tv[desc[v].vertindex];
-				// MDL is [0-255] => remapped on unsigned 16bit [0; 65535] seen as [0,1] coords in the vertex shader
-				// to be compatible with the MD3 range
-				xyz[v].xyz[0] = (int)trivert.v[0] * 257;
-				xyz[v].xyz[1] = (int)trivert.v[1] * 257;
-				xyz[v].xyz[2] = (int)trivert.v[2] * 257;
-				xyz[v].xyz[3] = 1; // need w 1 for 4 byte vertex compression
-
-				// map the normal coordinates in [-1..1] to [-127..127] and store in an unsigned char.
-				// this introduces some error (less than 0.004), but the normals were very coarse
-				// to begin with
-				xyz[v].normal[0] = 127 * r_avertexnormals[trivert.lightnormalindex][0];
-				xyz[v].normal[1] = 127 * r_avertexnormals[trivert.lightnormalindex][1];
-				xyz[v].normal[2] = 127 * r_avertexnormals[trivert.lightnormalindex][2];
-				xyz[v].normal[3] = 0; // unused; for 4-byte alignment
-			}
-		}
-		break;
-	case PV_QUAKE3:
-		for (int f = 0; f < hdr->numframes; f++) // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
-		{
-			meshxyz_t			 *xyz = (meshxyz_t *)vbodata + vertofs;
-			const md3XyzNormal_t *tv = (md3XyzNormal_t *)vertexes + ((size_t)hdr->numverts * (size_t)f);
-			vertofs += hdr->numverts_vbo;
-
-			float lat, lng;
-
-			for (int v = 0; v < hdr->numverts_vbo; v++, tv++)
-			{
-				// MD3 is SIGNED 16bit => remapped on unsigned 16bit seen as [0,1] coords in the vertex shader
-				xyz[v].xyz[0] = (int)tv->xyz[0] + 32768;
-				xyz[v].xyz[1] = (int)tv->xyz[1] + 32768;
-				xyz[v].xyz[2] = (int)tv->xyz[2] + 32768;
-				xyz[v].xyz[3] = 1; // need w 1 for 4 byte vertex compression
-
-				// map the normal coordinates in [-1..1] to [-127..127] and store in an unsigned char.
-				// this introduces some error (less than 0.004), but the normals were very coarse
-				// to begin with
-				lat = (float)tv->latlong[0] * (2 * M_PI) * (1.0 / 255.0);
-				lng = (float)tv->latlong[1] * (2 * M_PI) * (1.0 / 255.0);
-				xyz[v].normal[0] = 127 * cos (lng) * sin (lat);
-				xyz[v].normal[1] = 127 * sin (lng) * sin (lat);
-				xyz[v].normal[2] = 127 * cos (lat);
-				xyz[v].normal[3] = 0; // unused; for 4-byte alignment
-			}
-		}
-		break;
-	case PV_MD5:
-	case PV_MD5_8:
-		memcpy (vbodata, vertexes, totalvbosize);
-		// vertexes is already the concat of the hdr surface vertices, triangles, ST, and normals
-		// already baked in.
-		break;
-	default:
-		assert (false);
-	}
-
-	// fill in the ST coords at the end of the buffer for MDL and MD3:
-	if (hdr->poseverttype == PV_QUAKE1)
-	{
-		assert (hdr->nextsurface == NULL);
-
-		meshst_t *st = (meshst_t *)(vbodata + hdr->vbostofs);
-		for (int f = 0; f < hdr->numverts_vbo; f++)
-		{
-			st[f].st[0] = ((float)desc[f].st[0] + 0.5f) / (float)hdr->skinwidth;
-			st[f].st[1] = ((float)desc[f].st[1] + 0.5f) / (float)hdr->skinheight;
-		}
-	}
-	else if (hdr->poseverttype == PV_QUAKE3)
-	{
-		meshst_t *st = (meshst_t *)(vbodata + hdr->vbostofs);
-		for (int f = 0; f < hdr->numverts_vbo; f++)
-		{
-			// md3 has floating-point skin coords. use the values directly.
-			st[f].st[0] = desc[f].st[0];
-			st[f].st[1] = desc[f].st[1];
-		}
 	}
 
 	// Allocate vertex buffer & upload to GPU
@@ -980,7 +812,254 @@ void GLMesh_UploadBuffers (
 		vkUpdateDescriptorSets (vulkan_globals.device, 1, &joints_set_write, 0, NULL);
 	}
 
-	TEMP_FREE (vbodata);
+}
+
+void GLMesh_UploadBuffers (
+	qmodel_t *mod, aliashdr_t *hdr, unsigned short *indexes, byte *vertexes, aliasmesh_t *desc, jointpose_t *joints, unsigned short *skeleton_indexes,
+	int num_skeleton_indexes)
+{
+	size_t	 totalvbosize = 0;
+	size_t	 vertex_data_size = 0;
+	size_t	 st_data_size = 0;
+	size_t	 totalindexsize = 0;
+	size_t	 totaljointssize = 0;
+	size_t	 skeleton_index_size = 0;
+	size_t	 input_vertex_count;
+	size_t	 output_vertex_count;
+	size_t	 numverts;
+	size_t	 numindexes;
+	if (!hdr)
+		return;
+	hdr->tracked_cull_qmax = 0.0;
+	hdr->tracked_cull_qmax_valid = false;
+
+	if (hdr->numverts <= 0 || hdr->numverts_vbo <= 0 ||
+		(size_t)hdr->numverts > (size_t)UINT16_MAX + 1 || (size_t)hdr->numverts_vbo > (size_t)UINT16_MAX + 1 ||
+		hdr->numindexes < 0 || num_skeleton_indexes < 0 ||
+		hdr->numframes < 0 || hdr->numjoints < 0)
+		Sys_Error ("GLMesh_UploadBuffers: %s has invalid mesh dimensions", mod->name);
+	numverts = (size_t)hdr->numverts_vbo;
+	numindexes = (size_t)hdr->numindexes;
+	if (!GLMesh_CheckedSizeMul (numindexes, sizeof (*indexes), &totalindexsize))
+		Sys_Error ("GLMesh_UploadBuffers: %s index buffer is too large", mod->name);
+	if (skeleton_indexes && num_skeleton_indexes > 0 &&
+		!GLMesh_CheckedSizeMul ((size_t)num_skeleton_indexes, sizeof (*skeleton_indexes), &skeleton_index_size))
+		Sys_Error ("GLMesh_UploadBuffers: %s skeleton index buffer is too large", mod->name);
+
+	switch (hdr->poseverttype)
+	{
+	case PV_QUAKE1:
+	{
+		if (hdr->numposes <= 0 ||
+			!GLMesh_CheckedSizeMul ((size_t)hdr->numverts, (size_t)hdr->numposes, &input_vertex_count) ||
+			input_vertex_count > SIZE_MAX / sizeof (trivertx_t) ||
+			!GLMesh_CheckedSizeMul (numverts, (size_t)hdr->numposes, &output_vertex_count) ||
+			!GLMesh_CheckedSizeMul (output_vertex_count, sizeof (meshxyz_t), &vertex_data_size))
+			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MDL vertex data", mod->name);
+	}
+	break;
+	case PV_QUAKE3:
+	{
+		if (hdr->numframes <= 0 ||
+			!GLMesh_CheckedSizeMul ((size_t)hdr->numverts, (size_t)hdr->numframes, &input_vertex_count) ||
+			input_vertex_count > SIZE_MAX / sizeof (md3XyzNormal_t) ||
+			!GLMesh_CheckedSizeMul (numverts, (size_t)hdr->numframes, &output_vertex_count) ||
+			!GLMesh_CheckedSizeMul (output_vertex_count, sizeof (meshxyz_t), &vertex_data_size))
+			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD3 vertex data", mod->name);
+	}
+	break;
+	case PV_MD5:
+	{
+		if (hdr->numposes != 1 ||
+			!GLMesh_CheckedSizeMul (numverts, sizeof (md5vert_t), &vertex_data_size))
+			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD5 vertex data", mod->name);
+	}
+	break;
+	case PV_MD5_8:
+	{
+		if (hdr->numposes != 1 ||
+			!GLMesh_CheckedSizeMul (numverts, sizeof (md5vert8_t), &vertex_data_size))
+			Sys_Error ("GLMesh_UploadBuffers: %s has invalid or oversized MD5_8 vertex data", mod->name);
+	}
+	break;
+	default:
+		Sys_Error ("GLMesh_UploadBuffers: %s has an invalid pose vertex type", mod->name);
+	}
+
+	if (joints)
+	{
+		size_t joint_pose_count;
+		if (hdr->numframes <= 0 || hdr->numjoints <= 0 ||
+			!GLMesh_CheckedSizeMul ((size_t)hdr->numframes, (size_t)hdr->numjoints, &joint_pose_count) ||
+			!GLMesh_CheckedSizeMul (joint_pose_count, sizeof (jointpose_t), &totaljointssize))
+			Sys_Error ("GLMesh_UploadBuffers: %s joint buffer is too large", mod->name);
+	}
+	else if (hdr->numframes > 0 && hdr->numjoints > 0)
+	{
+		size_t joint_pose_count;
+		if (!GLMesh_CheckedSizeMul ((size_t)hdr->numframes, (size_t)hdr->numjoints, &joint_pose_count) ||
+			!GLMesh_CheckedSizeMul (joint_pose_count, sizeof (jointpose_t), &totaljointssize))
+			Sys_Error ("GLMesh_UploadBuffers: %s joint data is too large", mod->name);
+	}
+
+	if (hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3)
+	{
+		// reserve room from ST data starting at vbostofs.
+		if (vertex_data_size > INT_MAX ||
+			!GLMesh_CheckedSizeMul (numverts, sizeof (meshst_t), &st_data_size) ||
+			!GLMesh_CheckedSizeAdd (vertex_data_size, st_data_size, &totalvbosize))
+			Sys_Error ("GLMesh_UploadBuffers: %s vertex buffer is too large", mod->name);
+	}
+	else
+		totalvbosize = vertex_data_size;
+	if (totalvbosize > INT_MAX)
+		Sys_Error ("GLMesh_UploadBuffers: %s vertex buffer exceeds the int offset limit", mod->name);
+	if (hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3)
+		hdr->vbostofs = (int)vertex_data_size;
+
+	if (GLMesh_ComputeTrackedCullQmax (hdr, vertexes, &hdr->tracked_cull_qmax))
+		hdr->tracked_cull_qmax_valid = true;
+
+	if (isDedicated)
+		return;
+	if (!numindexes)
+		return;
+	if (!totalvbosize)
+		return;
+	if (!indexes || !vertexes ||
+		((hdr->poseverttype == PV_QUAKE1 || hdr->poseverttype == PV_QUAKE3) && !desc))
+		Sys_Error ("GLMesh_UploadBuffers: %s has missing mesh data", mod->name);
+	if (hdr->gpu_upload || hdr->vertex_buffer || hdr->index_buffer ||
+		hdr->skeleton_index_buffer || hdr->joints_buffer)
+		Sys_Error ("GLMesh_UploadBuffers: %s already owns mesh resources", mod->name);
+	hdr->num_skeleton_indexes = num_skeleton_indexes;
+
+	// create the vertex buffer (empty)
+	byte *vbodata = Mem_Alloc (totalvbosize);
+
+	// fill in the vertices of the buffer
+	size_t vertofs = 0;
+
+	switch (hdr->poseverttype)
+	{
+	case PV_QUAKE1:
+		for (int f = 0; f < hdr->numposes; f++) // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
+		{
+			meshxyz_t		 *xyz = (meshxyz_t *)vbodata + vertofs;
+			const trivertx_t *tv = (trivertx_t *)vertexes + ((size_t)hdr->numverts * (size_t)f);
+			vertofs += hdr->numverts_vbo;
+
+			for (int v = 0; v < hdr->numverts_vbo; v++)
+			{
+				trivertx_t trivert = tv[desc[v].vertindex];
+				// MDL is [0-255] => remapped on unsigned 16bit [0; 65535] seen as [0,1] coords in the vertex shader
+				// to be compatible with the MD3 range
+				xyz[v].xyz[0] = (int)trivert.v[0] * 257;
+				xyz[v].xyz[1] = (int)trivert.v[1] * 257;
+				xyz[v].xyz[2] = (int)trivert.v[2] * 257;
+				xyz[v].xyz[3] = 1; // need w 1 for 4 byte vertex compression
+
+				// map the normal coordinates in [-1..1] to [-127..127] and store in an unsigned char.
+				// this introduces some error (less than 0.004), but the normals were very coarse
+				// to begin with
+				xyz[v].normal[0] = 127 * r_avertexnormals[trivert.lightnormalindex][0];
+				xyz[v].normal[1] = 127 * r_avertexnormals[trivert.lightnormalindex][1];
+				xyz[v].normal[2] = 127 * r_avertexnormals[trivert.lightnormalindex][2];
+				xyz[v].normal[3] = 0; // unused; for 4-byte alignment
+			}
+		}
+		break;
+	case PV_QUAKE3:
+		for (int f = 0; f < hdr->numframes; f++) // ericw -- what RMQEngine called nummeshframes is called numposes in QuakeSpasm
+		{
+			meshxyz_t			 *xyz = (meshxyz_t *)vbodata + vertofs;
+			const md3XyzNormal_t *tv = (md3XyzNormal_t *)vertexes + ((size_t)hdr->numverts * (size_t)f);
+			vertofs += hdr->numverts_vbo;
+
+			float lat, lng;
+
+			for (int v = 0; v < hdr->numverts_vbo; v++, tv++)
+			{
+				// MD3 is SIGNED 16bit => remapped on unsigned 16bit seen as [0,1] coords in the vertex shader
+				xyz[v].xyz[0] = (int)tv->xyz[0] + 32768;
+				xyz[v].xyz[1] = (int)tv->xyz[1] + 32768;
+				xyz[v].xyz[2] = (int)tv->xyz[2] + 32768;
+				xyz[v].xyz[3] = 1; // need w 1 for 4 byte vertex compression
+
+				// map the normal coordinates in [-1..1] to [-127..127] and store in an unsigned char.
+				// this introduces some error (less than 0.004), but the normals were very coarse
+				// to begin with
+				lat = (float)tv->latlong[0] * (2 * M_PI) * (1.0 / 255.0);
+				lng = (float)tv->latlong[1] * (2 * M_PI) * (1.0 / 255.0);
+				xyz[v].normal[0] = 127 * cos (lng) * sin (lat);
+				xyz[v].normal[1] = 127 * sin (lng) * sin (lat);
+				xyz[v].normal[2] = 127 * cos (lat);
+				xyz[v].normal[3] = 0; // unused; for 4-byte alignment
+			}
+		}
+		break;
+	case PV_MD5:
+	case PV_MD5_8:
+		memcpy (vbodata, vertexes, totalvbosize);
+		// vertexes is already the concat of the hdr surface vertices, triangles, ST, and normals
+		// already baked in.
+		break;
+	default:
+		assert (false);
+	}
+
+	// fill in the ST coords at the end of the buffer for MDL and MD3:
+	if (hdr->poseverttype == PV_QUAKE1)
+	{
+		assert (hdr->nextsurface == NULL);
+
+		meshst_t *st = (meshst_t *)(vbodata + hdr->vbostofs);
+		for (int f = 0; f < hdr->numverts_vbo; f++)
+		{
+			st[f].st[0] = ((float)desc[f].st[0] + 0.5f) / (float)hdr->skinwidth;
+			st[f].st[1] = ((float)desc[f].st[1] + 0.5f) / (float)hdr->skinheight;
+		}
+	}
+	else if (hdr->poseverttype == PV_QUAKE3)
+	{
+		meshst_t *st = (meshst_t *)(vbodata + hdr->vbostofs);
+		for (int f = 0; f < hdr->numverts_vbo; f++)
+		{
+			// md3 has floating-point skin coords. use the values directly.
+			st[f].st[0] = desc[f].st[0];
+			st[f].st[1] = desc[f].st[1];
+		}
+	}
+
+	/* Keep final layout bytes, rather than reparse assets or retain old GPU
+	 * addresses. The MD5 completion hook replaces its temporary pose borrow. */
+	alias_gpu_upload_t *upload = Mem_Alloc (sizeof (*upload));
+	memset (upload, 0, sizeof (*upload));
+	upload->vertices = vbodata;
+	upload->vertex_size = totalvbosize;
+	upload->indexes = Mem_Alloc (totalindexsize);
+	upload->index_size = totalindexsize;
+	memcpy (upload->indexes, indexes, totalindexsize);
+	if (skeleton_indexes && num_skeleton_indexes > 0)
+	{
+		upload->skeleton_indexes = Mem_Alloc (skeleton_index_size);
+		upload->skeleton_size = skeleton_index_size;
+		memcpy (upload->skeleton_indexes, skeleton_indexes, skeleton_index_size);
+	}
+	upload->joints = (const byte *)joints;
+	upload->joint_size = joints ? totaljointssize : 0;
+	upload->joints_ready = joints == NULL;
+	if (joints && hdr->avatar_static_prop)
+	{
+		/* Private prop upload supplies a stack-local identity pose, with
+		 * no model skeleton lifetime to borrow after this call returns. */
+		byte *owned = Mem_Alloc (totaljointssize);
+		memcpy (owned, joints, totaljointssize);
+		upload->joints = owned;
+		upload->owns_joints = upload->joints_ready = true;
+	}
+	hdr->gpu_upload = upload;
+	GLMesh_CreateBuffersFromUpload (mod, hdr);
 }
 
 /*
@@ -1011,6 +1090,113 @@ void GLMesh_DeleteAllMeshBuffers (void)
 			GLMesh_DeleteMeshBuffers ((aliashdr_t *)m->extradata[i]);
 		}
 	}
+}
+
+/* The MD5 loader calls this before releasing its temporary skinning poses.
+ * All surfaces normally reuse the one already retained model pose span. */
+void GLMesh_BindRetainedMD5Poses (qmodel_t *model)
+{
+	md5_skeleton_view_t skeleton;
+	size_t pose_count = 0, pose_bytes = 0;
+	const byte *poses = NULL;
+	if (Mod_GetMD5Skeleton (model, &skeleton) && skeleton.absolute_poses &&
+		GLMesh_CheckedSizeMul (skeleton.joint_count, skeleton.pose_count, &pose_count) &&
+		GLMesh_CheckedSizeMul (pose_count, sizeof (float[12]), &pose_bytes))
+		poses = (const byte *)skeleton.absolute_poses;
+	for (aliashdr_t *hdr = (aliashdr_t *)model->extradata[PV_MD5]; hdr; hdr = hdr->nextsurface)
+	{
+		alias_gpu_upload_t *upload = hdr->gpu_upload;
+		if (!upload || !upload->joints || upload->joints_ready)
+			continue;
+		if (poses && pose_bytes == upload->joint_size &&
+			!memcmp (poses, upload->joints, pose_bytes))
+			upload->joints = poses;
+		else
+		{
+			byte *owned = Mem_Alloc (upload->joint_size);
+			memcpy (owned, upload->joints, upload->joint_size);
+			upload->joints = owned;
+			upload->owns_joints = true;
+		}
+		upload->joints_ready = true;
+	}
+}
+
+static qboolean GLMesh_SurfaceGPUEmpty (const aliashdr_t *hdr)
+{
+	return !hdr->vertex_buffer && !hdr->index_buffer && !hdr->joints_buffer &&
+		!hdr->skeleton_index_buffer && !hdr->joints_set && !hdr->avatar_prop_blas;
+}
+
+static qboolean GLMesh_SurfaceCanReplay (const aliashdr_t *hdr)
+{
+	const alias_gpu_upload_t *upload = hdr->gpu_upload;
+	size_t index_bytes, skeleton_bytes;
+	if (hdr->numindexes == 0 && !upload)
+		return GLMesh_SurfaceGPUEmpty (hdr);
+	return hdr->numindexes > 0 && hdr->num_skeleton_indexes >= 0 &&
+		GLMesh_CheckedSizeMul ((size_t)hdr->numindexes, sizeof (unsigned short), &index_bytes) &&
+		GLMesh_CheckedSizeMul ((size_t)hdr->num_skeleton_indexes, sizeof (unsigned short), &skeleton_bytes) &&
+		upload && upload->vertices && upload->vertex_size && upload->vertex_size <= INT_MAX &&
+		upload->indexes && upload->index_size == index_bytes &&
+		upload->skeleton_size == skeleton_bytes &&
+		(!skeleton_bytes || upload->skeleton_indexes) && upload->joints_ready &&
+		(!upload->joint_size || upload->joints);
+}
+
+typedef enum { MESH_REPLAY_CHECK, MESH_REPLAY_CHECK_EMPTY, MESH_REPLAY_RETIRE, MESH_REPLAY_CREATE } mesh_replay_operation_t;
+
+/* Same ownership traversal as full model disposal; no precache-only subset or
+ * second asset registry. The transaction caller controls GPU/task retirement. */
+static qboolean GLMesh_VisitReplayModels (mesh_replay_operation_t operation)
+{
+	for (int j = 0; j < mod_numknown; ++j)
+	{
+		qmodel_t *model = &mod_known[j];
+		if (model->needload || model->type != mod_alias)
+			continue;
+		for (int root_index = 0; root_index < PV_SIZE + MD5_AVATAR_PROP_COUNT; ++root_index)
+		{
+			aliashdr_t *root = root_index < PV_SIZE
+				? (aliashdr_t *)model->extradata[root_index]
+				: model->avatar_prop_gpu[root_index - PV_SIZE];
+			if (operation == MESH_REPLAY_RETIRE)
+			{
+				GLMesh_DeleteMeshBuffersInternal (root, false);
+				continue;
+			}
+			for (aliashdr_t *hdr = root; hdr; hdr = hdr->nextsurface)
+			{
+				if (!GLMesh_SurfaceCanReplay (hdr) ||
+					(operation == MESH_REPLAY_CHECK_EMPTY && !GLMesh_SurfaceGPUEmpty (hdr)))
+					return false;
+				if (operation == MESH_REPLAY_CREATE && hdr->gpu_upload && GLMesh_SurfaceGPUEmpty (hdr))
+					GLMesh_CreateBuffersFromUpload (model, hdr);
+			}
+		}
+	}
+	return true;
+}
+
+qboolean GLMesh_CanReplayAllMeshBuffers (void)
+{
+	return !isDedicated && GLMesh_VisitReplayModels (MESH_REPLAY_CHECK);
+}
+
+qboolean GLMesh_RetireAllMeshBuffers (void)
+{
+	if (!GLMesh_CanReplayAllMeshBuffers ())
+		return false;
+	return GLMesh_VisitReplayModels (MESH_REPLAY_RETIRE);
+}
+
+qboolean GLMesh_ReplayAllMeshBuffers (void)
+{
+	/* Validate every surface before the first allocation, including that no old
+	 * GPU handle remains. Shared references created during this walk are skipped. */
+	if (isDedicated || !GLMesh_VisitReplayModels (MESH_REPLAY_CHECK_EMPTY))
+		return false;
+	return GLMesh_VisitReplayModels (MESH_REPLAY_CREATE);
 }
 
 /*

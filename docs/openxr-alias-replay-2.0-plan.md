@@ -1,6 +1,7 @@
 # Alias GPU replay prerequisite
 
-Status: plan and local Astra design disposition precede implementation.
+Status: implemented prerequisite, accepted by final local Astra source review.
+Full device reconstruction remains pending.
 Parent: [device reconstruction](openxr-device-reconstruction-2.0-plan.md).
 
 Behavior: after GPU-only retirement, the same loaded alias/header/surface/model
@@ -66,3 +67,24 @@ Repeated same-device retirement/replay is an owner proof only; complete loaded
 scene/new-binding/connection proof belongs to the parent. No builds/tests now;
 final local Astra source review follows integration. User live/performance and
 Windows qualification remain deferred. Native Linux ARM is engine end-goal work.
+
+## Local Astra implementation disposition (2026-09-29)
+
+Lovelace verified the four-file implementation against the plan and actual
+primary/vkQuake sources. The existing allocation/staging/descriptor/address
+blocks are reused unchanged by initial upload and replay. The524-line diff
+contains326 lines relocating163 unchanged allocation lines; this small estimate
+overrun does not add an asset owner, renderer or reconstruction state machine.
+
+| Finding/recommendation | Disposition |
+| --- | --- |
+| Private prop upload passes a stack-local identity pose; the MD5 completion hook visits only the main surface chain. The retained prop borrow would dangle and all-model preflight refuses replay. | Adopted: copy only the private prop's joint bytes during upload while live; mark owned/replay-ready. Full disposal frees that copy. Main MD5 surfaces still borrow their byte-identical retained skeleton. |
+| Keep GPU-only retirement and full CPU disposal separate. | Implemented at the existing mesh deletion owner; skin texels, frames and immutable payload survive retirement. Private prop BLAS retires before inputs. |
+| All loaded alias variants and private props need preflight before mutation. | Implemented through existing mod_known ownership traversal. No source reparsing or header replacement. |
+| Caller joins tasks, retires entity BLAS, establishes GPU completion and drains deferred garbage on the old heaps/layouts. | Retained as parent transaction requirements; new APIs are not wired into live device switching. |
+
+Final local Astra Max source review accepted the private-prop correction,
+including caller lifetime, readiness, GPU-only retirement and full disposal.
+Linux/ARM software checks and RAM/runtime qualification are deferred until the
+full implementation pass. No builds/tests or device reconstruction trials have
+run for this slice.
