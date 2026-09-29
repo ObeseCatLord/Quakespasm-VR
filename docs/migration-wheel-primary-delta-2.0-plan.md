@@ -511,3 +511,26 @@ before cached-missing short-circuit; otherwise an upgrade can retain an old
 missing result. The estimate remains plausible but tight; challenge any overrun
 against new ownership/state rather than line count alone. Production review and
 end-of-full-implementation Linux/ARM checks remain required.
+
+### Stage4 narrow wwheel/provenance amendment before production
+
+Further direct primary inspection (`vr.c:9255..9290`) shows wwheel applies
+selector/command/ammo and inherits an existing native profile's ownership,
+before explicit file precedence. Stage2's required parse-wwheel-first order
+instead marks inferred ITEMS/ACTIVEWEAPON halves as authored, even though no
+such fields were read from wwheel text. Alk/Enyo WEAPONS and Dwell extra
+MODITEMS pairs then conflict before native enrichment. This is a demonstrated
+adapter incompatibility, not evidence for another inventory dispatcher.
+
+Minimal correction: wwheel field flags describe only actually supplied
+selector/command and valid ammo tokens; retain its current generic descriptor
+values as replaceable fallback. Native profile matching/enrichment can then
+fill its verified full descriptors through the accepted identity adapter.
+If a native profile omits descriptor metadata, preserve an existing wwheel
+descriptor rather than replace it with unset fields; existing source provenance
+distinguishes that case. Explicit vr_weapons descriptors are applied afterward
+and retain per-key conflict/precedence behavior. Copy primary's narrow Rogue
+wwheel final-axe correction (lava selector plus command1 -> RIT_AXE) before
+duplicate-slot checks. No new flags, callback dispatcher, table registry,
+identity fallback by command, parser or authority policy. This amendment needs
+bounded local Astra disposition before changing the production boundary.
