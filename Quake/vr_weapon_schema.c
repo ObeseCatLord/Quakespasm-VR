@@ -224,6 +224,27 @@ static qboolean VR_SchemaIsLegacyMultiplayerVectorKey(const char *key)
 		!strcmp(key, "enhanced_mp_muzzle_offset");
 }
 
+/* Capture before FinishEntry creates compatibility aliases/descriptors.
+ * Only fields marked authored are authoritative to a wheel overlay. */
+static void VR_SchemaSnapshotWheel(vr_weapon_schema_entry_t *entry)
+{
+	vr_weapon_schema_wheel_t *wheel = &entry->wheel;
+	wheel->bitmask = entry->bitmask;
+	wheel->impulse = entry->impulse;
+	wheel->owned_stat = entry->owned_stat;
+	wheel->owned_mask = entry->owned_mask;
+	wheel->active_stat = entry->active_stat;
+	wheel->active_mask = entry->active_mask;
+	wheel->ammo_stat = entry->ammo_stat;
+	/* The ammo token can already have replaced an explicit zero. */
+	if (!(wheel->fields & VR_SCHEMA_WHEEL_AMMO_MAX))
+		wheel->ammo_max = entry->ammo_max;
+	memcpy(wheel->model_path, entry->model_path, sizeof(wheel->model_path));
+	memcpy(wheel->viewmodel_path, entry->viewmodel_path, sizeof(wheel->viewmodel_path));
+	wheel->scale = entry->scale;
+	memcpy(wheel->offset, entry->offset, sizeof(wheel->offset));
+}
+
 static qboolean VR_SchemaFinishEntry(vr_weapon_schema_entry_t *entry,
 									 const vr_schema_globals_t *globals)
 {
@@ -313,6 +334,7 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 			{
 				if (!VR_SchemaReadVector(parser, value, entry->offset)) return false;
 				entry->has_offset = true;
+				entry->wheel.fields |= VR_SCHEMA_WHEEL_OFFSET;
 			}
 			else if (!strcmp(key, "held_offset"))
 			{
@@ -361,26 +383,31 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 		if (!strcmp(key, "bitmask"))
 		{
 			if (!VR_SchemaParseInt(value, &entry->bitmask)) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_BITMASK;
 		}
 		else if (!strcmp(key, "model"))
 		{
 			size_t length = strlen(value);
 			if (length >= sizeof(entry->model_path)) return false;
 			memcpy(entry->model_path, value, length + 1);
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_MODEL;
 		}
 		else if (!strcmp(key, "viewmodel") || !strcmp(key, "held_model"))
 		{
 			size_t length = strlen(value);
 			if (length >= sizeof(entry->viewmodel_path)) return false;
 			memcpy(entry->viewmodel_path, value, length + 1);
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_VIEWMODEL;
 		}
 		else if (!strcmp(key, "impulse"))
 		{
 			if (!VR_SchemaParseInt(value, &entry->impulse)) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_IMPULSE;
 		}
 		else if (!strcmp(key, "scale"))
 		{
 			if (!VR_SchemaParseFloat(value, &entry->scale)) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_SCALE;
 		}
 		else if (!strcmp(key, "held_scale"))
 		{
@@ -427,20 +454,24 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 			qboolean valid;
 			entry->owned_stat = VR_SchemaParseStat(value, NULL, &valid);
 			if (!valid) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_OWNED_STAT;
 		}
 		else if (!strcmp(key, "owned_mask"))
 		{
 			if (!VR_SchemaParseInt(value, &entry->owned_mask)) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_OWNED_MASK;
 		}
 		else if (!strcmp(key, "active_stat"))
 		{
 			qboolean valid;
 			entry->active_stat = VR_SchemaParseStat(value, NULL, &valid);
 			if (!valid) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_ACTIVE_STAT;
 		}
 		else if (!strcmp(key, "active_mask"))
 		{
 			if (!VR_SchemaParseInt(value, &entry->active_mask)) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_ACTIVE_MASK;
 		}
 		else if (!strcmp(key, "ammo"))
 		{
@@ -450,20 +481,25 @@ static qboolean VR_SchemaParseEntry(vr_schema_parser_t *parser,
 			if (!valid) return false;
 			if (!entry->ammo_max)
 				entry->ammo_max = default_max;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_AMMO;
 		}
 		else if (!strcmp(key, "ammo_stat"))
 		{
 			qboolean valid;
 			entry->ammo_stat = VR_SchemaParseStat(value, NULL, &valid);
 			if (!valid) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_AMMO_STAT;
 		}
 		else if (!strcmp(key, "ammo_max"))
 		{
 			if (!VR_SchemaParseInt(value, &entry->ammo_max)) return false;
+			entry->wheel.fields |= VR_SCHEMA_WHEEL_AMMO_MAX;
+			entry->wheel.ammo_max = entry->ammo_max;
 		}
 		/* Unknown entry keys intentionally consume exactly one scalar value. */
 	}
 
+	VR_SchemaSnapshotWheel(entry);
 	return VR_SchemaFinishEntry(entry, globals);
 }
 

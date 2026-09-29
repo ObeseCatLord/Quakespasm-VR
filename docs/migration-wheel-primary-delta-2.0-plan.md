@@ -235,3 +235,12 @@ remain zero-metadata values consumed through their existing finished fields.
 Appending preserves existing member offsets but changes size/array stride;
 rebuild dependents during end-of-goal qualification. No binary compatibility
 with stale objects is claimed. Raw-mode/new API is rejected for this slice.
+
+The bounded parser prerequisite is now implemented.
+Its inline snapshot captures parsed declarations before calibration finishing,
+including explicit ammo maximum at token read. All13 presence bits are set
+only by successful authored reads; omitted keys and inference add no bits.
+Calibration's finished values, globals, aliases, held/melee fields and staged
+filtering remain unchanged. Catalog consumers do not yet read the snapshot;
+the subsequent identity/partial-overlay stage remains required. Final local Astra Max source review accepted this bounded prerequisite.
+End-of-goal qualification and catalog consumer integration remain pending.
