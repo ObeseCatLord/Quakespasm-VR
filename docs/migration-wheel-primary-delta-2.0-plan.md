@@ -292,3 +292,11 @@ matching/overlay/discovery functions. A separate catalog/parser, protocol,
 entity viewmodel owner, command interpreter or per-mod gameplay layer requires
 reopening. Astra source review follows integration; builds/tests remain deferred
 until full implementation. Stage3/4 and device-owner reconstruction remain open.
+
+A direct primary documentation cross-check clarifies stage2 ammo precedence:
+`docs/vr-weapon-wheel.md` says runtime capacity extensions take precedence over
+a fixed maximum; `VR_WeaponCatalog_ResolveAmmoMax` already implements that
+policy in `2.0`. Preserve it. Explicit maxima, including zero, remain the
+stored fallback and are not overwritten by profile defaults; dynamic capacity
+must be derived from the current ammo type, not disabled merely because a fixed
+maximum was authored. No new capacity-policy owner is needed.
