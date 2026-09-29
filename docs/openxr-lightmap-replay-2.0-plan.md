@@ -400,7 +400,7 @@ establishes host-observed completion and is not the generated upload API's
 return guarantee. This source finding resolves the tentative barrier question;
 full transaction/validation qualification still follows implementation.
 
-## Stage3 candidate brush GPU owner brief (not authorized yet)
+## Stage3 candidate brush GPU owner brief (scope reopened; do not implement)
 
 Verified remaining owner slice: r_brush.c and existing glquake.h declarations;
 expected400–600 changed lines including moves. Native buffers and descriptor
@@ -409,6 +409,19 @@ parallel map data or preserved whole-map upload mirror. GPU retirement runs only
 under the parent's joined/quiesced and completed-or-lost submission contract on
 the old device, before its allocator/layout/function-pointer owners are retired.
 No unconditional nested healthy-device wait in the loss path is proposed.
+
+Local Astra Max returned conditional design acceptance after personally reading
+the owners. Main has not begun this stage. The user's subsequent Vulkan-reuse
+question reopened whether full device reconstruction belongs in the goal at all;
+the [parent scope reassessment](openxr-device-reconstruction-2.0-plan.md#scope-reassessment-brief-preserve-the-donor-renderer)
+supersedes this candidate until its scope is resolved. Required corrections if
+this optional stage is later pursued: extract GPU-only indirect setup without
+PrepareIndirectDraws/R_CalcDeps; prove plane/texinfo/visibility allocation spans;
+include bmodel_instances_desc_set and create frame buffers before vertices;
+retire independently present partial/duplicate AS children and both TLAS slots
+before backing-buffer garbage; resolve TLAS allocation counter mismatch; verify
+the first-frame previous-transform shader branches. Do not treat that review as
+permission to build a larger renderer or a completion claim.
 
 Retire lightmap and indirect descriptor sets; surface-data/submodel/indirect/
 index/visibility buffers plus their native memory; per-atlas workgroup buffers
