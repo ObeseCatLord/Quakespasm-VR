@@ -83,7 +83,11 @@ Implementation stages and ownership:
    native dispatch and reset/held-trigger/replay cases.
 
 Coding slice writes: vr_weapon_schema.c/h, vr_weapon_calibration.c/h,
-vr_input.c/h and cl_input.c. Server protocol/contact/outcome code stays unchanged
+vr_input.c/h and cl_input.c. Add only the completed frame's existing predicted
+display time to vr_openxr.h/cpp for sample deltas; do not introduce another clock
+or runtime sampling owner. Track configuration identity using the effective
+profile, held/muzzle calibration and global weapon/world scaling values.
+Server protocol/contact/outcome code stays unchanged
 for generic behavior. Reopen if this becomes a second physical-hit solver,
 server policy or more than a small gesture state. Exact inherited adapters
 remain useful only for behavior that this generic input contract cannot supply.
