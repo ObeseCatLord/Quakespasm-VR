@@ -1490,6 +1490,12 @@ extern "C" int VRXR_CreateVulkanInstance(PFN_vkGetInstanceProcAddr get_proc,
 	const bool captured=end_capture(*instance,VK_NULL_HANDLE,saved);
 	if(!vulkan_result("xrCreateVulkanInstanceKHR",xrResult,result) || !*instance) return 0;
 	if(!captured) { say("OpenXR: runtime did not forward Vulkan instance creation through the supplied callback"); return 0; }
+	const XrVersion createdVersion=XR_MAKE_VERSION(VK_API_VERSION_MAJOR(saved.apiVersion),VK_API_VERSION_MINOR(saved.apiVersion),0);
+	if(VK_API_VERSION_VARIANT(saved.apiVersion) || createdVersion<xrVersion) {
+		// The renderer prepared core entry points/features for the requested
+		// API; actual creation may not silently lower that contract.
+		say("OpenXR: forwarded Vulkan API is below the renderer's requested version"); return 0;
+	}
 	saved.getProc=get_proc; g_creation=std::move(saved);
 	g.vk.getProc=get_proc; g.vk.instance=*instance; g.vk.apiVersion=g_creation.apiVersion; return 1;
 }

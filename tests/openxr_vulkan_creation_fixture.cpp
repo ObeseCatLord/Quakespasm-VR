@@ -117,6 +117,7 @@ static void spy_checks() {
  assert(instance && !g.vk.instance && !g_creation.instance && g_creation.instanceExtensions.empty());
  setup();bypass=true;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));assert(instance && !g_creation.instance);
  setup();missing_instance_proc=true;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));assert(!instance && !driver_instances && !g_creation.instance);
+ setup();merged_api=VK_API_VERSION_1_0;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));assert(instance && !g_creation.instance && !g.vk.instance);
  // Direct renderer creation keeps names/API/features without needing XR discovery.
  g=State();VRXR_RecordVulkanInstance(spy_proc,&info,instance);VRXR_RecordVulkanDevice(physical,&device_info,device);
  assert(g_creation.apiVersion==application.apiVersion && g_creation.instanceExtensions.size()==1 && g_creation.deviceExtensions.size()==1);

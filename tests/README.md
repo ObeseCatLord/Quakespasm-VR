@@ -3311,3 +3311,10 @@ layout-owner test **skips77**. Do not claim actual six-set layouts or loaded-sce
 continuity from these checks. Live/gaze/performance and Windows/ARM tests remain
 user-deferred; incompatible-device reconstruction and late foveation readiness
 remain implementation work.
+
+
+The late-binding parser's zero/oversized/endlessly growing and invalid-name
+cases also pass ASan/UBSan (`-fsanitize=address,undefined
+-fno-omit-frame-pointer`). Run the executable with
+`ASAN_OPTIONS=detect_leaks=0` in this ptrace-managed sandbox: LeakSanitizer
+cannot run here, so this result does not include leak checking.

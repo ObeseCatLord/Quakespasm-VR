@@ -7,12 +7,15 @@ namespace {
 static const char *required_instance_names, *required_device_names;
 static int instance_name_queries, device_name_queries, name_growth_queries;
 static bool malformed_names, growing_names;
+static bool endless_growth, zero_size, excessive_size;
 static XrResult extension_query_result;
 static XrResult legacy_names(const char *names, uint32_t capacity, uint32_t *count, char *buffer) {
  if(extension_query_result!=XR_SUCCESS) return extension_query_result;
  *count=uint32_t(std::strlen(names)+1);
+ if(zero_size) *count=0;
+ if(excessive_size) *count=2*1024*1024;
  if(!capacity) return XR_SUCCESS;
- if(growing_names && ++name_growth_queries<=2) { *count=capacity+1; return XR_ERROR_SIZE_INSUFFICIENT; }
+ if(endless_growth || (growing_names && ++name_growth_queries<=2)) { *count=capacity+1; return XR_ERROR_SIZE_INSUFFICIENT; }
  if(capacity<*count) return XR_ERROR_SIZE_INSUFFICIENT;
  std::memcpy(buffer,names,*count);
  if(malformed_names) buffer[*count-1]='x';
@@ -103,6 +106,7 @@ static void late_setup(bool direct_desktop=false) {
  loader_absent=legacy_absent=false;required_instance_names=required_device_names="";
  instance_name_queries=device_name_queries=name_growth_queries=discovery_creates=0;
  malformed_names=growing_names=false;extension_query_result=XR_SUCCESS;physical_api=VK_API_VERSION_1_1;
+ endless_growth=zero_size=excessive_size=false;
  instance_loss_event=event_pending=false;
 }
 static bool adopt() { return VRXR_AdoptVulkan(nullptr,fake_instance,fake_physical,fake_device)!=0; }
@@ -134,6 +138,10 @@ int main() {
  late_setup(true);required_instance_names="VK_FAKE_required";assert(!adopt() && !g.instance); // exact names, not prefix
  late_setup(true);required_instance_names="  VK_FAKE_required_extra  ";growing_names=true;assert(adopt());VRXR_Shutdown();
  late_setup();malformed_names=true;assert(!adopt() && !g.instance);
+ late_setup();endless_growth=true;assert(!adopt() && !g.instance);
+ late_setup();zero_size=true;assert(!adopt() && !g.instance);
+ late_setup();excessive_size=true;assert(!adopt() && !g.instance);
+ late_setup();required_instance_names="VK_FAKE_bad\tname";assert(!adopt() && !g.instance);
  late_setup();required_device_names="VK_FAKE_unenabled";assert(!adopt() && !g.instance);
  late_setup();extension_query_result=XR_ERROR_RUNTIME_FAILURE;assert(!adopt() && !g.instance);
  late_setup();offered_physical=reinterpret_cast<VkPhysicalDevice>(999);assert(!adopt() && !g.instance);

@@ -222,3 +222,14 @@ closure; late foveation readiness; existing-owner live reconstruction for change
 GPU/API/extensions and actual Vulkan device loss. Live headset/gaze/multiplayer/
 performance testing and Windows/ARM checks remain deferred per user scope.
 This checkpoint does not declare VR-001/VR-002 or the whole migration complete.
+
+
+Post-checkpoint guard: actual forwarded Vulkan API cannot be a variant or lower
+in major/minor than the renderer's request. This protects preselected core entry
+points/features before device initialization; the lower-forwarded-API fixture
+rejects without publishing metadata while retaining any returned handle for
+renderer cleanup. Linux build and real/spied creation checks pass after this
+change. Extension-parser zero/oversized/endlessly-growing/invalid-character
+cases also pass ASan/UBSan. LeakSanitizer cannot run under this execution
+sandbox's ptrace context, so that run disables only leak detection; do not
+claim leak checking. Real layout proof remains a recorded skip, not a pass.
