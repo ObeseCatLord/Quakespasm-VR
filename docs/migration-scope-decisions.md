@@ -50,3 +50,15 @@ Windows builds remain deferred. Complete implementation before consolidated
 verification; use this Linux machine and the authorized Foundry Linux ARM host
 for that verification. Do not deploy to or modify its running game/server merely
 to build. Windows remains a release target, not a required build in this pass.
+
+## Universal melee fallback (2026-09-29)
+
+Uncovered mods should have built-in melee behavior without requiring engine
+patches per mod. The [generic melee plan](migration-generic-melee-2.0-plan.md)
+selects an ordinary attack-input gesture: default standard-axe conventions and
+explicit weapon-profile opt-in for other models. Original QuakeC owns damage,
+animation, cooldown, reach and custom effects. No universal damage replacement
+or arbitrary QC function invocation is implied. Exact inherited adapters remain
+for measured physical contact; the fallback avoids new per-mod engine fixes
+where ordinary native-input semantics suffice. Mjolnir hybrid/dual-state weapon
+adapters remain excluded. [Configuration](generic-melee.md) records the limits.
