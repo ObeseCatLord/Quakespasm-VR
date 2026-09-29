@@ -481,9 +481,10 @@ cl.time. Does not modify the entity.
 void R_SetupAliasFrame (const entity_t *e, aliashdr_t *paliashdr, lerpdata_t *lerpdata)
 {
 	int frame = e->frame;
-	if (VR_InputCopperReadyPose (e, paliashdr))
+	int ready_pose;
+	if (VR_InputMeleeReadyPose (e, paliashdr, &ready_pose))
 	{
-		lerpdata->pose1 = lerpdata->pose2 = paliashdr->frames[0].firstpose;
+		lerpdata->pose1 = lerpdata->pose2 = ready_pose;
 		lerpdata->blend = 1;
 		return;
 	}
@@ -860,7 +861,7 @@ R_DrawAliasModel -- johnfitz -- almost completely rewritten
 static int R_AliasModelMatrixInternal (
 	entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata,
 	float model_matrix[16], qboolean apply_viewmodel_transforms,
-	const mod_held_melee_recipe_t *held_recipe)
+	const mod_held_melee_recipe_t *held_recipe, int viewmodel_hand)
 {
 	if (held_recipe || (apply_viewmodel_transforms && R_IsVRViewmodel (e)))
 	{
@@ -963,9 +964,10 @@ static int R_AliasModelMatrixInternal (
 			geometry_scale[axis] = (float)scale_value;
 		}
 
+		const int model_hand = viewmodel_hand >= 0 ? viewmodel_hand :
+			VR_InputDominantPhysicalHand ();
 		const qboolean mirror_model_y = held_recipe && held_recipe->authored_left ?
-			VR_InputDominantPhysicalHand () == 1 :
-			(!paired_half && VR_InputDominantPhysicalHand () == 0);
+			model_hand == 1 : (!paired_half && model_hand == 0);
 		if (mirror_model_y)
 		{
 			/* E * MirrorY * T * S: reflect the held offset with the mesh. */
@@ -1027,7 +1029,19 @@ static int R_AliasModelMatrixInternal (
 int R_AliasModelMatrix (entity_t *e, const aliashdr_t *paliashdr, lerpdata_t *lerpdata, float model_matrix[16])
 {
 	return R_AliasModelMatrixInternal (e, paliashdr, lerpdata,
-		model_matrix, true, NULL);
+		model_matrix, true, NULL, -1);
+}
+
+/* Input samples the same selected source viewmodel for either physical hand.
+ * Override only reflection; never change entity state or the renderer's hand. */
+int R_AliasViewmodelHandMatrix (entity_t *e, const aliashdr_t *geometry,
+	lerpdata_t *lerpdata, float model_matrix[16], int physical_hand)
+{
+	if (e != &cl.viewent || physical_hand < 0 || physical_hand > 1 ||
+		!R_IsVRViewmodel (e))
+		return -1;
+	return R_AliasModelMatrixInternal (e, geometry, lerpdata,
+		model_matrix, true, NULL, physical_hand);
 }
 
 /* The private view has unit scale and zero scale origin. Start from the
@@ -1058,7 +1072,7 @@ int R_HeldMeleeMatrix (entity_t *e, const aliashdr_t *geometry,
 	if (!recipe)
 		return -1;
 	return R_AliasModelMatrixInternal (e, geometry, lerpdata, matrix,
-		true, recipe);
+		true, recipe, -1);
 }
 
 static void R_DrawAliasSurfaces (
@@ -1332,7 +1346,7 @@ void R_DrawPreparedWheelAliasModel (
 
 	float model_matrix[16];
 	const int matrix_result = R_AliasModelMatrixInternal (e, selected_geometry,
-		&lerpdata, model_matrix, false, NULL);
+		&lerpdata, model_matrix, false, NULL, -1);
 	if (matrix_result < 0)
 		return;
 	qboolean opposite_front_face = matrix_result > 0;

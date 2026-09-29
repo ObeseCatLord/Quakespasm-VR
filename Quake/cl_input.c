@@ -573,9 +573,6 @@ static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 		bits |= 1;
 	if (isfinal)
 		in_attack.state &= ~2;
-	bits = VR_InputMergeMeleeAttack (bits, isfinal);
-	if (VR_InputSuppressUncalibratedAttack (cmd))
-		bits &= ~1u;
 
 	if (in_jump.state & 3)
 		bits |= 2;
@@ -594,6 +591,9 @@ static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 			extra_buttons[i]->state &= ~2;
 	}
 
+	bits = VR_InputMergeMeleeAttack (bits, isfinal);
+	if (VR_InputSuppressUncalibratedAttack (cmd))
+		bits &= ~1u;
 	cmd->buttons = bits;
 	cmd->impulse = in_impulse;
 

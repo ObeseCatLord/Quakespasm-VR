@@ -629,18 +629,6 @@ static qboolean V_AkimboRecipeIsQBJ3Fist (
 		!strcmp (recipe->source, "progs/v_berserk.mdl");
 }
 
-/* Presentation policy is separate from the paired-model capability. QBJ3's
- * native fist animation remains visible if immersive contact is unavailable. */
-static qboolean V_QBJ3FistImmersivePresentation (void)
-{
-	const cvar_t *option = Cvar_FindVar ("vr_immersive_melee");
-	return cl.vr_qbj3_berserk_akimbo_supported && option &&
-		isfinite (option->value) && option->value != 0.0f &&
-		V_TrackedAimMode () == VR_AIMMODE_CONTROLLER &&
-		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
-		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3;
-}
-
 /* This single-hand recipe reuses the pair loader's pinned split output and
  * the existing two-point ready-pose cache. A virtual-path override has no
  * generated provenance and must never acquire these source-specific points. */
@@ -652,7 +640,6 @@ static qboolean V_HeldMeleeGeometry (qmodel_t **model_out,
 	const mod_held_melee_recipe_t *recipe;
 	qmodel_t *source, *held;
 	aliashdr_t *source_geometry, *geometry;
-	const cvar_t *option = Cvar_FindVar ("vr_immersive_melee");
 
 	if (model_out)
 		*model_out = NULL;
@@ -666,8 +653,7 @@ static qboolean V_HeldMeleeGeometry (qmodel_t **model_out,
 		modelindex >= MAX_MODELS ||
 		!V_UseTrackedView () || V_TrackedAimMode () != VR_AIMMODE_CONTROLLER ||
 		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED ||
-		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) == 0 ||
-		!option || !isfinite (option->value) || option->value == 0.0f ||
+		!VR_InputGestureMeleeActive () ||
 		cl.stats[STAT_ACTIVEWEAPON] != 4096)
 		return false;
 	source = cl.model_precache[modelindex];
@@ -676,7 +662,7 @@ static qboolean V_HeldMeleeGeometry (qmodel_t **model_out,
 		cl.viewent.skinnum < 0)
 		return false;
 	recipe = Mod_GetHeldMeleeRecipe (source->name);
-	if (!recipe || cl.vr_weapon_contact_profile != recipe->contact_profile)
+	if (!recipe)
 		return false;
 	held = Mod_ForName (recipe->held, false);
 	if (!held || held->needload || held->type != mod_alias ||
@@ -693,8 +679,8 @@ static qboolean V_HeldMeleeGeometry (qmodel_t **model_out,
 		cl.viewent.skinnum >= source_geometry->numskins ||
 		source_geometry->frames[recipe->ready_frame].numposes != 1)
 		return false;
-	/* The donor freezes these held meshes independently of the QC
-	 * animation. Native readiness remains the server outcome owner's policy. */
+	/* Generated held meshes retain their authored ready pose while native QC
+	 * continues its ordinary attack sequence. */
 	geometry = (aliashdr_t *)held->extradata[PV_QUAKE1];
 	if (!geometry || geometry->poseverttype != PV_QUAKE1 ||
 		geometry->numverts != recipe->vertices || geometry->numtris != recipe->triangles ||
@@ -849,7 +835,6 @@ static void V_PrepareHeldMelee (const vrxr_frame_t *frame)
 entity_t *V_HeldMeleeEntity (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	const cvar_t *option = Cvar_FindVar ("vr_immersive_melee");
 	return vulkan_globals.stereo_active && held_melee_prepared &&
 		held_melee_recipe && cl.viewent.model &&
 		Mod_GetHeldMeleeRecipe (cl.viewent.model->name) == held_melee_recipe &&
@@ -857,10 +842,8 @@ entity_t *V_HeldMeleeEntity (void)
 		frame->should_render && V_UseTrackedView () &&
 		VR_InputDominantPhysicalHand () == held_melee_hand &&
 		VR_InputPhysicalHandAccepted (frame, held_melee_hand) &&
-		option && isfinite (option->value) && option->value != 0.0f &&
+		VR_InputGestureMeleeActive () &&
 		cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
-		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) &&
-		cl.vr_weapon_contact_profile == held_melee_recipe->contact_profile &&
 		cl.stats[STAT_ACTIVEWEAPON] == 4096 &&
 		cl.stats[STAT_WEAPON] > 0 && cl.stats[STAT_WEAPON] < MAX_MODELS &&
 		cl.model_precache[cl.stats[STAT_WEAPON]] == held_melee_source_model &&
@@ -1228,8 +1211,8 @@ void V_PrepareAkimboPair (void)
 		!isfinite (vr_gunmodelpitch.value))
 		return;
 	qbj3_fists = V_AkimboRecipeIsQBJ3Fist (recipe);
-	freeze_frame = V_AkimboRecipeIsDwellAxe (recipe) ||
-		(qbj3_fists && V_QBJ3FistImmersivePresentation ());
+	freeze_frame = (V_AkimboRecipeIsDwellAxe (recipe) || qbj3_fists) &&
+		VR_InputGestureMeleeActive ();
 
 	/* Pair files and any selected geometry are synchronously prepared here,
 	 * before the renderer can distribute its viewmodel work to tasks. */

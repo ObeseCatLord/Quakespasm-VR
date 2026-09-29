@@ -79,15 +79,17 @@ int VR_InputDominantPhysicalHand (void);
 qboolean VR_InputPhysicalHandAccepted (const vrxr_frame_t *frame, int physical_hand);
 extern cvar_t vr_weapon_collision;
 qboolean VR_WeaponCollisionAuthorized (void);
+/* Selected gesture-mode melee policy; independent of current hand tracking. */
+qboolean VR_InputGestureMeleeActive (void);
 /* Selected supported axe edge in the raw presentation hand frame. False without
  * an admitted MELEE profile; callers may use calibrated generic fallback. */
 qboolean VR_InputStockAxePresentationEdgeOffsets (int physical_hand,
 	vec3_t base, vec3_t tip);
 struct entity_s;
 struct aliashdr_s;
-/* Read-only ready-pose selection for the admitted Copper viewmodel. */
-qboolean VR_InputCopperReadyPose (const struct entity_s *entity,
-	const struct aliashdr_s *geometry);
+/* Read-only ready-pose selection for the selected gesture-mode VR viewmodel. */
+qboolean VR_InputMeleeReadyPose (const struct entity_s *entity,
+	const struct aliashdr_s *geometry, int *pose_out);
 qboolean VR_InputCrosshairAimRay (vec3_t start, vec3_t forward);
 int VR_InputCrosshairAimRays (vec3_t starts[2], vec3_t forwards[2]);
 void VR_InputTriggerHaptic (int logical_role, float duration_seconds, float amplitude);

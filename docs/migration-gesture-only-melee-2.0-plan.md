@@ -1,10 +1,34 @@
 # Gesture-only melee and steady VR weapon presentation
 
-Status: design disposition accepted; bounded implementation in progress. This supersedes
+Status: source implementation and final Astra review accepted; Linux/ARM
+qualification deferred until all implementation is finished. This supersedes
 physical-contact melee expansion and the unfinished Copper server integration.
 Only branch 2.0. The user's dirty migration-2.0.md remains untouched.
 
 ## Required behavior and existing owners
+
+Direct primary-branch reference: ../quakespasm-openvr is checked out on master
+(the repository has no local main ref), at
+51b452c018273647dcf94f4628a370267ff8fa91. HEAD matches master and the inspected
+vr.c/cl_input.c files have no working-tree difference from that ref. This is
+the existing separate read-only reference checkout; another clone is unnecessary.
+vr.c:7346 VR_ImmersiveMeleeSuppressTrigger uses profile identity to suppress
+primary attack, except an explicitly native-trigger hybrid. cl_input.c:1086
+clears BUTTON_ATTACK on the finalized send command. vr.c:7730..7785
+VR_DrawTrackedViewModel selects the profile's ready pose in a scoped held copy
+and restores the original entity/animation afterward. Native QC continues its
+own attack state. These are the control and presentation references, rather
+than newly invented melee policy.
+Native-animation/hybrid profiles additionally require source readiness in
+vr.c:7318; those exact physical/hybrid behaviors are deferred by the user.
+
+For 2.0, the reviewed final-command seam records the gesture pulse under the
+existing prediction/history owner. Observational alias pose selection and
+prepared generated entities preserve the same presentation separation without
+borrowing the OpenGL routine's temporary global entity assignment during Vulkan
+draw tasks. The revised user scope omits native-trigger hybrid exceptions,
+keeps trigger suppression through hand-tracking loss, and admits ordinary
+gestures by shared profile without a physical-contact server capability.
 
 When immersive melee is enabled and the selected weapon is recognized as melee,
 a validated physical swing requests ordinary attack input. Physical attack
@@ -89,6 +113,15 @@ and reach; there is no blade-edge contact or universal parry promise.
 | MD3 ready poses used numposes=1 | Bound PV_QUAKE3 by numframes like MD5; MDL uses numposes. Keep read-only frame0 fallback and validate selected surface chain. |
 | Disabling contact authorization also lost collision geometry | Restore geometry eligibility and gate only immersive contact producers plus final admission. Retain the existing collision/pose owners; no server change. |
 | Dominant-only recognition loses paired melee swings | Reuse the recognizer per hand for existing paired melee, with coalesced native requests. Share profile enable/disable with generated ready-pose presentation. No direct blade damage or per-hand native leaf invocation. |
+| Authored endpoints inherited the dominant reflection for offhand sampling | Add a validated hand-specific adapter to the existing alias model matrix, overriding only reflection. Ordinary rendering callers retain the dominant-hand default; input passes the sampled physical hand. No entity/global mutation or duplicate transform math. |
 
 Local gpt-6-astra/max verified the adapter approach needs no new layer.
-Final combined source review and deferred software qualification remain required.
+The final combined source review verified both contact producers/final admission,
+preserved collision geometry, selective attack filtering after all physical bits,
+calibration ordering, both independent hand states, observational ready poses and
+explicit shared-profile overrides. Its one offhand endpoint finding was fixed
+through the existing matrix adapter and accepted in the follow-up. The reviewer
+also verified the current primary-branch control/presentation reference above.
+No remaining source blocker was reported in this bounded slice. No builds or
+tests were run; deferred software qualification remains required. This does not
+certify all native mod timing, headset feel or the complete migration.
