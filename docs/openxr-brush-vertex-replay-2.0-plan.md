@@ -74,3 +74,23 @@ GPU creation and a loaded scene after complete parent reconstruction. Linux/ARM
 qualification is at the end; actual headset/performance trials are user-owned.
 
 Local Astra must verify and dispose this brief before production changes.
+
+## Local Astra design disposition
+
+Sartre personally verified donor/current arithmetic and retained BSP metadata.
+Accepted with one P2 validation clarification; no P1 or architecture reopening.
+Adopt: eligibility covers both upload branches. Retained polygon declarations
+must provide enough vertices for numedges; missing tiled polygons fail rather
+than use ordinary regeneration. Absent ordinary polygons require nonnegative
+BSP counts and nonnull edge/vertex arrays before the checked position helper.
+Checked aggregate bytes and per-surface destination ranges apply to both;
+world-submodel count/pointer/tagging inputs also need validation.
+
+One thin public boolean eligibility function is accepted because the parent
+transaction needs its answer before destructive retirement. It uses the same
+private validation as the builder, local counts and existing precache traversal,
+without mutating CPU/GPU state. Vertex calculation remains private. Preserve
+donor operation order and original initial polygon ownership/tiled copying.
+The estimate is plausible but tight; source review must separate moved arithmetic
+from new checks and challenge duplicated policy, not just line count. Full
+lightmap/BLAS/device recovery and qualification are still outside this slice.
