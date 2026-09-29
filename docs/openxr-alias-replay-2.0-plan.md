@@ -1,7 +1,9 @@
 # Alias GPU replay prerequisite
 
-Status: implemented prerequisite, accepted by final local Astra source review.
-Full device reconstruction remains pending.
+Status: historical prerequisite; unused replay/retention is being removed under
+the focused [Vulkan scope disposition](openxr-device-reconstruction-2.0-plan.md#focused-astra-max-scope-disposition).
+General live device reconstruction is deferred. The plan below records the
+original design/review and is superseded by the removal plan at the end.
 Parent: [device reconstruction](openxr-device-reconstruction-2.0-plan.md).
 
 Behavior: after GPU-only retirement, the same loaded alias/header/surface/model
@@ -88,3 +90,32 @@ including caller lifetime, readiness, GPU-only retirement and full disposal.
 Linux/ARM software checks and RAM/runtime qualification are deferred until the
 full implementation pass. No builds/tests or device reconstruction trials have
 run for this slice.
+
+## Transient-upload restoration plan (before implementation)
+
+Objective: eliminate normal-load RAM/copy overhead introduced solely for unused
+live-device replay. Verified current consumers: GLMesh_UploadBuffers owns initial
+layout conversion, staging copies and Vulkan allocations; its private creation
+helper is called only there and from the unused replay traversal. No production
+caller invokes the replay entries. R_StagingUploadBuffer copies all bytes before
+returning; GPU completion is not needed to free the original CPU upload source.
+Primary's existing-context mode toggle and vkQuake's same-device restart do not
+need these additional model mirrors.
+
+Use the existing creation helper with explicit borrowed byte spans/sizes,
+without another payload owner. Free transformed vbodata immediately after its
+staging upload; use loader-owned indices, skeleton indices and joints directly
+while valid. Remove replay-only copies, gpu_upload field/type, MD5 completion
+hook and check/retire/replay traversal/API together. Collapse the CPU-disposal
+switch back to the existing full deletion entry; preserve GPU handle clearing,
+native heap/descriptors/garbage, private-prop BLAS retirement and skin disposal.
+Preserve model-owned MD5 skeletons, avatar bind/prop data, culling metadata,
+model identities and all four/eight-weight/MDL/MD3 layout math.
+
+Write set: Quake/gl_mesh.c, gl_model.c, gl_model.h, glquake.h and this document.
+Expected roughly200–260 source lines, predominantly deletion; no renderer,
+loader, staging, avatar or protocol replacement. Local Astra scope review
+recommends this bounded deletion. Final source review follows; builds/tests
+remain deferred until full implementation is finished. End qualification checks
+native models, avatars/props, map disposal and desktop/stereo rendering; no
+device-replay test is a requirement for the deferred transaction.

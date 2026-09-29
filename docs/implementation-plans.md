@@ -71,7 +71,12 @@ this slice. The subsequent [late-binding plan](openxr-late-binding-2.0-plan.md)
 adds compatible-device desktop attachment and fresh instance recovery using
 actual creation metadata and original-Vulkan qualification. Its Linux component
 checks pass; a later native-GPU run also passes the actual donor six-set layout
-owners, while loaded-scene XR/GPU proof remains open. Incompatible-device reconstruction remains parent implementation scope. The
+owners, while loaded-scene XR/GPU proof remains open. The focused
+[Vulkan scope disposition](openxr-device-reconstruction-2.0-plan.md#focused-astra-max-scope-disposition)
+defers general live incompatible-device replacement and device-loss recovery;
+keep existing startup and compatible mode/session transitions. Unused alias
+payload retention is being removed first; these prerequisite helpers no longer
+define the next required migration stage. The
 [late-foveation plan](openxr-late-foveation-2.0-plan.md) records the device-time
 readiness adapter and its remaining proof limits. At the user's request, no
 further builds or tests will run until implementation of the full goal is done;

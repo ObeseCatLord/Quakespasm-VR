@@ -1,7 +1,8 @@
 # OpenXR Vulkan device reconstruction
 
-Status: scope reopened after the user's Vulkan-reuse question. Further device
-reconstruction implementation is paused pending the focused Astra review below.
+Status: general live device replacement/recovery is deferred after the user's
+Vulkan-reuse question and the focused Astra review below. Retain explicit XR
+startup, compatible late attachment and same-device mode/session transitions.
 Earlier local Astra Max design disposition recorded; full production reconstruction
 is not implemented. Texture-retirement, alias replay and brush vertex regeneration
 prerequisites pass bounded final source review.
@@ -287,7 +288,8 @@ Verified by direct source reads:
 - The original feature rows VR-001/VR-002/XR-001/XR-002 require explicit VR,
   runtime/device compatibility and reconnect safety. Later documents added
   full incompatible-device and Vulkan-device-loss reconstruction as parent
-  scope. That addition was agent interpretation, not a separate user request.
+  scope. The supplied user history does not separately mandate transparent
+  arbitrary GPU replacement; the original VR behavior requirement still applies.
 
 Official source rechecked: [enable2 specification](https://raw.githubusercontent.com/KhronosGroup/OpenXR-Docs/main/specification/sources/chapters/extensions/khr/khr_vulkan_enable2.adoc)
 requires compatible creation/runtime GPU and supplies startup wrappers.
@@ -315,3 +317,23 @@ Do not demand new layers to make an unused fallback complete. Main owns final
 scope judgment and writes. The separate Stage3 brush design is conditional
 acceptance with source/order/ownership issues, not authorization to continue
 through this reopened architecture decision.
+
+## Focused Astra Max scope disposition
+
+Hegel personally verified startup, primary toggles, donor restart and actual
+call sites; no delegation, edits or execution checks. Main checked the decisive
+creation/adoption paths and the retained alias allocation/copy sites.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Preserve explicit enable2 startup, actual creation capture, shared renderer/session/image/queue owners and compatible late attachment. | Adopted. These have production consumers and implement the desired OpenXR route without replacing vkQuake rendering. |
+| Same-device compatibility requires API/features/extensions, runtime GPU, queue provenance and legacy binding support. | Adopted. Incompatible desktop late attachment retains the existing process-restart-with-`-openxr` guidance; `vid_restart` does not replace the device. Do not certify every arbitrary hot-connect case. |
+| Desktop selection/runtime independence differs from identical donor device configuration. | Adopted. Existing optional interop/multiview readiness remains, but graphics and performance equivalence still need consolidated qualification. |
+| Startup discovery refusal can continue desktop; Vulkan creation failure is fatal. | Adopted. Preserve current distinction; no universal desktop fallback or device-loss recovery claim. |
+| The source alone cannot establish historical user intent. | Adapted. Scope follows supplied conversation and actual primary behavior, not lack of a code consumer alone. Broad recovery remains a future candidate, not a completion dependency invented from API lifecycle differences. |
+| Alias replay retains upload bytes during normal loading despite having no production replay consumer. | Adopted. Remove unused replay traversal/APIs and retention-only payloads/hooks together, restoring transient native upload lifetime. Preserve real avatar skeleton/bind data and native graphics. |
+| Prune lightmap replay separately; avoid wholesale prerequisite reversion. | Adopted. Keep useful validation/native helper fixes and existing texture/heap corrections; remove unused replay-only paths in a bounded follow-up. Stage3 is not implemented. |
+
+This defers a speculative transaction, not OpenXR, multiview, culling, foveation,
+graphics effects, networking or other requested features. Actual primary toggles
+and named-target initialization remain end-of-implementation qualification.
