@@ -1,8 +1,8 @@
 # Current-primary weapon-wheel reconciliation
 
-Status: plan preceded implementation; stage1 stock preview paths are copied,
-but source inspection reopened their held-identity integration before
-qualification. Stages2..4 remain pending.
+Status: plan preceded implementation; stage1 stock preview paths and required
+held-identity consumer adapter are source-integrated. Final local Astra source
+review and build/draw qualification remain pending. Stages2..4 remain pending.
 Reference: product primary `master` at
 `51b452c018273647dcf94f4628a370267ff8fa91`, read-only sibling
 `quakespasm-openvr`. The [source-update record](migration-source-updates.md)
@@ -94,7 +94,9 @@ primary's adjacent held-identity separation is necessary: `EntryActive` and
 `FindDiscoveredModel` currently compare a held model to the preview. Native
 super-shotgun `v_shot2.mdl` is not a basename alias of its actual pickup
 `g_shot.mdl`; substituting preview paths alone can lose active highlighting and
-create a duplicate discovery row. Do not qualify stage1 independently.
+create a duplicate discovery row. The reopened stage1 adds exact stock held
+identity at the existing entry/active/discovery/preview-loader boundaries;
+do not qualify the literal preview paths independently of those consumers.
 
 The proposed tightly coupled write set is `vr_weapon_menu.c/.h`,
 `vr_weapon_catalog.h` and `vr_weapon_schema.c/.h`. Keep current catalog arrays,

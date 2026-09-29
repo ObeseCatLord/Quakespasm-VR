@@ -32,6 +32,8 @@ typedef struct {
 	int ammo_max_stat;
 	int has_schema_peer;
 	int has_profile_peer;
+	/* Held identity is independent of the pickup/preview mesh. */
+	const char *viewmodel_path;
 } vr_weapon_menu_entry_t;
 
 typedef struct {

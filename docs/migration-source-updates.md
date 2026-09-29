@@ -123,7 +123,8 @@ Directly inspected behaviors to reconcile at existing `2.0`
   independently owned slots. Observation and ambiguous matching do not invent
   commands, arbitrary inventory masks or first-match overrides.
 - Stock shotgun/super-shotgun preview paths are corrected to the actual native
-  models. `2.0` now copies those two stock paths at its existing preview table;
+  models. `2.0` now copies those two stock paths and separates exact stock held
+  identity at existing active/discovery and main-thread fallback consumers;
   no selection, entity model or native gameplay owner changes.
 
 The current `2.0` wheel has existing provenance, stable IDs, own-game wwheel
@@ -134,8 +135,9 @@ and upgrade behavior are **pending reconciliation**, not silently marked done.
 The [bounded wheel-delta plan](migration-wheel-primary-delta-2.0-plan.md)
 precedes adaptation; broader policy implementation still needs senior review,
 retaining desktop/VR wheel parity, the current renderer and all newer melee
-profile fields. The two-path correction is source-inspected, with builds and
-presentation checks deferred until the full implementation is finished.
+profile fields. Stock paths plus their required held-identity adapter are
+source-integrated; final source review is pending. Builds and presentation
+checks are deferred until the full implementation is finished.
 
 Separately, the [gesture-only plan](migration-gesture-only-melee-2.0-plan.md)
 directly compares this same primary revision's

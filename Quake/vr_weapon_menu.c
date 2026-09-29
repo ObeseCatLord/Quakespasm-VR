@@ -44,35 +44,36 @@ typedef struct {
 static const vr_weapon_menu_entry_t vr_weapon_menu_stock_entries[] = {
 	{IT_AXE, VR_WEAPON_MENU_WEAPON, VR_WEAPON_CATALOG_SOURCE_STOCK,
 		"AXE", "progs/g_axe.mdl", 1.0f, {0, 0, 0}, IT_AXE, 1,
-		STAT_ITEMS, IT_AXE, STAT_ACTIVEWEAPON, IT_AXE, -1, 0, -1, 0, 0},
+		STAT_ITEMS, IT_AXE, STAT_ACTIVEWEAPON, IT_AXE, -1, 0, -1, 0, 0,
+		"progs/v_axe.mdl"},
 	{IT_SHOTGUN, VR_WEAPON_MENU_WEAPON, VR_WEAPON_CATALOG_SOURCE_STOCK,
 		"SHOTGUN", "progs/v_shot.mdl", 1.0f, {0, 0, 0}, IT_SHOTGUN, 2,
 		STAT_ITEMS, IT_SHOTGUN, STAT_ACTIVEWEAPON, IT_SHOTGUN,
-		STAT_SHELLS, 100, STAT_VR_MAX_SHELLS, 0, 0},
+		STAT_SHELLS, 100, STAT_VR_MAX_SHELLS, 0, 0, "progs/v_shot.mdl"},
 	{IT_SUPER_SHOTGUN, VR_WEAPON_MENU_WEAPON, VR_WEAPON_CATALOG_SOURCE_STOCK,
 		"DOUBLE SHOTGUN", "progs/g_shot.mdl", 1.0f, {0, 0, 0}, IT_SUPER_SHOTGUN, 3,
 		STAT_ITEMS, IT_SUPER_SHOTGUN, STAT_ACTIVEWEAPON, IT_SUPER_SHOTGUN,
-		STAT_SHELLS, 100, STAT_VR_MAX_SHELLS, 0, 0},
+		STAT_SHELLS, 100, STAT_VR_MAX_SHELLS, 0, 0, "progs/v_shot2.mdl"},
 	{IT_NAILGUN, VR_WEAPON_MENU_WEAPON, VR_WEAPON_CATALOG_SOURCE_STOCK,
 		"NAILGUN", "progs/g_nail.mdl", 1.0f, {0, 0, 0}, IT_NAILGUN, 4,
 		STAT_ITEMS, IT_NAILGUN, STAT_ACTIVEWEAPON, IT_NAILGUN,
-		STAT_NAILS, 200, STAT_VR_MAX_NAILS, 0, 0},
+		STAT_NAILS, 200, STAT_VR_MAX_NAILS, 0, 0, "progs/v_nail.mdl"},
 	{IT_SUPER_NAILGUN, VR_WEAPON_MENU_WEAPON, VR_WEAPON_CATALOG_SOURCE_STOCK,
 		"SUPER NAILGUN", "progs/g_nail2.mdl", 1.0f, {0, 0, 0}, IT_SUPER_NAILGUN, 5,
 		STAT_ITEMS, IT_SUPER_NAILGUN, STAT_ACTIVEWEAPON, IT_SUPER_NAILGUN,
-		STAT_NAILS, 200, STAT_VR_MAX_NAILS, 0, 0},
+		STAT_NAILS, 200, STAT_VR_MAX_NAILS, 0, 0, "progs/v_nail2.mdl"},
 	{IT_GRENADE_LAUNCHER, VR_WEAPON_MENU_WEAPON, VR_WEAPON_CATALOG_SOURCE_STOCK,
 		"GRENADE", "progs/g_rock.mdl", 1.0f, {0, 0, 0}, IT_GRENADE_LAUNCHER, 6,
 		STAT_ITEMS, IT_GRENADE_LAUNCHER, STAT_ACTIVEWEAPON, IT_GRENADE_LAUNCHER,
-		STAT_ROCKETS, 100, STAT_VR_MAX_ROCKETS, 0, 0},
+		STAT_ROCKETS, 100, STAT_VR_MAX_ROCKETS, 0, 0, "progs/v_rock.mdl"},
 	{IT_ROCKET_LAUNCHER, VR_WEAPON_MENU_WEAPON, VR_WEAPON_CATALOG_SOURCE_STOCK,
 		"ROCKET", "progs/g_rock2.mdl", 1.0f, {0, 0, 0}, IT_ROCKET_LAUNCHER, 7,
 		STAT_ITEMS, IT_ROCKET_LAUNCHER, STAT_ACTIVEWEAPON, IT_ROCKET_LAUNCHER,
-		STAT_ROCKETS, 100, STAT_VR_MAX_ROCKETS, 0, 0},
+		STAT_ROCKETS, 100, STAT_VR_MAX_ROCKETS, 0, 0, "progs/v_rock2.mdl"},
 	{IT_LIGHTNING, VR_WEAPON_MENU_WEAPON, VR_WEAPON_CATALOG_SOURCE_STOCK,
 		"LIGHTNING", "progs/g_light.mdl", 1.0f, {0, 0, 0}, IT_LIGHTNING, 8,
 		STAT_ITEMS, IT_LIGHTNING, STAT_ACTIVEWEAPON, IT_LIGHTNING,
-		STAT_CELLS, 100, STAT_VR_MAX_CELLS, 0, 0}
+		STAT_CELLS, 100, STAT_VR_MAX_CELLS, 0, 0, "progs/v_light.mdl"}
 };
 
 static const vr_weapon_menu_catalog_t vr_weapon_menu_stock_catalog = {
@@ -445,6 +446,9 @@ static void VR_WeaponMenu_ApplySchemaMetadata (
 		q_strlcpy (vr_weapon_menu_schema_models[index], model_path,
 			sizeof (vr_weapon_menu_schema_models[index]));
 		entry->model_path = vr_weapon_menu_schema_models[index];
+		/* An authored replacement must not inherit a native stock held path.
+		 * Authored held/preview provenance is reconciled in the next slice. */
+		entry->viewmodel_path = NULL;
 		vr_weapon_menu_model_provenance[index] = VR_WEAPON_MENU_MODEL_FILE;
 		if (entry->label == vr_weapon_menu_wwheel_labels[index])
 			VR_WeaponMenu_SchemaLabel (vr_weapon_menu_wwheel_labels[index],
@@ -1126,6 +1130,15 @@ static qboolean VR_WeaponMenu_ProfileUsesItemOwnership (int selector)
 	return false;
 }
 
+static qboolean VR_WeaponMenu_EntryModelMatches (
+	const vr_weapon_menu_entry_t *entry, const char *model_path)
+{
+	if (entry->viewmodel_path && entry->viewmodel_path[0])
+		return model_path && (!q_strcasecmp (entry->viewmodel_path, model_path) ||
+			(entry->model_path && !q_strcasecmp (entry->model_path, model_path)));
+	return VR_WeaponCatalog_ModelPathsMatch (entry->model_path, model_path);
+}
+
 static qboolean VR_WeaponMenu_EntryActive (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
@@ -1149,8 +1162,7 @@ static qboolean VR_WeaponMenu_EntryActive (const vr_weapon_menu_entry_t *entry,
 	{
 		const char *observed_path = VR_WeaponMenu_CurrentModelPath (stats,
 			num_stats);
-		if (observed_path && !VR_WeaponCatalog_ModelPathsMatch (
-			observed_path, entry->model_path))
+		if (observed_path && !VR_WeaponMenu_EntryModelMatches (entry, observed_path))
 			return false;
 	}
 	return active;
@@ -1445,7 +1457,7 @@ static int VR_WeaponMenu_FindDiscoveredModel (
 		if (entry->kind == VR_WEAPON_MENU_WEAPON &&
 			VR_WeaponMenu_EntryMatchesSelector (entry, selector) &&
 			entry->model_path && entry->model_path[0] &&
-			VR_WeaponCatalog_ModelPathsMatch (entry->model_path, model_path))
+			VR_WeaponMenu_EntryModelMatches (entry, model_path))
 			return (int)i;
 	}
 	return -1;
@@ -1586,6 +1598,11 @@ void VR_WeaponMenu_PrepareModels (void)
 		model = vr_weapon_menu_assets.model[index];
 		if (!model)
 			model = Mod_ForName (path, false);
+		if (!model || model->type != mod_alias)
+		{
+			if (entry->viewmodel_path && entry->viewmodel_path[0])
+				model = Mod_ForName (entry->viewmodel_path, false);
+		}
 		if (!model || model->type != mod_alias)
 		{
 			/* The inherited wheel uses the viewmodel when a mod omits its
