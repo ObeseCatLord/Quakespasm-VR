@@ -353,3 +353,22 @@ values and failed parse atomicity, game/map reset, authored stock visibility,
 calibration save retaining directive/comments/unknown tokens and exact requested
 held/muzzle/melee values. Linux/ARM checks follow full implementation; no builds,
 tests or fixtures now. Stage4 native parent-slot variants remains separate.
+
+## Stage2 local Astra implementation disposition
+
+Sartre reviewed the actual744-line consumer diff, primary helper/callers and
+capacity amendment. Accepted with four P2 corrections; no P1 or new registry/
+state machine, and the existing architecture remains suitable.
+
+| Source finding | Main disposition |
+| --- | --- |
+| A flagged ownership-mask half can be overwritten while its stat is unset. | Adopt: protect an authored mask independently of its stat half. Unknown native fallback masks remain replaceable. Apply the same rule to active halves. |
+| Stock-to-profile replacement preserves the unchanged-preview held alias across memset, then clears it because the comparison lost the old preview. | Adopt: retain the old preview comparison input through replacement. Unchanged Dwell SSG keeps g_shot/v_shot2 association; changed native previews still clear inherited held guesses. |
+| Runtime learning checks selector without the declaration's actual active stat. | Adopt: extract the existing stat predicate and reuse it in both discovery searches and active detection. Keep exact selector fallback for entries without active descriptors. Inactive declarations cannot absorb another weapon. |
+| A max-only file overlay on a wwheel nails row misses dynamic capacity. | Adopt: derive capacity metadata from the final ammo type at wwheel creation and after each metadata merge; preserve explicit fallback zero. |
+| Model-provenance enum/array now have writers and no readers. | Adopt simplification: delete obsolete write-only policy bookkeeping. Authored fields, native-profile provenance and existing copied model/held paths already govern behavior; no replacement array or policy owner. |
+
+Final bounded source review follows these corrections. Identity/overlay source
+acceptance does not prove actual selection, render/asset availability or full
+native rosters. Complete-roster/upgrade work and end-of-goal Linux/ARM checks
+remain required. No builds/tests/fixtures have run for this stage.
