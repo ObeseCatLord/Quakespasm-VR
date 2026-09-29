@@ -300,3 +300,56 @@ policy in `2.0`. Preserve it. Explicit maxima, including zero, remain the
 stored fallback and are not overwritten by profile defaults; dynamic capacity
 must be derived from the current ammo type, not disabled merely because a fixed
 maximum was authored. No new capacity-policy owner is needed.
+
+## Stage3 verified brief: own-game complete roster
+
+Primary `master51b452c0` `vr.c:8896` consumes `roster complete` outside blocks
+and applies authority only when the file belongs to the active search path.
+Its current weapon-wheel documentation describes explicit complete rosters as
+suppressing undeclared generic stock guesses; partial offsets/command files
+must not imply completeness. Current shared parser ignores the unknown global
+words, so that declaration has no metadata consumer here. Calibration saving
+copies text outside blocks unchanged, validates effective values/counts before
+writing, and verifies active-game output afterward (`calibration.c:982..1070`).
+These are source facts; no end-to-end save result is claimed.
+
+Choose one optional metadata output on the existing shared parser. Retain the
+four-argument `VR_WeaponSchemaParse` wrapper for current consumers; add a
+metadata-capable entry point using the same tokenizer, globals, validation and
+staged commit. Add one `complete_roster` flag, set only by a successfully read
+`roster complete` directive; never infer it from count, calibration fields,
+preview paths, command presence or unknown words. No separate scan/parser or
+catalog authority owner. Preserve primary case behavior (`roster` key exact,
+`complete` value case-insensitive), sticky complete declarations and unknown
+scalar values that do not establish completeness. Missing/brace values fail
+parse without publishing metadata. Output defaults false on failure.
+
+The wheel's existing own-game loader obtains the metadata after its search-
+path check and can accept a valid complete declaration with zero entries.
+Set existing catalog authority even when that file is empty; force the mutable
+catalog active so suppression cannot be bypassed by the immutable stock route.
+Reuse `ShouldExpose`: undeclared stock rows are suppressed; authored matched
+rows, known native profiles and actual unselectable discoveries follow existing
+source policy. Do not discard calibration entries or rewrite their ownership.
+Partial files and successful own-game wwheel retain stage2 behavior.
+
+Calibrator parsing continues through the compatibility wrapper for ordinary
+loads. Its save/preflight uses the metadata-capable parser to compare original
+and rewritten complete-roster state alongside the current effective-value/count
+check. Keep surgical text preservation and existing post-write verification;
+do not serialize a new file or add another save path. No metadata in a weapon
+block or protocol. The user does not need old unrelated settings preserved.
+
+Write set: `vr_weapon_schema.c/.h`, the existing loader/reload functions in
+`vr_weapon_menu.c`, and the bounded save/preflight calls in
+`vr_weapon_calibration.c`. Expected80–160 changed lines; no parser/calibrator
+rewrite, source-file reparse pass, authority state machine or new renderer.
+Local Astra disposition is required before stage3 production edits. This brief
+is independent read-only planning while stage2's actual diff is source-reviewed.
+
+End-of-full-implementation acceptance: own/inherited complete declarations,
+partial files, zero-entry complete files, omitted/inferred fields, malformed
+values and failed parse atomicity, game/map reset, authored stock visibility,
+calibration save retaining directive/comments/unknown tokens and exact requested
+held/muzzle/melee values. Linux/ARM checks follow full implementation; no builds,
+tests or fixtures now. Stage4 native parent-slot variants remains separate.
