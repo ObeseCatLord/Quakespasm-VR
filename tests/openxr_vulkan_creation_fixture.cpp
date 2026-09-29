@@ -5,7 +5,7 @@
 #include "../Quake/vr_openxr.cpp"
 namespace {
 static XrResult wrapper_result;
-static bool threaded, multiple_creates, bypass;
+static bool threaded, multiple_creates, multiple_instances, reused_device, bypass;
 static bool use_cached_device, missing_instance_proc, missing_device_proc;
 static PFN_vkCreateDevice cached_device;
 static const char *instance_extra, *device_extra;
@@ -21,7 +21,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL spy_device(VkPhysicalDevice selected, cons
  assert(!allocator && selected==physical && info->queueCreateInfoCount==2);
  assert(info->pQueueCreateInfos[1].queueFamilyIndex==7 && info->pQueueCreateInfos[1].flags==VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT);
  assert(info->enabledExtensionCount==2 && !std::strcmp(info->ppEnabledExtensionNames[1],device_extra));
- *out=reinterpret_cast<VkDevice>(uintptr_t(201 + driver_devices++));return VK_SUCCESS;
+ *out=reinterpret_cast<VkDevice>(uintptr_t(201 + (reused_device ? 0 : driver_devices)));++driver_devices;return VK_SUCCESS;
 }
 static void VKAPI_PTR arbitrary_proc() {}
 static VKAPI_ATTR VkResult VKAPI_CALL unrelated_device(VkPhysicalDevice,const VkDeviceCreateInfo *,const VkAllocationCallbacks *,VkDevice *) {
@@ -55,7 +55,7 @@ static XrResult XRAPI_PTR wrapped_instance(XrInstance, const XrVulkanInstanceCre
    cached_device=reinterpret_cast<PFN_vkCreateDevice>(getProc(*out,"vkCreateDevice"));assert(cached_device);
    assert(getProc(reinterpret_cast<VkInstance>(999),"vkCreateDevice")==reinterpret_cast<PFN_vkVoidFunction>(unrelated_device));
   }
-  if(multiple_creates) { VkInstance ignored;assert(create(&merged,nullptr,&ignored)==VK_SUCCESS); }
+  if(multiple_instances) { VkInstance ignored;assert(create(&merged,nullptr,&ignored)==VK_SUCCESS); }
  };
  if(threaded) { std::thread worker(invoke);worker.join(); } else invoke();
  return wrapper_result;
@@ -69,7 +69,12 @@ static XrResult XRAPI_PTR wrapped_device(XrInstance, const XrVulkanDeviceCreateI
  auto invoke=[&] {
   auto create=use_cached_device ? cached_device : reinterpret_cast<PFN_vkCreateDevice>(info->pfnGetInstanceProcAddr(g.vk.instance,"vkCreateDevice"));assert(create);
   *result=create(info->vulkanPhysicalDevice,&merged,info->vulkanAllocator,out);
-  if(multiple_creates) { VkDevice ignored;assert(create(info->vulkanPhysicalDevice,&merged,nullptr,&ignored)==VK_SUCCESS); }
+  if(multiple_creates) {
+   VkDevice ignored;
+   VkPhysicalDeviceMultiviewFeatures later={VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES};
+   if(reused_device) merged.pNext=&later; // different live facts under the recycled handle
+   assert(create(info->vulkanPhysicalDevice,&merged,nullptr,&ignored)==VK_SUCCESS);
+  }
  };
  if(threaded) { std::thread worker(invoke);worker.join(); } else invoke();
  return wrapper_result;
@@ -80,7 +85,7 @@ static void setup() {
  g.vk.requirements.minApiVersionSupported=XR_MAKE_VERSION(1,1,0);
  g.vk.requirements.maxApiVersionSupported=XR_MAKE_VERSION(1,3,0);
  g.xr.CreateVulkanInstance=wrapped_instance;g.xr.CreateVulkanDevice=wrapped_device;g.xr.DestroyInstance=destroy_instance;
- wrapper_result=XR_SUCCESS;threaded=multiple_creates=bypass=false;driver_instances=driver_devices=0;
+ wrapper_result=XR_SUCCESS;threaded=multiple_creates=multiple_instances=reused_device=bypass=false;driver_instances=driver_devices=0;
  use_cached_device=missing_instance_proc=missing_device_proc=false;cached_device=nullptr;
  instance_extra="VK_FAKE_runtime_instance";device_extra=VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME;merged_api=VK_API_VERSION_1_2;
  physical=reinterpret_cast<VkPhysicalDevice>(301);
@@ -89,9 +94,12 @@ static void spy_checks() {
  VkApplicationInfo application={VK_STRUCTURE_TYPE_APPLICATION_INFO};application.apiVersion=VK_API_VERSION_1_1;
  const char *instance_names[]={"VK_FAKE_app_instance"};
  VkInstanceCreateInfo info={VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};info.pApplicationInfo=&application;info.enabledExtensionCount=1;info.ppEnabledExtensionNames=instance_names;
- setup();threaded=multiple_creates=use_cached_device=true;
- VkInstance instance;assert(VRXR_CreateVulkanInstance(spy_proc,&info,&instance));
- assert(instance==reinterpret_cast<VkInstance>(101) && driver_instances==2);
+ setup();multiple_instances=true;
+ VkInstance instance;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));
+ assert(instance && driver_instances==2 && !g_creation.instance && !g.vk.instance);
+ setup();threaded=use_cached_device=true;
+ assert(VRXR_CreateVulkanInstance(spy_proc,&info,&instance));
+ assert(instance==reinterpret_cast<VkInstance>(101) && driver_instances==1);
  assert(g_creation.apiVersion==merged_api && g.vk.apiVersion==merged_api);
  assert(g_creation.instanceExtensions.size()==2 && g_creation.instanceExtensions[1]==instance_extra);
  assert(capture_proc(instance,"arbitrary")==arbitrary_proc);
@@ -111,6 +119,13 @@ static void spy_checks() {
  wrapper_result=XR_SUCCESS;assert(VRXR_CreateVulkanDevice(&device_info,&device));
  assert(g_creation.device==device && g_creation.deviceExtensions[1]==device_extra && g_creation.multiview && g_creation.densityMap);
  assert(g.vk.queues.size()==2 && g.vk.queues[1].flags==VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT);
+ // Simulate a runtime replacing a destroyed device with a recycled handle;
+ // distinguish the later create's features so selecting the old record fails.
+ g.vk.device=VK_NULL_HANDLE;g_creation.device=VK_NULL_HANDLE;
+ driver_devices=0;multiple_creates=reused_device=true;
+ assert(VRXR_CreateVulkanDevice(&device_info,&device));
+ assert(driver_devices==2 && device==reinterpret_cast<VkDevice>(201));
+ assert(!g_creation.multiview && !g_creation.densityMap && !g.vk.fragmentDensityMapEnabled);
  VRXR_Shutdown();assert(!g.vk.device && g_creation.device==device && g_creation.apiVersion==merged_api);
  VRXR_ForgetVulkanCreation();assert(!g_creation.instance && !g_creation.device && g_creation.queues.empty());
  setup();wrapper_result=XR_ERROR_RUNTIME_FAILURE;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));

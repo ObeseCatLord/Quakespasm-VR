@@ -248,8 +248,21 @@ static bool end_capture(VkInstance instance, VkDevice device, VulkanCreation &sa
 	std::lock_guard<std::mutex> lock(g_capture.mutex);
 	g_capture.active=false;
 	bool found=false;
-	for(const VulkanCreation &record:g_capture.records)
-		if((device && record.device==device) || (!device && instance && record.instance==instance)) { saved=record; found=true; break; }
+	if(device) {
+		// A runtime can destroy/recreate a device during setup; Vulkan may
+		// recycle its handle. The latest successful matching create is live.
+		for(auto it=g_capture.records.rbegin();it!=g_capture.records.rend();++it)
+			if(it->device==device) { saved=*it; found=true; break; }
+	} else if(instance && instance==g_capture.instance) {
+		size_t instances=0;
+		for(const VulkanCreation &record:g_capture.records) if(record.instance) {
+			++instances;
+			if(record.instance==instance) { saved=record; found=true; }
+		}
+		// Device dispatch can be cached inside the instance wrapper. More
+		// than one created instance would make that pin ambiguous.
+		found=found && instances==1;
+	}
 	g_capture.records.clear();
 	return found;
 }

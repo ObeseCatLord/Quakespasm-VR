@@ -233,3 +233,15 @@ change. Extension-parser zero/oversized/endlessly-growing/invalid-character
 cases also pass ASan/UBSan. LeakSanitizer cannot run under this execution
 sandbox's ptrace context, so that run disables only leak detection; do not
 claim leak checking. Real layout proof remains a recorded skip, not a pass.
+
+
+Final review corrections in progress: Astra Max accepted the late-binding
+provenance/readiness/explicit-intent/synchronization/retirement source boundaries
+and the API guard, but found two capture defects. Multiple successful instance
+creates could disagree with the cached dispatch pin; publication now requires
+exactly one successful instance record matching both output and pin. Recycled
+device handles could select a destroyed earlier creation; device matching now
+searches newest to oldest. Focused regressions reject ambiguous instance creation
+and distinguish the latest reused-handle device's feature facts. The creation
+and actual software Vulkan checks pass after both fixes; final correction
+verification by Astra remains pending. Known layout/scene proof limits persist.
