@@ -1,6 +1,7 @@
 # Current-primary weapon-wheel reconciliation
 
-Status: plan before implementation of the newly identified source delta.
+Status: plan preceded implementation; stage1 stock paths are source-adapted,
+with build/draw qualification deferred. Stages2..4 remain pending.
 Reference: product primary `master` at
 `51b452c018273647dcf94f4628a370267ff8fa91`, read-only sibling
 `quakespasm-openvr`. The [source-update record](migration-source-updates.md)
