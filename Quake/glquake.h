@@ -932,6 +932,10 @@ void R_DrawIndirectBrushes_ShowTris (cb_context_t *cbx);
 void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *ent, texchain_t chain, qboolean opaque_only, qboolean transparent_only);
 
 void GL_BuildLightmaps (void);
+/* Quiesced CPU preparation only; successful regeneration cannot resume the old
+ * renderer until reconstruction completes or the lightmap owner is discarded. */
+qboolean GL_CanRegenerateLightmapInputs (void);
+qboolean GL_RegenerateLightmapInputs (void);
 void GL_SetupIndirectDraws (void);
 void GL_SetupLightmapCompute (void);
 void GL_UpdateLightmapDescriptorSets (void);

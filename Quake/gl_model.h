@@ -811,6 +811,7 @@ typedef struct qmodel_s
 
 	byte		*visdata;
 	byte		*lightdata;
+	size_t lightdata_bytes; // readable retained RGB allocation; shared by inline models
 	char		*entities;
 	unsigned int entities_crc; // entities lump CRC16
 

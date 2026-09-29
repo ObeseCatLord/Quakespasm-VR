@@ -700,6 +700,10 @@ static void Mod_FreeModelMemory (qmodel_t *mod)
 	else
 		SAFE_FREE (mod->textures);
 
+	// Inline models borrow lighting storage; invalidate without freeing it twice.
+	mod->lightdata = NULL;
+	mod->lightdata_bytes = 0;
+
 	if (!isDedicated)
 		TexMgr_FreeTexturesForOwner (mod);
 }
@@ -1964,7 +1968,11 @@ static void Mod_LoadLighting (qmodel_t *mod, byte *mod_base, lump_t *l)
 	char		 litfilename[MAX_OSPATH];
 	unsigned int path_id;
 
+	size_t rgb_bytes;
+	if (l->filelen < 0 || !Mod_CheckedSizeMul ((size_t)l->filelen, 3, &rgb_bytes) || rgb_bytes > SIZE_MAX - 8)
+		Sys_Error ("Mod_LoadLighting: invalid lighting size in %s", mod->name);
 	mod->lightdata = NULL;
+	mod->lightdata_bytes = 0;
 	// LordHavoc: check for a .lit file
 	q_strlcpy (litfilename, mod->name, sizeof (litfilename));
 	COM_StripExtension (litfilename, litfilename, sizeof (litfilename));
@@ -1978,20 +1986,21 @@ static void Mod_LoadLighting (qmodel_t *mod, byte *mod_base, lump_t *l)
 		{
 			Con_DPrintf ("ignored %s from a gamedir with lower priority\n", litfilename);
 		}
-		else if (data[0] == 'Q' && data[1] == 'L' && data[2] == 'I' && data[3] == 'T')
+		else if (com_filesize >= 8 && data[0] == 'Q' && data[1] == 'L' && data[2] == 'I' && data[3] == 'T')
 		{
 			i = ReadLongUnaligned (data + sizeof (int));
 			if (i == 1)
 			{
-				if (8 + l->filelen * 3 == com_filesize)
+				if ((qfilesize_t)(8 + rgb_bytes) == com_filesize)
 				{
 					Con_DPrintf2 ("%s loaded\n", litfilename);
-					mod->lightdata = (byte *)Mem_AllocNonZero (l->filelen * 3);
-					memcpy (mod->lightdata, data + 8, l->filelen * 3);
+					mod->lightdata = (byte *)Mem_AllocNonZero (rgb_bytes);
+					mod->lightdata_bytes = rgb_bytes;
+					memcpy (mod->lightdata, data + 8, rgb_bytes);
 					Mem_Free (data);
 					return;
 				}
-				Con_Printf ("Outdated .lit file (%s should be %u bytes, not %lld)\n", litfilename, 8 + l->filelen * 3, com_filesize);
+				Con_Printf ("Outdated .lit file (%s should be %zu bytes, not %lld)\n", litfilename, 8 + rgb_bytes, com_filesize);
 			}
 			else
 			{
@@ -2015,7 +2024,8 @@ static void Mod_LoadLighting (qmodel_t *mod, byte *mod_base, lump_t *l)
 		// RGB lightmap samples are packed in 16bits.
 		// RRRRR GGGGG BBBBBB
 
-		mod->lightdata = (byte *)Mem_Alloc ((l->filelen / 2) * 3);
+		mod->lightdata_bytes = (size_t)(l->filelen / 2) * 3;
+		mod->lightdata = (byte *)Mem_Alloc (mod->lightdata_bytes);
 		in = mod_base + l->fileofs;
 		out = mod->lightdata;
 
@@ -2035,14 +2045,16 @@ static void Mod_LoadLighting (qmodel_t *mod, byte *mod_base, lump_t *l)
 	if (mod->bspversion == BSPVERSION_VALVE)
 	{
 		// lightmap samples are already stored as rgb
-		mod->lightdata = (byte *)Mem_Alloc (l->filelen);
-		memcpy (mod->lightdata, mod_base + l->fileofs, l->filelen);
+		mod->lightdata_bytes = (size_t)l->filelen;
+		mod->lightdata = (byte *)Mem_Alloc (mod->lightdata_bytes);
+		memcpy (mod->lightdata, mod_base + l->fileofs, mod->lightdata_bytes);
 		return;
 	}
 #endif
 
-	mod->lightdata = (byte *)Mem_Alloc (l->filelen * 3);
-	in = mod->lightdata + l->filelen * 2; // place the file at the end, so it will not be overwritten until the very last write
+	mod->lightdata_bytes = rgb_bytes;
+	mod->lightdata = (byte *)Mem_Alloc (rgb_bytes);
+	in = mod->lightdata + (size_t)l->filelen * 2; // place the file at the end, so it will not be overwritten until the very last write
 	out = mod->lightdata;
 	memcpy (in, mod_base + l->fileofs, l->filelen);
 	for (i = 0; i < l->filelen; i++)

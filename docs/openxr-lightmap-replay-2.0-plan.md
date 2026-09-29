@@ -1,7 +1,7 @@
 # Lightmap derived-input reconstruction
 
-Status: stage1 source integrated with final local Astra acceptance; stage2a
-verified brief awaits disposition. Full lightmap/device replay remains open. This preserves the parent [device reconstruction contract](openxr-device-reconstruction-2.0-plan.md),
+Status: stage1 and stage2a source integrated with final local Astra acceptance;
+stage2b upload/activation brief awaits disposition. Full device replay remains open. This preserves the parent [device reconstruction contract](openxr-device-reconstruction-2.0-plan.md),
 with the [brush vertex prerequisite](openxr-brush-vertex-replay-2.0-plan.md)
 already source integrated. Only2.0 edits; primary, donor and game assets remain
 read-only. No builds/tests until the entire implementation is finished.
@@ -342,3 +342,22 @@ record membership/borrowed lifetime and whether any new APIs are necessary. A
 preflight rejection preserves all records and inputs; native fatal allocation
 errors remain fatal. Final parent qualification at the end is required; this
 brief does not authorize production or establish live device reconstruction.
+
+## Stage2a production/source acceptance
+
+Local Astra/max personally accepted the four-file CPU preparation source with
+no P1/P2 findings:215 additions/43 deletions, within revised250–350 estimate.
+GL_CanRegenerateLightmapInputs and GL_RegenerateLightmapInputs share complete
+preflight, native first-null/index/submodel traversal and existing atlas owners.
+Shared native lighting calculation omits dynamic-light scratch and cache writes
+only during reconstruction; initial and public callers retain their behavior.
+Transient allocation/free is shared, retained BSP positions replace only missing
+polygon inputs, and authoritative RGB allocation length bounds sample reads.
+No extra permanent jumbo-map upload copy, atlas repack or texture record changes.
+
+The original stage2a candidate cache markers/third public cleanup API above were
+rejected and superseded by the adopted disposition. Preparation alone is not a
+restored frame and cannot resume the old renderer. No external callers, GPU
+creation/upload or cache activation were added. Compilation and end-to-end
+qualification remain deferred until full implementation, not certified by this
+source review. Main reviewed the combined diff and git diff --check passed.
