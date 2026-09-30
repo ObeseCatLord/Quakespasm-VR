@@ -107,3 +107,21 @@ the callback/main-thread boundaries locally with Astra after implementation.
    PTT binding/release/menu gating; unavailable audio/Steam Audio; return navigation and both-eye
    pointer/menu coordinates. User live microphone/headset/performance checks
    remain deferred. This plan alone does not complete the voice/UI feature.
+
+## Requested-Astra source disposition
+
+The first bounded source advisory identified three P2 defects. Main verified
+the device-failure path, native mouse drag entry/return and capture publication
+against the current code. Adopt the corrections within the existing owners:
+
+| Finding | Disposition |
+| --- | --- |
+| Failed SDL enumeration becomes an empty list and replaces an explicit device | Return with feedback on SDL3 NULL or SDL2 negative count before modifying preferences. A successful zero-device list remains distinct. No implicit device replacement follows enumeration failure. |
+| Sound-to-Voice or Controls return can inherit a slider grab | Retire native slider/scrollbar drag state on Voice entry/return; initiate Sound grabs only on its actual sliders. No new input-capture state is needed. |
+| Saved enablement hides a failed capture open/start | Add a bounded pure GUI result derived from existing capture-wanted/device state after the attempt and display requested-but-unavailable capture separately from saved preferences. No new failure-policy cache, capture owner or GUI-time SDL call. |
+
+Main also corrected the worker's label/value/cursor overlap and shortened the
+device-loss hint within the intended page layout. These are source findings;
+no graphical or executable validation has run. Effective reviewer settings
+are unexposed, so this is a requested-Astra advisory, not a certified
+senior-skill pass. Final software acceptance remains pending.
