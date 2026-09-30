@@ -107,3 +107,54 @@ camera/demo transitions, menu/HUD, reference/runtime recovery, independent avata
 and shadow poses, moving brushes and eye-only visibility remain on the feature
 map. Eye tracking stays optional; fixed foveation remains explicit opt-in only
 and never a fallback.
+
+## Current-primary aim boundary repair plan (2026-09-30)
+
+Earlier hand-integration and VR-demo statements above describe the historical
+P1 increment. Current private hand/muzzle command preparation is present in
+`vr_input.c:VR_InputPreparePrivatePose/VR_InputApplyPending`, separately from
+movement-command angles. VR demos and additional demo features are now excluded
+by the user; native desktop vkQuake demos remain supported.
+
+The requested local Astra/xhigh source review against primary `51b452c0`
+identified two actual inherited aim differences, spot-checked by main:
+
+| Evidence | Minimal adopted design |
+| --- | --- |
+| Primary `vr.c:VR_Deadzone_f` clamps the archived deadzone to 0–70 degrees. Current `V_Init` has no corresponding callback and `V_UpdateTrackedAim` only rejects nonfinite values. | Reuse native cvar callbacks and `Cvar_SetValueQuick` to clamp finite values to 0–70 and restore 30 for nonfinite input. Keep the resolver's finite safeguard and default/flags. |
+| Primary controller mode writes dominant-hand aim into `cl.aimangles` and `lastAim`. Current controller mode deliberately preserves native movement/input aim and stores that in `tracked_previous_aim`; leaving mode 7 therefore loses the hand-aim inheritance. | Reuse the existing `tracked_previous_aim` history for the last valid mapped dominant-hand aim in controller mode, with one validity bit. On leaving controller mode, transfer that history into native input aim or the existing withheld-aim correction if native angles are locked. Do not change controller-mode movement or private weapon pose. |
+
+The transition design is proposed for a bounded source review before coding:
+capture only a focused, valid, tracked dominant hand through the existing
+`V_TrackedMovementAngles(FOLLOW_HAND, ...)` mapping after head/reference/yaw
+resolution. Never invent an angle from an unavailable hand. Leaving controller
+mode consumes the valid history, resets its roll for modes 1–6, and preserves
+the visual/head history and pending reference rebase. Entering controller mode
+clears the hand-history validity. Client reset and authoritative absolute angles
+also clear validity; authoritative relative deltas keep using the existing
+history rotation. The existing absolute-angle and centerview owners must win
+over cached physical history. No second angle cache, movement policy, protocol
+or camera state machine is required.
+
+Retaining movement aim on the transition reproduces the demonstrated mismatch:
+stationary mapped head yaw 0, hand yaw 90, native input yaw 0, then 7→1 yields
+0 instead of the primary's 90. Overwriting native input aim continuously in
+controller mode would undo the deliberate separation from movement commands;
+that alternative is rejected. A second hand/history vector is unnecessary if
+the existing preceding-aim history and its authoritative setters suffice.
+
+Scope: `Quake/view.c` only, at most 60 net production lines, existing cvar,
+history, reset, authoritative setter and mode callback boundaries. Review must
+challenge invalid/stale hand, angle locks, reference changes, absolute/relative
+authority and repeated mode switches. Reopen this plan if a second cached pose,
+input-owner rewrite or more than the bounded scope is needed. The requested
+reviewer's effective model settings are not exposed here: source advice is not
+formal skill/model certification or runtime qualification.
+
+After all implementation, qualify deadzone extremes/default/nonfinite input;
+7→1/2/3/4/5/6 and return transitions; left-handed mapping; unavailable hand;
+native angle locks and absolute/relative/centerview precedence; unchanged
+controller movement/private firing and desktop behavior. No tests/builds/probes
+run for this source plan. Intermission camera composition requires a separate
+renderer-boundary source reconciliation, not a conclusion from this view-only
+review.
