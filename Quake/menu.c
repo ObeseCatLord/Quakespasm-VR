@@ -5015,14 +5015,6 @@ static void M_Mods_SelectInstalled (const char *gamedir)
 	}
 }
 
-static qboolean M_Mods_CatalogueEntryMatches (const addon_catalog_entry_t *a,
-	const addon_catalog_entry_t *b)
-{
-	return !strcmp (a->gamedir, b->gamedir) && !strcmp (a->name, b->name) &&
-		!strcmp (a->author, b->author) && !strcmp (a->description, b->description) && !strcmp (a->download, b->download) &&
-		a->size == b->size && a->verified == b->verified;
-}
-
 static void M_Mods_ConfirmCatalogueInstall (void)
 {
 	addon_catalog_entry_t current;
@@ -5033,7 +5025,7 @@ static void M_Mods_ConfirmCatalogueInstall (void)
 		return;
 	}
 	index = AddonCatalog_FindGameDir (mods_catalogue_approved.gamedir, &current);
-	if (index < 0 || !M_Mods_CatalogueEntryMatches (&mods_catalogue_approved, &current))
+	if (index < 0 || !AddonCatalog_EntryMatchesApproved (&current, &mods_catalogue_approved))
 	{
 		q_strlcpy (mods_catalogue_feedback, "Entry changed. Return and select it again.", sizeof (mods_catalogue_feedback));
 		return;
@@ -5044,7 +5036,7 @@ static void M_Mods_ConfirmCatalogueInstall (void)
 		M_Mods_SelectInstalled (current.gamedir);
 		return;
 	}
-	if (AddonCatalog_StartInstall (index, true))
+	if (AddonCatalog_StartInstallApproved (index, &mods_catalogue_approved, true))
 	{
 		mods_catalogue_install_active = true;
 		mods_catalogue_feedback[0] = '\0';

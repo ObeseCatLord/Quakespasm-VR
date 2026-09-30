@@ -57,8 +57,11 @@ corrections; no retired VR seed
 on a desktop setting change; pitched/rolled native intermission entities with
 one physical-head contribution and unchanged desktop cameras. Native co-op
 results, deathmatch scores and finale use the existing tracked intermission
-panel. CSQC score/death/intermission canvas placement is still an implementation
-boundary and must be completed before this final qualification begins.
+panel. CSQC score/death/intermission canvas placement is now source-integrated
+through the [existing canvas adapter](csqc-score-panels-2.0-plan.md). Final
+qualification must cover mixed native inventory/voice, registered callback
+combinations, source clipping, independent framebuffer scaling and native
+intermission fallback after QC errors; source acceptance is not rendered proof.
 
 Read game assets only from the existing quakespasm_straight installation. Native
 runners may link/copy needed data into disposable writable profiles; saves,

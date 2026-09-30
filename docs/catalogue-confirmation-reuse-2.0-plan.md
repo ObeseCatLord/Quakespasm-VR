@@ -34,3 +34,13 @@ selection, unverified confirmation, startup failure feedback and ordinary
 keyboard/controller/pointer behavior. Retain existing cancellation, validated
 PACK/temp/rename, retry and server-mod reconnect coverage in the full UI-003/004
 matrix. Source review alone is not installation or runtime qualification.
+
+## Source integration
+
+Implemented with two additions and ten deletions in `menu.c`. Main reviewed the
+full diff against the shared bounded field comparator, mutex-protected job
+start, detail-page snapshot and server-mod consumer. The duplicate comparator
+is deleted; the early comparison and worker job start both consume the existing
+approved snapshot. Installed handling, feedback, dispatch and layout remain.
+Scoped whitespace checking passed. No executable checks were run; the final
+qualification matrix above remains open.
