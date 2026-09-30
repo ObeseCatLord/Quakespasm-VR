@@ -145,3 +145,31 @@ does not repeat a pulse. That helper maps the logical weapon hand to the
 physical controller and gates desktop/unfocused sessions. This reconciles the
 earlier checkpoint's pending menu/wheel statements; physical output remains
 the user's deferred device check.
+
+## Current-primary menu pointer source checkpoint (2026-09-30)
+
+Main compared primary `51b452c0:vr.c:VR_UpdateMenuPointer/VR_DoMenuTrigger`
+with the current native consumers. `gl_screen.c:SCR_VRMenuPrepare` prepares
+one tracked surface before GUI recording, using the dominant physical hand's
+raw controller ray and the same displayed canvas transform for hit testing.
+The inherited 0.13 physical menu scale and 1.35 mod-browser multiplier remain;
+native menu canvas scaling is inverted so artwork and hit coordinates agree.
+The existing pinned/automatic/head-follow anchor options are presentation
+improvements, not a second input or gameplay owner.
+
+`SCR_DrawGUI` publishes the corresponding pointer through
+`M_SetVRPointerPixelPosition` before `M_Draw`; native hover, slider, scrollbar
+and list consumers remain. `VR_InputMenuPanelTrigger` runs after the completed
+draw/XR release, at most once per input dispatch, against that published hover.
+It retains the selected key until trigger release, context-change neutral gates,
+physical binding capture and off-target Enter fallback. The already implemented
+mod-filter keyboard requires a real hit and consumes a miss until release.
+That is an explicit native keyboard boundary, not a new per-mod input policy.
+
+Controller navigation/scroll keys still use the shared input bridge. When no
+tracked session is active, native `M_UpdateMouse` reads the desktop pointer and
+clears VR override state. No new pointer, canvas or input rewrite is justified
+by this source comparison. This closes the stale inventory assertion that the
+menu pointer implementation is absent; actual hover/activation, drag/scroll,
+focus/modal/release and desktop software qualification remains at the final
+Linux/ARM gate. No execution or tests were performed for this checkpoint.
