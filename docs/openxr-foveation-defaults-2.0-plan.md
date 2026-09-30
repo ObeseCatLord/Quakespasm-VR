@@ -71,3 +71,25 @@ networking, avatars, SSAO algorithm, culling, quad views or general device loss.
 Effective settings are unexposed, so required certified senior-skill review
 cannot be verified; label the result requested-Astra advisory. Main remains
 responsible for final architecture and records adopted/adapted/rejected findings.
+
+## Requested-Astra disposition before production
+
+The advisory adopted the lean, with no demonstrated native mismatch requiring
+another view, barrier or resource owner. Main spot-checked candidate selection,
+pre-task update ordering, two-offset submission and queue-submit-before-release.
+Queue submission is not GPU completion; neither CPU task joins nor successful
+view creation attest to runtime producer synchronization or allocation metadata.
+
+| Finding / recommendation | Main disposition |
+| --- | --- |
+| Remove switch requirement only from existing complete-candidate selection | Adopt. `allow_runtime_foveation` becomes current settings readiness. Preserve runtime/GPU/sample/offset predicates and exclusive features; no code expansion to other owners. |
+| Treat the public application convention as explicit interoperability policy | Adopt with limits. RG8, paired layer count, auxiliary offset bit and usable incoming layout/readiness are runtime integration assumptions, not newly proven normative guarantees. Preserve existing acquired/waited update/query and runtime-managed synchronization. Source implementation does not certify any live runtime. |
+| KHR is a device-selection alternative, not a live FDM-device fallback | Adopt clarification. If FDM preparation or a runtime profile/map fails after selection, recover to full-rate stereo on that device. Incompatible device reconstruction stays deferred. |
+| View creation and format probes cannot attest to borrowed-image metadata | Adopt. Retain real error/extent/failure recovery; describe probes as GPU capability checks only. No fabricated attestation query. |
+| Dynamic/deferred views, guessed transitions/stalls, private runtime inspection, handset allowlists or live testing as prerequisites | Reject as prerequisites. No demonstrated incompatibility justifies additional owners or changes; a changed read point would not prove missing synchronization. |
+
+The earlier development gate/release-blocker designation in linked historical
+reviews is superseded by this accepted interoperability decision. Actual
+GPU/runtime validation remains the user's deferred qualification, rather than
+an unfinished code requirement or a promise of universal runtime conformance.
+Production estimate remains under50 changed lines in `Quake/gl_vidsdl.c`.
