@@ -2487,11 +2487,29 @@ static void PF_dropclient (void)
 }
 
 // console/cvar stuff
+static void PF_cvar_setf (void)
+{
+	const char *var = G_STRING (OFS_PARM0);
+	char		val[32];
+
+	q_snprintf (val, sizeof (val), "%g", G_FLOAT (OFS_PARM1));
+	Cvar_Set (var, val);
+}
+
 static void PF_print (void)
 {
 	int i;
 	for (i = 0; i < qcvm->argc; i++)
 		Con_Printf ("%s", G_STRING (OFS_PARM0 + i * 3));
+}
+static void PF_cl_cprint (void)
+{
+	SCR_CenterPrint (PF_VarString (0));
+}
+static void PF_cl_getresolution (void)
+{
+	csqc_display_t display = SCR_GetCSQCDisplay ();
+	G_VECTORSET (OFS_RETURN, display.width / display.scale, display.height / display.scale, 0);
 }
 static void PF_cvar_string (void)
 {
@@ -4940,7 +4958,7 @@ static void PF_cl_drawstring (void)
 
 	while ((c = PR_Markup_Parse (&mu)))
 	{
-		DrawQC_CharacterQuad (vulkan_globals.secondary_cb_contexts[SCBX_GUI], x, pos[1], c, size[0], size[1], rgb, alpha);
+		DrawQC_CharacterQuad (vulkan_globals.secondary_cb_contexts[SCBX_GUI], x, pos[1], c, size[0], size[1], mu.colour, mu.colour[3]);
 		x += size[0];
 	}
 }
@@ -5614,6 +5632,7 @@ static struct
 	{"checkextension",				PF_checkextension,				PF_checkextension,				99,		D("float(string extname)", "Checks for an extension by its name (eg: checkextension(\"FRIK_FILE\") says that its okay to go ahead and use strcat).\nUse cvar(\"pr_checkextension\") to see if this builtin exists.")},	// #99	//darkplaces system - query a string to see if the mod supports X Y and Z.
 	{"checkbuiltin",				PF_checkbuiltin,				PF_checkbuiltin,				0,		D("float(__variant funcref)", "Checks to see if the specified builtin is supported/mapped. This is intended as a way to check for #0 functions, allowing for simple single-builtin functions.")},
 	{"builtin_find",				PF_builtinsupported,			PF_builtinsupported,			100,	D("float(string builtinname)", "Looks to see if the named builtin is valid, and returns the builtin number it exists at.")},	// #100	//per builtin system.
+	{"cvar_setf", PF_cvar_setf, PF_cvar_setf, 176, "void(string cvarname, float value)"},
 	{"anglemod",					PF_anglemod,					PF_anglemod,					102,	"float(float value)"},	//telejano
 	{"fopen",						PF_fopen,						PF_fopen,						110,	D("filestream(string filename, float mode, optional float mmapminsize)", "Opens a file, typically prefixed with \"data/\", for either read or write access.")},	// (FRIK_FILE)
 	{"fclose",						PF_fclose,						PF_fclose,						111,	"void(filestream fhandle)"},	// (FRIK_FILE)
@@ -5670,6 +5689,7 @@ static struct
 	{"iscachedpic",					PF_NoSSQC,						PF_cl_iscachedpic,				316,	D("float(string name)", "Checks to see if the image is currently loaded. Engines might lie, or cache between maps.")},// (EXT_CSQC)
 	{"precache_pic",				PF_NoSSQC,						PF_cl_precachepic,				317,	D("string(string name, optional float flags)", "Forces the engine to load the named image. If trywad is specified, the specified name must any lack path and extension.")},// (EXT_CSQC)
 	{"drawgetimagesize",			PF_NoSSQC,						PF_cl_getimagesize,				318,	D("#define draw_getimagesize drawgetimagesize\nvector(string picname)", "Returns the dimensions of the named image. Images specified with .lmp should give the original .lmp's dimensions even if texture replacements use a different resolution.")},// (EXT_CSQC)
+	{"draw_getimagesize", PF_NoSSQC, PF_cl_getimagesize, 318, "vector(string picname)"},
 	{"drawcharacter",				PF_NoSSQC,						PF_cl_drawcharacter,			320,	D("float(vector position, float character, vector size, vector rgb, float alpha, optional float drawflag)", "Draw the given quake character at the given position.\nIf flag&4, the function will consider the char to be a unicode char instead (or display as a ? if outside the 32-127 range).\nsize should normally be something like '8 8 0'.\nrgb should normally be '1 1 1'\nalpha normally 1.\nSoftware engines may assume the named defaults.\nNote that ALL text may be rescaled on the X axis due to variable width fonts. The X axis may even be ignored completely.")},// (EXT_CSQC, [EXT_CSQC_???])
 	{"drawrawstring",				PF_NoSSQC,						PF_cl_drawrawstring,			321,	D("float(vector position, string text, vector size, vector rgb, float alpha, optional float drawflag)", "Draws the specified string without using any markup at all, even in engines that support it.\nIf UTF-8 is globally enabled in the engine, then that encoding is used (without additional markup), otherwise it is raw quake chars.\nSoftware engines may assume a size of '8 8 0', rgb='1 1 1', alpha=1, flag&3=0, but it is not an error to draw out of the screen.")},// (EXT_CSQC, [EXT_CSQC_???])
 	{"drawpic",						PF_NoSSQC,						PF_cl_drawpic,					322,	D("float(vector position, string pic, vector size, vector rgb, float alpha, optional float drawflag)", "Draws an shader within the given 2d screen box. Software engines may omit support for rgb+alpha, but must support rescaling, and must clip to the screen without crashing.")},// (EXT_CSQC, [EXT_CSQC_???])
@@ -5677,6 +5697,8 @@ static struct
 	{"drawsetcliparea",				PF_NoSSQC,						PF_cl_drawsetclip,				324,	D("void(float x, float y, float width, float height)", "Specifies a 2d clipping region (aka: scissor test). 2d draw calls will all be clipped to this 2d box, the area outside will not be modified by any 2d draw call (even 2d polygons).")},// (EXT_CSQC_???)
 	{"drawresetcliparea",			PF_NoSSQC,						PF_cl_drawresetclip,			325,	D("void(void)", "Reverts the scissor/clip area to the whole screen.")},// (EXT_CSQC_???)
 	{"drawstring",					PF_NoSSQC,						PF_cl_drawstring,				326,	D("float(vector position, string text, vector size, vector rgb, float alpha, float drawflag)", "Draws a string, interpreting markup and recolouring as appropriate.")},// #326
+	{"drawcolorcodedstring", PF_NoSSQC, PF_cl_drawstring, 326, "float(vector position, string text, vector size, vector rgb, float alpha, float drawflag)"},
+	{"drawcolorcodedstring2", PF_NoSSQC, PF_cl_drawstring, 326, "float(vector position, string text, vector size, vector rgb, float alpha, float drawflag)"},
 	{"stringwidth",					PF_NoSSQC,						PF_cl_stringwidth,				327,	D("float(string text, float usecolours, vector fontsize='8 8')", "Calculates the width of the screen in virtual pixels. If usecolours is 1, markup that does not affect the string width will be ignored. Will always be decoded as UTF-8 if UTF-8 is globally enabled.\nIf the char size is not specified, '8 8 0' will be assumed.")},// EXT_CSQC_'DARKPLACES'
 	{"drawsubpic",					PF_NoSSQC,						PF_cl_drawsubpic,				328,	D("void(vector pos, vector sz, string pic, vector srcpos, vector srcsz, vector rgb, float alpha, optional float drawflag)", "Draws a rescaled subsection of an image to the screen.")},// #328 EXT_CSQC_'DARKPLACES'
 	{"getstati",					PF_NoSSQC,						PF_cl_getstat_int,				330,	D("#define getstati_punf(stnum) (float)(__variant)getstati(stnum)\nint(float stnum)", "Retrieves the numerical value of the given EV_INTEGER or EV_ENTITY stat. Use getstati_punf if you wish to type-pun a float stat as an int to avoid truncation issues with DP's network protocol.")},// (EXT_CSQC)
@@ -5687,6 +5709,7 @@ static struct
 	{"particleeffectnum",			PF_sv_particleeffectnum,		PF_cl_particleeffectnum,		335,	D("float(string effectname)", "Precaches the named particle effect. If your effect name is of the form 'foo.bar' then particles/foo.cfg will be loaded by the client if foo.bar was not already defined.\nDifferent engines will have different particle systems, this specifies the QC API only.")},// (EXT_CSQC)
 	{"trailparticles",				PF_sv_trailparticles,			PF_cl_trailparticles,			336,	D("void(float effectnum, entity ent, vector start, vector end)", "Draws the given effect between the two named points. If ent is not world, distances will be cached in the entity in order to avoid framerate dependancies. The entity is not otherwise used.")},// (EXT_CSQC),
 	{"pointparticles",				PF_sv_pointparticles,			PF_cl_pointparticles,			337,	D("void(float effectnum, vector origin, optional vector dir, optional float count)", "Spawn a load of particles from the given effect at the given point traveling or aiming along the direction specified. The number of particles are scaled by the count argument.")},// (EXT_CSQC)
+	{"cprint", PF_NoSSQC, PF_cl_cprint, 338, "void(string s, ...)"},
 	{"print",						PF_print,						PF_print,						339,	D("void(string s, ...)", "Unconditionally print on the local system's console, even in ssqc (doesn't care about the value of the developer cvar).")},//(EXT_CSQC)
 	{"getplayerkeyvalue",			PF_NoSSQC,						PF_cl_playerkey_s,				348,	D("string(float playernum, string keyname)", "Look up a player's userinfo, to discover things like their name, topcolor, bottomcolor, skin, team, *ver.\nAlso includes scoreboard info like frags, ping, pl, userid, entertime, as well as voipspeaking and voiploudness.")},// (EXT_CSQC)
 	{"getplayerkeyfloat",			PF_NoSSQC,						PF_cl_playerkey_f,				0,		D("float(float playernum, string keyname, optional float assumevalue)", "Cheaper version of getplayerkeyvalue that avoids the need for so many tempstrings.")},
@@ -5808,6 +5831,8 @@ static struct
 	{"ex_centerprint",				PF_centerprint,					PF_NoCSQC,						0,		"void(entity client, string s, ...)"},
 	{"ex_bprint",					PF_bprint,						PF_NoCSQC,						0,		"void(string s, ...)"},
 	{"ex_sprint",					PF_sprint,						PF_NoCSQC,						0,		"void(entity client, string s, ...)"},
+	{"getresolution", PF_NoSSQC, PF_cl_getresolution, 608, "vector()"},
+	{"ex_finalefinished", PF_sv_finalefinished, PF_NoCSQC, 0, "float()"},
 	{"ex_finaleFinished",			PF_sv_finalefinished,			PF_NoCSQC,						0,		"float()"},
 	{"ex_CheckPlayerEXFlags",		PF_sv_CheckPlayerEXFlags,		PF_NoCSQC,						0,		"float(entity playerEnt)"},
 	{"ex_walkpathtogoal",			PF_sv_walkpathtogoal,			PF_NoCSQC,						0,		"float(float movedist, vector goal)"},

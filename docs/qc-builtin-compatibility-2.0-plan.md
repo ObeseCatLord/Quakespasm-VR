@@ -101,15 +101,19 @@ the original donor spelling. This is an inherited fallback, not new finale
 detection. Its ordinary dynamic number is allocated by the existing registry.
 
 Primary `PF_cl_drawstring` uses `mu.colour` and its alpha for each glyph after
-`PR_Markup_Parse`. Destination parses the same markup but passes the original
-RGB/alpha to `DrawQC_CharacterQuad`, losing color and half-alpha changes. Pass
+`PR_Markup_Parse`. Destination passes the original RGB/alpha to
+`DrawQC_CharacterQuad`, losing its parser's color and half-alpha changes. Pass
 the parser's existing per-glyph RGBA to that same helper. Plain strings and raw
 strings keep their existing behavior. No shaders, pipelines, render targets or
 new geometry path are needed.
 
+The parsers share the per-glyph RGBA contract, not identical parsing policy:
+primary disables caret markup with `false`, while destination retains the
+donor's `pr_checkextension.value` gate. Preserve that donor parsing policy.
+
 All changes stay in `Quake/pr_ext.c`; occupied-slot compatibility, core-name
 lookup, file/search/buffer lifetimes, events and capability advertisement remain
-separate slices. Estimated production scope: three small wrappers, six registry
+separate slices. Estimated production scope: three small wrappers, seven registry
 entries and one existing draw call argument correction. Reopen this slice if it
 needs VM dispatch changes or another state owner.
 
@@ -121,3 +125,13 @@ centerprint timing; desktop absolute/relative scaling and VR panel extents;
 plain strings, color/reset/half-alpha markup and unchanged raw strings. Builds,
 tests and probes remain deferred. Hardware rendering qualification stays with
 the user.
+
+## Second-slice source disposition
+
+Personal local Astra Max accepted the actual cvar/HUD patch with no introduced
+P1/P2. The reviewer verified primary wrappers/aliases, existing number allocation
+and VM-specific invocation, shared destination HUD extents and per-glyph RGBA
+consumption. The documentation parsing-policy correction above is accepted;
+no new parser policy is introduced. Source acceptance does not prove identical
+primary markup output or runtime/desktop/VR rendering. No builds, tests, compiler
+runs or probes were performed. Other registry gaps remain open.
