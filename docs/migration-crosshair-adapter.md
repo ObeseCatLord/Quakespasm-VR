@@ -71,3 +71,28 @@ calibrated rays before recording the immutable frame snapshot. Noncontroller
 mode retains the gameplay-aim ray through `cl.viewangles`; scene tasks do not
 reload weapon models or mutate the command/QC owner. This source wiring does
 not qualify wall/barrel alignment, stairs or physical headset appearance.
+
+## Physical muzzle and QC-source owner checkpoint
+
+Main inspected the current producers and consumers, not only their names.
+`vr_input.c:4768–4855` produces rays from tracked hand angles and calibrated
+muzzle transforms; ordinary weapons use the existing collision-corrected
+presentation origin, held melee uses its prepared origin, and ready pairs use
+their prepared fixed anchors. These paths do not branch on player count.
+
+The server's weapon scope at `sv_phys.c:4461–4486` reconstructs and clamps the
+command muzzle, then temporarily subtracts the existing
+`VR_WeaponCalibrationProjectileSourceOffset` before native QC firing. The
+calibration helper at `vr_weapon_calibration.c:3209–3280` preserves native source
+conventions and authored source corrections. Server initialization at
+`sv_main.c:3098–3100` initializes/reloads that owner, including dedicated use.
+No second multiplayer offset store or client-only correction is needed.
+
+Primary `vr.c:6243–6291` instead has conditional solo-only pointer source
+compensation and a projectile-Z setting. Its selective pointer adjustment is
+not copied: the adopted preset plan retains the current physical-muzzle pointer
+and native QC-source boundary in every network mode. Thus the old index wording
+that source correction remains to be implemented is superseded by actual source
+wiring. Final Linux/ARM owner-level checks remain necessary; alignment and
+actual impacts cannot be certified from this inspection. No executable checks
+or performance measurements were run.
