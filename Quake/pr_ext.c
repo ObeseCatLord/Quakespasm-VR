@@ -912,39 +912,30 @@ static void PF_strncmp (void)
 {
 	const char *a = G_STRING (OFS_PARM0);
 	const char *b = G_STRING (OFS_PARM1);
+	int alen = strlen (a), blen = strlen (b);
+	int len = qcvm->argc > 2 ? G_FLOAT (OFS_PARM2) : -1;
+	int aofs = qcvm->argc > 3 ? G_FLOAT (OFS_PARM3) : 0;
+	int bofs = qcvm->argc > 4 ? G_FLOAT (OFS_PARM4) : 0;
 
-	if (qcvm->argc > 2)
-	{
-		int len = G_FLOAT (OFS_PARM2);
-		int aofs = qcvm->argc > 3 ? G_FLOAT (OFS_PARM3) : 0;
-		int bofs = qcvm->argc > 4 ? G_FLOAT (OFS_PARM4) : 0;
-		if (aofs < 0 || (aofs && aofs > (int)strlen (a)))
-			aofs = strlen (a);
-		if (bofs < 0 || (bofs && bofs > (int)strlen (b)))
-			bofs = strlen (b);
-		G_FLOAT (OFS_RETURN) = strncmp (a + aofs, b, len);
-	}
-	else
-		G_FLOAT (OFS_RETURN) = strcmp (a, b);
+	/* Inherited optional-offset contract; retain native lexical comparisons. */
+	aofs = CLAMP (0, aofs, alen);
+	bofs = CLAMP (0, bofs, blen);
+	G_FLOAT (OFS_RETURN) = len >= 0 ? strncmp (a + aofs, b + bofs, len) :
+		strcmp (a + aofs, b + bofs);
 }
 static void PF_strncasecmp (void)
 {
 	const char *a = G_STRING (OFS_PARM0);
 	const char *b = G_STRING (OFS_PARM1);
+	int alen = strlen (a), blen = strlen (b);
+	int len = qcvm->argc > 2 ? G_FLOAT (OFS_PARM2) : -1;
+	int aofs = qcvm->argc > 3 ? G_FLOAT (OFS_PARM3) : 0;
+	int bofs = qcvm->argc > 4 ? G_FLOAT (OFS_PARM4) : 0;
 
-	if (qcvm->argc > 2)
-	{
-		int len = G_FLOAT (OFS_PARM2);
-		int aofs = qcvm->argc > 3 ? G_FLOAT (OFS_PARM3) : 0;
-		int bofs = qcvm->argc > 4 ? G_FLOAT (OFS_PARM4) : 0;
-		if (aofs < 0 || (aofs && aofs > (int)strlen (a)))
-			aofs = strlen (a);
-		if (bofs < 0 || (bofs && bofs > (int)strlen (b)))
-			bofs = strlen (b);
-		G_FLOAT (OFS_RETURN) = q_strncasecmp (a + aofs, b, len);
-	}
-	else
-		G_FLOAT (OFS_RETURN) = q_strcasecmp (a, b);
+	aofs = CLAMP (0, aofs, alen);
+	bofs = CLAMP (0, bofs, blen);
+	G_FLOAT (OFS_RETURN) = len >= 0 ? q_strncasecmp (a + aofs, b + bofs, len) :
+		q_strcasecmp (a + aofs, b + bofs);
 }
 static void PF_strstrofs (void)
 {
@@ -991,64 +982,47 @@ static void PF_strtrim (void)
 
 	G_INT (OFS_RETURN) = PR_SetEngineString (news);
 }
-static void PF_strreplace (void)
+/* Capacity-aware replacement copied from the inherited primary branch.
+ * Keep native temporary-string ownership and registry permissions. */
+static void PF_strreplace_internal(qboolean insensitive)
 {
-	char	   *resultbuf = PR_GetTempString ();
-	char	   *result = resultbuf;
-	const char *search = G_STRING (OFS_PARM0);
-	const char *replace = G_STRING (OFS_PARM1);
-	const char *subject = G_STRING (OFS_PARM2);
-	int			searchlen = strlen (search);
-	int			replacelen = strlen (replace);
+	const char *search = G_STRING(OFS_PARM0);
+	const char *replace = G_STRING(OFS_PARM1);
+	const char *subject = G_STRING(OFS_PARM2);
+	char *out = PR_GetTempString();
+	size_t slen = strlen(search), rlen = strlen(replace), len = 0;
 
-	if (searchlen)
+	if (!slen)
 	{
-		while (*subject && result < resultbuf + STRINGTEMP_LENGTH - replacelen - 2)
-		{
-			if (!strncmp (subject, search, searchlen))
-			{
-				subject += searchlen;
-				memcpy (result, replace, replacelen);
-				result += replacelen;
-			}
-			else
-				*result++ = *subject++;
-		}
-		*result = 0;
-		G_INT (OFS_RETURN) = PR_SetEngineString (resultbuf);
+		q_strlcpy(out, subject, STRINGTEMP_LENGTH);
+		G_INT(OFS_RETURN) = PR_SetEngineString(out);
+		return;
 	}
-	else
-		G_INT (OFS_RETURN) = PR_SetEngineString (subject);
+	while (*subject && len < STRINGTEMP_LENGTH - 1)
+	{
+		qboolean match = insensitive ? !q_strncasecmp(subject, search, slen) : !strncmp(subject, search, slen);
+		if (match)
+		{
+			size_t copy = q_min(rlen, (size_t)(STRINGTEMP_LENGTH - len - 1));
+			memcpy(out + len, replace, copy);
+			len += copy;
+			subject += slen;
+		}
+		else
+			out[len++] = *subject++;
+	}
+	out[len] = 0;
+	G_INT(OFS_RETURN) = PR_SetEngineString(out);
 }
-static void PF_strireplace (void)
-{
-	char	   *resultbuf = PR_GetTempString ();
-	char	   *result = resultbuf;
-	const char *search = G_STRING (OFS_PARM0);
-	const char *replace = G_STRING (OFS_PARM1);
-	const char *subject = G_STRING (OFS_PARM2);
-	int			searchlen = strlen (search);
-	int			replacelen = strlen (replace);
 
-	if (searchlen)
-	{
-		while (*subject && result < resultbuf + sizeof (resultbuf) - replacelen - 2)
-		{
-			// UTF-8-FIXME: case insensitivity is awkward...
-			if (!q_strncasecmp (subject, search, searchlen))
-			{
-				subject += searchlen;
-				memcpy (result, replace, replacelen);
-				result += replacelen;
-			}
-			else
-				*result++ = *subject++;
-		}
-		*result = 0;
-		G_INT (OFS_RETURN) = PR_SetEngineString (resultbuf);
-	}
-	else
-		G_INT (OFS_RETURN) = PR_SetEngineString (subject);
+static void PF_strreplace(void)
+{
+	PF_strreplace_internal(false);
+}
+
+static void PF_strireplace(void)
+{
+	PF_strreplace_internal(true);
 }
 
 static void PF_sprintf_internal (const char *s, int firstarg, char *outbuf, int outbuflen)
@@ -4042,6 +4016,7 @@ static void PF_buf_cvarlist (void)
 			Mem_Free (strbuflist[bufno].strings[i]);
 	if (strbuflist[bufno].strings)
 		Mem_Free (strbuflist[bufno].strings);
+	strbuflist[bufno].strings = NULL;
 	strbuflist[bufno].used = strbuflist[bufno].allocated = 0;
 
 	for (var = Cvar_FindVarAfter ("", CVAR_NONE); var; var = var->next)
