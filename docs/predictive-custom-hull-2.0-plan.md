@@ -92,8 +92,9 @@ minimum. For custom bounds also include the rotated compiled hull's sphere
 envelope: radius is the length of per-axis maximum absolute clip bounds; center
 per axis is `actor_mins - hull.clip_mins`. Union that envelope with authored
 bounds. Use existing loaded world hull dimensions, which model loading copies
-to submodels. Identical ordinary compiled-hull bounds take the existing path
-without this extra radius calculation or enlarged collection.
+to submodels. Only ordinary stock hull1 bounds take the existing path without
+this extra radius calculation or enlarged collection. An actor matching the
+larger hull2 still needs the rotated envelope.
 
 This is conservative candidate collection, not a new collision shape/solver.
 Ownership would extend to the existing `Quake/sv_phys.c` BuildBounds helper,
@@ -103,3 +104,11 @@ Runtime acceptance adds a custom short actor touching a linked BSP ceiling
 outside its authored envelope and rotated linked brushes. Do not infer
 conservatism for collision trees authored outside their linked entity bounds;
 the trace shortcut correction does not repair unrelated world spatial bounds.
+
+Personal Astra Max verified the collection follow-up and main checked the
+actual loader copy and pre-collection world validation boundary. Adopt the
+sphere union, restrict the unchanged fast path to matching stock hull1, and
+validate the loaded brush world model before using its hull dimensions. Do not
+rotate the `actor_mins - clip_mins` center; only the compiled hull rotates.
+The sphere already contains its unrotated shape, so no extra union is needed.
+Existing collection capacity/failure handling remains unchanged.
