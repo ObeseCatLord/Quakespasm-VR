@@ -2954,7 +2954,7 @@ static void PF_sv_te_explosion2 (void)
 {
 	float *org = G_VECTOR (OFS_PARM0);
 	int	   palstart = G_FLOAT (OFS_PARM1);
-	int	   palcount = G_FLOAT (OFS_PARM1);
+	int	   palcount = G_FLOAT (OFS_PARM2);
 	MSG_WriteByte (&sv.multicast, svc_temp_entity);
 	MSG_WriteByte (&sv.multicast, TE_EXPLOSION2);
 	MSG_WriteCoord (&sv.multicast, org[0], sv.protocolflags);
@@ -2968,7 +2968,7 @@ static void PF_cl_te_explosion2 (void)
 {
 	float	 *pos = G_VECTOR (OFS_PARM0);
 	int		  colorStart = G_FLOAT (OFS_PARM1);
-	int		  colorLength = G_FLOAT (OFS_PARM1);
+	int		  colorLength = G_FLOAT (OFS_PARM2);
 	dlight_t *dl;
 
 	if (PScript_RunParticleEffectTypeString (pos, NULL, 1, va ("TE_EXPLOSION2_%i_%i", colorStart, colorLength)))
