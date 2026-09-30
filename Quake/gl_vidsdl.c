@@ -1554,14 +1554,57 @@ static void GL_SelectRenderFormats (VkBool32 extended_format_support)
 	Con_Printf ("\n");
 }
 
-#if defined(VK_QCOM_fragment_density_map_offset)
-static qboolean GL_DensityOffsetSceneFormatSupported (VkFormat format, VkImageUsageFlags usage, uint32_t width, uint32_t height)
+static VkSampleCountFlagBits GL_SelectNativeSampleCount (void)
 {
-	VkImageFormatProperties properties;
-	return vkGetPhysicalDeviceImageFormatProperties (vulkan_physical_device, format, VK_IMAGE_TYPE_2D,
-		VK_IMAGE_TILING_OPTIMAL, usage, VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM, &properties) == VK_SUCCESS &&
-		(properties.sampleCounts & VK_SAMPLE_COUNT_1_BIT) && properties.maxArrayLayers >= 2 &&
+	const int fsaa = (int)vid_fsaa.value;
+	ZEROED_STRUCT (VkImageFormatProperties, image_format_properties);
+	const VkResult result = vkGetPhysicalDeviceImageFormatProperties (
+		vulkan_physical_device, vulkan_globals.color_format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+		0, &image_format_properties);
+	if (result != VK_SUCCESS)
+		return VK_SAMPLE_COUNT_1_BIT;
+
+	// Workaround: Intel advertises 16 samples but crashes when using it.
+	if ((fsaa >= 16) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_16_BIT) && (vulkan_globals.device_properties.vendorID != 0x8086))
+		return VK_SAMPLE_COUNT_16_BIT;
+	if ((fsaa >= 8) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_8_BIT))
+		return VK_SAMPLE_COUNT_8_BIT;
+	if ((fsaa >= 4) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_4_BIT))
+		return VK_SAMPLE_COUNT_4_BIT;
+	if ((fsaa >= 2) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_2_BIT))
+		return VK_SAMPLE_COUNT_2_BIT;
+	return VK_SAMPLE_COUNT_1_BIT;
+}
+
+#if defined(VK_QCOM_fragment_density_map_offset)
+static qboolean GL_DensityOffsetSceneFormatSupported (VkFormat format, VkImageUsageFlags usage, VkSampleCountFlagBits samples,
+	uint32_t width, uint32_t height)
+{
+	ZEROED_STRUCT (VkImageFormatProperties, properties);
+	if (vkGetPhysicalDeviceImageFormatProperties (vulkan_physical_device, format, VK_IMAGE_TYPE_2D,
+			VK_IMAGE_TILING_OPTIMAL, usage, VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM, &properties) != VK_SUCCESS)
+		return false;
+	return (properties.sampleCounts & samples) && properties.maxArrayLayers >= 2 &&
 		properties.maxExtent.width >= width && properties.maxExtent.height >= height;
+}
+
+static qboolean GL_DensityOffsetFormatsSupported (VkSampleCountFlagBits samples, uint32_t width, uint32_t height,
+	uint32_t density_width, uint32_t density_height)
+{
+	VkImageUsageFlags depth_usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+	if (R_SSAOEnabled ())
+		depth_usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+	return GL_DensityOffsetSceneFormatSupported (vulkan_globals.color_format,
+			   VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
+				   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+			   VK_SAMPLE_COUNT_1_BIT, width, height) &&
+		(samples == VK_SAMPLE_COUNT_1_BIT || GL_DensityOffsetSceneFormatSupported (vulkan_globals.color_format,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, samples, width, height)) &&
+		GL_DensityOffsetSceneFormatSupported (vulkan_globals.depth_format, depth_usage, samples, width, height) &&
+		GL_DensityOffsetSceneFormatSupported (VK_FORMAT_R8G8_UNORM, VK_IMAGE_USAGE_FRAGMENT_DENSITY_MAP_BIT_EXT,
+			VK_SAMPLE_COUNT_1_BIT, density_width, density_height);
 }
 #endif
 
@@ -1996,6 +2039,7 @@ static void GL_InitDevice (void)
 	qboolean fragment_density_map_candidate = false;
 #if defined(VK_QCOM_fragment_density_map_offset)
 	qboolean fragment_density_offset_candidate = false;
+	const VkSampleCountFlagBits native_sample_count = GL_SelectNativeSampleCount ();
 #endif
 	if (fragment_density_map_extension && (create_renderpass2_core || create_renderpass2_extension) &&
 		vulkan_globals.openxr_multiview_available &&
@@ -2019,14 +2063,11 @@ static void GL_InitDevice (void)
 					!openxr_vulkan_binding ? "not discovered" : (VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable"));
 #if defined(VK_QCOM_fragment_density_map_offset)
 				fragment_density_offset_candidate = fragment_density_offset_extension && VRXR_VulkanFoveationEyeSupported () &&
+					VRXR_VulkanSwapchainImageFlagsSupported () &&
 					fragment_density_offset_features.fragmentDensityMapOffset &&
 					fragment_density_offset_properties.fragmentDensityOffsetGranularity.width &&
 					fragment_density_offset_properties.fragmentDensityOffsetGranularity.height &&
-					GL_DensityOffsetSceneFormatSupported (vulkan_globals.color_format,
-						VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
-						VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, 0, 0) &&
-					GL_DensityOffsetSceneFormatSupported (vulkan_globals.depth_format,
-						VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 0, 0);
+					GL_DensityOffsetFormatsSupported (native_sample_count, 0, 0, 0, 0);
 				if (fragment_density_offset_candidate)
 					vulkan_globals.openxr_fragment_density_offset_granularity = fragment_density_offset_properties.fragmentDensityOffsetGranularity;
 #endif
@@ -2068,17 +2109,20 @@ static void GL_InitDevice (void)
 	const qboolean density_settings_ready = !(vid_fsaa.value >= 2 && vid_fsaamode.value >= 1) &&
 		!(r_width.value > 0 && r_height.value > 0);
 	const qboolean allow_runtime_foveation = COM_CheckParm ("-vk-runtime-foveation") && density_settings_ready;
-	const qboolean prefer_fb_eye = allow_runtime_foveation && openxr_vulkan_binding && VRXR_VulkanFoveationEyeSupported ();
-	if (fragment_density_map_candidate && allow_runtime_foveation && (prefer_fb_eye || !khr_shading_rate_candidate))
+	qboolean prefer_fb_eye = false;
+#if defined(VK_QCOM_fragment_density_map_offset)
+	prefer_fb_eye = allow_runtime_foveation && VRF_RequestedMode (vr_foveation.value) == VRF_MODE_EYE_TRACKED &&
+		openxr_vulkan_binding && fragment_density_offset_candidate;
+#endif
+	const qboolean prefer_fb_fixed = allow_runtime_foveation && VRF_RequestedMode (vr_foveation.value) == VRF_MODE_FIXED &&
+		openxr_vulkan_binding && VRXR_VulkanFoveationSupported ();
+	const qboolean prepare_fb_fallback = allow_runtime_foveation && !khr_shading_rate_candidate;
+	if (fragment_density_map_candidate && (prefer_fb_eye || prefer_fb_fixed || prepare_fb_fallback))
 	{
 #if defined(VK_QCOM_fragment_density_map_offset)
-		// XR_META_foveation_eye_tracked makes the runtime apply the gaze pattern
-		// to its map. Do not enable the separate Vulkan offset path until the
-		// borrowed map's offset creation flags and its semantics are verified.
-		fragment_density_offset_feature_enabled = false;
-		fragment_density_offset_use_ext = false;
-		if (fragment_density_offset_candidate)
-			Con_Printf ("OpenXR density-map offsets available but not qualified for borrowed runtime images.\n");
+		fragment_density_offset_feature_enabled = fragment_density_offset_candidate;
+		if (fragment_density_offset_feature_enabled)
+			fragment_density_offset_use_ext = !fragment_density_offset_qcom_extension && fragment_density_offset_ext_usable;
 #endif
 		fragment_density_map_feature_enabled = true;
 		fragment_shading_rate_feature_enabled = false;
@@ -2659,7 +2703,7 @@ static void GL_CreateUIColorBuffer (void)
 	GL_SetObjectName ((uint64_t)ui_color_buffer_view, VK_OBJECT_TYPE_IMAGE_VIEW, "UI Color Buffer View");
 }
 
-static void GL_CreateColorBuffer (void)
+static void GL_CreateColorBuffer (VkSampleCountFlagBits native_sample_count)
 {
 	VkResult err;
 	int		 i;
@@ -2737,44 +2781,25 @@ static void GL_CreateColorBuffer (void)
 		GL_SetObjectName ((uint64_t)color_buffers_view[i], VK_OBJECT_TYPE_IMAGE_VIEW, va ("Color Buffer View %d", i));
 	}
 
-	vulkan_globals.sample_count = VK_SAMPLE_COUNT_1_BIT;
+	vulkan_globals.sample_count = native_sample_count;
 	vulkan_globals.supersampling = false;
 
+	switch (vulkan_globals.sample_count)
 	{
-		const int fsaa = (int)vid_fsaa.value;
-
-		VkImageFormatProperties image_format_properties;
-		vkGetPhysicalDeviceImageFormatProperties (
-			vulkan_physical_device, vulkan_globals.color_format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, image_create_info.usage, 0,
-			&image_format_properties);
-
-		// Workaround: Intel advertises 16 samples but crashes when using it.
-		if ((fsaa >= 16) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_16_BIT) && (vulkan_globals.device_properties.vendorID != 0x8086))
-			vulkan_globals.sample_count = VK_SAMPLE_COUNT_16_BIT;
-		else if ((fsaa >= 8) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_8_BIT))
-			vulkan_globals.sample_count = VK_SAMPLE_COUNT_8_BIT;
-		else if ((fsaa >= 4) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_4_BIT))
-			vulkan_globals.sample_count = VK_SAMPLE_COUNT_4_BIT;
-		else if ((fsaa >= 2) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_2_BIT))
-			vulkan_globals.sample_count = VK_SAMPLE_COUNT_2_BIT;
-
-		switch (vulkan_globals.sample_count)
-		{
-		case VK_SAMPLE_COUNT_2_BIT:
-			Sys_Printf ("2 AA Samples\n");
-			break;
-		case VK_SAMPLE_COUNT_4_BIT:
-			Sys_Printf ("4 AA Samples\n");
-			break;
-		case VK_SAMPLE_COUNT_8_BIT:
-			Sys_Printf ("8 AA Samples\n");
-			break;
-		case VK_SAMPLE_COUNT_16_BIT:
-			Sys_Printf ("16 AA Samples\n");
-			break;
-		default:
-			break;
-		}
+	case VK_SAMPLE_COUNT_2_BIT:
+		Sys_Printf ("2 AA Samples\n");
+		break;
+	case VK_SAMPLE_COUNT_4_BIT:
+		Sys_Printf ("4 AA Samples\n");
+		break;
+	case VK_SAMPLE_COUNT_8_BIT:
+		Sys_Printf ("8 AA Samples\n");
+		break;
+	case VK_SAMPLE_COUNT_16_BIT:
+		Sys_Printf ("16 AA Samples\n");
+		break;
+	default:
+		break;
 	}
 	GL_QueryFragmentShadingRatesForSamples (vulkan_globals.sample_count);
 
@@ -2787,7 +2812,6 @@ static void GL_CreateColorBuffer (void)
 
 		image_create_info.samples = vulkan_globals.sample_count;
 		image_create_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-		image_create_info.flags = 0;
 
 		assert (msaa_color_buffer == VK_NULL_HANDLE);
 		err = vkCreateImage (vulkan_globals.device, &image_create_info, NULL, &msaa_color_buffer);
@@ -4184,7 +4208,7 @@ static void VID_GetRenderSize (int *width, int *height)
 	}
 }
 
-static qboolean GL_DensityFoveationRequestedActive (int render_width, int render_height)
+static qboolean GL_DensityFoveationRequestedActive (int render_width, int render_height, VkSampleCountFlagBits native_sample_count)
 {
 	if (!vulkan_globals.stereo_active || !vulkan_globals.openxr_fragment_density_map_enabled ||
 		openxr_density_backend_failed || !openxr_density_image_views ||
@@ -4198,14 +4222,10 @@ static qboolean GL_DensityFoveationRequestedActive (int render_width, int render
 	if (vulkan_globals.openxr_fragment_density_offset_enabled)
 	{
 #if defined(VK_QCOM_fragment_density_map_offset)
-		// Both scene attachments carry the offset bit when this device feature
-		// is enabled, including during an explicitly requested fixed profile.
-		if (!GL_DensityOffsetSceneFormatSupported (vulkan_globals.color_format,
-			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |
-			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, render_width, render_height) ||
-			!GL_DensityOffsetSceneFormatSupported (vulkan_globals.depth_format,
-				VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-				render_width, render_height))
+		vrxr_vulkan_eye_t density_image;
+		if (!VRXR_GetVulkanImage (0, 0, &density_image) || !density_image.density_image ||
+			!GL_DensityOffsetFormatsSupported (native_sample_count, render_width, render_height,
+				density_image.density_width, density_image.density_height))
 			return false;
 #else
 		return false;
@@ -4214,7 +4234,7 @@ static qboolean GL_DensityFoveationRequestedActive (int render_width, int render
 	if (mode == VRF_MODE_FIXED)
 		return VRXR_VulkanFoveationFixedAvailable ();
 	if (mode != VRF_MODE_EYE_TRACKED || !VRF_EyeTrackingEnabled (vr_eye_tracking.value) ||
-		!VRXR_VulkanFoveationEyeAvailable ())
+		!vulkan_globals.openxr_fragment_density_offset_enabled || !VRXR_VulkanFoveationEyeAvailable ())
 		return false;
 
 	return true;
@@ -4240,9 +4260,10 @@ static void GL_CreateRenderResources (void)
 		GL_CreateMirrorResources ();
 	}
 	VID_GetRenderSize (&vid.render_width, &vid.render_height);
+	const VkSampleCountFlagBits native_sample_count = GL_SelectNativeSampleCount ();
 	vulkan_globals.openxr_fragment_density_map_active =
-		GL_DensityFoveationRequestedActive (vid.render_width, vid.render_height);
-	GL_CreateColorBuffer ();
+		GL_DensityFoveationRequestedActive (vid.render_width, vid.render_height, native_sample_count);
+	GL_CreateColorBuffer (native_sample_count);
 	if (vid.render_width != vid.width || vid.render_height != vid.height)
 		GL_CreateUIColorBuffer ();
 	GL_CreateDepthBuffer ();
@@ -4711,16 +4732,29 @@ static void GL_OpenXRAttach (void)
 	openxr_desktop_width = vid.width;
 	openxr_desktop_height = vid.height;
 	/* Device-time FDM readiness survives rediscovery; only request borrowed
-	 * maps from a runtime that actually supports the FB extension family. */
-	const qboolean runtime_density_maps = vulkan_globals.openxr_fragment_density_map_enabled && VRXR_VulkanFoveationSupported ();
+	 * maps from a runtime that still supports the selected route. */
+	qboolean runtime_density_maps = vulkan_globals.openxr_fragment_density_map_enabled && VRXR_VulkanFoveationSupported ();
+	VkImageCreateFlags runtime_density_image_flags = 0;
+#if defined(VK_QCOM_fragment_density_map_offset)
+	if (runtime_density_maps && vulkan_globals.openxr_fragment_density_offset_enabled)
+	{
+		if (!VRXR_VulkanFoveationEyeSupported () || !VRXR_VulkanSwapchainImageFlagsSupported ())
+		{
+			runtime_density_maps = false;
+			Con_Printf ("OpenXR META density-offset support changed after rediscovery; requesting ordinary stereo.\n");
+		}
+		else
+			runtime_density_image_flags = VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM;
+	}
+#endif
 	if (!VRXR_AttachVulkan (vulkan_globals.gfx_queue_family_index, 0,
 		VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 2, GL_OpenXRRetireImages, NULL,
-		runtime_density_maps, 0))
+		runtime_density_maps, runtime_density_image_flags))
 	{
 		Con_Printf ("OpenXR session attachment failed; keeping desktop output.\n");
 		return;
 	}
-	if (runtime_density_maps && !VRXR_VulkanFoveationEyeAvailable ())
+	if (runtime_density_maps && vulkan_globals.openxr_fragment_density_offset_enabled && !VRXR_VulkanFoveationEyeAvailable ())
 		Con_Printf ("OpenXR META eye profile unavailable after attachment; eye mode will render full rate.\n");
 	unsigned width, height;
 	if (!VRXR_GetViewSize (0, &width, &height) || !width || !height ||
@@ -5136,7 +5170,7 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 	const qboolean foveation_active = GL_FoveationRequestedActive (render_width, render_height);
 	const qboolean foveation_active_changed = foveation_active != vulkan_globals.openxr_fragment_shading_rate_active;
 	vulkan_globals.openxr_fragment_shading_rate_active = foveation_active;
-	const qboolean density_active = GL_DensityFoveationRequestedActive (render_width, render_height);
+	const qboolean density_active = GL_DensityFoveationRequestedActive (render_width, render_height, vulkan_globals.sample_count);
 	const qboolean density_active_changed = render_resources_created &&
 		density_active != vulkan_globals.openxr_fragment_density_map_active;
 	if (render_resources_created)
