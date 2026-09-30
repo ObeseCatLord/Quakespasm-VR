@@ -84,3 +84,51 @@ expired fist model corrected by native selector, save/load and client/map/abort
 resets. Verify native movement/attack/color effects and desktop/VR prediction
 fencing. Builds/tests are deferred until all migration implementation is finished;
 user live trials and performance measurement remain separate.
+
+## Verified integration brief for the source decision
+
+Main read the actual primary implementations at2211–2597,2950–3020,
+3120–3156 and3846–3904. Generic stage1 cleanup is currently being corrected
+by a separate coder; its adopted callback contract is in the parent plan.
+This brief plans stage2 only; implementation must wait for generic integration
+and the source disposition. Requested Astra/max effective settings cannot be
+verified by the current tool, so its result will be source advice only.
+
+| Fact | Evidence/status |
+| --- | --- |
+| Mod APIs use named functions and typed fields, not a new ability registry | Verified primary2211–2315; existing2.0 typed-field/void-layer helpers are at sv_phys.c:566–609 before pending corrections. Native ED_FindField/Function remains the lookup owner. |
+| Berserk active means items_qbj bit4 or berserk_finished greater than QC time | Verified current physical selection at sv_phys.c:3849–3875; physical selection additionally pins the program/model/selected weapon and therefore is not reusable as an expiration gate. Copy only the typed active predicate with finite/range admission. |
+| Native context has self/other/time, argc and parameter/return scratch | Verified four repeated donor callback wrappers2353–2498. Current SV_SaveQCInputs/SV_RestoreQCInputs already own cooperative input borrowing; actual server destruction does not return into the stack (generic review). |
+| Recovery/cleanup runs after ordinary PostThink | Verified primary3846–3856;2.0 already has one actual-PostThink completion and enclosing cancellation scope, including shared-QC windows. Do not invoke recovery at every accepted command head or invent another Think schedule. |
+| Passive plunge entry must set pending cleanup, and timer/pending bits reset with current slot/map owners | Verified primary lifecycle arrays and Begin/End/Finish helpers; extend existing per-client metadata only. |
+| Donor serialization helper calls ordinary RestoreInventory on a detached edict | Verified primary3120–3137 versus RestoreInventory3015 calling W_ChangeWeapon after stale-model rejection. This contradicts its no-transition-QC comment for that case; copying that callback path into snapshot preparation is rejected. |
+| Fresh saved-player restoration is outside ordinary physics policy | Verified current host_cmd spawn/restore and sv_phys RestoreSavedInventory owner. Stage2 callbacks there need only the existing bounded cancellation binding; do not invoke full BeginPostThink/cooldown. |
+| Runtime correctness/build/callback execution | Unverified; all software checks are deferred until complete implementation. |
+
+Current lean: copy typed layer/API/limbo/expired-model logic, consolidate only
+the repeated donor borrowed-context call bodies at a single private helper,
+and reuse existing input borrowing/cancellation. Named function signatures and
+the actual call's scalar/entity argument encodings remain explicit. Restore
+borrowed call context/basis/trace/input, not a full saved gameplay-global struct.
+Entity/destination writes and subsequent callbacks require the original live
+owner; global unwind still occurs after client cancellation in a surviving VM.
+Retain the destination while the native limbo callback runs. Do not add storage
+generations, a dispatch framework, a second client identity or physical-melee
+dependency.
+
+Expired-fist rejection in inventory copying may be passive, but selector/stack
+callbacks belong only to the fresh live player's restore/completion boundary.
+Detached save projection and the live dead corpse during changelevel must never
+run W_ChangeWeapon or other transition callbacks merely to encode inventory.
+This is an explicit narrow safety correction to the actual donor reference.
+Active berserk remains protected by the typed item/timer predicate.
+
+Open decisions: exact callback-context reuse and minimum write boundary;
+single actual-PostThink recovery timing; destination/client cancellation and
+one semantic discontinuity after a native forced relocation; lifetime of pending
+void cleanup; safe fresh-body selector versus serialization ownership. Rank
+these by actual source risk and challenge whether any callback/helper is
+unnecessary. Source depth budget: donor named helpers/inventory/completion and
+current typed/binding/save/input owners only. No generic movement re-review,
+revival, new mod abilities, physical melee, wheel, graphics or runtime tests.
+Expected300–450 net lines, no new owner; reopen above450 or broader dispatch.
