@@ -1032,14 +1032,40 @@ static void SV_WriteAmmoCapacityStats (edict_t *ent, int *statsi)
 		statsi[stats[i]] = (int)values[i];
 }
 
+static qboolean SV_ReadOptionalInventoryField (edict_t *ent, const char *name, int *destination)
+{
+	ddef_t *def = ED_FindField (name);
+	eval_t *value;
+	float number;
+	int64_t normalized;
+
+	if (!def || (def->type & ~DEF_SAVEGLOBAL) != ev_float)
+		return false;
+	value = GetEdictFieldValue (ent, def->ofs);
+	if (!value)
+		return false;
+	number = value->_float;
+	if (!isfinite (number) || number < -2147483648.0 || number >= 4294967296.0)
+		return false;
+
+	/* Truncate the numeric QC value, then preserve its 32-bit transport bits. */
+	normalized = (int64_t)number;
+	if (normalized >= INT64_C (2147483648))
+		normalized -= INT64_C (4294967296);
+	*destination = (int)normalized;
+	return true;
+}
+
 void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **statss)
 {
 	size_t	 i;
 	edict_t *ent = client->edict;
 	int		 items;
-	eval_t	*val = GetEdictFieldValue (ent, qcvm->extfields.items2);
-	if (val)
-		items = (int)((uint32_t)ent->v.items | ((uint32_t)val->_float << 23));
+	int		 items2 = 0;
+	qboolean items2_valid = SV_ReadOptionalInventoryField (ent, "items2", &items2);
+	eval_t	*val;
+	if (items2_valid)
+		items = (int)((uint32_t)ent->v.items | ((uint32_t)items2 << 23));
 	else
 		items = (int)((uint32_t)ent->v.items | ((uint32_t)pr_global_struct->serverflags << 28));
 
@@ -1076,19 +1102,13 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 	}
 
 	/* Preserve mod-owned inventory channels for the shared desktop/VR wheel.
-	 * These are optional QuakeC fields; absent fields leave their stats zero. */
-	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("weapons"))))
-		statsi[STAT_VR_WEAPONS] = (int)val->_float;
-	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("items2"))))
-		statsi[STAT_VR_ITEMS2] = (int)val->_float;
-	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("moditems"))))
-		statsi[STAT_VR_MODITEMS] = (int)val->_float;
-	else if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("items_dwell"))))
-		statsi[STAT_VR_MODITEMS] = (int)val->_float;
-	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("weapon2"))))
-		statsi[STAT_VR_WEAPON2] = (int)val->_float;
-	if ((val = GetEdictFieldValue (ent, ED_FindFieldOffset ("weapons2"))))
-		statsi[STAT_VR_WEAPONS2] = (int)val->_float;
+	 * Absent or invalid optional QuakeC fields leave their stats zero. */
+	SV_ReadOptionalInventoryField (ent, "weapons", &statsi[STAT_VR_WEAPONS]);
+	statsi[STAT_VR_ITEMS2] = items2;
+	if (!SV_ReadOptionalInventoryField (ent, "moditems", &statsi[STAT_VR_MODITEMS]))
+		SV_ReadOptionalInventoryField (ent, "items_dwell", &statsi[STAT_VR_MODITEMS]);
+	SV_ReadOptionalInventoryField (ent, "weapon2", &statsi[STAT_VR_WEAPON2]);
+	SV_ReadOptionalInventoryField (ent, "weapons2", &statsi[STAT_VR_WEAPONS2]);
 	SV_WriteAmmoCapacityStats (ent, statsi);
 
 	for (i = 0; i < sv.numcustomstats; i++)
@@ -4425,7 +4445,7 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 	int			 bits;
 	int			 i;
 	int			 items;
-	eval_t		*val;
+	int			 items2;
 	unsigned int weaponmodelindex = SV_ModelIndex (PR_GetString (ent->v.weaponmodel));
 
 	if (weaponmodelindex >= client->limit_models)
@@ -4441,10 +4461,8 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 
 	// stuff the sigil bits into the high bits of items for sbar, or else
 	// mix in items2
-	val = GetEdictFieldValue (ent, ED_FindFieldOffset ("items2"));
-
-	if (val)
-		items = (int)ent->v.items | ((int)val->_float << 23);
+	if (SV_ReadOptionalInventoryField (ent, "items2", &items2))
+		items = (int)ent->v.items | ((uint32_t)items2 << 23);
 	else
 		items = (int)ent->v.items | ((int)pr_global_struct->serverflags << 28);
 

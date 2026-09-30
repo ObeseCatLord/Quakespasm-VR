@@ -5,6 +5,14 @@ WPN-003/004/006 owners; earlier inventory placeholders do not imply those owners
 need another implementation. Native vkQuake retains command/stat/filesystem and
 draw ownership. Source evidence is not full feature or runtime acceptance.
 
+The subsequent [optional inventory projection repair](weapon-inventory-stat-projection-2.0-plan.md)
+adds declaration/range admission and defined normalization for representable
+32-bit QC masks. Both native items2 packing sites share that helper; valid zero
+suppresses fallback, while the optional channel retains the unshifted mask.
+Main and requested local Astra source review accepted the18-net-line repair.
+Native core casts and custom-stat ordering/precedence remain unchanged; actual
+protocol/QC/wheel qualification remains required.
+
 | Boundary | Actual inspected production owner | Remaining proof |
 | --- | --- | --- |
 | Ownership and discovery | `VR_WeaponMenu_AddSchemaEntry` admits declared rows only with valid command/identity and complete descriptor pairs; a new implicit bitmask row uses `STAT_VR_WEAPONS`. `VR_WeaponMenu_CatalogEntryOwned` supplements that with item bits only for the known stock-bit subset. Explicit ownership metadata removes the supplement. `EntryOwned` makes discovered rows active-only; discovery never invents an impulse. `EntryActive` checks observed held identity where required, retaining owned stock fallback selection under selector reuse. | Actual declarations/private stats, custom high bits, ambiguous identity, transient activation and unknown model cases through real native transport and release owners. No arbitrary mod correctness claim. |

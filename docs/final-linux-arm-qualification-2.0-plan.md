@@ -63,6 +63,15 @@ qualification must cover mixed native inventory/voice, registered callback
 combinations, source clipping, independent framebuffer scaling and native
 intermission fallback after QC errors; source acceptance is not rendered proof.
 
+The optional inventory stat repair adds actual registered-QC/server/client/wheel
+cases to prediction/multiplayer and wheel qualification: representable bit31
+and upper unsigned32 masks, ordinary fractions/negative values, invalid or
+wrong-type fields, valid zero versus moditems/items_dwell fallback, both items2
+packing paths and unchanged native custom-stat precedence. Packed STAT_ITEMS
+retains the low nine items2 bits; STAT_VR_ITEMS2 retains the normalized full mask.
+Keep ordinary core field values valid: this is a bounded optional-field repair,
+not a complete native numeric-conversion audit.
+
 Read game assets only from the existing quakespasm_straight installation. Native
 runners may link/copy needed data into disposable writable profiles; saves,
 configs and generated QC programs belong there. The map/mod matrix includes

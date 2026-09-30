@@ -84,3 +84,19 @@ core field values valid. This repair does not claim a whole-engine ISO-C numeric
 audit: native core casts and unsigned-to-signed wire decoding remain outside
 the demonstrated optional-field scope. Actual custom-stat precedence must be
 checked as existing behavior, not promised float-override behavior.
+
+## Source integration and final review
+
+Implemented39 added/21 removed production lines,18 net, in the one planned
+file. Main reviewed the complete diff against declaration/hash lookup, both
+items2 packing sites, zeroed arrays, native stat encoders/client bitwise consumers
+and the pinned primary's optional projections. One typed/ranged helper covers
+the demonstrated boundary without another lookup for CalcStats items2.
+
+The retained requested local Astra final source advisory found no P1/P2 blocker
+and required no further source correction. Main accepted its helper arithmetic,
+valid-zero/failure isolation, unsigned shift, reload-owned lookup and unchanged
+native core/custom-stat policy findings. Scoped whitespace checking passed.
+No builds/tests/probes ran; source advice is not runtime or model certification.
+Both protocol paths and the complete actual QC/client/wheel qualification above
+remain pending after all implementation.
