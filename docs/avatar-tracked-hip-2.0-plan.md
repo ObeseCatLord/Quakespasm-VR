@@ -42,3 +42,24 @@ zero/nonzero, confidence zero/fractional/one/invalid, mapped versus unmapped Hip
 children, no supplied Hip, unrelated generic/custom avatars and independent
 failure rollback. Shipped asset appearance and numerical behavior are unverified;
 source mapping alone does not establish full FBT or migration parity.
+
+## Implementation and source disposition
+
+`b64fbe74` implements the three-file adapter. The bounded local Astra advisory
+accepted the actual source with no actionable residual defect in its scope.
+Main verified reference order: inverse-presented canonical goal, 96-unit delta
+bound, confidence blend, independent orientation and mapped-branch restoration.
+The renderer explicitly maps the named Hip wire role (index 0) to adapter slot 2;
+foot slots remain 0/1. Legacy wrappers use NULL/default confidence 1.
+
+| Review recommendation | Disposition |
+|---|---|
+| Retain cached floor translation single-applied | Confirmed; prepared context reused, fallback built only if absent. |
+| Keep zero positional confidence independent from Hip rotation | Confirmed; zero leaves position unchanged, rotation still follows tracked source. Invalid confidence/distance restores optional Hip stage. |
+| Restore mapped semantic branches after applying the Hip transform | Confirmed; unmapped children follow Hip, mapped nonvirtual branches retain saved pose. |
+| Preserve independent animal upper/feet and generic/custom dispatch | Confirmed in bounded callsites; full FBT/asset parity remains unqualified. |
+
+`git diff --check` passed. No build/tests/compiler/runtime/fixture execution.
+Effective reviewer metadata is unavailable; requested-Astra/Max advisory is not
+a certified senior-skill pass. Linux/ARM and shipped-asset qualification remain
+deferred, and the full migration goal remains active.

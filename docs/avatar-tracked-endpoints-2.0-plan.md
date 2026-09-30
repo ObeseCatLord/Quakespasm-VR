@@ -161,3 +161,9 @@ metadata remains unavailable, so the reviews remain bounded requested-Astra/Max
 advisories rather than certified senior-skill passes. Shipped topology, numerical
 singularities, compilation, appearance and stack/performance cost remain
 unqualified. Final Linux/ARM qualification and the broader migration remain open.
+
+The subsequent [tracked animal Hip adapter](avatar-tracked-hip-2.0-plan.md)
+extends the frame confidence array to [left foot,right foot,Hip] and restores
+the primary's missing bounded Hip position correction. The two-foot batch and
+generic feet keep their first two values and existing policies. Animal Hip
+policy being unchanged describes this checkpoint, not the later `b64fbe74`.
