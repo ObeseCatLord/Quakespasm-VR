@@ -2947,6 +2947,74 @@ static void SV_Protocol_f (void)
 	}
 }
 
+static void SV_NetDiag_f (void)
+{
+	int i;
+	const qboolean connected = cls.state == ca_connected && cls.netcon != NULL;
+
+	if (connected)
+		Con_Printf ("client netdiag: connected=1 signon=%d protocol=%u qsvr=%u\n",
+			cls.signon, cl.protocol, cl.protocol_qsvr);
+	else
+		Con_Printf ("client netdiag: connected=0 signon=%d protocol=n/a qsvr=n/a\n",
+			cls.signon);
+	Con_Printf ("client netdiag: moves acked=%d acks=%d stale_acks=%d packets=%d cmds=%d generated_msec=%llu last_packet_cmds=%d\n",
+		cl.ackedmovemessages, cl.net_move_acks, cl.net_move_stale_acks,
+		cl.net_move_packets_sent, cl.net_move_cmds_sent, cl.net_move_msec_generated,
+		cl.net_move_last_packet_cmds);
+	Con_Printf ("client netdiag: snapshots seq=%d packets=%d drops=%d acks_sent=%d ack_overflows=%d have=%d\n",
+		cl.net_snapshot_sequence, cl.net_snapshot_packets, cl.net_snapshot_drops,
+		cl.net_snapshot_acks_sent, cl.net_snapshot_ack_queue_overflows,
+		cl.net_snapshot_have ? 1 : 0);
+	Con_Printf ("client netdiag: authority=%d prediction_allowed=%d selected_owner=%d mode_epoch=%u discontinuity_epoch=%u reason=%u snapshot_valid=%d snapshot_ack=%d snapshot_owner=%d resume_pending=%d resume_epoch_valid=%d resume_epoch=%u resume_first=%d\n",
+		cl.move_ack_authority, cl.move_ack_prediction_allowed ? 1 : 0,
+		cl.move_ack_selected_owner ? 1 : 0, (unsigned)cl.move_ack_mode_epoch,
+		(unsigned)cl.move_ack_discontinuity_epoch, (unsigned)cl.move_ack_discontinuity_reason,
+		cl.move_snapshot_valid ? 1 : 0, cl.move_snapshot_ack, cl.move_snapshot_owner,
+		cl.move_ack_resume_pending ? 1 : 0, cl.move_resume_marker_epoch_valid ? 1 : 0,
+		(unsigned)cl.move_resume_marker_epoch_sent, cl.move_resume_marker_first_sequence);
+	Con_Printf ("client netdiag: retained_prediction_error=(%.2f %.2f %.2f) sequence=%d time=%.3f\n",
+		cl.prediction_error[0], cl.prediction_error[1], cl.prediction_error[2],
+		cl.prediction_error_sequence, cl.prediction_error_time);
+
+	if (!sv.active)
+	{
+		Con_Printf ("server netdiag: inactive\n");
+		return;
+	}
+
+	for (i = 0; i < svs.maxclients; ++i)
+	{
+		client_t *client = &svs.clients[i];
+
+		if (!client->active)
+			continue;
+		Con_Printf ("server netdiag: #%d %s protocol=%u qsvr=%u pext2=0x%x selected=%d queue_head=%u queue_count=%u queue_msec=%u lastmove=%d completed=%d retired=%d discarded=%d\n",
+			i + 1, client->name, sv.protocol, client->protocol_qsvr,
+			client->protocol_pext2, client->private_pmove_walk_selected ? 1 : 0,
+			client->private_cmd_queue_head, client->private_cmd_queue_count,
+			client->private_cmd_queue_msec, client->lastmovemessage,
+			client->private_completed_move, client->private_retired_move,
+			client->private_discarded_move);
+		Con_Printf ("server netdiag: #%d mode_epoch=%u discontinuity_epoch=%u reason=%u published_authority_valid=%d published_authority=%u input_phase=%d native_frame=%d resume_first=%d\n",
+			i + 1, (unsigned)client->private_move_mode_epoch,
+			(unsigned)client->private_move_discontinuity_epoch,
+			(unsigned)client->private_move_discontinuity_reason,
+			client->private_move_published_authority_valid ? 1 : 0,
+			(unsigned)client->private_move_published_authority, client->private_input_phase,
+			client->private_move_native_frame ? 1 : 0, client->private_resume_first_sequence);
+		if (client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS)
+			Con_Printf ("server netdiag: #%d replacement_ack=%d\n",
+				i + 1, client->lastacksequence);
+		if (client->netconnection)
+			Con_Printf ("server netdiag: #%d socket sequence_in=%d sequence_out=%d\n",
+				i + 1, NET_QSocketGetSequenceIn (client->netconnection),
+				NET_QSocketGetSequenceOut (client->netconnection));
+		else
+			Con_Printf ("server netdiag: #%d socket=none\n", i + 1);
+	}
+}
+
 /*
 ===============
 SV_Init
@@ -3029,6 +3097,7 @@ void SV_Init (void)
 
 	Cmd_AddCommand ("pext", SV_Pext_f);
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); // johnfitz
+	Cmd_AddCommand ("netdiag", SV_NetDiag_f);
 
 	for (i = 0; i < MAX_MODELS; i++)
 		q_snprintf (localmodels[i], 8, "*%i", i);

@@ -88,6 +88,40 @@ static float music_gain = 0.5f;
 static int music_rejection_reported;
 static void Spatial_PumpMusic(void);
 
+static void Spatial_Probe_f(void)
+{
+	vec3_t origin;
+	sfx_t *sfx;
+	const char *name = Cmd_Argc() > 1 ? Cmd_Argv(1) : "ambience/fire1.wav";
+
+	if (Cmd_Argc() != 1 && Cmd_Argc() != 2 && Cmd_Argc() != 5) {
+		Con_Printf("spatial_probe [sound.wav [x y z]]; stopsound clears probes\n");
+		return;
+	}
+	if (cls.signon != SIGNONS) {
+		Con_Printf("Load a map before placing a spatial probe\n");
+		return;
+	}
+	VectorMA(listener_origin, 128, listener_forward, origin);
+	if (Cmd_Argc() == 5) {
+		origin[0] = atof(Cmd_Argv(2));
+		origin[1] = atof(Cmd_Argv(3));
+		origin[2] = atof(Cmd_Argv(4));
+	}
+	if (!isfinite(origin[0]) || !isfinite(origin[1]) || !isfinite(origin[2])) {
+		Con_Printf("spatial_probe coordinates must be finite\n");
+		return;
+	}
+	if (cl.max_edicts >= INT_MAX) {
+		Con_Printf("spatial_probe cannot allocate a probe entity id\n");
+		return;
+	}
+	sfx = S_PrecacheSound(name);
+	S_StartSound(cl.max_edicts + 1, 0, sfx, origin, 1, 1);
+	Con_Printf("Spatial probe %s at %.1f %.1f %.1f\n",
+		name, origin[0], origin[1], origin[2]);
+}
+
 static float Spatial_ClampCvar(const cvar_t *var, float fallback, float min_value,
 	float max_value)
 {
@@ -505,6 +539,7 @@ void Spatial_Register(void)
 	Cvar_RegisterVariable(&snd_spatial_radio_compression);
 	Cvar_RegisterVariable(&snd_spatial_radio_drive);
 	Cvar_RegisterVariable(&snd_spatial_voice_reverb);
+	Cmd_AddCommand("spatial_probe", Spatial_Probe_f);
 	Cmd_AddCommand("spatial_status", Spatial_Status_f);
 }
 

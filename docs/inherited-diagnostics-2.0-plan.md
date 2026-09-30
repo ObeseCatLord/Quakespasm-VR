@@ -69,6 +69,25 @@ avatars and equipment remain their existing independent migration requirement.
 3. Main reviews actual output fields/call ownership and scoped whitespace diff;
    update command checkpoint without claiming full feature completion.
 
+## Source integration checkpoint
+
+The two native callbacks and registrations are implemented with104 net added
+production lines. Main reviewed the complete source diff against actual field
+types, socket accessors and sound-channel classification. One reference-only
+name was corrected during integration: vkQuake has no Q_atof helper, so explicit
+probe positions use the existing standard atof convention and finite-result
+validation. Native source/channel/map owners remain; no timer, counter table,
+renderer or DSP policy was added.
+
+The report labels disconnected local state and current retained prediction
+correction honestly; it does not fabricate primary-only cumulative server
+counters. Server socket reads are guarded and replacement ACK output requires
+the negotiated replacement-delta bit. spatial_probe registration follows the
+existing USE_STEAMAUDIO spatial owner, and the native legacy fallback remains
+usable in that build when the spatial renderer is inactive. Builds without that
+optional owner do not acquire a new spatial console API. Scoped whitespace
+checks passed; no executable or audible qualification was performed.
+
 After full implementation, Linux/ARM software checks cover disconnected/listen/
 dedicated state, active public/private/desktop/VR peers, reset/reconnect/ACK and
 queue state, valid and absent sockets, invalid arity/nonfinite probe positions,
