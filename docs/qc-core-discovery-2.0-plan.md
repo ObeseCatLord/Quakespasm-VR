@@ -22,7 +22,7 @@
 ## Small adapter
 
 Copy only the primary core **name/number metadata**, for names whose ordinary
-slots are present in the native tables (1–78). Add the native lower-case
+slots are present in the native tables (1–79). Add the native lower-case
 `changeyaw` spelling alongside primary `ChangeYaw`, and primary `cvar_setlong`
 alias 72. Keep this immutable metadata private in `Quake/pr_ext.c`; it contains
 no function pointers, mutable mapping or second resource/dispatch owner.
@@ -39,9 +39,10 @@ unchanged. All duplicate empty declarations are visited by the native scan.
 Do not copy the primary re-release debug drawing names at 81–89: their primary
 handlers are already `PF_Fixme`, and those numbers are occupied by unrelated
 native extensions. Existing reviewed re-release adapters remain separate.
-The native `finaleFinished` contract at 79 needs a separate verified boundary
-comparison if name discovery there is required; this slice covers ordinary
-Quake core calls, not an inferred debug drawing implementation.
+Source comparison also verified primary `PF_finalefinished` and native
+`PF_sv_finalefinished` both return zero at slot 79. Include `finaleFinished`
+metadata with native SSQC handling and native CSQC rejection, without claiming
+a completed-finale feature. This is not an inferred debug drawing implementation.
 
 Replacing both native handler arrays with primary's unified registry would
 duplicate ownership and risk desktop/CSQC behavior. Adding wrappers for each
