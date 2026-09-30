@@ -13,6 +13,27 @@ VM or replace the donor registry. Occupied numeric slots must retain donor
 semantics for donor programs. Any inherited conflicting binding needs verified
 function-name, VM and declared-slot evidence before changing dispatch.
 
+## Existing math wrapper source checkpoint — 2026-09-30
+
+Direct comparison of primary master `51b452c0` `Quake/pr_cmds.c`
+`PF_Sin` through `PF_vectorvectors` with destination `Quake/pr_ext.c`
+found matching wrapper formulas, argument selection and output assignments
+for the 17 inherited registered names: `sin`, `cos`, `sqrt`, `min`, `max`,
+`bound`, `pow`, `anglemod`, `bitshift`, `mod`, `vectorvectors`, `asin`,
+`acos`, `atan`, `atan2`, `tan`, `log`. Their actual extension rows retain the
+same numbers and both-VM handlers: 60–62, 94–97, 102, 218, 245, 432,
+471–475 and 532. Keep these native wrappers; no duplicate math adapter is
+required by this comparison. Native dynamically numbered `crossproduct`
+remains a useful additional registration: primary defines the same helper
+but has no corresponding literal registry entry in the checked file.
+
+This covers the wrapper source and registration contracts, not numerical
+execution or equivalence of every common math helper/VM path. Existing
+extreme-value `anglemod` termination, malformed shift/count conversion and
+floating-point domain behavior are not qualified by this checkpoint.
+End-of-implementation Linux/ARM checks and broader MOD-001/005 acceptance
+remain required. No production code, tests, probes or fixtures changed here.
+
 ## First slice: successful extension discovery
 
 Primary `PF_builtin_find` initializes the result to zero, compares names without
