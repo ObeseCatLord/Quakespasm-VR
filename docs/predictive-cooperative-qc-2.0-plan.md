@@ -192,3 +192,28 @@ helper, keeping native snapshot classification/correction. It supersedes the
 stage1 selected coalescing behavior; public/native-world behavior remains.
 Its software/review evidence and outstanding Gorilla/replay/state work are
 recorded separately.
+
+## Current state source audit
+
+A bounded personal local Astra Max source audit of the actual accepted-command
+and builtin paths found ordinary liquid execution, imported ladder controls
+and native-to-command return already implemented. `SV_CooperativeCommandOwner`
+does not impose a dry-state gate; the command branch uses observational frame
+validation instead of the plain WALK preflight. The builtin imports actor
+state, executes the shared solver and materializes liquid/flag results. The
+frame dispatcher re-evaluates eligibility after native ownership ends.
+
+The actionable implementation gap was custom BSP hull coordinates: actual
+actor bounds reach the builtin, but the shared trace selected only hull0/1 and
+ignored the minimum-to-compiled-hull offset. The
+[native hull reuse plan](predictive-custom-hull-2.0-plan.md) addresses that
+boundary; it does not introduce another solver or arbitrary-size collision.
+Authored ladder exit still follows the imported QC flag lifetime. QSS-M also
+imports/exports that flag; no new automatic lifetime is inferred from it.
+
+This audit is source evidence, not additional runtime qualification. Complete
+authored state transitions and end-of-implementation checks remain required.
+Arbitrary server-only QC cannot acquire plain client replay simply by calling
+standard physics. Earlier dry/multislot/load limitations are historical;
+current general initial-state and local/load adapters supersede them. Gorilla
+and instant stop remain excluded by the user's scope decisions.

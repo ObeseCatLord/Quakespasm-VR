@@ -115,6 +115,13 @@ to WALK. Restored unowned ledge jumps finish under the existing native owner;
 owned/provisional solver timers remain unchanged. Personal Astra Max accepted
 the two-file source delta; end-of-implementation qualification is pending.
 
+A current cooperative source audit found liquid execution, imported ladder
+controls and native-to-command return present. Its concrete missing collision
+boundary is addressed by the
+[native custom-hull reuse plan](predictive-custom-hull-2.0-plan.md), written
+before production changes. Broader authored state checks remain qualification;
+plain replay of arbitrary server-only QC is not implied by the standard builtin.
+
 The [stock activation plan](predictive-stock-activation-2.0-plan.md) was committed
 before changing defaults, then reopened before the source-proven intermission
 fix. Its implementation retains existing movement/QC/completion owners.
