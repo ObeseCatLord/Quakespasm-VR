@@ -25,6 +25,7 @@ must remain usable. Existing QC particle and draw builtins consume callbacks.
 | Activation reference | Primary and QSS-M enable/disable client commands own one csqcactive flag; enable reflags present entries. Neither command requires a PEXT1 header. [verified: host_cmd.c] |
 | Loader gap | Native loader admits only DrawHud; primary admits DrawHud/DrawScores/Ent_Update. Existing HUD fallback checks actual DrawHud, not merely VM presence. [verified: host.c/sbar.c/gl_screen.c] |
 | Allocation lifetime | Native edicts have ED_Retain/Release; ED_Free queues slots only with retain_count zero. Raw reference mapping without retention can alias a freed/recycled slot. [verified: pr_edict.c] |
+| Main-thread callback boundary | `_Host_Frame` reads server packets before SCR_UpdateScreen; task rendering joins draw_done (dependent on draw GUI/render consumers) before returning. Preserve this parser boundary and current-VM switching; no callbacks on renderer workers or new task graph. [verified: host.c:1234/gl_screen.c:2569-2588] |
 | Final proof | Linux/ARM builds and actual mod/network loss/re-enable/software integration are deferred until full implementation. Live headset and performance measurement user-deferred. [unverified: none run in this slice] |
 
 ## Mostly-worked design and open decisions
@@ -112,6 +113,36 @@ packet budget and oversized refusal without ordinary-world starvation.
 Run only at final implementation completion: Linux x86-64/ARM builds and actual
 normal admission/packet parser/callback/effect checks, ordinary desktop HUD,
 public QSS-M/native desktop peers, current private VR, old private clients that
-never enable, full movement owner snapshots and voice/VRIK coexistence. Source
+never enable, full movement owner snapshots and voice/VRIK coexistence. No existing checked-in test presently exercises this custom entity transport;
+final proof must add actual admission/loss/callback coverage rather than infer it
+from private movement tests. Source
 inspection/diff whitespace is not end-to-end proof. Do not mark NET-009 or the
 full migration complete solely from plans, declarations, mocks or counters.
+
+## Astra advisory disposition before production
+
+Requested local Astra Max returned a verify-first architecture advisory; effective
+settings were unavailable, so the formal senior-skill gate cannot be certified.
+Main spot-checked primary BeginFrame, native stat/writer initialization, world
+reset parsing, ED_Free/retain/release, debug live-reference conversion and private
+header admission. No builds/tests/probes ran. The advisory caught real gaps.
+
+| Recommendation | Main disposition |
+| --- | --- |
+| Begin/retire each packet frame before stats and both entity writers | Adopt primary BeginFrame at the existing native owner, including continuations and non-PREDINFO peers; delete writer-specific reinitialization. |
+| Reset retransmission must reconstruct custom state | Adopt: every emitted native world reset clears client mapped state and reflags all current custom state, including already-sent continuations, for complete reconstruction. |
+| Free/reuse must retain removal debt even while disabled | Adapt: notify the existing per-client pending flags from SSQC ED_Free. When a new custom entity reuses such a slot, encode remove then full create together in one bounded record candidate/packet; log both debts together, so loss cannot turn a new entity into a stale mapped lifetime. No generation/wire extension. Reconcile resend bits with current visibility/eligibility. |
+| Mandatory player owner must not be replaced | Adopt native-only transport for that recipient's player owner. No inherited requirement for a second custom owner stream has been established. Other recipients' custom entities use ordinary filters. |
+| Cursor/progress and impossible payload | Adopt one custom scan cursor in the existing packet loop. Retry a temporary shortage with unchanged bits in a fresh packet after mandatory native data. A record that cannot fit that valid otherwise-empty packet explicitly fails that recipient with size/entity diagnostics, preserving ordinary clients/server operation. Reject silent dirty-bit clearing and fragmentation. |
+| Retained free mappings are not callable | Adopt liveness checks before callbacks, detach/release after an update frees itself, detach before live Remove callback, cleanup before every client VM teardown. Native ED_Retain/Release remains the sole lifetime adapter. |
+| Private/public readiness split | Adopt negotiated public PEXT1 plus replacement ACKs, or unchanged private header plus explicit readiness. Server CSQC support must be enabled. Reset selected PEXT1 on serverinfo, retain original public offer, force private selected PEXT1 zero. |
+| Loader, enable retry, reload | Adopt primary callback admission at both native checks and one pending reliable enable flag after Init; no initialization retries. Existing sign-on/map reload only; disable stops future sending but does not authorize unloading opaque in-flight parsers. Existing event predicate and HUD dispatch remain unchanged. |
+| Additional renderer/command-queue/full-CSQC policy | Delete from scope; native parser ordering, tasks, VM, assets, GUI and fallback HUD suffice. |
+
+Client decoder/hooks/mapping and reliable enable retry are independently writable
+in `cl_parse.c`, `cl_main.c`, `client.h`, `progs.h`, `protocol.h`. One authorized
+web GPT coding agent owns only those files. Main owns `sv_main.c`, `server.h`,
+`host.c`, `host_cmd.c`, `pr_edict.c` for server integration, loader activation and
+free/teardown hooks. No overlapping edits; main reviews and integrates every
+agent change. Scope stays NET-009 until its source implementation is coherent;
+no declarations-only completion claim.
