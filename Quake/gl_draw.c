@@ -1421,6 +1421,38 @@ static qboolean GL_SetModernHUDCanvas (cb_context_t *cbx, canvastype canvas)
 	return true;
 }
 
+/* Native artwork on a CSQC gameplay panel uses the same source-unit size.
+ * Center its first 320 units and keep the HUD's source y=0 anchor. */
+static qboolean GL_SetCSQCNativeHUDCanvas (cb_context_t *cbx, canvastype canvas)
+{
+	float width, height, source_y;
+	if (!cbx->ui_panel_active || !cbx->ui_panel_classic_hud || !SCR_CSQCDisplayOverrideActive ())
+		return false;
+
+	switch (canvas)
+	{
+	case CANVAS_SBAR:
+		width = 320.0f;
+		height = 48.0f;
+		source_y = 0.0f;
+		break;
+	case CANVAS_MENU:
+		width = 416.0f;
+		height = 200.0f;
+		source_y = -152.0f;
+		break;
+	default:
+		return false;
+	}
+
+	const csqc_display_t display = SCR_GetCSQCDisplay ();
+	const float px = display.pixel_scale[0], py = display.pixel_scale[1];
+	GL_OrthoMatrix (cbx, 0, width, height, 0, -99999, 99999);
+	GL_Viewport (cbx, (glwidth - 320.0f * px) * 0.5f,
+		glheight - (source_y + height) * py, width * px, height * py, 0.0f, 1.0f);
+	return true;
+}
+
 /*
 ================
 GL_SetCanvas -- johnfitz -- support various canvas types
@@ -1453,7 +1485,7 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 		GL_Viewport (cbx, 0, 0, glwidth, glheight, 0.0f, 1.0f);
 		break;
 	case CANVAS_MENU:
-		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
+		if (!GL_SetCSQCNativeHUDCanvas (cbx, newcanvas) && !GL_SetModernHUDCanvas (cbx, newcanvas))
 		{
 			if (cbx->ui_panel_classic_hud)
 			{
@@ -1481,7 +1513,7 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 		break;
 	}
 	case CANVAS_SBAR:
-		if (!GL_SetModernHUDCanvas (cbx, newcanvas))
+		if (!GL_SetCSQCNativeHUDCanvas (cbx, newcanvas) && !GL_SetModernHUDCanvas (cbx, newcanvas))
 		{
 			s = CLAMP (1.0, scr_sbarscale.value, (float)glwidth / 320.0);
 			if (cl.gametype == GAME_DEATHMATCH && scr_style.value < 2.0f && !cbx->ui_panel_classic_hud)

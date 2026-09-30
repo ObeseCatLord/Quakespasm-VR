@@ -650,15 +650,10 @@ static qboolean SCR_VRHUDFrameEligible (const vrxr_frame_t *frame)
 /* Only the classic/CSQC panel replaces status-bar scene reservation. */
 static qboolean SCR_VRClassicSbarFrameEligible (const vrxr_frame_t *frame)
 {
-	const qboolean score_or_death = sb_showscores || cl.stats[STAT_HEALTH] <= 0;
 	const qboolean csqc_hud = scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud;
-	const qboolean csqc_scores_only = scr_style.value < 1.0f &&
-		cl.qcvm.extfuncs.CSQC_DrawScores && !cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm;
 
-	/* Native score/death stays on CANVAS_SBAR. A CSQC-owned scoreboard
-	 * uses its own virtual canvas and is deliberately left on the flat path. */
 	return SCR_VRHUDFrameEligible (frame) && isfinite (scr_style.value) && scr_style.value < 2.0f &&
-		!(csqc_hud && (qcvm || score_or_death)) && !(csqc_scores_only && score_or_death);
+		!(csqc_hud && qcvm);
 }
 
 static qboolean SCR_VRModernSbarFrameEligible (const vrxr_frame_t *frame)
@@ -1691,6 +1686,8 @@ typedef struct
 	int pointer_x, pointer_y;
 	float world_per_eye_pixel;
 	float world_from_ndc[16];
+	float csqc_world_from_ndc[16];
+	csqc_display_t csqc_display; // Positive width publishes a fully prepared CSQC transform.
 } vr_menu_panel_t;
 
 typedef enum
@@ -1742,6 +1739,46 @@ typedef struct
 
 static vr_modern_sbar_panel_t vr_modern_sbar_panel;
 
+/* Invert CANVAS_CSQC's full viewport around an explicit source pivot. HUD
+ * source y=0 stays at its donor target; intermission centers (160,100). */
+static qboolean SCR_VRCSQCPanelPrepare (csqc_display_t *display, float matrix[16],
+	float width, float height, float scale, const vec3_t target, const vec3_t right,
+	const vec3_t down, const vec3_t normal, float pivot_x, float pivot_y)
+{
+	display->width = 0.0f;
+	if (!isfinite (width) || !isfinite (height) || width <= 0 || height <= 0 ||
+		!isfinite (scale) || scale <= 0 || vid.width <= 0 || vid.height <= 0 || glwidth <= 0 || glheight <= 0)
+		return false;
+
+	const float viewport_y = vid.height - glheight;
+	const float x_step = 2.0f * glwidth / (width * vid.width);
+	const float y_step = 2.0f * glheight / (height * vid.height);
+	const float x_base = -1.0f;
+	const float y_base = 2.0f * viewport_y / vid.height - 1.0f;
+	if (!isfinite (x_step) || !isfinite (y_step) || x_step <= 0 || y_step <= 0 || !isfinite (y_base))
+		return false;
+
+	const float center_x = x_base + x_step * pivot_x;
+	const float center_y = y_base + y_step * pivot_y;
+	memset (matrix, 0, 16 * sizeof (*matrix));
+	for (int i = 0; i < 3; ++i)
+	{
+		matrix[i] = right[i] * (scale / x_step);
+		matrix[4 + i] = down[i] * (scale / y_step);
+		matrix[8 + i] = normal[i] * scale;
+		matrix[12 + i] = target[i] - matrix[i] * center_x - matrix[4 + i] * center_y;
+		if (!isfinite (matrix[i]) || !isfinite (matrix[4 + i]) || !isfinite (matrix[8 + i]) || !isfinite (matrix[12 + i]))
+			return false;
+	}
+	matrix[15] = 1.0f;
+	display->height = height;
+	display->scale = 1.0f;
+	display->pixel_scale[0] = glwidth / width;
+	display->pixel_scale[1] = glheight / height;
+	display->width = width;
+	return true;
+}
+
 static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 	const vec3_t center, const vec3_t right, const vec3_t down, const vec3_t normal,
 	float scale, qboolean menu_canvas, int *pixel_x, int *pixel_y)
@@ -1767,19 +1804,12 @@ static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 	return !menu_canvas || M_VRPointerPixelInMenuCanvas (*pixel_x, *pixel_y);
 }
 
-/* Native solo/multiplayer intermission and finale use CANVAS_MENU. CSQC scores
- * use CANVAS_CSQC and remain excluded from this tracked 320x200 panel
- * contract. */
+/* Native and CSQC intermission share the existing tracked menu anchor. */
 static qboolean SCR_VRNativeIntermission (void)
 {
 	if (cls.state != ca_connected || cls.signon != SIGNONS || !cl.worldmodel ||
 		key_dest != key_game ||
 		(cl.intermission != 1 && cl.intermission != 2))
-		return false;
-
-	/* Sbar_IntermissionOverlay dispatches CSQC_DrawScores on CANVAS_CSQC for
-	 * this style. Leave that independent canvas on the original flat path. */
-	if (cl.intermission == 1 && scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawScores)
 		return false;
 
 	return true;
@@ -1810,6 +1840,7 @@ static void SCR_VRMenuPrepare (void)
 
 	vr_menu_panel.valid = false;
 	vr_menu_panel.pointer_valid = false;
+	vr_menu_panel.csqc_display.width = 0.0f;
 	if (requested_mode == VR_PANEL_NONE)
 	{
 		vr_menu_panel_mode = VR_PANEL_NONE;
@@ -1890,6 +1921,10 @@ static void SCR_VRMenuPrepare (void)
 	vr_menu_panel.world_from_ndc[15] = 1;
 	vr_menu_panel.world_per_eye_pixel = scale;
 	vr_menu_panel.valid = true;
+	if (requested_mode == VR_PANEL_INTERMISSION && cl.intermission == 1 &&
+		scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawScores && !qcvm)
+		SCR_VRCSQCPanelPrepare (&vr_menu_panel.csqc_display, vr_menu_panel.csqc_world_from_ndc,
+			320.0f, 200.0f, vr_menu_scale.value, vr_menu_anchor.center, right, down, normal, 160.0f, 100.0f);
 }
 
 /* Prepare the held weapon wheel once for the stereo pair. Its anchor is
@@ -2104,16 +2139,18 @@ static void SCR_VRClassicSbarPrepare (void)
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	vec3_t target, right, normal, down;
 	float scale, bar_scale, viewport_x, viewport_y, x_step, y_step, x_base, y_base;
-	float canvas_width = 320.0f, canvas_height = 48.0f;
+	float canvas_width = 320.0f;
 	qboolean csqc_hud;
 
 	vr_classic_sbar_panel.valid = false;
 	if (!SCR_VRClassicSbarFrameEligible (frame))
 		return;
-	csqc_hud = scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawHud && !qcvm;
+	csqc_hud = scr_style.value < 1.0f && !qcvm &&
+		(cl.qcvm.extfuncs.CSQC_DrawHud ||
+		 (cl.qcvm.extfuncs.CSQC_DrawScores && !cl.qcvm.extfuncs.CSQC_DrawHud &&
+		  (sb_showscores || cl.stats[STAT_HEALTH] <= 0) && key_dest != key_menu));
 	if (csqc_hud)
 	{
-		canvas_height = 200.0f;
 		if (Sbar_IsADWideCSQCHud ())
 			canvas_width = q_max (320.0f, 960.0f / q_max (1.0f, scr_sbarscale.value));
 	}
@@ -2127,32 +2164,21 @@ static void SCR_VRClassicSbarPrepare (void)
 
 	if (csqc_hud)
 	{
-		/* CANVAS_CSQC fills the render viewport. Include its framebuffer scale
-		 * here so the panel matrix keeps each source unit at vr_hud_scale. */
-		viewport_x = 0.0f;
-		viewport_y = vid.height - glheight;
-		x_step = 2.0f * glwidth / (canvas_width * vid.width);
-		y_step = 2.0f * glheight / (canvas_height * vid.height);
-		x_base = -1.0f;
-		y_base = 2.0f * viewport_y / vid.height - 1.0f;
-		vr_classic_sbar_panel.csqc_display.width = canvas_width;
-		vr_classic_sbar_panel.csqc_display.height = canvas_height;
-		vr_classic_sbar_panel.csqc_display.scale = 1.0f;
-		vr_classic_sbar_panel.csqc_display.pixel_scale[0] = glwidth / canvas_width;
-		vr_classic_sbar_panel.csqc_display.pixel_scale[1] = glheight / canvas_height;
+		vr_classic_sbar_panel.valid = SCR_VRCSQCPanelPrepare (&vr_classic_sbar_panel.csqc_display,
+			vr_classic_sbar_panel.world_from_ndc, canvas_width, 200.0f, scale,
+			target, right, down, normal, canvas_width * 0.5f, 0.0f);
+		vr_classic_sbar_panel.csqc_hud = csqc_hud;
+		return;
 	}
-	else
-	{
-		bar_scale = CLAMP (1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
-		if (!isfinite (bar_scale) || bar_scale <= 0)
-			return;
-		viewport_x = (glwidth - 320.0f * bar_scale) * 0.5f;
-		viewport_y = vid.height - 48.0f * bar_scale;
-		x_step = 2.0f * bar_scale / vid.width;
-		y_step = 2.0f * bar_scale / vid.height;
-		x_base = 2.0f * viewport_x / vid.width - 1.0f;
-		y_base = 2.0f * viewport_y / vid.height - 1.0f;
-	}
+	bar_scale = CLAMP (1.0f, scr_sbarscale.value, (float)glwidth / 320.0f);
+	if (!isfinite (bar_scale) || bar_scale <= 0)
+		return;
+	viewport_x = (glwidth - 320.0f * bar_scale) * 0.5f;
+	viewport_y = vid.height - 48.0f * bar_scale;
+	x_step = 2.0f * bar_scale / vid.width;
+	y_step = 2.0f * bar_scale / vid.height;
+	x_base = 2.0f * viewport_x / vid.width - 1.0f;
+	y_base = 2.0f * viewport_y / vid.height - 1.0f;
 	if (!isfinite (x_step) || !isfinite (y_step) || x_step <= 0 || y_step <= 0 ||
 		!isfinite (x_base) || !isfinite (y_base))
 		return;
@@ -2164,7 +2190,7 @@ static void SCR_VRClassicSbarPrepare (void)
 		matrix[i] = right[i] * (scale / x_step);
 		matrix[4 + i] = down[i] * (scale / y_step);
 		matrix[8 + i] = normal[i] * scale;
-		const float center_x = csqc_hud ? x_base + x_step * canvas_width * 0.5f : x_base + x_step * 160.0f;
+		const float center_x = x_base + x_step * 160.0f;
 		matrix[12 + i] = target[i] - matrix[i] * center_x - matrix[4 + i] * y_base;
 		if (!isfinite (matrix[i]) || !isfinite (matrix[4 + i]) || !isfinite (matrix[8 + i]) ||
 			!isfinite (matrix[12 + i]))
@@ -2241,7 +2267,7 @@ static void SCR_DrawVRHUDPanel (cb_context_t *cbx, qboolean flat_fallback)
 	else
 	{
 		GL_BeginUIPanel (cbx, vr_classic_sbar_panel.world_from_ndc);
-		cbx->ui_panel_classic_hud = !panel_csqc;
+		cbx->ui_panel_classic_hud = true;
 	}
 	if (panel_csqc)
 		SCR_SetCSQCDisplayOverride (&vr_classic_sbar_panel.csqc_display);
@@ -2370,11 +2396,20 @@ static void SCR_DrawGUI (void *unused)
 	}
 	else if (cl.intermission == 1 && key_dest == key_game) // end of level
 	{
+		const qboolean panel_csqc = intermission_panel_valid &&
+			vr_menu_panel.csqc_display.width > 0.0f && !recovered_csqc_error;
 		if (intermission_panel_valid)
-			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
+		{
+			GL_BeginUIPanel (cbx, panel_csqc ? vr_menu_panel.csqc_world_from_ndc : vr_menu_panel.world_from_ndc);
+			if (panel_csqc)
+				SCR_SetCSQCDisplayOverride (&vr_menu_panel.csqc_display);
+		}
 		Sbar_IntermissionOverlay (cbx);
 		if (intermission_panel_valid)
+		{
+			SCR_SetCSQCDisplayOverride (NULL);
 			GL_EndUIPanel (cbx);
+		}
 	}
 	else if (cl.intermission == 2 && key_dest == key_game) // end of episode
 	{

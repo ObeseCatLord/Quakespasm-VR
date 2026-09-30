@@ -119,3 +119,21 @@ The current wrapper's classic flag already owns the required inventory, voice
 and mini-score behavior; no second consumer predicate or new context flag is
 needed. Keep callback dispatch distinct for HUD+scores, HUD-only native
 deathmatch fallback, and scores-only explicit scores/death.
+
+## Source integration and final advisory
+
+The adapter is implemented in the two planned files:114 added and47 removed
+production lines,67 net. Main reviewed the complete diff against the native
+canvas/panel composition and actual sbar dispatch. Gameplay retains its y=0
+source anchor; the shared helper centers intermission separately. Mixed native
+inventory, scores and voice reuse the classic-layout flag and independent
+override pixel scales. The native intermission matrix remains available after
+QC failure, selected using the post-longjmp volatile recovery flag.
+
+The requested local Astra final read-only source advisory found no P1/P2 blocker
+in this scope. Main accepted its transform, eligibility, inventory/voice,
+override/cache/clip and recovery findings against the actual diff. Scoped
+whitespace checking passed. No builds/tests/probes were run. Already-recorded
+commands before a QC failure are not rolled back; that native limitation remains.
+This is source integration, not runtime or model certification. The final
+software acceptance matrix above remains pending after all implementation.
