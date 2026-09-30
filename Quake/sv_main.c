@@ -4475,7 +4475,13 @@ qboolean SV_SendClientDatagram (client_t *client)
 			while (client->snapshotresume < client->numpendingentities ||
 				client->csqcsnapshotresume < client->numpendingcsqcentities)
 			{
-				NET_SendUnreliableMessage (client->netconnection, &msg);
+				size_t oldnative = client->snapshotresume;
+				size_t oldcustom = client->csqcsnapshotresume;
+				if (NET_SendUnreliableMessage (client->netconnection, &msg) == -1)
+				{
+					SV_DropClient (false);
+					return false;
+				}
 				SZ_Clear (&msg);
 				frame = SVFTE_BeginFrame (client);
 				if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
@@ -4494,6 +4500,12 @@ qboolean SV_SendClientDatagram (client_t *client)
 				}
 				if (!SVFTE_WriteCSQCEntitiesToClient (client, &msg, frame, true))
 				{
+					SV_DropClient (false);
+					return false;
+				}
+				if (client->snapshotresume == oldnative && client->csqcsnapshotresume == oldcustom)
+				{
+					Con_Printf ("%s: entity continuation cannot advance within datagram budget\n", client->name);
 					SV_DropClient (false);
 					return false;
 				}
