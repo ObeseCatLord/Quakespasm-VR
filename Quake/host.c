@@ -1034,8 +1034,8 @@ static void CL_LoadCSProgs (void)
 				G_FLOAT (OFS_PARM2) = 10000 * maj + 100 * (min) + VKQUAKE_VER_PATCH;
 				PR_ExecuteProgram (qcvm->extfuncs.CSQC_Init);
 			}
+			// Prespawn is appended by the frame owner before the reliable enable retry.
 			cl.csqc_enable_pending = qcvm->extfuncs.CSQC_Ent_Update != 0;
-			CL_TryEnableCSQCEntities ();
 		}
 		else
 			PR_ClearProgs (qcvm);

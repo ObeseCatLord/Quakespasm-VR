@@ -307,9 +307,11 @@ typedef struct client_s
 	size_t        csqcsnapshotresume;
 	unsigned int *pendingcsqcentities_bits;
 	size_t        numpendingcsqcentities;
+	int          *csqcentities_remove_sequence; // latest emitted removal ACK boundary
 	unsigned int *pendingentities_bits; // UF_ flags for each entity
 	size_t		  numpendingentities;	// realloc if too small
 #define SENDFLAG_PRESENT 0x80000000u	// tracks that we previously sent one of these ents (resulting in a remove if the ent gets remove()d).
+#define SENDFLAG_REMOVEWAIT 0x10000000u // last removal boundary remains unacknowledged
 #define SENDFLAG_CURRENT 0x20000000u // current snapshot eligibility, never replayed or exposed to QC
 #define SENDFLAG_REMOVE	 0x40000000u	// for packetloss to signal that we need to resend a remove.
 #define SENDFLAG_USABLE	 0x00ffffffu	// SendFlags bits that the qc is actually able to use (don't get confused if the mod uses SendFlags=-1).
