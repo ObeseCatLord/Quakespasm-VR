@@ -190,6 +190,8 @@ static cvar_t sv_weapon_collision = {"sv_weapon_collision", "-1", CVAR_NOTIFY | 
 static cvar_t sv_immersive_melee = {"sv_immersive_melee", "0", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_voice = {"sv_voice", "1", CVAR_SERVERINFO};
 cvar_t sv_coop_shared_pickups = {"sv_coop_shared_pickups", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_respawn_near_player = {"sv_coop_respawn_near_player", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_respawn_delay = {"sv_coop_respawn_delay", "10", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_respawn_keep_weapons_ammo = {"sv_coop_respawn_keep_weapons_ammo", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_player_teleport_fallback = {"sv_coop_player_teleport_fallback", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 
@@ -3079,9 +3081,13 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_immersive_melee);
 	Cvar_RegisterVariable (&sv_voice);
 	Cvar_RegisterVariable (&sv_coop_shared_pickups);
+	Cvar_RegisterVariable (&sv_coop_respawn_near_player);
+	Cvar_RegisterVariable (&sv_coop_respawn_delay);
 	Cvar_RegisterVariable (&sv_coop_respawn_keep_weapons_ammo);
 	Cvar_RegisterVariable (&sv_coop_player_teleport_fallback);
 	Cvar_SetCallback (&sv_coop_shared_pickups, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_respawn_near_player, Host_Callback_Notify);
+	Cvar_SetCallback (&sv_coop_respawn_delay, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_respawn_keep_weapons_ammo, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_coop_player_teleport_fallback, Host_Callback_Notify);
 	Cvar_SetCallback (&sv_gorilla, SV_GorillaPolicyChanged);
@@ -3714,6 +3720,9 @@ void SV_ConnectClient (int clientnum)
 	qboolean		  defer_spawn_parms;
 
 	client = svs.clients + clientnum;
+	if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
+		svs.coop_initial_spawn_client[clientnum] = false;
+	SV_CoopRespawnCancelBorrowedPolicy (client, client->edict);
 
 	if (client->netconnection)
 		Con_DPrintf ("Client %s connected\n", NET_QSocketGetTrueAddressString (client->netconnection));
@@ -5485,20 +5494,22 @@ void SV_SaveSpawnparms (void)
 
 	svs.serverflags = pr_global_struct->serverflags;
 
-	for (i = 0, host_client = svs.clients; i < svs.maxclients; i++, host_client++)
+	for (i = 0; i < svs.maxclients; i++)
 	{
-		if (!host_client->active)
+		client_t *client = &svs.clients[i];
+		host_client = client;
+		if (!client->active)
 			continue;
 
 		// call the progs to get default spawn parms for the new client
-		pr_global_struct->self = EDICT_TO_PROG (host_client->edict);
-		PR_ExecuteProgram (pr_global_struct->SetChangeParms);
+		if (!SV_CoopRespawnSetChangeParms (client))
+			continue;
 		for (j = 0; j < NUM_BASIC_SPAWN_PARMS; j++)
-			host_client->spawn_parms[j] = (&pr_global_struct->parm1)[j];
+			client->spawn_parms[j] = (&pr_global_struct->parm1)[j];
 		for (; j < NUM_TOTAL_SPAWN_PARMS; j++)
 		{
 			ddef_t *g = ED_FindGlobal (va ("parm%i", j + 1));
-			host_client->spawn_parms[j] = g ? qcvm->globals[g->ofs] : 0;
+			client->spawn_parms[j] = g ? qcvm->globals[g->ofs] : 0;
 		}
 	}
 }
@@ -5878,11 +5889,17 @@ void SV_SpawnServer (const char *server)
 	// johnfitz
 
 	// send serverinfo to all connected clients
+	memset (svs.coop_initial_spawn_client, 0,
+		sizeof (svs.coop_initial_spawn_client));
 	for (i = 0, host_client = svs.clients; i < svs.maxclients; i++, host_client++)
 	{
 		host_client->knowntoqc = false;
 		if (host_client->active)
+		{
+			if (i < MAX_SCOREBOARD)
+				svs.coop_initial_spawn_client[i] = true;
 			SV_SendServerinfo (host_client);
+		}
 	}
 
 	Con_DPrintf ("Server spawned.\n");

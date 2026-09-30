@@ -1473,6 +1473,7 @@ static void Host_Map_f (void)
 	}
 
 	svs.serverflags = 0; // haven't completed an episode yet
+	svs.coop_loadgame_late_join_spawns_near = false;
 	q_strlcpy (name, Cmd_Argv (1), sizeof (name));
 	// remove (any) trailing ".bsp" from mapname -- S.A.
 	p = strrchr (name, '.');
@@ -2851,6 +2852,8 @@ static void Host_Loadgame_f (void)
 		sv.paused = true; // pause until all clients connect
 		sv.loadgame = true;
 		sv.loadgame_multiplayer = inherited_load;
+		svs.coop_loadgame_late_join_spawns_near =
+			(svs.maxclients > 1 && coop.value && !deathmatch.value);
 	}
 	else
 		S_StopAllSounds (true, true); // do this before parsing the edicts, since that may take a while
@@ -3534,6 +3537,7 @@ static void Host_Spawn_f (void)
 	qboolean inherited_spawn;
 	qboolean saved_dead;
 	qboolean restored_living = false;
+	qboolean initial_spawn_client;
 
 	if (cmd_source != src_client)
 	{
@@ -3549,10 +3553,12 @@ static void Host_Spawn_f (void)
 
 	host_client->knowntoqc = true;
 	host_client->lastmovetime = qcvm->time;
+	clientnum = (int)(host_client - svs.clients);
+	initial_spawn_client = clientnum >= 0 && clientnum < MAX_SCOREBOARD &&
+		svs.coop_initial_spawn_client[clientnum];
 	inherited_spawn = host_client->spawn_parms_pending;
 	if (inherited_spawn)
 	{
-		clientnum = (int)(host_client - svs.clients);
 		saved_clientnum = Host_LoadgameFindSavedClientForSpawn (clientnum, host_client->name);
 		saved_ent = saved_clientnum >= 0 ? Host_LoadgameSavedClientEdict (saved_clientnum) : NULL;
 		saved_dead = saved_ent && (saved_ent->v.health <= 0 || saved_ent->v.deadflag != DEAD_NO);
@@ -3580,6 +3586,8 @@ static void Host_Spawn_f (void)
 			SV_LinkEdict (ent, false);
 			Host_LoadgameClearSavedClient (saved_clientnum);
 			Host_LoadgameMaybeClearLoadedFlag ();
+			if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
+				svs.coop_initial_spawn_client[clientnum] = false;
 			restored_living = true;
 		}
 		else
@@ -3630,6 +3638,12 @@ static void Host_Spawn_f (void)
 			}
 			else
 				SV_CoopSharedApplyToJoiningClient (ent);
+			if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
+				svs.coop_initial_spawn_client[clientnum] = false;
+			if ((svs.coop_loadgame_late_join_spawns_near || !initial_spawn_client) &&
+				isfinite (sv_coop_respawn_near_player.value) &&
+				SV_CoopFeatureEnabled (&sv_coop_respawn_near_player, true))
+				SV_CoopRespawnPlaceNearPlayer (ent);
 		}
 		sv.paused = false; // the first completed spawn resumes the loaded world
 	}
@@ -3673,6 +3687,11 @@ static void Host_Spawn_f (void)
 		/* A new co-op player inherits accepted team progression after QuakeC
 		 * initializes its own inventory. Saved clients use the inherited path. */
 		SV_CoopSharedApplyToJoiningClient (ent);
+		if (clientnum >= 0 && clientnum < MAX_SCOREBOARD)
+			svs.coop_initial_spawn_client[clientnum] = false;
+		if (!initial_spawn_client && isfinite (sv_coop_respawn_near_player.value) &&
+			SV_CoopFeatureEnabled (&sv_coop_respawn_near_player, true))
+			SV_CoopRespawnPlaceNearPlayer (ent);
 	}
 
 	Send_Spawn_Info (host_client, inherited_spawn ? restored_living : sv.loadgame);

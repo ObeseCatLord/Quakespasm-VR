@@ -98,8 +98,8 @@ cvar_t sv_coop_notelefrag = {"sv_coop_notelefrag", "-1", CVAR_ARCHIVE | CVAR_NOT
  * profile, while 0 and 1 are explicit per-feature overrides. */
 qboolean SV_CoopFeatureEnabled (const cvar_t *feature, qboolean modern_default)
 {
-	if (feature && feature->value >= 0.0f)
-		return (int)feature->value;
+	if (feature && isfinite (feature->value) && feature->value >= 0.0f)
+		return feature->value >= 1.0f;
 	return sv_coop_classic.value ? false : modern_default;
 }
 
@@ -209,6 +209,7 @@ void Host_EndGame (const char *message, ...)
 	Con_DPrintf ("Host_EndGame: %s\n", string);
 	SV_CoopFriendlyFireReset ();
 	SV_ClearVRWeaponPoseScope ();
+	SV_CoopRespawnCancelBorrowedPolicy (NULL, NULL);
 
 	PR_SwitchQCVM (NULL);
 
@@ -254,6 +255,7 @@ void Host_Error (const char *error, ...)
 	inerror = true;
 	SV_CoopFriendlyFireReset ();
 	SV_ClearVRWeaponPoseScope ();
+	SV_CoopRespawnCancelBorrowedPolicy (NULL, NULL);
 
 	Sys_DebugBreak ();
 
@@ -574,6 +576,7 @@ void SV_DropClient (qboolean crash)
 	const unsigned int retired_generation = host_client->vrik_generation;
 	const int retired_slot = (int)(host_client - svs.clients);
 	resume_friendly_fire = SV_CoopFriendlyFireSuspend ();
+	SV_CoopRespawnCancelBorrowedPolicy (host_client, host_client->edict);
 
 	if (!crash)
 	{

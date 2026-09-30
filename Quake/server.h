@@ -49,6 +49,8 @@ typedef struct
 	struct client_s *clients;			 // [maxclients]
 	int				 serverflags;		 // episode completion information
 	qboolean		 changelevel_issued; // cleared when at SV_SpawnServer
+	qboolean		 coop_loadgame_late_join_spawns_near;
+	qboolean		 coop_initial_spawn_client[MAX_SCOREBOARD];
 
 	char serverinfo[SERVER_INFO_STRING_SIZE]; // \key\value infostring data.
 } server_static_t;
@@ -511,6 +513,8 @@ extern cvar_t sv_coop_noplayerclip;
 extern cvar_t sv_coop_notelefrag;
 extern cvar_t sv_coop_player_teleport_fallback;
 extern cvar_t sv_coop_shared_pickups;
+extern cvar_t sv_coop_respawn_near_player;
+extern cvar_t sv_coop_respawn_delay;
 extern cvar_t sv_coop_respawn_keep_weapons_ammo;
 extern cvar_t fraglimit;
 extern cvar_t timelimit;
@@ -544,8 +548,12 @@ void SV_AppendVRIKRetirement (client_t *client, int slot, unsigned int generatio
 void SV_CoopRespawnRefreshClientInventory (edict_t *ent);
 void SV_CoopRespawnSaveClientEdict (edict_t *ent, edict_t *snapshot);
 void SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot);
+qboolean SV_CoopRespawnPrepareChangelevel (edict_t *ent);
+qboolean SV_CoopRespawnSetChangeParms (client_t *client);
+qboolean SV_CoopRespawnPlaceNearPlayer (edict_t *ent);
 void SV_CoopRespawnInventoryResetClientSlot (int slot);
 void SV_CoopRespawnInventoryResetState (void);
+void SV_CoopRespawnCancelBorrowedPolicy (client_t *client, edict_t *ent);
 void SV_CoopRespawnSyncSharedKeys (edict_t *source);
 qboolean SV_CoopRespawnTeleportToPlayer (edict_t *ent, edict_t *target);
 qboolean SV_CoopRespawnTeleportToSpawn (edict_t *ent, edict_t *spawn);

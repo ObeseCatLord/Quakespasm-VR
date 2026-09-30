@@ -281,3 +281,37 @@ is introduced. Expected completed stage1 size880–940 net lines, bounded by975
 including the justified changelevel adapter. Reopen above975, a second binding
 or a broad callback/movement rewrite. Source review and final Linux/ARM software
 qualification must still cover the actual resulting implementation.
+
+## Generic respawn production source checkpoint
+
+The completed stage1 slice is955 net production lines across the six planned
+files. Main reviewed the original copied policy and complete correction diffs,
+including all fresh/native/shared-QC continuation and input/pose unwind owners.
+The separate coding correction followed the adopted source disposition; main
+then added the missing command-time PreThink/impact/trigger and native relink/
+contact cancellation checks. Think capture is limited to the matching player
+scope, preserving unrelated entity Think behavior. No general VM framework,
+client generation registry or prediction-command retirement was added.
+
+The native typed inventory cache now supplies body/safe/death anchors and
+once-per-world death reconciliation. Existing command/world callbacks still
+own respawn timing and movement. Cooldown filtering borrows current invocation
+inputs while shared-QC policy spans the existing think window; actual PostThink
+alone commits retention/optional placement. Death placement stays dry,
+teammate placement retains native water policy, ranked candidates and team-wipe
+behavior preserve the reference, and invalid placement retains QC's spawn.
+Both relocated and ordinary successful spawns publish their appropriate native
+discontinuity. Fresh joins, initial map clients, living restores and dead
+changelevel encoding retain the planned distinctions.
+
+The bounded SetChangeParms adapter binds before preparation/callback and keeps
+health/deadflag restoration plus native64-parm publication tied to the surviving
+client/edict. Existing disconnect/free/reuse/VM-clear/nonlocal-abort hooks cancel
+borrowed writes, including same-slot bot replacement. Main verified the actual
+registered dropclient/spawnclient route, rather than using pointer equality as
+identity. Surviving VM input/basis cleanup remains intact.
+
+Scoped git diff --check passes. No tests/builds/compiler runs/probes/fixtures or
+benchmarks were performed; Linux/ARM software qualification is still pending.
+Active inherited QBJ3 recovery/color/model cleanup is a separate stage2 follow-up,
+not implemented or certified by this checkpoint. Co-op revival remains excluded.

@@ -155,6 +155,8 @@ FIXME: walk all entities and NULL out references to this entity
 */
 void ED_Free (edict_t *ed)
 {
+	if (qcvm == &sv.qcvm)
+		SV_CoopRespawnCancelBorrowedPolicy (NULL, ed);
 	if (ed->free)
 	{
 		// Assert that this isn't linked to any area
@@ -1783,6 +1785,8 @@ void		  PR_SwitchQCVM (qcvm_t *nvm)
 void PR_ClearProgs (qcvm_t *vm)
 {
 	qcvm_t *oldvm = qcvm;
+	if (vm == &sv.qcvm)
+		SV_CoopRespawnCancelBorrowedPolicy (NULL, NULL);
 	if (vm == &cl.qcvm)
 		CL_ClearCSQCEntities (false);
 	if (!vm->progs)
