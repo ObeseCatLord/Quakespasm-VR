@@ -155,11 +155,26 @@ load-bearing reference filter, parser, calibration and wheel-consumer claims.
 | Raw float publication may differ from rounded file/reload values. | Adopt projection from already-validated parsed candidate fields, then native preflight and publication of that same array. Native cvar formatting remains. |
 
 The focused requested-Astra source follow-up verified terminal-global semantics
-and actual wheel consumers. Main adopted its two preservation corrections and EOF
-guard above. No parser provenance/new loader was justified. This plan is ready for
-the bounded implementation. The draft source review's six findings and cap
-disposition above are adopted before the correction pass; executable qualification
-still remains deferred.
+and actual wheel consumers. Main adopted its preservation corrections and EOF
+guards above. No parser provenance/new loader was justified.
+
+## Source integration checkpoint
+
+The native save-owner adapter is implemented in Quake/vr_weapon_calibration.c:
+593 additions and58 deletions,535 net, within the reopened550-net ceiling.
+The final requested-Astra source advisory accepted all six correction findings
+with no remaining P1/P2 blocker in this slice. Main spot-checked candidate-derived
+publication, preflight-before-write, exact readback and the unchanged public
+single-save route. Known-roster snapshots, authored shared-model multiplicity,
+terminal-global ordering and presence-sensitive unselected fields remain in the
+accepted implementation. No additional loader, parser or persistent owner was
+introduced.
+
+Source review and scoped whitespace checks are not executable qualification.
+No builds, tests, engine probes or live-device checks were run for this slice;
+the Linux/ARM acceptance below remains end-of-implementation work. Effective
+reviewer settings were unexposed, so this is requested-Astra source advisory,
+not runtime/platform or whole-goal certification.
 
 ## Final software acceptance (after all implementation)
 

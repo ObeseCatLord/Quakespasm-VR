@@ -61,6 +61,9 @@ static char vr_weapon_calibration_cvar_names[VR_WEAPON_CALIBRATION_MAX_SLOTS]
 static qboolean vr_weapon_calibration_initialized;
 static qboolean vr_weapon_calibration_commands_registered;
 
+static qboolean VR_WeaponCalibrationPreflightSchema(
+	const vr_weapon_schema_entry_t *entries, size_t count);
+
 extern cvar_t vr_aimmode;
 extern cvar_t vr_world_scale;
 
@@ -518,6 +521,19 @@ static qboolean VR_CalibrationLineIsMultiplayerKey(const char *line, size_t len)
 		VR_CalibrationLineStartsWithKey(line, len, "enhanced_mp_muzzle_offset");
 }
 
+static int VR_CalibrationSchemaValueArity(const char *key)
+{
+	return !strcmp(key, "offset") || !strcmp(key, "held_offset") ||
+		!strcmp(key, "mp_held_offset") || !strcmp(key, "muzzle_offset") ||
+		!strcmp(key, "mp_muzzle_offset") ||
+		!strcmp(key, "enhanced_held_offset") ||
+		!strcmp(key, "enhanced_mp_held_offset") ||
+		!strcmp(key, "enhanced_muzzle_offset") ||
+		!strcmp(key, "enhanced_mp_muzzle_offset") ||
+		!strcmp(key, "melee_base") || !strcmp(key, "melee_tip") ||
+		!strcmp(key, "muzzle_source_offset") ? 3 : 1;
+}
+
 static const char *VR_CalibrationFindBrace(const char *text,
 									   const char *end, char brace)
 {
@@ -546,34 +562,53 @@ static qboolean VR_CalibrationBlockMatchesViewmodel(const char *block,
 {
 	char explicit_viewmodel[MAX_QPATH] = {0};
 	char model_fallback[MAX_QPATH] = {0};
-	char *copy;
-	char *parse;
+	const char *cursor = block;
+	const char *end = block + len;
+	char key[COM_PARSE_MAX_TOKEN_SIZE];
+	char value[COM_PARSE_MAX_TOKEN_SIZE];
 	const char *selected_viewmodel;
 
-	copy = (char *)malloc(len + 1);
-	if (!copy)
-		return false;
-	memcpy(copy, block, len);
-	copy[len] = '\0';
-	parse = copy;
-	while ((parse = (char *)COM_Parse(parse)) && com_token[0])
+	while (cursor < end)
 	{
-		if (!strcmp(com_token, "viewmodel") ||
-			!strcmp(com_token, "held_model") || !strcmp(com_token, "model"))
-		{
-			qboolean explicit_key = !strcmp(com_token, "viewmodel") ||
-				!strcmp(com_token, "held_model");
-			char *destination = explicit_key ? explicit_viewmodel : model_fallback;
-			size_t destination_size = explicit_key ?
-				sizeof(explicit_viewmodel) : sizeof(model_fallback);
+		const char *key_start;
+		const char *next;
+		qboolean parse_error = false;
 
-			parse = (char *)COM_Parse(parse);
-			if (!parse || !com_token[0])
-				break;
-			q_strlcpy(destination, com_token, destination_size);
+		next = COM_ParseExBufferSpan(cursor, CPE_NOTRUNC, key,
+			sizeof(key), &parse_error, &key_start);
+		if (!next || parse_error || next > end || !key_start ||
+			key_start < cursor || key_start >= end)
+			return false;
+		if (!strcmp(key, "}"))
+			break;
+		if (!strcmp(key, "{"))
+		{
+			cursor = next;
+			continue;
+		}
+		cursor = next;
+		for (int i = 0; i < VR_CalibrationSchemaValueArity(key); ++i)
+		{
+			const char *value_start;
+			const char *value_next = COM_ParseExBufferSpan(cursor,
+				CPE_NOTRUNC, value, sizeof(value), &parse_error,
+				&value_start);
+			if (!value_next || parse_error || value_next > end ||
+				!value_start || value_start < cursor || value_start >= end ||
+				!strcmp(value, "{") || !strcmp(value, "}"))
+				return false;
+			if (i == 0 && (!strcmp(key, "viewmodel") ||
+				!strcmp(key, "held_model") || !strcmp(key, "model")))
+			{
+				qboolean explicit_key = !strcmp(key, "viewmodel") ||
+					!strcmp(key, "held_model");
+				q_strlcpy(explicit_key ? explicit_viewmodel : model_fallback,
+					value, explicit_key ? sizeof(explicit_viewmodel) :
+					sizeof(model_fallback));
+			}
+			cursor = value_next;
 		}
 	}
-	free(copy);
 	/* VR_WeaponSchemaParse uses model only when no non-empty explicit
 	 * viewmodel/held_model path was supplied. */
 	selected_viewmodel = explicit_viewmodel[0] ? explicit_viewmodel :
@@ -582,7 +617,8 @@ static qboolean VR_CalibrationBlockMatchesViewmodel(const char *block,
 }
 
 static qboolean VR_CalibrationAppendAdjustmentLines(
-	vr_calibration_textbuf_t *buf, int slot, qboolean enhanced_format)
+	vr_calibration_textbuf_t *buf, int slot, qboolean enhanced_format,
+	qboolean force_classic_muzzle)
 {
 	char line[192];
 	const vr_weapon_calibration_slot_t *calibration =
@@ -626,7 +662,7 @@ static qboolean VR_CalibrationAppendAdjustmentLines(
 		VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value);
 	if (!VR_CalibrationTextAppendLine(buf, line))
 		return false;
-	if (calibration->has_muzzle_offset)
+	if (calibration->has_muzzle_offset || force_classic_muzzle)
 	{
 		q_snprintf(line, sizeof(line), "muzzle_offset %.7g %.7g %.7g",
 			VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value,
@@ -641,7 +677,7 @@ static qboolean VR_CalibrationAppendAdjustmentLines(
 
 static qboolean VR_CalibrationWriteUpdatedBlock(
 	vr_calibration_textbuf_t *buf, const char *block, size_t len, int slot,
-	qboolean enhanced_format)
+	qboolean enhanced_format, qboolean global_mode)
 {
 	const char *cursor = block;
 	const char *copied = block;
@@ -670,7 +706,7 @@ static qboolean VR_CalibrationWriteUpdatedBlock(
 				(size_t)(key_start - copied)) &&
 				VR_CalibrationTextAppend(buf, "\n") &&
 				VR_CalibrationAppendAdjustmentLines(buf, slot,
-					enhanced_format) &&
+					enhanced_format, global_mode) &&
 				VR_CalibrationTextAppendN(buf, key_start,
 					(size_t)(end - key_start));
 		}
@@ -681,16 +717,9 @@ static qboolean VR_CalibrationWriteUpdatedBlock(
 		}
 		/* Match VR_SchemaParseEntry's value arity. Unknown keys consume one
 		 * scalar; all vector keys consume three tokens, even when not edited. */
-		values = !strcmp(key, "offset") || !strcmp(key, "held_offset") ||
-			!strcmp(key, "mp_held_offset") || !strcmp(key, "muzzle_offset") ||
-			!strcmp(key, "mp_muzzle_offset") ||
-			!strcmp(key, "enhanced_held_offset") ||
-			!strcmp(key, "enhanced_mp_held_offset") ||
-			!strcmp(key, "enhanced_muzzle_offset") ||
-			!strcmp(key, "enhanced_mp_muzzle_offset") ||
-			!strcmp(key, "melee_base") || !strcmp(key, "melee_tip") ||
-			!strcmp(key, "muzzle_source_offset") ? 3 : 1;
-		selected = VR_CalibrationLineIsMultiplayerKey(key, strlen(key)) || (enhanced_format ?
+		values = VR_CalibrationSchemaValueArity(key);
+		selected = (!global_mode &&
+			VR_CalibrationLineIsMultiplayerKey(key, strlen(key))) || (enhanced_format ?
 			VR_CalibrationLineIsEnhancedKey(key, strlen(key)) :
 			VR_CalibrationLineIsClassicKey(key, strlen(key)));
 		if (selected && !VR_CalibrationTextAppendN(buf, copied,
@@ -863,6 +892,325 @@ static qboolean VR_CalibrationSavedValuesMatch(const char *text,
 	return matches == 1;
 }
 
+static qboolean VR_CalibrationAppendTopLevelWithoutClassicGlobals(
+	vr_calibration_textbuf_t *buf, const char *text, size_t len)
+{
+	const char *cursor = text;
+	const char *copied = text;
+	const char *end = text + len;
+	char key[COM_PARSE_MAX_TOKEN_SIZE];
+	char value[COM_PARSE_MAX_TOKEN_SIZE];
+
+	while (cursor < end)
+	{
+		const char *key_start;
+		const char *next;
+		qboolean parse_error = false;
+		int values = 0;
+		qboolean selected;
+
+		next = COM_ParseExBufferSpan(cursor, CPE_NOTRUNC, key,
+			sizeof(key), &parse_error, &key_start);
+		if (parse_error)
+			return false;
+		if (!next)
+			break;
+		if (!key_start || key_start < cursor)
+			return false;
+		/* The native lexer may skip trailing trivia to the next block. */
+		if (key_start >= end)
+			break;
+		if (next > end)
+			return false;
+		selected = !strcmp(key, "global_held_scale") ||
+			!strcmp(key, "global_held_offset") || !strcmp(key, "global_muzzle_offset");
+		if (!strcmp(key, "global_held_scale"))
+			values = 1;
+		else if (!strcmp(key, "global_held_offset") ||
+			!strcmp(key, "global_muzzle_offset") ||
+			!strcmp(key, "global_mp_held_offset") || !strcmp(key, "global_mp_muzzle_offset"))
+			values = 3;
+		else if (!strcmp(key, "roster"))
+			values = 1; /* Native unknown top-level keys consume zero values. */
+		if (!values)
+		{
+			cursor = next;
+			continue;
+		}
+		if (selected && !VR_CalibrationTextAppendN(buf, copied,
+			(size_t)(key_start - copied)))
+			return false;
+		cursor = next;
+		for (int i = 0; i < values; ++i)
+		{
+			const char *value_start;
+			const char *value_next;
+			parse_error = false;
+			value_next = COM_ParseExBufferSpan(cursor, CPE_NOTRUNC, value,
+				sizeof(value), &parse_error, &value_start);
+			if (!value_next || parse_error || value_next > end ||
+				!value_start || value_start < cursor || value_start >= end ||
+				!strcmp(value, "{") || !strcmp(value, "}"))
+				return false;
+			if (selected && !VR_CalibrationTextAppendN(buf, cursor,
+				(size_t)(value_start - cursor)))
+				return false;
+			cursor = value_next;
+		}
+		if (selected)
+			copied = cursor;
+	}
+	return VR_CalibrationTextAppendN(buf, copied, (size_t)(end - copied));
+}
+
+static qboolean VR_CalibrationAppendGlobalAdjustmentLines(
+	vr_calibration_textbuf_t *buf, int slot)
+{
+	char line[192];
+
+	q_snprintf(line, sizeof(line), "global_held_scale %.7g",
+		VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value);
+	if (!VR_CalibrationTextAppendLine(buf, line))
+		return false;
+	q_snprintf(line, sizeof(line), "global_held_offset %.7g %.7g %.7g",
+		VR_WeaponOffsetCvar(slot, VR_WOFS_X).value,
+		VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value,
+		VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value);
+	if (!VR_CalibrationTextAppendLine(buf, line))
+		return false;
+	q_snprintf(line, sizeof(line), "global_muzzle_offset %.7g %.7g %.7g",
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value,
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y).value,
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value);
+	return VR_CalibrationTextAppendLine(buf, line);
+}
+
+static qboolean VR_CalibrationGeneratedGlobalsVisible(const char *text,
+	size_t first, size_t last)
+{
+	static const char *const keys[] = {
+		"global_held_scale", "global_held_offset", "global_muzzle_offset"};
+	const char *cursor = text;
+	char token[COM_PARSE_MAX_TOKEN_SIZE];
+	int found = 0;
+
+	/* Walk from byte zero: lexing the emitter slice alone misses an open
+	 * source comment. Offsets remain valid when the output buffer reallocates. */
+	for (;;)
+	{
+		const char *start;
+		qboolean parse_error;
+		const char *next = COM_ParseExBufferSpan(cursor, CPE_NOTRUNC,
+			token, sizeof(token), &parse_error, &start);
+		if (parse_error)
+			return false;
+		if (!next)
+			return found == 3;
+		if (found < 3 && start && start >= text + first && start < text + last &&
+			next <= text + last && !strcmp(token, keys[found]))
+			++found;
+		cursor = next;
+	}
+}
+
+static void VR_CalibrationFillSnapshotEntry(vr_weapon_schema_entry_t *entry,
+	const char *model, int snapshot_slot)
+{
+	const vr_weapon_calibration_slot_t *calibration =
+		&vr_weapon_calibration_slots[snapshot_slot];
+
+	memset(entry, 0, sizeof(*entry));
+	q_strlcpy(entry->viewmodel_path, model, sizeof(entry->viewmodel_path));
+	entry->has_enhanced_held_offset = calibration->has_enhanced_held_offset;
+	VectorCopy(calibration->enhanced_held_offset, entry->enhanced_held_offset);
+	entry->has_enhanced_muzzle_offset = calibration->has_enhanced_muzzle_offset;
+	VectorCopy(calibration->enhanced_muzzle_offset, entry->enhanced_muzzle_offset);
+	entry->has_muzzle_source_offset = calibration->has_muzzle_source_offset;
+	VectorCopy(calibration->muzzle_source_offset, entry->muzzle_source_offset);
+	entry->has_muzzle_source_viewofs = calibration->has_muzzle_source_viewofs;
+	entry->muzzle_source_viewofs = calibration->muzzle_source_viewofs;
+	entry->has_spawn_at_self_origin = calibration->has_spawn_at_self_origin;
+	entry->spawn_at_self_origin = calibration->spawn_at_self_origin;
+	entry->melee = calibration->melee;
+}
+
+static qboolean VR_CalibrationAppendSnapshotBlock(vr_calibration_textbuf_t *buf,
+	const char *model, int snapshot_slot)
+{
+	vr_weapon_schema_entry_t snapshot;
+	char line[192];
+
+	VR_CalibrationFillSnapshotEntry(&snapshot, model, snapshot_slot);
+	if (!VR_CalibrationEntryIsFinite(&snapshot) ||
+		!VR_CalibrationTextAppendLine(buf, "{"))
+		return false;
+	q_snprintf(line, sizeof(line), "viewmodel %s", model);
+	if (!VR_CalibrationTextAppendLine(buf, line))
+		return false;
+#define VR_APPEND_SNAPSHOT_VECTOR(key, field) \
+	do { \
+		q_snprintf(line, sizeof(line), key " %.9g %.9g %.9g", \
+			snapshot.field[0], snapshot.field[1], snapshot.field[2]); \
+		if (!VR_CalibrationTextAppendLine(buf, line)) return false; \
+	} while (0)
+	if (snapshot.has_enhanced_held_offset)
+		VR_APPEND_SNAPSHOT_VECTOR("enhanced_held_offset", enhanced_held_offset);
+	if (snapshot.has_enhanced_muzzle_offset)
+		VR_APPEND_SNAPSHOT_VECTOR("enhanced_muzzle_offset", enhanced_muzzle_offset);
+	if (snapshot.has_muzzle_source_offset)
+		VR_APPEND_SNAPSHOT_VECTOR("muzzle_source_offset", muzzle_source_offset);
+	if (snapshot.has_muzzle_source_viewofs)
+	{
+		q_snprintf(line, sizeof(line), "muzzle_source_viewofs %d",
+			snapshot.muzzle_source_viewofs ? 1 : 0);
+		if (!VR_CalibrationTextAppendLine(buf, line)) return false;
+	}
+	if (snapshot.has_spawn_at_self_origin)
+	{
+		q_snprintf(line, sizeof(line), "spawn_at_self_origin %d",
+			snapshot.spawn_at_self_origin ? 1 : 0);
+		if (!VR_CalibrationTextAppendLine(buf, line)) return false;
+	}
+	if (snapshot.melee.has_enabled)
+	{
+		q_snprintf(line, sizeof(line), "melee %d",
+			snapshot.melee.enabled ? 1 : 0);
+		if (!VR_CalibrationTextAppendLine(buf, line)) return false;
+	}
+	if (snapshot.melee.has_base)
+		VR_APPEND_SNAPSHOT_VECTOR("melee_base", melee.base);
+	if (snapshot.melee.has_tip)
+		VR_APPEND_SNAPSHOT_VECTOR("melee_tip", melee.tip);
+	if (snapshot.melee.has_speed)
+	{
+		q_snprintf(line, sizeof(line), "melee_speed %.9g", snapshot.melee.speed);
+		if (!VR_CalibrationTextAppendLine(buf, line)) return false;
+	}
+	if (snapshot.melee.has_ready_frame)
+	{
+		q_snprintf(line, sizeof(line), "melee_frame %d",
+			snapshot.melee.ready_frame);
+		if (!VR_CalibrationTextAppendLine(buf, line)) return false;
+	}
+#undef VR_APPEND_SNAPSHOT_VECTOR
+	return VR_CalibrationTextAppendLine(buf, "}");
+}
+
+static qboolean VR_CalibrationUnselectedMatches(
+	const vr_weapon_schema_entry_t *actual,
+	const vr_weapon_schema_entry_t *expected)
+{
+	/* Compare present values, including explicit false, without struct padding
+	 * or stale storage behind absent private flags participating. */
+#define VR_MATCH_OPTIONAL(flag, field) \
+	do { \
+		if (actual->flag != expected->flag || (actual->flag && \
+			memcmp(&actual->field, &expected->field, sizeof(actual->field)))) \
+			return false; \
+	} while (0)
+	VR_MATCH_OPTIONAL(has_enhanced_held_offset, enhanced_held_offset);
+	VR_MATCH_OPTIONAL(has_enhanced_muzzle_offset, enhanced_muzzle_offset);
+	VR_MATCH_OPTIONAL(has_muzzle_source_offset, muzzle_source_offset);
+	VR_MATCH_OPTIONAL(has_muzzle_source_viewofs, muzzle_source_viewofs);
+	VR_MATCH_OPTIONAL(has_spawn_at_self_origin, spawn_at_self_origin);
+	VR_MATCH_OPTIONAL(melee.has_enabled, melee.enabled);
+	VR_MATCH_OPTIONAL(melee.has_base, melee.base);
+	VR_MATCH_OPTIONAL(melee.has_tip, melee.tip);
+	VR_MATCH_OPTIONAL(melee.has_speed, melee.speed);
+	VR_MATCH_OPTIONAL(melee.has_ready_frame, melee.ready_frame);
+#undef VR_MATCH_OPTIONAL
+	return true;
+}
+
+static qboolean VR_CalibrationSelectedMatches(
+	const vr_weapon_schema_entry_t *entry, int selected_slot)
+{
+	vec3_t held, muzzle;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		held[axis] = VR_WeaponOffsetCvar(selected_slot, axis).value;
+		muzzle[axis] = VR_WeaponMuzzleCvar(selected_slot, axis).value;
+	}
+	return entry->has_held_scale && entry->has_held_offset &&
+		entry->has_muzzle_offset &&
+		VR_CalibrationSavedFloatMatches(entry->held_scale,
+			VR_WeaponOffsetCvar(selected_slot, VR_WOFS_SCALE).value) &&
+		VR_CalibrationSavedVectorMatches(entry->held_offset, held) &&
+		VR_CalibrationSavedVectorMatches(entry->muzzle_offset, muzzle);
+}
+
+static qboolean VR_CalibrationSnapshotMatches(
+	const vr_weapon_schema_entry_t *entry, const char *model, int snapshot_slot)
+{
+	vr_weapon_schema_entry_t expected;
+
+	VR_CalibrationFillSnapshotEntry(&expected, model, snapshot_slot);
+	return !strcmp(entry->viewmodel_path, model) && !strcmp(entry->model_path, model) &&
+		entry->wheel.fields == VR_SCHEMA_WHEEL_VIEWMODEL &&
+		!strcmp(entry->wheel.viewmodel_path, model) &&
+		VR_CalibrationUnselectedMatches(entry, &expected);
+}
+
+static qboolean VR_CalibrationGlobalCandidateMatches(const char *text,
+	const vr_weapon_schema_entry_t *original, size_t original_count,
+	const vr_weapon_schema_metadata_t *original_metadata,
+	char target_ids[][MAX_QPATH], const int *target_slots,
+	const int *target_original, size_t target_count, int selected_slot,
+	vr_weapon_schema_entry_t *publication)
+{
+	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	vr_weapon_schema_metadata_t metadata;
+	size_t count, missing = 0, appended;
+
+	for (size_t i = 0; i < target_count; ++i)
+		if (!target_original[i]) ++missing;
+	if (!VR_WeaponSchemaParseWithMetadata(text, entries,
+		VR_WEAPON_SCHEMA_MAX_ENTRIES, &count, &metadata) ||
+		metadata.complete_roster != original_metadata->complete_roster ||
+		count != original_count + missing)
+		return false;
+	for (size_t i = 0; i < original_count; ++i)
+		if (strcmp(entries[i].model_path, original[i].model_path) ||
+			strcmp(entries[i].viewmodel_path, original[i].viewmodel_path) ||
+			memcmp(&entries[i].wheel, &original[i].wheel, sizeof(entries[i].wheel)) ||
+			!VR_CalibrationUnselectedMatches(&entries[i], &original[i]))
+			return false;
+	appended = original_count;
+	for (size_t i = 0; i < target_count; ++i)
+	{
+		int matches = 0;
+		const vr_weapon_schema_entry_t *selected = NULL;
+		for (size_t j = 0; j < count; ++j)
+			if (!strcmp(entries[j].viewmodel_path, target_ids[i]))
+			{
+				++matches;
+				if (!VR_CalibrationSelectedMatches(&entries[j], selected_slot))
+					return false;
+				selected = &entries[j];
+			}
+		if (matches != (target_original[i] ? target_original[i] : 1))
+			return false;
+		if (!target_original[i])
+		{
+			if (appended >= count || target_slots[i] < 0 ||
+				!VR_CalibrationSnapshotMatches(&entries[appended],
+					target_ids[i], target_slots[i]))
+				return false;
+			++appended;
+		}
+		/* Publish precisely the parsed file values, once per identity. */
+		memset(&publication[i], 0, sizeof(publication[i]));
+		memcpy(publication[i].viewmodel_path, selected->viewmodel_path,
+			sizeof(publication[i].viewmodel_path));
+		publication[i].has_held_scale = publication[i].has_held_offset =
+			publication[i].has_muzzle_offset = true;
+		publication[i].held_scale = selected->held_scale;
+		VectorCopy(selected->held_offset, publication[i].held_offset);
+		VectorCopy(selected->muzzle_offset, publication[i].muzzle_offset);
+	}
+	return appended == count;
+}
+
 static qboolean VR_CalibrationAppendNewBlock(vr_calibration_textbuf_t *buf,
 											 const char *model, int slot,
 											 qboolean enhanced_format)
@@ -876,15 +1224,29 @@ static qboolean VR_CalibrationAppendNewBlock(vr_calibration_textbuf_t *buf,
 		return false;
 	q_snprintf(line, sizeof(line), "viewmodel %s", model);
 	return VR_CalibrationTextAppendLine(buf, line) &&
-		VR_CalibrationAppendAdjustmentLines(buf, slot, enhanced_format) &&
+		VR_CalibrationAppendAdjustmentLines(buf, slot, enhanced_format, false) &&
 		VR_CalibrationTextAppendLine(buf, "}");
 }
 
-static qboolean VR_WeaponCalibrationSave(void)
+static int VR_CalibrationFindTargetIndex(char ids[][MAX_QPATH], size_t count,
+	const char *model)
+{
+	for (size_t i = 0; i < count; ++i)
+		if (!strcmp(ids[i], model))
+			return (int)i;
+	return -1;
+}
+
+static qboolean VR_WeaponCalibrationSaveInternal(qboolean global_mode)
 {
 	vr_calibration_textbuf_t output = {0};
 	vr_weapon_schema_entry_t parsed[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	vr_weapon_schema_entry_t publication[VR_WEAPON_SCHEMA_MAX_ENTRIES];
 	vr_weapon_schema_metadata_t metadata;
+	char target_ids[VR_WEAPON_SCHEMA_MAX_ENTRIES][MAX_QPATH];
+	int target_slots[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	int target_original[VR_WEAPON_SCHEMA_MAX_ENTRIES] = {0};
+	int target_written[VR_WEAPON_SCHEMA_MAX_ENTRIES] = {0};
 	qmodel_t *model;
 	aliashdr_t *alias_header;
 	byte *file = NULL;
@@ -895,6 +1257,8 @@ static qboolean VR_WeaponCalibrationSave(void)
 	int model_index;
 	int slot;
 	size_t parsed_count;
+	size_t target_count = 0;
+	size_t globals_start = 0, globals_end = 0;
 	qboolean enhanced_format;
 	qboolean invalid_values;
 	qboolean updated = false;
@@ -905,7 +1269,13 @@ static qboolean VR_WeaponCalibrationSave(void)
 	if (!vr_weapon_calibration_initialized || cls.state != ca_connected ||
 		cls.signon != SIGNONS || cls.demoplayback)
 	{
-		Con_Printf("VR: vrweaponsave requires a connected, fully signed-on game\n");
+		Con_Printf("VR: %s requires a connected, fully signed-on game\n",
+			global_mode ? "vrweaponsaveglobal" : "vrweaponsave");
+		return false;
+	}
+	if (global_mode && vr_weapon_calibration_adjustment.active)
+	{
+		Con_Printf("VR: finish or cancel the active weapon adjustment before vrweaponsaveglobal; use vrweaponsave for the current weapon\n");
 		return false;
 	}
 	model_index = cl.stats[STAT_WEAPON];
@@ -915,7 +1285,8 @@ static qboolean VR_WeaponCalibrationSave(void)
 		cl.viewent.model->needload || cl.viewent.model->type != mod_alias ||
 		!cl.viewent.model->name[0])
 	{
-		Con_Printf("VR: vrweaponsave requires a valid current alias viewmodel\n");
+		Con_Printf("VR: %s requires a valid current alias viewmodel\n",
+			global_mode ? "vrweaponsaveglobal" : "vrweaponsave");
 		return false;
 	}
 	model = cl.viewent.model;
@@ -928,14 +1299,21 @@ static qboolean VR_WeaponCalibrationSave(void)
 		cl.viewent.skinnum);
 	if (!alias_header)
 	{
-		Con_Printf("VR: vrweaponsave cannot read the active viewmodel alias header\n");
+		Con_Printf("VR: %s cannot read the active viewmodel alias header\n",
+			global_mode ? "vrweaponsaveglobal" : "vrweaponsave");
 		return false;
 	}
 	enhanced_format = VR_CalibrationPoseTypeIsEnhanced(
 		alias_header->poseverttype);
 	if (!VR_CalibrationPoseTypeIsSupported(alias_header->poseverttype))
 	{
-		Con_Printf("VR: vrweaponsave cannot save this viewmodel geometry format\n");
+		Con_Printf("VR: %s cannot save this viewmodel geometry format\n",
+			global_mode ? "vrweaponsaveglobal" : "vrweaponsave");
+		return false;
+	}
+	if (global_mode && enhanced_format)
+	{
+		Con_Printf("VR: vrweaponsaveglobal saves classic calibration only; use vrweaponsave for this enhanced viewmodel\n");
 		return false;
 	}
 	slot = VR_FindCalibrationSlot(model->name);
@@ -973,7 +1351,7 @@ static qboolean VR_WeaponCalibrationSave(void)
 			enhanced_format ? "enhanced" : "classic", model->name);
 		return false;
 	}
-	if (!enhanced_format &&
+	if (!global_mode && !enhanced_format &&
 		!vr_weapon_calibration_slots[slot].has_muzzle_offset)
 	{
 		/* A successful classic save publishes the current muzzle cvars.
@@ -993,46 +1371,158 @@ static qboolean VR_WeaponCalibrationSave(void)
 		Con_Printf("VR: refusing to save; existing vr_weapons.txt is invalid\n");
 		goto done;
 	}
+	if (global_mode)
+	{
+		size_t missing = 0;
+		for (size_t i = 0; i < parsed_count; ++i)
+		{
+			const char *id = parsed[i].viewmodel_path;
+			int target;
+			if (!id[0])
+				continue;
+			if (!VR_CalibrationSafeModelToken(id))
+			{
+				Con_Printf("VR: refusing global save; local schema has an unsafe accepted calibration identity\n");
+				goto done;
+			}
+			target = VR_CalibrationFindTargetIndex(target_ids, target_count, id);
+			if (target >= 0)
+			{
+				++target_original[target];
+				continue;
+			}
+			if (target_count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
+				goto done;
+			q_strlcpy(target_ids[target_count], id,
+				sizeof(target_ids[target_count]));
+			target_slots[target_count] = -1;
+			target_original[target_count] = 1;
+			++target_count;
+		}
+		for (int live_slot = 0; live_slot < VR_WEAPON_CALIBRATION_MAX_SLOTS;
+			 ++live_slot)
+		{
+			const char *id = VR_WeaponOffsetCvar(live_slot, VR_WOFS_ID).string;
+			int target;
+			if (!id || !id[0] || !strcmp(id, "-1"))
+				continue;
+			if (!VR_CalibrationSafeModelToken(id))
+			{
+				Con_Printf("VR: refusing global save; live calibration has an unsafe identity\n");
+				goto done;
+			}
+			target = VR_CalibrationFindTargetIndex(target_ids, target_count, id);
+			if (target >= 0)
+			{
+				if (target_slots[target] >= 0 && target_slots[target] != live_slot)
+				{
+					Con_Printf("VR: refusing global save; duplicate live calibration identity %s\n", id);
+					goto done;
+				}
+				target_slots[target] = live_slot;
+				continue;
+			}
+			if (target_count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
+			{
+				Con_Printf("VR: refusing global save; known calibration roster exceeds schema capacity\n");
+				goto done;
+			}
+			q_strlcpy(target_ids[target_count], id,
+				sizeof(target_ids[target_count]));
+			target_slots[target_count] = live_slot;
+			++target_count;
+		}
+		/* Admission found the active slot; the complete live scan includes it. */
+		for (size_t i = 0; i < target_count; ++i)
+			if (!target_original[i])
+				++missing;
+		if (parsed_count + missing > VR_WEAPON_SCHEMA_MAX_ENTRIES)
+		{
+			Con_Printf("VR: refusing global save; materialized calibration roster exceeds schema capacity\n");
+			goto done;
+		}
+	}
 	p = source;
 	end = source + strlen(source);
 	while (p < end)
 	{
 		const char *open = VR_CalibrationFindBrace(p, end, '{');
 		const char *close;
+		int target = -1;
 
 		if (!open)
 		{
-			if (!VR_CalibrationTextAppendN(&output, p, (size_t)(end - p)))
+			if (!(global_mode ?
+				VR_CalibrationAppendTopLevelWithoutClassicGlobals(&output, p,
+					(size_t)(end - p)) :
+				VR_CalibrationTextAppendN(&output, p, (size_t)(end - p))))
 				goto done;
 			break;
 		}
-		if (!VR_CalibrationTextAppendN(&output, p, (size_t)(open - p)))
+		if (!(global_mode ?
+			VR_CalibrationAppendTopLevelWithoutClassicGlobals(&output, p,
+				(size_t)(open - p)) :
+			VR_CalibrationTextAppendN(&output, p, (size_t)(open - p))))
 			goto done;
 		close = VR_CalibrationFindBrace(open + 1, end, '}');
 		if (!close)
 			goto done; /* The schema preflight should make this unreachable. */
 		++close;
-		if (VR_CalibrationBlockMatchesViewmodel(open,
+		if (global_mode)
+			for (size_t i = 0; i < target_count; ++i)
+				if (target_original[i] &&
+					VR_CalibrationBlockMatchesViewmodel(open,
+						(size_t)(close - open), target_ids[i]))
+				{
+					target = (int)i;
+					break;
+				}
+		if (global_mode ? target >= 0 : VR_CalibrationBlockMatchesViewmodel(open,
 			(size_t)(close - open), model->name))
 		{
-			if (updated)
+			if (!global_mode && updated)
 			{
 				Con_Printf("VR: refusing to save; multiple viewmodel blocks match %s\n",
 					model->name);
 				goto done;
 			}
 			if (!VR_CalibrationWriteUpdatedBlock(&output, open,
-				(size_t)(close - open), slot, enhanced_format))
+				(size_t)(close - open), slot, enhanced_format, global_mode))
 				goto done;
-			updated = true;
+			if (global_mode)
+				++target_written[target];
+			else
+				updated = true;
 		}
-		else if (!VR_CalibrationTextAppendN(&output, open,
-			(size_t)(close - open)))
+		else if (!VR_CalibrationTextAppendN(&output, open, (size_t)(close - open)))
 			goto done;
 		p = close;
 	}
 
-	if (!updated)
+	if (global_mode)
+	{
+		for (size_t i = 0; i < target_count; ++i)
+			if (target_original[i] != target_written[i])
+			{
+				Con_Printf("VR: refusing global save; source block multiplicity does not match accepted identity %s\n",
+					target_ids[i]);
+				goto done;
+			}
+		/* Always separate terminal globals from source text so an EOF line
+		 * comment cannot consume the new directives. */
+		if (!VR_CalibrationTextAppend(&output, "\n"))
+			goto done;
+		globals_start = output.len;
+		if (!VR_CalibrationAppendGlobalAdjustmentLines(&output, slot))
+			goto done;
+		globals_end = output.len;
+		for (size_t i = 0; i < target_count; ++i)
+			if (!target_original[i] &&
+				!VR_CalibrationAppendSnapshotBlock(&output, target_ids[i],
+					target_slots[i]))
+				goto done;
+	}
+	else if (!updated)
 	{
 		vr_calibration_textbuf_t prefixed = {0};
 		/* A new runtime slot has not inherited the file's global offsets.
@@ -1053,10 +1543,20 @@ static qboolean VR_WeaponCalibrationSave(void)
 		Con_Printf("VR: refusing to save; vr_weapons.txt is too large\n");
 		goto done;
 	}
-	if (!VR_CalibrationSavedValuesMatch(output.data ? output.data : "",
-		model->name, slot, enhanced_format, parsed_count, &metadata))
+	if (global_mode ?
+		(!VR_CalibrationGeneratedGlobalsVisible(output.data, globals_start, globals_end) ||
+		!VR_CalibrationGlobalCandidateMatches(output.data ? output.data : "",
+			parsed, parsed_count, &metadata, target_ids, target_slots,
+			target_original, target_count, slot, publication)) :
+		!VR_CalibrationSavedValuesMatch(output.data ? output.data : "",
+			model->name, slot, enhanced_format, parsed_count, &metadata))
 	{
 		Con_Printf("VR: refusing to save; rewritten vr_weapons.txt does not preserve the requested calibration\n");
+		goto done;
+	}
+	if (global_mode && !VR_WeaponCalibrationPreflightSchema(publication, target_count))
+	{
+		Con_Printf("VR: refusing global save; selected calibration roster cannot be published safely\n");
 		goto done;
 	}
 	COM_WriteFile("vr_weapons.txt", output.data ? output.data : "",
@@ -1068,8 +1568,20 @@ static qboolean VR_WeaponCalibrationSave(void)
 		post_write_failed = true;
 		goto done;
 	}
-	Con_Printf("VR: saved %s calibration for %s to %s/vr_weapons.txt\n",
-		enhanced_format ? "enhanced" : "classic", model->name, com_gamedir);
+	if (global_mode)
+	{
+		if (!VR_WeaponCalibrationApplySchema(publication, target_count))
+		{
+			Con_Printf("VR: saved global classic calibration to disk, but could not publish it to live calibration slots\n");
+			post_write_failed = true;
+			goto done;
+		}
+		Con_Printf("VR: saved global classic calibration from %s across %u identities to %s/vr_weapons.txt\n",
+			model->name, (unsigned int)target_count, com_gamedir);
+	}
+	else
+		Con_Printf("VR: saved %s calibration for %s to %s/vr_weapons.txt\n",
+			enhanced_format ? "enhanced" : "classic", model->name, com_gamedir);
 	ok = true;
 
 done:
@@ -1077,16 +1589,27 @@ done:
 		vr_weapon_calibration_slots[slot].has_muzzle_offset = false;
 	if (!ok && output.data && !post_write_failed)
 		Con_Printf("VR: failed to save %s calibration for %s\n",
-			enhanced_format ? "enhanced" : "classic", model->name);
+			global_mode ? "global classic" :
+			(enhanced_format ? "enhanced" : "classic"), model->name);
 	free(output.data);
 	if (file)
 		Mem_Free(file);
 	return ok;
 }
 
+static qboolean VR_WeaponCalibrationSave(void)
+{
+	return VR_WeaponCalibrationSaveInternal(false);
+}
+
 static void VR_WeaponCalibrationSave_f(void)
 {
 	(void)VR_WeaponCalibrationSave();
+}
+
+static void VR_WeaponCalibrationSaveGlobal_f(void)
+{
+	(void)VR_WeaponCalibrationSaveInternal(true);
 }
 
 static int VR_FindFreeCalibrationSlot(void)
@@ -1753,6 +2276,7 @@ void VR_WeaponCalibrationRegisterCommands(void)
 		return;
 	vr_weapon_calibration_commands_registered = true;
 	Cmd_AddCommand("vrweaponsave", VR_WeaponCalibrationSave_f);
+	Cmd_AddCommand("vrweaponsaveglobal", VR_WeaponCalibrationSaveGlobal_f);
 	Cmd_AddCommand("vradjustweapon", VR_WeaponCalibrationAdjustGrip_f);
 	Cmd_AddCommand("vradjustmuzzle", VR_WeaponCalibrationAdjustMuzzle_f);
 }
@@ -1771,7 +2295,7 @@ void VR_WeaponCalibrationReset(void)
 		VR_SetCalibrationSlotDefaults(slot);
 }
 
-qboolean VR_WeaponCalibrationApplySchema(
+static qboolean VR_WeaponCalibrationPreflightSchema(
 	const vr_weapon_schema_entry_t *entries, size_t count)
 {
 	size_t index;
@@ -1818,6 +2342,17 @@ qboolean VR_WeaponCalibrationApplySchema(
 	}
 
 	if (new_slots_needed > free_slots)
+		return false;
+	return true;
+}
+
+qboolean VR_WeaponCalibrationApplySchema(
+	const vr_weapon_schema_entry_t *entries, size_t count)
+{
+	size_t index;
+	int slot;
+
+	if (!VR_WeaponCalibrationPreflightSchema(entries, count))
 		return false;
 
 	for (index = 0; index < count; ++index)
