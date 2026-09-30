@@ -86,3 +86,48 @@ clears XYZ, clipped-point refusal preserves the input, guarded arithmetic preced
 face access, and signed projection matches primary. The native helper's callers,
 distance calculations and nearest-surface cache remain. No builds, tests or
 compiler/runtime probes ran; final consolidated qualification remains pending.
+
+## Remaining indexed-query boundary (2026-09-30; before code)
+
+Main re-read the current source and primary master51b452c0. Existing accepted
+point/triangle/normal/clipped-point guards are present. Three neighboring native
+wrappers still use only the relative face count: PF_getsurfacenumpoints,
+PF_getsurfacetexture and PF_getsurfacepointattribute. Their offset accesses lack
+the absolute table-range checks established above. Mod_LoadSubmodels still reads
+firstface/numfaces and Mod_SetupSubmodels copies them without that validation.
+Primary PF_GetBrushSurface establishes the absolute range for these wrappers.
+
+Copy the already accepted native subtraction-form guard into those three
+conditions: positive nummodelsurfaces, nonnegative firstmodelsurface below
+numsurfaces, requested index below both the relative count and remaining table
+length. The point-attribute edge-count dereference must follow those conditions.
+Retain existing successful values and numeric/both-VM registration. Invalid count
+returns0; invalid texture returns empty string; invalid attribute returns zero XYZ.
+
+Primary PF_getsurfacetexture additionally refuses a missing texinfo/texture.
+Copy that predicate before accessing the name. Primary's texture-coordinate
+attribute uses dimensions1 when the texture is absent; copy that fallback for
+SPA_TEXCOORDS0, retaining native successful normalization. This does not promise
+malformed texinfo/edge/vertex storage support or alter loader policy.
+
+Minimal adapter: these local guards/fallbacks in Quake/pr_ext.c, roughly30 added
+lines. Native model lookup, shared arrays, vertex helper, cache, clipping and VM
+owners remain. A copied second model lookup/cache or whole primary surface API
+would duplicate owners. Extracting/replacing all accepted wrappers is unnecessary
+for these remaining demonstrated boundaries; retain their reviewed native bodies.
+
+The broader comparison also confirms that nearest-surface squared-distance
+cutoff256 matches primary's literal256; do not square/change it merely from the
+native constant name. Native caching remains reusable. Primary and native
+lightmap-coordinate formulas differ; retain native calculations/atlas dimensions
+as part of vkQuake's graphics baseline rather than copying a legacy GL formula.
+
+Delegate one bounded coding worker for precisely these three wrappers, no edits
+elsewhere. Main integrates and requests bounded local Astra source review of
+guards, fallback, successful values and native owner preservation. No tests,
+builds, compiler checks, probes or new fixtures until implementation finishes;
+scoped git diff --check only. Final Linux/ARM acceptance must cover world/inline
+count, texture name and all attributes; invalid bases/indices; differing edge
+counts; absent texture; zero return after nonzero result; both VMs; unchanged
+native lightmap coordinates and nearest-surface cache behavior. This source slice
+does not itself close the complete MOD-001/005 runtime acceptance.
