@@ -181,3 +181,24 @@ camera branch. Final qualification must cover pitched/rolled intermission
 entities, physical head rotation, native solo/multiplayer results and finale,
 plus return to gameplay. This is a source-based correction, not an executed
 comfort or camera-continuity result.
+
+### Adopted source-review refinements before history coding
+
+Main spot-checked the requested local Astra source advice against the actual
+history setters, centerview implementation, hand admission and renderer:
+
+| Recommendation | Disposition |
+| --- | --- |
+| Preserve last valid controller history when a later hand sample is unavailable. | Adopt: mode-specific preceding-aim updates; controller capture replaces history only on a successfully mapped, tracked dominant hand. No fabricated replacement or second vector. |
+| An accepted unlocked centerview must override controller history, not merely clear its validity. | Adopt: reuse the existing visible pitch/yaw copy into native aim/history in controller mode too, retain the lock guard, clear withheld correction and hand-history validity. A later real hand sample may naturally establish new history. |
+| Locked exit must replace effective aim rather than add another correction. | Adopt: retained hand aim H gets zero roll; native locked aim stays unchanged and withheld becomes H minus native aim. Unlocked exit installs H and clears withheld. Preceding aim remains H in both cases. |
+| Absolute correction/reset invalidate cached hand history, while relative correction/reference rebasing retain their existing meanings. | Adopt at native setters/reset; leave relative history rotation and pending reference rebase intact. Consume the exit seed once. |
+| Keep desktop/session boundaries explicit. | Main refinement: transfer requires an active tracked view and signed-on non-demo/non-intermission gameplay. A later desktop cvar edit must never apply a retired VR hand angle. Entering/leaving callbacks still clear consumed history validity. |
+| Native multiplayer panel admission and intermission base-tilt repair need another renderer. | Rejected: source advice found no introduced blocker in the existing panel admission or proposed pitch/roll guard; both reuse native draw/stereo owners. Idle-composition ordering remains the current renderer's, not an exact mathematical parity claim. |
+
+The web worker was stopped on the user's instruction before integration; its
+bounded clamp/intermission diff is reviewed and completed locally. No more web
+agents will be used for now. The finite deadzone comparison must use native
+double precision so valid fractional values are not rounded merely by entering
+the clamp callback. Effective reviewer settings remain unavailable; these are
+source dispositions, with final executable qualification still deferred.
