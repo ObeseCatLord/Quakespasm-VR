@@ -97,3 +97,26 @@ Final qualification must cover all eight profiles, both sides, absent/partial
 and predicted roles, zero/fractional confidence, reach limits/collapsed chains,
 head descendants, authored wrist/foot basis, Vore no-tracker knees and prop/bounds
 consumers, on Linux x86-64 then ARM. User owns live visual/performance testing.
+
+## Bounded Astra advisory disposition
+
+Requested local Astra/Max reviewer; effective settings cannot be verified by
+the exposed tool. Source-only advisory returned 2026-09-30, not a certified
+senior-skill pass. Main checked reference length selection, nonzero seed-axis
+transport and the separate outward-axis/paired-seed fallbacks in source.
+
+| Recommendation | Disposition |
+|---|---|
+| Bind lengths alone miss Shambler seed transport and collapsed-current-segment handling | Adopt: new tracked Shambler policy preserves nonzero transport axes and skips undefined current-segment rotations before solved branch translations. Existing physical callers remain unchanged. |
+| Define foot adapter completion and partial failure | Adopt: private leg math reports completion; zero finite confidence is an accepted position no-op. Public committed bits permit bounded reach clamps, not exact requested arrival. Validate capacity, ancestry and separate branches; rollback each side. |
+| Resolve both legs, save bases/seeds before any side mutation | Adopt; failure to construct paired seeds still permits animated pole with available outward axis. Invalid opposite rig must not suppress the valid side. |
+| Confidence/presence/basis have different roles and bit layouts | Adopt: renderer copies confidence [left foot,right foot] without blending or using it as presence. Adapter restores orientation about solved origin, including children. |
+| Head→left arm→right arm→feet→Vore, each snapshot refreshed | Adopt; renderer ignores optional result, so every failure must restore valid palette without discarding earlier successes. Floor correction is single-applied. |
+| Desktop Vore replacement must not copy shortcut gates/exact residual rejection | Adopt: gather offending feet before mutation, use the shared mirrored solve and permit reference singularity clamps. |
+| One implementation with thin old wrappers; no public rig cache | Adopt. Five-file production boundary retained. |
+
+Model-foot API includes caller capacity in joints. Its side bits are 1<<0 left,
+1<<1 right. A finite confidence ≤0 accepts an unchanged position/basis; invalid
+confidence rejects that side. Output validation must check finite rigid matrices,
+not merely a non-crashing solve. The bounded validation can remain local to the
+CPU adapter rather than expose an animation/cache owner.
