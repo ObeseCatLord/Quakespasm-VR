@@ -38,3 +38,22 @@ retains progress/rotation/native writes; final software qualification covers
 publication failures and restorable checkpoints. Deliberate manual writes into
 the inherited `coop_autoN` namespace share those slots; unrelated manual saves
 are not overwritten. No general manual-name protection is claimed.
+
+
+## Before-code native sound trailer bound repair
+
+Main directly verified `Host_Loadgame_f`'s `sv.sound_precache` trailer branch
+checks `idx < MAX_MODELS`, then indexes `sv.sound_precache[idx]`.
+`quakedef.h:103–104` defines MAX_MODELS8192 and MAX_SOUNDS2048;
+`server.h:116` declares the sound array with MAX_SOUNDS. The same wrong check
+is present in pinned native vkQuake `host_cmd.c:2186–2193`. Valid saves emitted
+by the existing writer use MAX_SOUNDS already. This is a demonstrated array
+boundary defect, not a reason to replace native trailer parsing or precaches.
+
+Exact repair: one guard identifier in `Quake/host_cmd.c`, only the sound trailer
+branch, MAX_MODELS→MAX_SOUNDS. Zero net production lines; keep model limits,
+writer format, parsing/allocation and all supported dialect behavior intact.
+No helper/framework/new resource policy. Main reviews the literal diff and
+scoped whitespace; no builds/tests now. Final qualification covers largest
+valid sound index and rejects MAX_SOUNDS through MAX_MODELS-1 without mutation
+outside the sound array, while model records retain their larger limit.
