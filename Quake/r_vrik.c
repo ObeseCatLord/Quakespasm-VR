@@ -792,6 +792,16 @@ unsigned char R_VRIKRefineModelFeet (const md5_skeleton_view_t *skeleton,
 		R_VRIKMatrixOrigin (palette[joints[1][0]], roots[1]);
 		VectorSubtract (roots[1], roots[0], lateral);
 		have_axis = R_VRIKFinite3 (lateral) && VectorNormalize (lateral) != 0.0f;
+		if (!have_axis)
+		{
+			/* The inherited policy still has an outward hemisphere when the
+			 * current roots coincide: use their authored bind separation. */
+			R_VRIKMatrixOrigin (skeleton->joints[joints[0][0]].bind, roots[0]);
+			R_VRIKMatrixOrigin (skeleton->joints[joints[1][0]].bind, roots[1]);
+			VectorSubtract (roots[1], roots[0], lateral);
+			have_axis = R_VRIKFinite3 (roots[0]) && R_VRIKFinite3 (roots[1]) &&
+				R_VRIKFinite3 (lateral) && VectorNormalize (lateral) != 0.0f;
+		}
 		if (have_axis)
 		{
 			VectorScale (lateral, -1.0f, outward[0]);
