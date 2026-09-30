@@ -4106,8 +4106,13 @@ static void PF_copyentity (void)
 	edict_t *src = G_EDICT (OFS_PARM0);
 	edict_t *dst = (qcvm->argc < 2) ? ED_Alloc () : G_EDICT (OFS_PARM1);
 	if (src->free || dst->free)
+	{
 		Con_Printf ("PF_copyentity: entity is free\n");
-	memcpy (&dst->v, &src->v, qcvm->edict_size - sizeof (entvars_t));
+		G_INT (OFS_RETURN) = EDICT_TO_PROG (qcvm->edicts);
+		return;
+	}
+	if (src != dst)
+		memcpy (&dst->v, &src->v, qcvm->progs->entityfields * 4);
 	dst->alpha = src->alpha;
 	dst->sendinterval = src->sendinterval;
 	dst->sendinterval_default = src->sendinterval_default;
@@ -4117,7 +4122,11 @@ static void PF_copyentity (void)
 }
 static void PF_edict_for_num (void)
 {
-	G_INT (OFS_RETURN) = EDICT_TO_PROG (EDICT_NUM (G_FLOAT (OFS_PARM0)));
+	int num = G_FLOAT (OFS_PARM0);
+
+	if (num < 0 || num >= qcvm->num_edicts)
+		num = 0;
+	G_INT (OFS_RETURN) = EDICT_TO_PROG (EDICT_NUM (num));
 }
 static void PF_num_for_edict (void)
 {
@@ -5620,7 +5629,7 @@ static void PF_cl_playerkey_internal (int player, const char *key, qboolean retf
 	extern int	scoreboardlines;
 	if (player < 0 && player >= -scoreboardlines)
 		player = fragsort[-1 - player];
-	if (player < 0 || player >= MAX_SCOREBOARD)
+	if (!cl.scores || player < 0 || player >= cl.maxclients || player >= MAX_SCOREBOARD)
 		ret = NULL;
 	else if (!strcmp (key, "viewentity"))
 		q_snprintf (buf, sizeof (buf), "%i", player + 1); // hack for DP compat. always returned even when the slot is empty (so long as its valid).
