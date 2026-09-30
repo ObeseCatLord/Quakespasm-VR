@@ -151,3 +151,21 @@ whether this policy is necessary/sufficient before the guard is implemented.
 End-of-implementation checks add underwater open/close, both wheel modes,
 tracking/session loss and no stale identity phase on close. Actual appearance
 and comfort remain deferred to the user.
+
+### Follow-up advisory disposition
+
+Local Astra verified the open flags and preparation order and recommended
+the short guard. Adopted: skip alternate scene deformation whenever
+`VR_WeaponMenu_IsOpenVR()` is true, without skipping ordinary frame setup.
+Do not depend on panel-valid, pointer-valid or foreground-depth state: those
+would miss the first frame or playspace mode. Cancellation during later wheel
+preparation may retain identity for one final frame; the next frame resets and
+selects from current state. On close, use the current `cl.time` phase without
+another restoration/smoothing state machine.
+
+This deliberately pauses the cosmetic alternate underwater effect during VR
+wheel interaction, preserving existing selection and both depth modes. The
+ordinary display/scene split remains useful for other UI. No wheel renderer,
+input, culling or depth owner is changed. The reviewer found the one guard
+sufficient in these owners; external input callers were not exhaustively
+reviewed, and source evidence is not runtime or comfort qualification.
