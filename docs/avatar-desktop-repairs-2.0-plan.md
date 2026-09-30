@@ -108,6 +108,11 @@ callers retain their previous threshold. No separate solver is added.
 
 The reviewer source-accepted the strict-reach change, explicit `false` tracked
 callers, original endpoint check, byte-identical dominant wrist and optional
-support rollback. The transport correction awaits the final source recheck.
+support rollback. The final source recheck of `1d2fa336` confirmed the anatomical
+call-site correction and unchanged threshold in existing callers, closing that
+finding. This does not establish full reference parity for the unchanged shared
+physical-path transport, nor certify the whole avatar module or its runtime
+appearance. The bounded desktop repair slice has source acceptance; final
+Linux/ARM software qualification remains outstanding.
 Effective model/effort metadata was unavailable; this is bounded advisory
 source evidence and no executed acceptance or certified model provenance.
