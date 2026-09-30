@@ -3516,6 +3516,7 @@ static void PF_fgets (void)
 		char			*ret = PR_GetTempString ();
 		char			*s = ret;
 		char			*end = ret + STRINGTEMP_LENGTH;
+		qboolean		 truncated = false;
 		for (;;)
 		{
 			if (f->cacheoffset == f->cachesize)
@@ -3546,9 +3547,12 @@ static void PF_fgets (void)
 				break;
 			s++;
 			if (s == end)
+			{
+				truncated = true;
 				s--; // rewind if we're overflowing, such that we truncate the string.
+			}
 		}
-		if (s > ret && s[-1] == '\r')
+		if (!truncated && s > ret && s[-1] == '\r')
 			s--; // terminate it on the \r of a \r\n pair.
 		*s = 0;	 // terminate it
 		G_INT (OFS_RETURN) = PR_SetEngineString (ret);
@@ -3618,9 +3622,12 @@ static void PF_fseek (void)
 			G_INT (OFS_RETURN) = (int)Sys_ftell (qcfiles[fileid].file) - qcfiles[fileid].filebase;
 		if (qcvm->argc > 1)
 		{
-			qcfiles[fileid].fileoffset = G_INT (OFS_PARM1);
-			Sys_fseek (qcfiles[fileid].file, qcfiles[fileid].filebase + qcfiles[fileid].fileoffset, SEEK_SET);
-			qcfiles[fileid].cachesize = qcfiles[fileid].cacheoffset = 0;
+			const qfileofs_t offset = G_INT (OFS_PARM1);
+			if (Sys_fseek (qcfiles[fileid].file, qcfiles[fileid].filebase + offset, SEEK_SET) == 0)
+			{
+				qcfiles[fileid].fileoffset = offset;
+				qcfiles[fileid].cachesize = qcfiles[fileid].cacheoffset = 0;
+			}
 		}
 	}
 }

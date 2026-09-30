@@ -43,3 +43,13 @@ loose, disk PAK and embedded-memory native loader. Use isolated malformed/short
 files for expected native failure, not game assets. Cover buffer-load append,
 blank/final lines and unchanged writes/ranges. No builds/tests/compiler/probes/
 fixtures/benchmarks before implementation closes.
+
+## Two-wrapper source integration checkpoint
+
+PF_fseek now holds the requested offset locally and updates logical position/
+read-cache state only after Sys_fseek returns success. Its prior-position return
+is unchanged. PF_fgets records actual output truncation before consuming the
+remainder and only removes CR from an untruncated physical line ending. Main
+reviewed both complete diffs and the native fseeko wrapper/cache loop; scoped
+git diff --check passes. Seven net lines in pr_ext.c; no executable checks.
+The checked native-loader disposition remains pending before common.c edits.
