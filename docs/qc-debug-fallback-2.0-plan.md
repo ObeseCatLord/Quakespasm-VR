@@ -62,3 +62,26 @@ cover all nine numeric/named declarations, native 81/82 in the same program,
 duplicate declarations, real QC bodies, CSQC, native `ex_draw_*`, disabled setup,
 discovery/support reporting and actual error delivery. All execution stays
 deferred until complete implementation.
+
+## Local review and main disposition before production
+
+The tool accepted an explicit `gpt-6-astra` / `max` selection. The reviewer
+reported that effective model/effort metadata is not exposed, so this is advisory
+Astra review with requested settings, not a certified effective Astra Max pass.
+Main independently spot-checked the load order, two actual documented-slot
+collisions, disabled early return, lazy activation and support-query branches.
+No human decision or approval is needed for these authorized ABI repairs.
+
+| Recommendation | Main disposition |
+| --- | --- |
+| Nine ordinary dynamic entries sharing one private error wrapper; null CSQC and `stub.` descriptions | Adopt. Reuse native number allocation/lookup, retain native `ex_draw_*`, and add no drawing capability. |
+| Exact SSQC name/number adaptation through the existing all-functions scan | Adopt. All nine primary numeric declarations route uniformly to their dynamic error targets; native 81/82 and unknown declarations retain their meanings. |
+| A narrowly named inherited-error VM category independent of the normal extension gate | Adopt. Recognized error fallbacks must not reach unrelated native handlers when disabled. Other SSQC extension and legacy adapter policies remain unchanged. |
+| For this category only, also admit eligible empty named `#0` declarations | Adopt. Require zero `first_statement`, `parm_start`, `locals`, and a matching nonempty name. Preserve ordinary QC bodies and numeric-declaration eligibility. |
+| Distinguish metadata discovery from callability | Adopt. `builtin_find` still returns registered numbers regardless of current VM availability; CSQC cannot invoke these SSQC handlers. Do not promise name invisibility. |
+| `checkbuiltin` must remain false after this error handler is cached | Adopt as a narrow additional rail. Check this one private handler in the existing cached-handler branch; no general stub/support-policy rewrite. Post-error QC continuation has not been established. |
+| General interpreter/name interception or global slot replacement | Reject. Duplicates working ownership or changes native meanings; cached direct calls make lazy-only interception incomplete. |
+
+The proposed write set remains unchanged. Source-only review, main judgment and
+the disposition above guide implementation; the end-of-goal review and actual
+error-delivery/platform acceptance remain required.
