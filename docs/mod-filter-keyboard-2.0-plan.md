@@ -49,7 +49,10 @@ changing view/closing menus so hidden keyboard state cannot intercept input.
 
 ## Scope and acceptance
 
-Write set: Quake/menu.c Mods region only and Quake/mod_browser_keyboard.h.
+Write set: Quake/menu.c Mods region, one pure pointer-policy query beside
+existing native pointer APIs, its declaration in Quake/menu.h, the corresponding
+single fallback-dispatch condition in Quake/vr_input.c, and
+Quake/mod_browser_keyboard.h.
 Estimate <=230 added lines. Reopen if a second input/browser owner, renderer
 change or broader browser replacement becomes necessary. Main reviews source
 against the primary and native pointer/filter boundaries. Plan precedes code
@@ -62,3 +65,41 @@ column movement through the final three wide keys, installed/catalogue filters,
 details/install cancellation, pointer hover reset, long metadata and launch
 after filtering. User live headset/performance checks remain deferred. This
 slice alone does not certify UI-002 or the migration goal.
+
+## Source implementation checkpoint
+
+Main extracted the primary's 43-key geometry and nearest-center vertical helper
+into mod_browser_keyboard.h, keeping its original behavior and attribution.
+The native Mods page now opens that keyboard from its labelled Filter field
+or Y, an unused ordinary controller shortcut in this page. Existing OpenXR
+Index PAD maps to Y; other profiles can activate Filter through the same native
+pointer/trigger path without another XR mapping. Installed/catalogue controls
+and their metadata/installation approval remain native.
+
+The subpage uses only mods_search, M_Mods_Char and M_Mods_UpdateFilter for text
+and list updates. Draw and hover share the extracted rectangles, with native
+inclusive hover bounds narrowed to match the half-open key rectangles. Native
+menu-change handling retires old hover, and keyboard transitions release
+slider/scrollbar grabs. Back closes only the keyboard; Done retains the filter.
+Entering Mods, changing catalogue view and launching a game clear the subpage.
+
+Main inspected actual pointer/trigger routing and bounded edits against the
+primary source; scoped whitespace checks passed. This is source integration,
+not executable keyboard or full UI-002 acceptance. Consolidated Linux/ARM
+qualification remains pending. No builds, tests or engine probes have run.
+
+## Requested-Astra source disposition before boundary correction
+
+The first bounded read-only source advisory found three P2 defects. Main
+verified the named native VR fallback, right-stick keys and scrollbar drag
+dispatch. Adopt all three: add the inherited right-stick up/down cases, refuse
+Filter mouse activation during scrollbar capture, and suppress a VR trigger's
+fallback Enter only while this keyboard requires a pointer hit. Deliberate
+physical/controller Enter/A still activate the selected key. The native pointer
+dispatcher and other menus retain their current fallback behavior.
+
+The narrow pointer query/condition is a demonstrated incompatibility at the
+existing boundary, not another input service. The write set above is amended
+before implementing that correction; the <=230-line estimate remains adequate.
+Effective model settings are unexposed, so this is a requested-Astra advisory,
+not a certified senior-skill pass. No executable checks have run.
