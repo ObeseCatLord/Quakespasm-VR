@@ -45,3 +45,24 @@ Final software checks are consolidated after all implementation: Linux x86-64,
 then isolated native Linux ARM on Foundry. Windows and user live headset/eye/
 multiplayer/performance testing remain deferred. No tests/builds/benchmarks were
 run for this source checkpoint.
+
+## Native CSQC picture and clip source checkpoint
+
+MOD-003 already has its native/VR drawing adapter; this is source inspection,
+not another drawing implementation. Main compared primary pr_cmds.c:3778–3813
+with current pr_ext.c:5516–5563: full pictures, image sizes and source-subrectangle
+arguments retain their existing cache/mutex/Draw_SubPic owner. In
+gl_draw.c:856–940, source size becomes an endpoint once, then maps through the
+picture's padded sl/tl/sh/th region; rgb/alpha and native picture/filter pipeline
+submission remain. No parallel picture cache or per-eye QC invocation is added.
+
+The existing desktop clip adapter at pr_ext.c:5432–5491 scales the native CSQC
+rectangle, intersects before Vulkan integer conversion and resets the full
+scissor. VR instead uses GL_SetUIPanelSourceClip/GL_ClearUIPanelSourceClip;
+gl_draw.c:1211–1265 intersects finite source rectangles with the current canvas
+clip, handles empty regions and clears the source clip. CANVAS_CSQC at1476
+retains the current display's pixel scale. Existing gl_screen.c classic/CSQC
+panel preparation and GUI error cleanup own the display override/panel lifetime.
+This is actual source-path evidence only; final Linux/ARM software checks still
+need crop/padding/alpha, resize, clip-reset/error and stereo panel coverage. No
+builds/tests/probes/shader tools or images were run/generated for this checkpoint.
