@@ -9,7 +9,9 @@ Requested local Astra source audit found a demonstrated NULL dispatch defect
 for registered commands; the separate [repair plan](qc-command-dispatch-2.0-plan.md)
 records primary guard and QSS-M callback reuse. Main spot-checked registration,
 native dispatch and both reference patterns. Callback execution, VM restoration
-and source admission are not certified by the initial audit.
+and source admission are not certified by the initial audit. The bounded
+command adapter is now source-integrated with its final requested-Astra source
+advisory acceptance recorded in the repair plan; executable checks remain open.
 
 | Contract | Source evidence and disposition |
 | --- | --- |

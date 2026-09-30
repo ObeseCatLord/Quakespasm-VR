@@ -906,7 +906,28 @@ qboolean Cmd_ExecuteString (const char *text, cmd_source_t src)
 			else if (src == src_server && cmd->srctype != src_server)
 				continue; // src_server may only execute server commands (such commands must be safe to parse within the context of a network message, so no
 						  // disconnect/connect/playdemo/etc)
-			cmd->function ();
+			else if (cmd->function)
+				cmd->function ();
+			else if (src == src_command && cmd->srctype == src_command &&
+				cl.qcvm.progs && cl.qcvm.extfuncs.CSQC_ConsoleCommand)
+			{
+				qcvm_t *oldvm = qcvm;
+				qboolean handled;
+
+				if (oldvm)
+					PR_SwitchQCVM (NULL);
+				PR_SwitchQCVM (&cl.qcvm);
+				G_INT (OFS_PARM0) = PR_MakeTempString (text);
+				PR_ExecuteProgram (cl.qcvm.extfuncs.CSQC_ConsoleCommand);
+				handled = G_FLOAT (OFS_RETURN) != 0;
+				PR_SwitchQCVM (NULL);
+				if (oldvm)
+					PR_SwitchQCVM (oldvm);
+				if (!handled)
+					Con_Printf ("gamecode not running, cannot \"%s\"\n", Cmd_Argv (0));
+			}
+			else
+				Con_Printf ("gamecode not running, cannot \"%s\"\n", Cmd_Argv (0));
 			return true;
 		}
 	}

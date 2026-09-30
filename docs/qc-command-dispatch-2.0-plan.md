@@ -64,7 +64,7 @@ Reopen before another production file, parser changes or new registry state.
 
 The initial requested-Astra source audit verified the NULL defect and existing
 owned runtime command-name storage. Main confirmed both dispatch defects and
-the actual primary/QSS-M flows. A focused requested-Astra advisory is reviewing
+the actual primary/QSS-M flows. A focused requested-Astra advisory reviewed
 callback admission, VM restoration and current native teardown before coding.
 Its terminal advisory recommends adopting the narrow adapter with the following
 main dispositions, spot-checked against the actual source/reference flows:
@@ -80,6 +80,19 @@ main dispositions, spot-checked against the actual source/reference flows:
 
 Effective reviewer settings are unexposed; this is requested-Astra source
 advisory, not certified skill/model/runtime acceptance.
+
+## Source integration checkpoint
+
+The21-net-line cmd.c adapter is implemented. Main reviewed the complete diff;
+the final requested-Astra source advisory accepted it with no remaining P1/P2
+finding. Source-denied, native-handler, registered callback and fallback cases
+are mutually exclusive. Only admitted NULL-handler src_command records enter
+the loaded client callback; the previous VM and return-value sequencing match
+the adopted QSS-M pattern. Native command and registration lifetime owners
+remain. Scoped whitespace checks passed. No executable checks were performed;
+the acceptance below remains end-of-implementation work.
+
+## Final software acceptance
 
 After full implementation, Linux/ARM checks exercise actual QC registration and
 execution, exact command text/arguments, callback accept/decline, absent/unloaded
