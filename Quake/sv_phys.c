@@ -395,8 +395,12 @@ typedef struct
 	string_t extra_string[COOP_RESPAWN_EXTRA_COUNT];
 } coop_respawn_inventory_t;
 
-typedef struct
+typedef struct coop_respawn_postthink_state_s
 {
+	struct coop_respawn_postthink_state_s *previous;
+	qcvm_t *vm;
+	client_t *client;
+	edict_t *ent;
 	qboolean mod_owns_respawn;
 	qboolean was_dead;
 	qboolean inventory_valid;
@@ -404,6 +408,7 @@ typedef struct
 	qboolean suppress_respawn_input;
 	qboolean cancelled;
 	qboolean actual_postthink;
+	unsigned short captured_epoch;
 	float old_force_retouch;
 	float saved_button0, saved_button1, saved_button2;
 	int saved_cmd_buttons;
@@ -473,30 +478,41 @@ static vec3_t coop_respawn_death_angles[MAX_SCOREBOARD];
 static vec3_t coop_respawn_death_v_angle[MAX_SCOREBOARD];
 static qboolean coop_respawn_death_anchor_valid[MAX_SCOREBOARD];
 static double coop_respawn_dead_since[MAX_SCOREBOARD];
+static double coop_respawn_limbo_since[MAX_SCOREBOARD];
 static qboolean coop_respawn_force_standard_spawn[MAX_SCOREBOARD];
+static qboolean coop_respawn_mod_cleanup_pending[MAX_SCOREBOARD];
 static qboolean coop_shared_frame_started_alive[MAX_SCOREBOARD];
 static qboolean coop_shared_frame_death_handled[MAX_SCOREBOARD];
 static coop_respawn_postthink_state_t coop_respawn_frame_predeath_state[MAX_SCOREBOARD];
+static coop_respawn_postthink_state_t *coop_respawn_borrowed_policy;
 
-static struct
+static coop_respawn_postthink_state_t *SV_CoopRespawnFindBorrowedPolicy (edict_t *ent)
 {
 	coop_respawn_postthink_state_t *state;
-	qcvm_t *vm;
-	client_t *client;
-	edict_t *ent;
-} coop_respawn_borrowed_policy;
+	for (state = coop_respawn_borrowed_policy; state; state = state->previous)
+		if (state->vm == qcvm && state->ent == ent)
+			return state;
+	return NULL;
+}
 
 void SV_CoopRespawnCancelBorrowedPolicy (client_t *client, edict_t *ent)
 {
-	if (!coop_respawn_borrowed_policy.state)
-		return;
-	if ((client && coop_respawn_borrowed_policy.client != client) ||
-		(ent && coop_respawn_borrowed_policy.ent != ent))
-		return;
-	coop_respawn_borrowed_policy.state->cancelled = true;
-	memset (&coop_respawn_borrowed_policy, 0,
-		sizeof (coop_respawn_borrowed_policy));
+	coop_respawn_postthink_state_t *state;
+	for (state = coop_respawn_borrowed_policy; state; state = state->previous)
+		if ((!client || state->client == client) && (!ent || state->ent == ent))
+			state->cancelled = true;
+	if (!client && !ent)
+		coop_respawn_borrowed_policy = NULL;
 }
+
+static qboolean SV_CoopRespawnPolicyOwnerLive (
+	const coop_respawn_postthink_state_t *state, client_t *client, edict_t *ent);
+static qboolean SV_CoopRespawnBindPolicy (edict_t *ent, int num,
+	coop_respawn_postthink_state_t *state);
+static qboolean SV_CoopRespawnUnbindPolicy (coop_respawn_postthink_state_t *state);
+static qboolean SV_CoopRespawnInvokeQC (edict_t *ent,
+	coop_respawn_postthink_state_t *state, dfunction_t *func, int argc,
+	const float *parms);
 
 void SV_CoopRespawnInventoryResetClientSlot (int slot)
 {
@@ -514,7 +530,9 @@ void SV_CoopRespawnInventoryResetClientSlot (int slot)
 	VectorClear (coop_respawn_death_v_angle[slot]);
 	coop_respawn_death_anchor_valid[slot] = false;
 	coop_respawn_dead_since[slot] = 0.0;
+	coop_respawn_limbo_since[slot] = 0.0;
 	coop_respawn_force_standard_spawn[slot] = false;
+	coop_respawn_mod_cleanup_pending[slot] = false;
 	coop_shared_frame_started_alive[slot] = false;
 	coop_shared_frame_death_handled[slot] = false;
 	memset (&coop_respawn_frame_predeath_state[slot], 0,
@@ -572,7 +590,40 @@ static eval_t *SV_CoopRespawnGetTypedField (edict_t *ent, const char *name,
 	return GetEdictFieldValue (ent, def->ofs);
 }
 
-static qboolean SV_CoopRespawnVoidLayerMatches (edict_t *ent, const char *suffix)
+#define QBJ3_CFL_PLUNGE 64
+#define QBJ3_CFL_LIMBO 2048
+#define QBJ3_VOID_CSHIFT_PRIORITY 70.0f
+#define QBJ3_VOID_CSHIFT_DENSITY 255.0f
+#define QBJ3_BERSERK_CSHIFT_PRIORITY 100.0f
+#define QBJ3_BERSERK_CSHIFT_DENSITY 32.0f
+
+static dfunction_t *SV_CoopRespawnFindFunction (const char *name, int numparms,
+	const byte *parm_sizes)
+{
+	dfunction_t *func = ED_FindFunction (name);
+	int i;
+	if (!func || func->numparms != numparms)
+		return NULL;
+	for (i = 0; parm_sizes && i < numparms; i++)
+		if (func->parm_size[i] != parm_sizes[i])
+			return NULL;
+	return func;
+}
+
+static qboolean SV_CoopRespawnQBJ3Flags (edict_t *ent, int *flags)
+{
+	eval_t *value = SV_CoopRespawnGetTypedField (ent, "customflags", ev_float);
+	if (!value || !isfinite (value->_float) ||
+		(double)value->_float < INT_MIN || (double)value->_float > INT_MAX)
+		return false;
+	if (flags)
+		*flags = (int)value->_float;
+	return true;
+}
+
+static qboolean SV_CoopRespawnCshiftLayerMatches (edict_t *ent,
+	const char *suffix, float expected_priority, float expected_density,
+	float expected_red)
 {
 	char name[32];
 	eval_t *priority, *density, *color;
@@ -583,31 +634,218 @@ static qboolean SV_CoopRespawnVoidLayerMatches (edict_t *ent, const char *suffix
 	q_snprintf (name, sizeof (name), "csf_color%s", suffix);
 	color = SV_CoopRespawnGetTypedField (ent, name, ev_vector);
 	return priority && density && color &&
-		fabs (priority->_float - 70.0f) < 0.01f &&
-		fabs (density->_float - 255.0f) < 0.01f &&
-		fabs (color->vector[0] - 32.0f) < 0.01f &&
+		fabs (priority->_float - expected_priority) < 0.01f &&
+		fabs (density->_float - expected_density) < 0.01f &&
+		fabs (color->vector[0] - expected_red) < 0.01f &&
 		fabs (color->vector[1]) < 0.01f && fabs (color->vector[2]) < 0.01f;
+}
+
+static qboolean SV_CoopRespawnVoidLayerMatches (edict_t *ent, const char *suffix)
+{
+	return SV_CoopRespawnCshiftLayerMatches (ent, suffix,
+		QBJ3_VOID_CSHIFT_PRIORITY, QBJ3_VOID_CSHIFT_DENSITY, 32.0f);
+}
+
+static qboolean SV_CoopRespawnBerserkLayerMatches (edict_t *ent,
+	const char *suffix)
+{
+	return SV_CoopRespawnCshiftLayerMatches (ent, suffix,
+		QBJ3_BERSERK_CSHIFT_PRIORITY, QBJ3_BERSERK_CSHIFT_DENSITY, 255.0f);
+}
+
+static qboolean SV_CoopRespawnQBJ3BerserkState (edict_t *ent,
+	qboolean *active)
+{
+	eval_t *items = SV_CoopRespawnGetTypedField (ent, "items_qbj", ev_float);
+	eval_t *finished = SV_CoopRespawnGetTypedField (ent, "berserk_finished", ev_float);
+	int bits;
+	if (!active || !items || !finished || !isfinite (items->_float) ||
+		(double)items->_float < INT_MIN || (double)items->_float > INT_MAX ||
+		!isfinite (finished->_float) || !isfinite (qcvm->time))
+		return false;
+	bits = (int)items->_float;
+	*active = (bits & 4) != 0 || finished->_float > qcvm->time;
+	return true;
 }
 
 static qboolean SV_CoopRespawnModOwnsLifecycle (edict_t *ent)
 {
-	eval_t *customflags;
 	ddef_t *controller;
 	dfunction_t *monitor, *unplunge, *clear;
+	static const byte entity_parm[] = {1};
+	int customflags;
 	if (!coop.value || deathmatch.value || !ent || ent->free ||
-		!(monitor = ED_FindFunction ("player_spawn_void_monitor")) || monitor->numparms != 0 ||
-		!(unplunge = ED_FindFunction ("void_unplunge")) || unplunge->numparms != 1 || unplunge->parm_size[0] != 1 ||
-		!(clear = ED_FindFunction ("csf_clear_all")) || clear->numparms != 1 || clear->parm_size[0] != 1 ||
+		!(monitor = SV_CoopRespawnFindFunction ("player_spawn_void_monitor", 0, NULL)) ||
+		!(unplunge = SV_CoopRespawnFindFunction ("void_unplunge", 1, entity_parm)) ||
+		!(clear = SV_CoopRespawnFindFunction ("csf_clear_all", 1, entity_parm)) ||
 		!(controller = ED_FindField ("csfcontroller")) ||
 		(controller->type & ~DEF_SAVEGLOBAL) != ev_entity ||
-		!(customflags = SV_CoopRespawnGetTypedField (ent, "customflags", ev_float)) ||
+		!SV_CoopRespawnQBJ3Flags (ent, &customflags) ||
 		(!SV_CoopRespawnVoidLayerMatches (ent, "") &&
 		 !SV_CoopRespawnVoidLayerMatches (ent, "_prev")))
 		return false;
-	return isfinite (customflags->_float) &&
-		(double)customflags->_float >= INT_MIN &&
-		(double)customflags->_float <= INT_MAX &&
-		((int)customflags->_float & 64) != 0;
+	return (customflags & QBJ3_CFL_PLUNGE) != 0;
+}
+
+static edict_t *SV_CoopRespawnQBJ3TeleportGoal (edict_t *ent)
+{
+	eval_t *goalvalue;
+	edict_t *goal;
+	const char *classname;
+	int goalref;
+	if (!qcvm || qcvm->edict_size <= 0 ||
+		!(goalvalue = SV_CoopRespawnGetTypedField (ent, "goalentity", ev_entity)))
+		return NULL;
+	goalref = goalvalue->edict;
+	if (goalref <= 0 || goalref % qcvm->edict_size ||
+		goalref > (qcvm->num_edicts - 1) * qcvm->edict_size)
+		return NULL;
+	goal = PROG_TO_EDICT (goalref);
+	if (goal->free || !goal->v.classname ||
+		!(classname = PR_GetString (goal->v.classname)))
+		return NULL;
+	if (strcmp (classname, "info_teleport_destination") &&
+		strcmp (classname, "info_teleport_target") &&
+		strcmp (classname, "misc_teleporttrain") &&
+		strcmp (classname, "info_notnull"))
+		return NULL;
+	return goal;
+}
+
+static qboolean SV_CoopRespawnClearQBJ3InactiveBerserk (edict_t *ent,
+	coop_respawn_postthink_state_t *state)
+{
+	static const byte parmsizes[] = {1, 1};
+	dfunction_t *func;
+	float parms[MAX_PARMS * 3] = {0};
+	qboolean active;
+	int prog;
+	if (!SV_CoopRespawnQBJ3BerserkState (ent, &active) || active ||
+		(!SV_CoopRespawnBerserkLayerMatches (ent, "") &&
+		 !SV_CoopRespawnBerserkLayerMatches (ent, "_prev")) ||
+		!SV_CoopRespawnGetTypedField (ent, "csfcontroller", ev_entity) ||
+		!(func = SV_CoopRespawnFindFunction ("csf_clear", 2, parmsizes)))
+		return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
+	prog = EDICT_TO_PROG (ent);
+	memcpy (&parms[0], &prog, sizeof (prog));
+	parms[3] = QBJ3_BERSERK_CSHIFT_PRIORITY;
+	return SV_CoopRespawnInvokeQC (ent, state, func, 2, parms);
+}
+
+static qboolean SV_CoopRespawnRepairQBJ3WeaponModel (edict_t *ent,
+	coop_respawn_postthink_state_t *state, string_t incoming_model,
+	string_t fresh_model)
+{
+	static const byte parmsizes[] = {1, 1};
+	dfunction_t *func;
+	float parms[MAX_PARMS * 3] = {0};
+	qboolean active;
+	const char *model;
+	if (!state || !state->client ||
+		!SV_CoopRespawnPolicyOwnerLive (state, state->client, ent))
+		return false;
+	if (!incoming_model || !(model = PR_GetString (incoming_model)) ||
+		strcmp (model, "progs/v_berserk.mdl") ||
+		!SV_CoopRespawnQBJ3BerserkState (ent, &active) || active)
+		return true;
+	ent->v.weaponmodel = fresh_model;
+	if (ent->v.health <= 0 || ent->v.deadflag != DEAD_NO ||
+		ent->v.solid == SOLID_NOT || !isfinite (ent->v.weapon) ||
+		!(func = SV_CoopRespawnFindFunction ("W_ChangeWeapon", 2, parmsizes)))
+		return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
+	parms[0] = ent->v.weapon;
+	parms[3] = 1.0f;
+	return SV_CoopRespawnInvokeQC (ent, state, func, 2, parms);
+}
+
+static qboolean SV_CoopRespawnRecoverQBJ3Limbo (edict_t *ent, int num,
+	coop_respawn_postthink_state_t *state)
+{
+	static const byte entity_parm[] = {1};
+	dfunction_t *think;
+	eval_t *dest;
+	edict_t *goal;
+	client_t *client = state->client;
+	double now, since;
+	int flags, index = num - 1;
+	qboolean survived;
+	if (index < 0 || index >= MAX_SCOREBOARD)
+		return SV_CoopRespawnPolicyOwnerLive (state, client, ent);
+	now = qcvm->time;
+	if (!coop.value || deathmatch.value || !isfinite (now) ||
+		!SV_CoopRespawnQBJ3Flags (ent, &flags) || !(flags & QBJ3_CFL_LIMBO) ||
+		ent->v.takedamage != DAMAGE_NO || ent->v.solid != SOLID_NOT ||
+		ent->v.movetype != MOVETYPE_NONE)
+	{
+		coop_respawn_limbo_since[index] = 0.0;
+		return SV_CoopRespawnPolicyOwnerLive (state, client, ent);
+	}
+	since = coop_respawn_limbo_since[index];
+	if (!(since > 0.0) || !isfinite (since) || now < since)
+	{
+		coop_respawn_limbo_since[index] = now;
+		return SV_CoopRespawnPolicyOwnerLive (state, client, ent);
+	}
+	if (now - since < 6.0)
+		return SV_CoopRespawnPolicyOwnerLive (state, client, ent);
+	think = SV_CoopRespawnFindFunction ("teleport_limbo_think", 0, NULL);
+	if (!think || !SV_CoopRespawnFindFunction ("teleport_exit_limbo", 1,
+		entity_parm) || !(dest = SV_CoopRespawnGetTypedField (ent, "dest", ev_vector)) ||
+		!(goal = SV_CoopRespawnQBJ3TeleportGoal (ent)))
+	{
+		coop_respawn_limbo_since[index] = 0.0;
+		return SV_CoopRespawnPolicyOwnerLive (state, client, ent);
+	}
+	ED_Retain (goal);
+	dest->vector[2] = 1.0f;
+	survived = SV_CoopRespawnInvokeQC (ent, state, think, 0, NULL);
+	if (qcvm == state->vm && state->vm == &sv.qcvm)
+		ED_Release (goal);
+	if (!survived)
+		return false;
+	if (!SV_CoopRespawnQBJ3Flags (ent, &flags))
+		return true;
+	if (flags & QBJ3_CFL_LIMBO)
+		return SV_CoopRespawnPolicyOwnerLive (state, client, ent);
+	coop_respawn_limbo_since[index] = 0.0;
+	if (client->private_move_discontinuity_epoch == state->captured_epoch)
+		SV_PrivatePlayerTeleported (ent, true);
+	return SV_CoopRespawnPolicyOwnerLive (state, client, ent);
+}
+
+static qboolean SV_CoopRespawnFinishQBJ3Lifecycle (edict_t *ent, int num,
+	coop_respawn_postthink_state_t *state)
+{
+	static const byte entity_parm[] = {1};
+	dfunction_t *clear;
+	float parms[MAX_PARMS * 3] = {0};
+	int flags, prog, index = num - 1;
+	if (index < 0 || index >= MAX_SCOREBOARD ||
+		!coop_respawn_mod_cleanup_pending[index])
+		return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
+	if (!coop.value || deathmatch.value || !ent || ent->free)
+		return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
+	if (!SV_CoopRespawnQBJ3Flags (ent, &flags) ||
+		ent->v.health <= 0 || ent->v.deadflag != DEAD_NO || ent->v.solid == SOLID_NOT ||
+		(flags & (QBJ3_CFL_PLUNGE | QBJ3_CFL_LIMBO)))
+		return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
+	if (!SV_CoopRespawnVoidLayerMatches (ent, "") &&
+		!SV_CoopRespawnVoidLayerMatches (ent, "_prev"))
+	{
+		coop_respawn_mod_cleanup_pending[index] = false;
+		return true;
+	}
+	clear = SV_CoopRespawnFindFunction ("csf_clear_all", 1, entity_parm);
+	if (!clear || !SV_CoopRespawnGetTypedField (ent, "csfcontroller", ev_entity))
+		return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
+	prog = EDICT_TO_PROG (ent);
+	memcpy (&parms[0], &prog, sizeof (prog));
+	if (!SV_CoopRespawnInvokeQC (ent, state, clear, 1, parms))
+		return false;
+	if (!SV_CoopRespawnVoidLayerMatches (ent, "") &&
+		!SV_CoopRespawnVoidLayerMatches (ent, "_prev"))
+		coop_respawn_mod_cleanup_pending[index] = false;
+	return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
 }
 
 static float SV_CoopRespawnMaxFloat (float a, float b)
@@ -1161,19 +1399,42 @@ void SV_CoopRespawnSaveClientEdict (edict_t *ent, edict_t *snapshot)
 	snapshot->v.currentammo = inventory.currentammo;
 }
 
-void SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot)
+qboolean SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot)
 {
+	coop_respawn_postthink_state_t state = {0};
 	coop_respawn_inventory_t inventory;
+	string_t fresh_model, incoming_model = 0;
+	qboolean owner_live;
+	int num;
 	if (!ent || ent->free || !snapshot || snapshot->free)
-		return;
+		return false;
+	num = NUM_FOR_EDICT (ent);
+	if (!SV_CoopRespawnBindPolicy (ent, num, &state))
+		return false;
+	fresh_model = ent->v.weaponmodel;
 	if (coop.value &&
 		SV_CoopFeatureEnabled (&sv_coop_respawn_keep_weapons_ammo, true))
 	{
 		SV_CoopRespawnSaveInventory (snapshot, &inventory);
+		incoming_model = inventory.weaponmodel;
 		SV_CoopRespawnRestoreSavedInventoryExact (ent, &inventory);
+		if (!SV_CoopRespawnRepairQBJ3WeaponModel (ent, &state,
+			incoming_model, fresh_model))
+			goto done;
 	}
+	if (coop.value && !deathmatch.value && ent->v.health > 0 &&
+		ent->v.deadflag == DEAD_NO &&
+		ent->v.solid != SOLID_NOT &&
+		!SV_CoopRespawnClearQBJ3InactiveBerserk (ent, &state))
+		goto done;
 	/* Team keys are restored even when optional weapon retention is disabled. */
-	SV_CoopSharedApplyToJoiningClient (ent);
+	if (SV_CoopRespawnPolicyOwnerLive (&state, state.client, ent))
+		SV_CoopSharedApplyToJoiningClient (ent);
+done:
+	owner_live = SV_CoopRespawnPolicyOwnerLive (&state, state.client, ent);
+	if (!SV_CoopRespawnUnbindPolicy (&state))
+		owner_live = false;
+	return owner_live;
 }
 
 qboolean SV_CoopRespawnPrepareChangelevel (edict_t *ent)
@@ -1575,8 +1836,7 @@ static qboolean SV_RunThink (edict_t *ent)
 	double	 think_start = 0;
 	qboolean alive, friendly_fire_scope;
 	coop_respawn_postthink_state_t *respawn_policy =
-		coop_respawn_borrowed_policy.ent == ent ?
-		coop_respawn_borrowed_policy.state : NULL;
+		SV_CoopRespawnFindBorrowedPolicy (ent);
 
 	thinktime = ent->v.nextthink;
 	if (thinktime <= 0 || thinktime > qcvm->time + host_frametime)
@@ -5486,7 +5746,8 @@ static qboolean SV_CoopRespawnRelocatePolicy (edict_t *ent, edict_t *anchor,
 	}
 	ent->v.fixangle = true;
 	SV_LinkEdict (ent, false);
-	SV_PrivatePlayerTeleported (ent, false);
+	if (!state)
+		SV_PrivatePlayerTeleported (ent, false);
 	return true;
 }
 
@@ -5538,19 +5799,29 @@ static void SV_CoopRespawnSetExtendedButtons (edict_t *ent, int buttons)
 static qboolean SV_CoopRespawnPolicyOwnerLive (
 	const coop_respawn_postthink_state_t *state, client_t *client, edict_t *ent)
 {
-	return state && !state->cancelled && qcvm == &sv.qcvm &&
-		coop_respawn_borrowed_policy.state == state &&
-		coop_respawn_borrowed_policy.vm == qcvm &&
-		coop_respawn_borrowed_policy.client == client &&
-		coop_respawn_borrowed_policy.ent == ent && client && ent &&
-		client->active && client->edict == ent && !ent->free;
+	const coop_respawn_postthink_state_t *scan;
+	if (!state || state->cancelled || qcvm != &sv.qcvm || state->vm != qcvm ||
+		state->client != client || state->ent != ent || !client || !ent ||
+		!client->active || client->edict != ent || ent->free)
+		return false;
+	for (scan = coop_respawn_borrowed_policy; scan; scan = scan->previous)
+		if (scan == state)
+			return true;
+	return false;
 }
 
 static qboolean SV_CoopRespawnBindPolicy (edict_t *ent, int num,
 	coop_respawn_postthink_state_t *state)
 {
+	coop_respawn_postthink_state_t *scan;
 	client_t *client;
 
+	for (scan = coop_respawn_borrowed_policy; scan; scan = scan->previous)
+		if (scan == state)
+		{
+			state->cancelled = true;
+			return false;
+		}
 	memset (state, 0, sizeof (*state));
 	if (!ent || ent->free || num < 1 || num > svs.maxclients)
 	{
@@ -5563,10 +5834,29 @@ static qboolean SV_CoopRespawnBindPolicy (edict_t *ent, int num,
 		state->cancelled = true;
 		return false;
 	}
-	coop_respawn_borrowed_policy.state = state;
-	coop_respawn_borrowed_policy.vm = qcvm;
-	coop_respawn_borrowed_policy.client = client;
-	coop_respawn_borrowed_policy.ent = ent;
+	state->previous = coop_respawn_borrowed_policy;
+	state->vm = qcvm;
+	state->client = client;
+	state->ent = ent;
+	coop_respawn_borrowed_policy = state;
+	return true;
+}
+
+static qboolean SV_CoopRespawnUnbindPolicy (coop_respawn_postthink_state_t *state)
+{
+	coop_respawn_postthink_state_t *scan;
+	if (!state || coop_respawn_borrowed_policy != state)
+	{
+		for (scan = coop_respawn_borrowed_policy; scan; scan = scan->previous)
+			if (scan == state)
+				state->cancelled = true;
+		return false;
+	}
+	coop_respawn_borrowed_policy = state->previous;
+	state->previous = NULL;
+	state->vm = NULL;
+	state->client = NULL;
+	state->ent = NULL;
 	return true;
 }
 
@@ -5632,13 +5922,19 @@ static void SV_CoopRespawnBeginPostThink (edict_t *ent, int num,
 	double dead_time;
 	if (!SV_CoopRespawnBindPolicy (ent, num, state))
 		return;
+	state->captured_epoch = state->client->private_move_discontinuity_epoch;
 
 	state->was_dead = SV_CoopIsDeadClient (ent);
 	if (coop.value && !state->was_dead)
 		SV_CoopRespawnRememberAliveState (ent, num);
 	state->mod_owns_respawn = SV_CoopRespawnModOwnsLifecycle (ent);
 	if (state->mod_owns_respawn)
+	{
+		index = num - 1;
+		if (state->was_dead && index >= 0 && index < MAX_SCOREBOARD)
+			coop_respawn_mod_cleanup_pending[index] = true;
 		return;
+	}
 	state->old_force_retouch = pr_global_struct->force_retouch;
 	VectorCopy (ent->v.origin, state->death_origin);
 	VectorCopy (ent->v.angles, state->death_angles);
@@ -5678,7 +5974,7 @@ static void SV_CoopRespawnBeginPostThink (edict_t *ent, int num,
 
 qboolean SV_CoopRespawnSetChangeParms (client_t *client)
 {
-	coop_respawn_postthink_state_t state;
+	coop_respawn_postthink_state_t state = {0};
 	edict_t *ent;
 	float saved_health, saved_deadflag;
 	qboolean preserve_dead_inventory, owner_live;
@@ -5709,15 +6005,12 @@ qboolean SV_CoopRespawnSetChangeParms (client_t *client)
 		ent->v.health = saved_health;
 		ent->v.deadflag = saved_deadflag;
 	}
-	if (coop_respawn_borrowed_policy.state == &state)
-		memset (&coop_respawn_borrowed_policy, 0,
-			sizeof (coop_respawn_borrowed_policy));
+	if (!SV_CoopRespawnUnbindPolicy (&state))
+		owner_live = false;
 	return owner_live;
 
 done:
-	if (coop_respawn_borrowed_policy.state == &state)
-		memset (&coop_respawn_borrowed_policy, 0,
-			sizeof (coop_respawn_borrowed_policy));
+	SV_CoopRespawnUnbindPolicy (&state);
 	return false;
 }
 
@@ -5728,18 +6021,16 @@ static void SV_CoopRespawnCancelPolicy (coop_respawn_postthink_state_t *state)
 	int num;
 	if (!state)
 		return;
-	client = coop_respawn_borrowed_policy.client;
-	ent = coop_respawn_borrowed_policy.ent;
-	if (coop_respawn_borrowed_policy.state == state && client && ent &&
+	client = state->client;
+	ent = state->ent;
+	if (client && ent &&
 		client->active && client->edict == ent && !ent->free)
 	{
 		num = (int)(client - svs.clients) + 1;
 		SV_CoopRespawnRestoreSuppressedInput (ent, num, state);
 	}
 	state->cancelled = true;
-	if (coop_respawn_borrowed_policy.state == state)
-		memset (&coop_respawn_borrowed_policy, 0,
-			sizeof (coop_respawn_borrowed_policy));
+	SV_CoopRespawnUnbindPolicy (state);
 }
 
 static void SV_CoopRespawnEndPostThink (edict_t *ent, int num,
@@ -5761,39 +6052,71 @@ static void SV_CoopRespawnEndPostThink (edict_t *ent, int num,
 		SV_CoopRespawnCancelPolicy (state);
 		return;
 	}
-	if (!state->mod_owns_respawn && coop.value)
+	if (!SV_CoopRespawnRecoverQBJ3Limbo (ent, num, state) ||
+		!SV_CoopRespawnFinishQBJ3Lifecycle (ent, num, state))
+	{
+		SV_CoopRespawnCancelPolicy (state);
+		return;
+	}
+	if (state->mod_owns_respawn)
+	{
+		if (state->was_dead && SV_CoopRespawnIsAliveClient (ent))
+		{
+			SV_VRContactPlayerRelocated (ent);
+			if (client->private_move_discontinuity_epoch == state->captured_epoch)
+				SV_PrivatePlayerTeleported (ent, true);
+		}
+		goto done;
+	}
+	if (!coop.value)
+		goto done;
+	if (coop.value)
 	{
 		if (!state->was_dead && SV_CoopIsDeadClient (ent))
 			SV_CoopRespawnHandleDeathTransition (ent, num, state);
 		else if (state->was_dead && SV_CoopRespawnIsAliveClient (ent))
 		{
+			string_t fresh_model = ent->v.weaponmodel;
 			if (SV_CoopFeatureEnabled (&sv_coop_respawn_keep_weapons_ammo, true) &&
 				state->inventory_valid)
+			{
 				SV_CoopRespawnRestoreInventory (ent, &state->inventory);
+				if (!SV_CoopRespawnRepairQBJ3WeaponModel (ent, state,
+					state->inventory.weaponmodel, fresh_model))
+				{
+					SV_CoopRespawnCancelPolicy (state);
+					return;
+				}
+			}
 			const qboolean relocated = isfinite (sv_coop_respawn_near_player.value) &&
 				SV_CoopFeatureEnabled (&sv_coop_respawn_near_player, true) &&
 				SV_CoopRespawnFindSpot (ent, state->death_origin, &anchor, spot,
 					!state->force_standard_spawn) &&
 				SV_CoopRespawnRelocatePolicy (ent, anchor, spot, state);
 			if (!relocated)
-			{
-				/* QC's ordinary spawn is also a discontinuity. Preserve its
-				 * authored hold and effects when optional placement is skipped. */
 				SV_VRContactPlayerRelocated (ent);
+			if (client->private_move_discontinuity_epoch == state->captured_epoch)
+				/* QC's ordinary spawn is also a discontinuity. Preserve its
+				 * authored hold and accepted command queues. */
 				SV_PrivatePlayerTeleported (ent, true);
-			}
 			index = num - 1;
 			coop_respawn_death_anchor_valid[index] = false;
 			coop_respawn_dead_since[index] = 0.0;
 			coop_respawn_force_standard_spawn[index] = false;
 		}
 	}
-	SV_CoopRespawnRestoreSuppressedInput (ent, num, state);
-	if (!state->mod_owns_respawn && coop.value && SV_CoopRespawnIsAliveClient (ent))
+	if (SV_CoopRespawnIsAliveClient (ent) &&
+		!SV_CoopRespawnClearQBJ3InactiveBerserk (ent, state))
+	{
+		SV_CoopRespawnCancelPolicy (state);
+		return;
+	}
+	if (coop.value && SV_CoopRespawnIsAliveClient (ent))
 		SV_CoopRespawnRememberAliveState (ent, num);
-	if (coop_respawn_borrowed_policy.state == state)
-		memset (&coop_respawn_borrowed_policy, 0,
-			sizeof (coop_respawn_borrowed_policy));
+done:
+	SV_CoopRespawnRestoreSuppressedInput (ent, num, state);
+	if (!SV_CoopRespawnUnbindPolicy (state))
+		state->cancelled = true;
 }
 
 qboolean SV_CoopRespawnTeleportToPlayer (edict_t *ent, edict_t *target)
@@ -8122,8 +8445,7 @@ static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client,
 	qboolean alive;
 	if (ent->v.nextthink <= 0 || ent->v.nextthink > qcvm->time + host_frametime)
 		return true;
-	respawn_policy = coop_respawn_borrowed_policy.ent == ent ?
-		coop_respawn_borrowed_policy.state : NULL;
+	respawn_policy = SV_CoopRespawnFindBorrowedPolicy (ent);
 	SV_BeginPrivateVRWeaponPose (ent, client, pose_cmd, &scope);
 	alive = SV_RunThink (ent);
 	SV_EndPrivateVRWeaponPoseGuarded (ent, &scope,
@@ -8920,6 +9242,92 @@ static void SV_RestoreQCInputs (const sv_qc_input_scope_t *scope)
 		if (scope->fields[i].address)
 			memcpy (scope->fields[i].address, scope->fields[i].saved,
 				scope->fields[i].words * sizeof (uint32_t));
+}
+
+static qboolean SV_CoopRespawnInvokeQC (edict_t *ent,
+	coop_respawn_postthink_state_t *state, dfunction_t *func, int argc,
+	const float *parms)
+{
+	struct
+	{
+		int self, other, trace_ent;
+		float time, frametime;
+		vec3_t forward, right, up;
+		float trace_allsolid, trace_startsolid, trace_fraction;
+		float trace_inwater, trace_inopen, trace_plane_dist;
+		vec3_t trace_endpos, trace_plane_normal;
+	} saved_context;
+	float saved_call_globals[OFS_PARM7 + 3 - OFS_RETURN];
+	sv_qc_input_scope_t input_scope;
+	client_t *client, *saved_host_client;
+	edict_t *saved_sv_player;
+	int saved_argc;
+	qboolean owner_live;
+
+	if (!state || !(client = state->client) ||
+		!SV_CoopRespawnPolicyOwnerLive (state, client, ent) || !func ||
+		argc < 0 || argc > MAX_PARMS || !qcvm->functions || !qcvm->progs ||
+		func < qcvm->functions || func >= qcvm->functions + qcvm->progs->numfunctions)
+		return false;
+	saved_context.self = pr_global_struct->self;
+	saved_context.other = pr_global_struct->other;
+	saved_context.time = pr_global_struct->time;
+	saved_context.frametime = pr_global_struct->frametime;
+	VectorCopy (pr_global_struct->v_forward, saved_context.forward);
+	VectorCopy (pr_global_struct->v_right, saved_context.right);
+	VectorCopy (pr_global_struct->v_up, saved_context.up);
+	saved_context.trace_allsolid = pr_global_struct->trace_allsolid;
+	saved_context.trace_startsolid = pr_global_struct->trace_startsolid;
+	saved_context.trace_fraction = pr_global_struct->trace_fraction;
+	saved_context.trace_inwater = pr_global_struct->trace_inwater;
+	saved_context.trace_inopen = pr_global_struct->trace_inopen;
+	saved_context.trace_plane_dist = pr_global_struct->trace_plane_dist;
+	saved_context.trace_ent = pr_global_struct->trace_ent;
+	VectorCopy (pr_global_struct->trace_endpos, saved_context.trace_endpos);
+	VectorCopy (pr_global_struct->trace_plane_normal, saved_context.trace_plane_normal);
+	saved_argc = qcvm->argc;
+	saved_host_client = host_client;
+	saved_sv_player = sv_player;
+	memcpy (saved_call_globals, qcvm->globals + OFS_RETURN,
+		sizeof (saved_call_globals));
+	SV_SaveQCInputs (&input_scope);
+	ED_Retain (ent);
+	host_client = client;
+	sv_player = ent;
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->time = qcvm->time;
+	qcvm->argc = argc;
+	memset (&qcvm->globals[OFS_PARM0], 0, MAX_PARMS * 3 * sizeof (float));
+	if (parms && argc)
+		memcpy (&qcvm->globals[OFS_PARM0], parms, argc * 3 * sizeof (float));
+	PR_ExecuteProgram (func - qcvm->functions);
+	assert (qcvm == &sv.qcvm);
+	SV_RestoreQCInputs (&input_scope);
+	host_client = saved_host_client;
+	sv_player = saved_sv_player;
+	qcvm->argc = saved_argc;
+	memcpy (qcvm->globals + OFS_RETURN, saved_call_globals,
+		sizeof (saved_call_globals));
+	pr_global_struct->self = saved_context.self;
+	pr_global_struct->other = saved_context.other;
+	pr_global_struct->time = saved_context.time;
+	pr_global_struct->frametime = saved_context.frametime;
+	VectorCopy (saved_context.forward, pr_global_struct->v_forward);
+	VectorCopy (saved_context.right, pr_global_struct->v_right);
+	VectorCopy (saved_context.up, pr_global_struct->v_up);
+	pr_global_struct->trace_allsolid = saved_context.trace_allsolid;
+	pr_global_struct->trace_startsolid = saved_context.trace_startsolid;
+	pr_global_struct->trace_fraction = saved_context.trace_fraction;
+	pr_global_struct->trace_inwater = saved_context.trace_inwater;
+	pr_global_struct->trace_inopen = saved_context.trace_inopen;
+	pr_global_struct->trace_plane_dist = saved_context.trace_plane_dist;
+	pr_global_struct->trace_ent = saved_context.trace_ent;
+	VectorCopy (saved_context.trace_endpos, pr_global_struct->trace_endpos);
+	VectorCopy (saved_context.trace_plane_normal, pr_global_struct->trace_plane_normal);
+	owner_live = SV_CoopRespawnPolicyOwnerLive (state, client, ent);
+	ED_Release (ent);
+	return owner_live;
 }
 
 static void SV_CoopRespawnFilterBorrowedInput (edict_t *ent, int num,
@@ -10281,7 +10689,7 @@ cleanup:
 		(!command_completed || last_reserved || native_boundary_completed || defer_next_head))
 		ent->v.impulse = 0;
 	if (respawn_policy_started &&
-		coop_respawn_borrowed_policy.state == respawn_policy &&
+		coop_respawn_borrowed_policy == respawn_policy &&
 		(failure || !shared_qc))
 	{
 		SV_CoopRespawnCancelPolicy (respawn_policy);
@@ -10897,10 +11305,14 @@ done:
 	{
 		if (respawn_policy->actual_postthink && respawn_owner_valid)
 			SV_CoopRespawnEndPostThink (ent, num, respawn_policy);
-		else if (coop_respawn_borrowed_policy.state == respawn_policy)
+		else if (coop_respawn_borrowed_policy == respawn_policy)
 			SV_CoopRespawnCancelPolicy (respawn_policy);
 		if (think_window && respawn_policy == &think_window->respawn_policy)
 			think_window->respawn_policy_live = false;
+		/* EndPostThink now owns callback-capable QBJ3 completion. Re-evaluate
+		 * the native owner after it returns before shared state or ACK writes. */
+		respawn_owner_valid = !respawn_policy->cancelled && client->active &&
+			client->edict == ent && !ent->free;
 	}
 	if (frame_completed && respawn_owner_valid)
 		SV_CoopSharedObserveClientDeath (ent, num);

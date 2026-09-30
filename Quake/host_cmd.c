@@ -3630,7 +3630,8 @@ static void Host_Spawn_f (void)
 			PR_ExecuteProgram (pr_global_struct->PutClientInServer);
 			if (saved_clientnum >= 0)
 			{
-				SV_CoopRespawnRestoreSavedInventory (ent, saved_ent);
+				if (!SV_CoopRespawnRestoreSavedInventory (ent, saved_ent))
+					return;
 				ent->alpha = sv.loadgame_client_alpha[saved_clientnum];
 				ent->v.frags = (float)host_client->old_frags;
 				Host_LoadgameClearSavedClient (saved_clientnum);

@@ -3,7 +3,8 @@
 2026-09-30. COOP-013 missing respawn cleanup, following the generic
 [respawn-policy plan](coop-respawn-policy-2.0-plan.md). Co-op revival is excluded.
 No physical-contact melee implementation or new mod ability is authorized here.
-This is a before-code brief; generic policy integration precedes this slice.
+Status: source-integrated after the corrections/recheck below; final Linux/ARM
+software qualification is pending. The retained brief preceded implementation.
 
 ## Actual behavior and reusable references
 
@@ -235,3 +236,43 @@ VM recovery. No other native command/spawn/physics ownership is reopened.
 The first model-helper correction is main-reviewed at418 net lines. These
 remaining corrections stay in sv_phys.c and within the existing450-net target;
 main reviews the exact patch before integration. Software checks remain deferred.
+
+## Main correction checkpoint, source recheck pending
+
+Main reviewed the complete original three-file diff, the five-net-line fresh
+model correction and the final six changed regions. The current413-net patch
+uses one Begin-captured epoch for limbo/generic/mod-owned completion; policy
+relocation leaves publication to End, standalone relocation keeps native direct
+publication. Forced limbo retry retains donor timing. Passive expired-model
+rejection precedes live/pre-begin/finite/signature callback admission. Invoke
+uses the established server-VM contract and always performs normal borrowed
+context/input/retention unwind after client cancellation. Extra storage-address
+captures/bailout were deleted. No persistent selector, protocol generation or
+queue retirement was added.
+
+The narrow Host_Spawn_f return precedes alpha/frags/saved-slot consumption/
+placement/signon after the new callbacks. Existing slot/map reset owners retain
+pending void/timer metadata, and full abort detaches the borrowed scope chain.
+Scoped whitespace checks pass. This records main source review only: local
+requested-Astra recheck and production integration are pending at this point,
+and all executable/platform qualification is still deferred.
+
+## Production integration and final scoped source acceptance
+
+The final413-net-line patch is integrated in sv_phys.c, server.h and host_cmd.c.
+The local requested-Astra recheck read the six corrected regions and found no
+additional P1/P2 source blocker; its earlier bounded chain/unwind/caller review
+likewise established no additional lifetime blocker. Main independently reviewed
+the full patch and both correction slices before integration. Typed limbogoal/
+API checks, borrowed context/input/retention, persistent void cleanup, valid
+inactive berserk protection, passive fresh-model rejection and native selector
+admission reuse actual primary/native owners. Save/corpse encoding stays passive.
+
+One Begin-captured epoch coordinates native recovery and generic/mod-owned
+respawn completion without accepted-command retirement. The native command
+registration prerequisite is6f090b1f. No revival, physical-contact feature,
+new mod abilities, second scheduler or general VM/device recovery was added.
+Scoped git diff --check passes. No build/compiler/test/fixture/probe/benchmark
+ran. This is source integration with requested-Astra advice and unobservable
+effective settings, not certified review/runtime acceptance or full migration
+completion. The final Linux/ARM and broader co-op qualification remain pending.

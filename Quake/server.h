@@ -547,7 +547,7 @@ void SV_AppendVRIKRetirement (client_t *client, int slot, unsigned int generatio
 
 void SV_CoopRespawnRefreshClientInventory (edict_t *ent);
 void SV_CoopRespawnSaveClientEdict (edict_t *ent, edict_t *snapshot);
-void SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot);
+qboolean SV_CoopRespawnRestoreSavedInventory (edict_t *ent, edict_t *snapshot);
 qboolean SV_CoopRespawnPrepareChangelevel (edict_t *ent);
 qboolean SV_CoopRespawnSetChangeParms (client_t *client);
 qboolean SV_CoopRespawnPlaceNearPlayer (edict_t *ent);
