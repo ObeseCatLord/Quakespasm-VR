@@ -4,7 +4,7 @@ vkQuake already supplies most requested loading and asset mechanisms. Reuse its 
 
 Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636dfbfd3e844be7cd`; **V** = vkQuake `4bc898f29073e8aa41069f0e79e3cb5a9eb73afa`; **F** = source master `1327f795`; **X** = source OpenXR `30808413`. Paths below are relative to those repositories; unqualified filenames are under `Quake/`. Line numbers refer to pins.
 
-**P** = donor implementation present; **S** = present but requires stereo adaptation; **M** = missing from inspected donors; **U** = outcome/equivalence unverified. Acceptance cases are proposed, **not executed**. No edits, builds, tests, agents, or remote actions occurred.
+**P** = donor implementation present; **S** = present but requires stereo adaptation; **M** = missing from inspected donors; **U** = outcome/equivalence unverified. The original inventory was read-only; subsequent row updates record specific implementation/checkpoints. Acceptance cases alone are proposed, **not executed**. Measurements and live headset/performance qualification are user-deferred and outside this implementation goal; Linux/ARM software checks follow full implementation.
 
 | ID | Behavior | Source/donor evidence | Disposition | Smallest destination change | Acceptance case |
 |---|---|---|---|---|---|
@@ -42,6 +42,19 @@ Evidence is from pinned Git objects: **I** = Ironwail `08d578136ff43d7d1ef38e636
 | ASSET-009 | Lightstyle interpolation | I `gl_rlight.c:49`; F `:48`; V `R_AnimateLight:41`, former GPU-update gate `:67` | A, adapter added; runtime parity pending | V lighting owner now applies modes 0/1/2 on both CPU and GPU lightmap update paths; retain its existing `r_dynamic` policy. | With r_dynamic=1, smooth and abrupt styles (including ad_tears) follow modes 0/1/2 on both CPU and GPU lightmap update paths; mode 1 retains abrupt flicker. |
 
 The asset evidence establishes implemented formats and lookup behavior, not complete QSS compatibility. Keep original file attribution and established subsystem ownership.
+
+Current-source reuse checkpoint (2026-09-30, source reads only): destination
+`image.c:157` retains PNG/TGA/JPG/JPEG lookup through the native loader with
+highest-path priority. `gl_model.c:6711/6751` retains shared MD3/MD5 skin lookup
+and indexed worker submission/join; `:6678` retains true-color glow/luma
+counterparts. Native texture jobs (`:1847`) and surface-extent jobs (`:2586`)
+remain. WAD3 palette loading is still owned by `Mod_LoadWadTexture` and
+`TexMgr_LoadImage8Valve`. Native liquid surface classification (`:2536`) keeps
+TEX_SPECIAL unlit liquids separate, while `gl_rlight.c:67` retains the authored
+interpolation gate for CPU and GPU lightmap consumers. These checks confirm
+reuse boundaries, not visible asset parity, completed map loads, measured speed
+or whole-renderer acceptance. No replacement model/texture/loading architecture
+is warranted by this inspection; final consolidated checks remain open.
 
 The current BSP texture loader also checks the file's 15 lump spans before
 loading, bounds reads from each texture-table entry and payload to the texture lump,
