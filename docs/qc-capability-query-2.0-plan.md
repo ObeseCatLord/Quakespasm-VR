@@ -97,3 +97,17 @@ No builds, tests, compiler probes or runtime trials were performed. The official
 documents `checkbuiltin` as a function-reference check for mapped/supported
 builtins, especially named `#0` declarations; it does not establish automatic
 reenabling of skipped destination load-time setup.
+
+## Later source comparison: advertisements versus actual behavior
+
+Three inherited advertisements retain deliberate native-policy differences:
+
+| Primary name | Verified behavior and disposition |
+| --- | --- |
+| `DP_SV_POINTPARTICLES` | QSS-M `pr_ext.c:9335` explicitly omits it because mods infer DarkPlaces particle behavior. Keep the native gated FTE particle advertisement; the existing point-particle handler is not proof of the DarkPlaces contract. |
+| `DP_QC_CVAR_DESCRIPTION` | Both primary `pr_cmds.c:1786` and destination `PF_cvar_description` return string zero, with no descriptions. Keep the safe callable fallback; do not add a claim of real description support from the inherited advertisement alone. This is not an absent migrated description implementation. |
+| `DP_GFX_FOG` | Installed AD source `world.qc:584` queries it and `globalfog.qc:178` appends extended fog arguments when true. Destination `Fog_FogCommand_f` accepts up to six command tokens; larger commands print usage instead of applying fog. Primary clips the command count to six, without implementing the full extended fields. Retain native basic-fog query/command/rendering behavior, so AD uses its basic fog path. No unconditional advertisement, mod-specific patch or fog renderer rewrite. |
+
+These are bounded source dispositions, not a complete capability audit or runtime
+visual proof. The user's native vkQuake graphics requirement favors retaining
+working native fog rather than importing a partial extended-fog claim.
