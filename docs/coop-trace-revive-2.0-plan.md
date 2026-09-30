@@ -80,3 +80,30 @@ damage remains QC-owned. User live multiplayer/headset trials remain separate.
 
 This plan does not close COOP-006's broader respawn-near/cooldown policy or the
 full co-op inventory. Those retain independent source and final software gates.
+
+## Adopted local Astra source disposition
+
+The requested Astra/max review verified the actual source before advising. The
+tool exposes requested settings, not independently certified effective settings;
+this is source/design advice, not final runtime or formal model certification.
+The main thread spot-checked native Think scheduling, all three PostThink scopes,
+client-slot reset owners, extended spawn-parm loading and selective QC restoration.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Include scheduled Think because stock axe damage is delayed | Adopt: observe the existing SV_RunPrivateVRWeaponThink callback as well as three PostThink sites. Do not add a weapon/mod dispatch gate. |
+| Apply after borrowed pose, friendly-fire and command/angle scopes unwind | Adopt: apply before movement publication/inventory refresh; cancel on cleanup exits and recompute attacker ownership after spawn. |
+| Retention alone cannot distinguish reused clients | Adopt: retain candidate and attacker, cancel on disconnect before its QC callback, on connect before slot reuse, on map reset and host abort. Cancellation remains visible during spawn. No separate identity registry/generation protocol. |
+| Copying donor blocked-origin fallback embeds a living player | Adapt: try the actual spawned hull at corpse offsets with native floor/hazard checks. If none is safe, preserve ordinary PutClientInServer position, hull, linking and teledeath behavior. Do not force a blocked corpse origin or speculate an edict/world rollback. Even an unsafe authored spawn remains native QC's existing outcome, not a new engine placement guarantee. |
+| Native has 64 spawn parms and additional borrowed QC state | Adopt: preserve applicable basic/extended parms, scratch/argc, trace/basis, self/other/time/frametime and existing cooperative input scope. Restore selectively only when saved VM storage is still valid; keep intentional gameplay globals. |
+| Revive must explicitly restore target inventory | Adopt: merge the existing last-alive/corpse typed inventory before QC, restore it under the inherited toggle, apply existing shared progression, then refresh the existing cache. No second inventory store. |
+| Relocation needs actual movement discontinuity and oldorigin | Adopt: reuse/factor native relocate and teledeath helpers with explicit saved corpse angles; update oldorigin and target discontinuity without retiring its command queue. |
+| Observe actual trace semantics and exclude synthetic contacts | Adopt: keep dispatch/publication unchanged, admit only original finite short traces and ordinary native/VR traces; preserve donor padded slab bounds, obstruction and minimum intersection-fraction selection. |
+| 400-line cap understates native adaptation | Adopt: reopen before coding to an estimated 450–650 net production lines across the four planned files and small host.c lifecycle hooks. Existing input helper may move within sv_phys.c rather than be duplicated. Stop for main architecture review before 650 net lines, another owner, or a second callback/respawn state machine. |
+
+Ordinary QC spawn fallback is an explicit improvement over donor forced blocked
+placement. Revival runs PutClientInServer once, never ClientConnect, with its
+observation closed. This remains a bounded pending trace operation, not a general
+QuakeC transaction or physical melee implementation. Final software acceptance
+must cover delayed axe, connection/bot reuse, borrowed context, both placement
+outcomes and native damage; builds/tests remain deferred until full implementation.
