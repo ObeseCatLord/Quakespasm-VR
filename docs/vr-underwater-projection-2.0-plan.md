@@ -124,3 +124,30 @@ The backend, frame graph, shader ABI, masks and foveation policy are unchanged.
 
 Only source comparison/reads and `git diff --check` have occurred. No builds,
 fixtures, runtime, headset or performance checks were performed.
+
+## Reopened interaction boundary before follow-up code
+
+The final bounded local Astra source review confirmed the common scene
+projection/AO/culling contract and frame ordering, but found that the previous
+UI disposition was incomplete. `r_passes.c` routes the interactive 3D wheel
+through terminal `SUBPASS_MAIN`, not `SUBPASS_UI`; `R_DrawViewModelTask` draws
+it beside overlays and the late held weapon. `vr_weapon_menu.c` selects in
+ordinary world/panel coordinates. Its models would deform relative to the
+unwarped foreground panel. Playspace models also share scene depth and culling.
+Main verified all four owners; treating the whole foreground context as UI
+would incorrectly exempt held weapons and world overlays.
+
+| Follow-up option | Reuse, behavior and complexity | Main lean |
+| --- | --- | --- |
+| Use identity scene factors while the interactive VR wheel is open. | Reuses `VR_WeaponMenu_IsOpenVR`, already read by the viewmodel task. Scene, wheel, depth, culling, AO, panels and hit testing all share ordinary projection during interaction. No new state, pass, target, input mapping or culling owner. Alternate oscillation resumes when closed; desktop and water modes 0/1 unchanged. One frame-selection guard. | Prefer this small VR presentation policy. Explicitly document temporary alternate-effect suppression. |
+| Select raw clips only around wheel geometry. | Foreground depth-clear mode can be exempted narrowly, but playspace scene depth/culling no longer match and selection labels still need a contract. Separate culling/depth replay or interaction deformation adds considerable policy to an opt-in cosmetic effect. | Reject without new evidence that the cosmetic effect during wheel interaction justifies that complexity. |
+| Distort wheel panels and input to follow the scene. | Requires matching per-eye image deformation to one physical interaction ray and panel position, plus action/text handling. Risks existing controller selection behavior and contradicts the protected-UI contract. | Reject. |
+| Disable the alternate VR effect entirely. | Deletes a native graphics feature even outside interaction. | Reject; the ordinary gameplay adapter remains useful. |
+
+Reopen scope is only the existing frame-selection condition and its docs.
+No change to wheel rendering, existing foreground/playspace occlusion, or
+Vulkan passes. A short local Astra advisory design recheck should challenge
+whether this policy is necessary/sufficient before the guard is implemented.
+End-of-implementation checks add underwater open/close, both wheel modes,
+tracking/session loss and no stale identity phase on close. Actual appearance
+and comfort remain deferred to the user.
