@@ -953,6 +953,14 @@ void Host_ServerFrame (void)
 	SV_CoopFriendlyFireReset ();
 }
 
+// Used by cl.qcvm.GetModel so SSQC and CSQC can share model builtins.
+static qmodel_t *CL_ModelForIndex (int index)
+{
+	if (index < 0 || index >= MAX_MODELS)
+		return NULL;
+	return cl.model_precache[index];
+}
+
 static void CL_LoadCSProgs (void)
 {
 	PR_ClearProgs (&cl.qcvm);
@@ -992,6 +1000,7 @@ static void CL_LoadCSProgs (void)
 				return;
 			}
 
+			qcvm->GetModel = CL_ModelForIndex;
 			// set a few globals, if they exist
 			if (qcvm->extglobals.maxclients)
 				*qcvm->extglobals.maxclients = cl.maxclients;
