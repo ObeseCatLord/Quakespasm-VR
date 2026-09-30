@@ -103,3 +103,34 @@ advisory, not a certified senior-skill pass. No human decision is required.
 | Preserve the wider inherited source requirement. | **Adopted:** separate rerelease discovery remains required stage 2. This patch does not claim complete MOD-006 or runtime text parity. |
 
 Production ownership and the 350-added-line bound remain as specified above.
+
+## Stage 2 source boundary checkpoint
+
+Main source reads establish the next adapter boundary without expanding stage 1:
+
+- Primary `COM_InitFilesystem` (`common.c:3327–3338`) chooses an explicit
+  `-rerelease` root first, then an available sibling rerelease, then Steam's
+  resolved rerelease unless `-norerelease` is set. The English localization
+  source is discovered independently of enhanced-model activation.
+- Primary `COM_LoadRereleaseLocalization` (`2455`) reads only
+  `localization/loc_english.txt` from that separately discovered pack, with
+  bounded PACK directory/entry validation and optional failure cleanup. It
+  never mounts the pack. This is the reusable read boundary; copying its
+  neighboring content-root/model-mount services is not required.
+- Native `COM_FindStoreBaseDir` (`3880`) already reuses Steam/GOG/Epic discovery,
+  but it is not the same as always discovering an optional localization source
+  for an otherwise valid portable basedir. `COM_InitSteamAPI` and explicit
+  `COM_AddRereleaseModelPack` are already separate native owners. Preserve
+  basedir/flavor selection, achievements and model-only mount rules.
+- The native language loader's normal search remains first. A separate source
+  should be consulted only for the exact missing English localization table,
+  before its existing KPF fallback, preserving the inherited precedence and
+  rejecting unrelated asset paths. The FGD supplement remains the stage-1
+  native game search, not a reason to mount commercial game data.
+
+Before stage-2 coding, draft the precise reused discovery order and native
+API/allocator adaptations, then obtain a bounded requested-Astra disposition.
+Do not recreate store discovery, export unused content-root APIs, add a second
+localization dictionary or copy the primary filesystem wholesale. No stage-2
+production code or asset copy is authorized by this source checkpoint alone;
+the migration task already authorizes finishing its planned implementation.
