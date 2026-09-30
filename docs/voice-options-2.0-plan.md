@@ -61,15 +61,32 @@ explicitly chooses another. Device cycling is main-thread SDL enumeration,
 including the default entry, exact-name length/uniqueness checks and graceful
 loss. Do not open devices or enumerate them in the GUI draw path.
 
-VR microphone changes share Voice_SetVRTransmitEnabled rather than creating
-another saved switch. Desktop changes share its existing desktop profile.
+VR and desktop transmission actions mutate the existing profile, sharing the
+native save/stop/close/refresh boundary with Voice_SetVRTransmitEnabled rather
+than creating another saved switch. Preserve the existing VR Options microphone
+opt-out, which also disables local monitoring. The voice page's explicitly named
+transmission control, like primary Voice_SetTransmitEnabled at voice.c:365,
+changes transmission only: local wet monitoring remains separately controlled.
+Do not restore a revoked monitoring preference automatically. A small common
+action-finalization helper is acceptable; no additional policy state is needed.
 VAD/PTT is profile-owned; cvar controls retain reference ranges. A small
 archived local-wet-level cvar feeds existing Spatial_SelfGain at Voice_Frame,
 with reference0..2 range. Reflection enablement uses native availability and
 device checks; failed activation leaves the preference/result readable.
 No accidental dry sidetone or transmit activation follows from wet monitoring.
 
-Write set: Quake/menu.c, menu.h, voice.c, voice.h. Estimate <=420 added lines,
+Native Voice_PTTKeyEvent already requires a physical gameplay key with the
+exact +voicerecord binding, and console command text cannot press PTT
+(voice.c:737,810). The native Controls list currently lacks that binding entry;
+add it to the existing keybinding list and a route to Controls from the voice
+page. Do not copy the primary's obsolete second ptt_allowed permission policy:
+native physical-input gating already owns this behavior. This entry and route
+complete usable VAD/PTT selection rather than add another input owner.
+
+Write set: Quake/menu.c, menu.h, voice.c, voice.h. Estimate <=600 added lines,
+revised before implementation to include native slider/pointer dispatch, device
+cycling and the verified Controls entry/route, which the original420-line
+estimate did not account for fully;
 no new module or persistent store. Reopen if a separate state/capture owner,
 new renderer synchronization or protocol change is proposed. Source-review
 the callback/main-thread boundaries locally with Astra after implementation.
@@ -86,6 +103,7 @@ the callback/main-thread boundaries locally with Astra after implementation.
    desktop/VR saved switches and profile transitions; default/exact/missing/
    duplicate devices; VAD/PTT and gameplay versus menu gating; sliders/ranges;
    receive/HUD/radio/spatial controls; local wet-only level and independent
-   transmit; unavailable audio/Steam Audio; return navigation and both-eye
+   transmit; global VR microphone opt-out stops monitoring as well; physical
+   PTT binding/release/menu gating; unavailable audio/Steam Audio; return navigation and both-eye
    pointer/menu coordinates. User live microphone/headset/performance checks
    remain deferred. This plan alone does not complete the voice/UI feature.
