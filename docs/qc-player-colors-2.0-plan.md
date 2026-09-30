@@ -3,7 +3,8 @@
 ## Verified brief for local Astra senior review
 
 Solo-maintained engine migration; reuse native owners and keep this an SSQC
-builtin adapter, not a color protocol/service rewrite. No production edits yet.
+builtin adapter, not a color protocol/service rewrite. This brief preceded
+production; the disposition below defines the implementation.
 
 | Fact | Evidence / status |
 | --- | --- |
@@ -19,7 +20,8 @@ builtin adapter, not a color protocol/service rewrite. No production edits yet.
 
 Paths above are sibling repositories under the workspace. Primary/QSS-M/vkQuake
 are read-only; only `quakespasm-2.0` branch `2.0` may be edited. Production write
-scope is `Quake/pr_ext.c`; existing server/userinfo/renderer owners stay intact.
+scope is `Quake/pr_ext.c`, plus the reviewed local-prefix correction in
+`Quake/cl_main.c`; existing server/userinfo/renderer owners stay intact.
 
 ## Proposed adapter and open decisions
 
@@ -75,3 +77,23 @@ negative/fractional/large/nonfinite values, name-less bots, absent/unknown
 clients, exact numeric/named binding, failed info capacity and ordinary desktop
 name/color commands. Confirm native team and both client presentations agree.
 No headset testing or performance measurement is part of this slice.
+
+## Astra design disposition
+
+Main spot-check confirmed the load-bearing source findings before adoption.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Reuse QSS-M's two native updates with primary's active-client guard | Adopt. No new protocol or replicated color owner. |
+| Canonicalize nibbles 14/15 to 13 | Adopt, explicitly retaining native-valid colors and aligning modern/legacy presentations. |
+| Seed only a missing userinfo name from the current client name | Adopt. Existing nonempty names stay native-authoritative. Reject an empty seed. |
+| Preflight native insertion before publication | Adopt one scratch copy, mirroring native unchanged-value skips and insertion order. No rollback/transaction framework. |
+| Native prefix survives the entire recipient loop | Adopt QSS-M's stack `prestr[64]`. Native `va()` rotates through eight buffers; the old prefix was retained while each recipient allocated another buffer. This correction belongs to the existing `SV_UpdateInfo` owner. |
+| Repeated accepted calls still set team | Adopt primary's unconditional team assignment after success, using the canonical bottom nibble. Also keep the native cached color byte canonical. Do not force synthetic info changes. |
+| Advertise the actual builtin capability | Adopt `DP_SV_SETCOLOR`, verified in both donors, through the existing query table. Do not advertise unrelated `DP_SV_CLIENTCOLORS` or `DP_SV_CLIENTNAME`; their complete contracts are outside this slice. |
+| No human decision or architecture replacement needed | Adopt. The native valid palette policy matches the user's native vkQuake foundation preference. |
+
+Deferred acceptance additionally includes eight-plus PREDINFO recipients,
+repeated identical colors after QC changes `.team`, and failed/unchanged-value
+preflight cases. The review was read-only, with no builds, tests, compiler or
+runtime probes. This disposition is design acceptance, not source/runtime proof.
