@@ -69,3 +69,8 @@ before client video/input/OpenXR/sound/voice initialization, explicit desktop
 OpenXR bootstrap fallback, and native demo registrations/read/write/seek owners.
 It does not qualify packet payload semantics, mission-pack gameplay or actual
 runtime-library availability.
+
+Current user scope supersedes older acceptance wording: demo functionality and
+its software checks are desktop-only and limited to native vkQuake features.
+VR demos and additional timeline/scrub/snapshot-rewind features are excluded;
+no further VR demo work follows this bounded native correction.

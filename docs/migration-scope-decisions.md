@@ -123,3 +123,19 @@ The retained [revival research](coop-trace-revive-2.0-plan.md) is historical onl
 Normal native melee, ordinary co-op respawn/cooldown, inventory retention,
 teleport and the rest of the migration remain in scope. Those features reuse
 native owners directly and must not depend on revival helpers.
+
+## Native desktop demos only (2026-09-30)
+
+The user limited demos to vkQuake's built-in desktop functionality and excluded
+VR demo support. Keep native recording/playback/pause/command seek behavior;
+no QSS-M/Ironwail timeline, scrubber, snapshot-rewind framework or additional
+demo feature is required. CAND-UX-002 is excluded from implementation scope.
+The two native read-bound/zero-minute seek fixes in327e34a9 correct existing
+built-in behavior; they do not add another demo feature or renderer.
+
+BASE-001's demo checks are desktop-only. VR demo recording/playback, tracked
+demo camera/avatar presentation and headset demo qualification are not
+completion gates. Incidental existing codec/cache-reset code is not a claim
+of VR demo support and does not justify further demo integration work.
+Native live play, tracking, command delivery, network replay/prediction and
+ordinary desktop↔VR mode transitions remain in scope.

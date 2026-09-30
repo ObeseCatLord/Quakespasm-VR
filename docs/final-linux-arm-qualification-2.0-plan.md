@@ -37,7 +37,7 @@ runtime, packet counter or helper test must keep its proof limitations explicit.
 
 | Family | Required software evidence at the actual owner |
 | --- | --- |
-| Native base and delivery | Desktop map/menu/console/config behavior; build/install/packaging and resource lookup; requested shared changes without replacing native vkQuake ownership; documented upstream adapter provenance and a separate disposable upstream merge rehearsal. |
+| Native base and delivery | Desktop map/menu/console/config and built-in vkQuake desktop demo behavior; build/install/packaging and resource lookup; requested shared changes without replacing native vkQuake ownership; documented upstream adapter provenance and a separate disposable upstream merge rehearsal. No VR demos or additional demo feature gate. |
 | OpenXR session and input | Device/runtime qualification, session/frame acquire/wait/release/submission/retirement ordering; startup, compatible attachment, healthy disable and explicit recovery; optional trackers/gaze, focus loss, physical-hand/profile changes and held-key release. Exercise actual backend/renderer paths where software facilities exist; do not call a fake-runtime result headset proof. |
 | Stereo and native graphics | Actual two-layer opaque multiview shaders/passes and independent eye cameras; once-per-frame animation/gameplay/particles/QC; native Vulkan MSAA/precision/lighting/warps/transparency, protected UI/weapon detail, shared AO qualities with unchanged desktop AO and stereo VR AO; conservative either-eye PVS/frustum/backface/moved-brush rejection independent of gaze. Rendered software evidence must accompany eligible path coverage. |
 | Foveation | FB/META preference and device-time fallback eligibility, exact extension/feature-family ownership, density-map/image lifecycle and MSAA compatibility; gaze toggle, freshness/validity and unavailable eye tracking restore full quality; fixed mode is explicit only, never default/fallback. KHR is a startup/device fallback, never switched live onto an FDM-created device. No quad views. |
@@ -71,6 +71,7 @@ certification. Resolve required findings before claiming implementation complete
 User live headset/eye tracking/multiplayer/performance trials and Windows builds
 remain outside this pass. General live incompatible VkDevice/device-loss rebuild,
 skyrooms, quad views, Gorilla/swim propulsion, instant stop, physical-contact
-melee/parry, Mjolnir hybrids, imagedump and revival do not become hidden gates.
+melee/parry, Mjolnir hybrids, imagedump, revival, VR demos and additional demo
+features do not become hidden gates.
 Within surviving software scope, missing/indirect evidence remains open. Keep
 the full migration goal active until its completion audit is supported.
