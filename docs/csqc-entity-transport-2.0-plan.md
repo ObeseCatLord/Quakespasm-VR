@@ -158,3 +158,7 @@ it as a QC SendFlags bit. Frame replay restores delivery debt only (USABLE and
 REMOVE), not visibility or PRESENT policy. This prevents a second PVS pass or
 parallel eligibility table. Free clears CURRENT while preserving removal debt;
 current visible reused slots receive atomic remove/full-create as above.
+
+`pr_ext.c` is added to main ownership for the existing `csqcactive` client-key
+query: report the actual recipient readiness flag instead of its hardcoded zero.
+No new query/capability owner is introduced.
