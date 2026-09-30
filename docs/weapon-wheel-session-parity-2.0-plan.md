@@ -54,3 +54,14 @@ stat disappearance and return, action then miss (no action and no resurrected
 weapon), unowned/empty/unavailable entry, occluded target, tracking/focus loss,
 mode/map/game cancellation, stable schema IDs and unchanged desktop actions.
 No runtime/headset/performance claim is made by this plan.
+
+
+## Player-action control source checkpoint
+
+The7-net-line production adapter copies the primary's archived default1 control,
+registers it in existing CL_InitInput, and checks it in the common co-op action
+predicate. Nonfinite values conservatively disable optional actions. Both player
+and spawn actions, rebuilt release candidates and prepared hover validation use
+that predicate. Main compared those consumers and the primary declaration;
+scoped git diff --check passes. No tests/builds ran. Retained selection remains
+unimplemented and requires the separately requested source disposition.

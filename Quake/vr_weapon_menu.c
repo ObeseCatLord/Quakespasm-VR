@@ -15,6 +15,8 @@
 
 extern qpic_t *Sbar_WeaponMenuIcon (int item_bit);
 
+cvar_t vr_weaponmenu_player_teleport = {"vr_weaponmenu_player_teleport", "1", CVAR_ARCHIVE};
+
 #define VR_WEAPON_MENU_MAX_ENTRIES VR_WEAPON_CATALOG_MAX_OBSERVATIONS
 #define VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE 0.28f
 
@@ -1892,7 +1894,9 @@ static qboolean VR_WeaponMenu_QuickSaveAvailable (void)
 
 static qboolean VR_WeaponMenu_CoopPlayersAvailable (void)
 {
-	return cls.state == ca_connected && cls.signon == SIGNONS &&
+	return isfinite (vr_weaponmenu_player_teleport.value) &&
+		vr_weaponmenu_player_teleport.value != 0.0f &&
+		cls.state == ca_connected && cls.signon == SIGNONS &&
 		cl.gametype == GAME_COOP && cl.maxclients > 1 && cl.scores != NULL;
 }
 

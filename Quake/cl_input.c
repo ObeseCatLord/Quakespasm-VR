@@ -1248,6 +1248,7 @@ CL_InitInput
 */
 void CL_InitInput (void)
 {
+	Cvar_RegisterVariable (&vr_weaponmenu_player_teleport);
 	Cmd_AddCommand_ServerCommand ("vr_weapon_contact_haptic",
 		CL_VRWeaponContactHaptic_f);
 	Cmd_AddCommand ("+vr_weaponmenu", IN_VRWeaponMenuDown);

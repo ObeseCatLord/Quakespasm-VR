@@ -5,6 +5,8 @@
 
 struct cb_context_s;
 
+extern cvar_t vr_weaponmenu_player_teleport;
+
 /* Stable catalog identities let the same screen-space picker serve later
  * profile, model, playspace, and co-op catalogs without owning game state. */
 typedef enum {
