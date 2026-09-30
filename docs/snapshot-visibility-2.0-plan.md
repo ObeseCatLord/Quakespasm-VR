@@ -21,8 +21,10 @@ customization, not just baseline delta flags. Direct reads show:
   still requires reference qualification.
 * Destination snapshot sets `parent=ent` without following existing tag fields.
   Native entity state packing already transmits tag entity/index, and client
-  `CL_AttachEntity` already applies them and inherits VIEWMODEL/EXTERIORMODEL flags.
-  No new attachment transform, renderer, entity service or culling graph is needed.
+  `CL_AttachEntity` already applies parent transforms and inherits
+  VIEWMODEL/EXTERIORMODEL flags. Its tag_index application remains a TODO and
+  chain depth is limited to ten. No new attachment transform, renderer, entity
+  service or culling graph is needed in this slice.
 * Primary admits emitting entities without a model. Native server state packing
   and client scripted particle emission already exist, but native model-null
   early rejection makes the smallest correct end-to-end adaptation unresolved.
@@ -249,3 +251,46 @@ renderer, protocol negotiation, prediction physics, foveation or approved NET-00
 state except direct no-remove/callback interaction. Effective settings metadata
 must be exposed to claim a certified senior-skill review; without it, explicitly
 label the result advisory. Main spot-checks and records disposition before code.
+
+## Astra design advisory disposition before production
+
+Local requested-Astra Max verified the brief/references and prioritized the
+mutable callback ownership boundary over additional rendering. Effective
+settings metadata is unavailable, so this is an advisory, not a certified
+senior-skill pass. Main spot-checked retirement/replay ordering, raw parent
+conversion in state packing, classic owner omission gates and `SV_DropClient`.
+No human decision remains. The table below supersedes proposed decisions above.
+
+| Recommendation | Disposition / adopted implementation contract |
+| --- | --- |
+| Merge callback lifetime and classic sorting decisions | Adopt one raw-self/other context helper, retain callback entity, preserve QC mutations, determine custom eligibility after callback. Retain recipient throughout snapshot/classic pass, and check free after every callback. Do not replace native sorting or add a state cache. |
+| Classic gather-abort cleanup cannot use an unbuilt sorted list | Adapt: release admitted count through `sort ? net_edicts : net_edicts_sorted`, including the separately retained owner once, after normal serialization, overflow or gather abort. Before serialization recheck free/non-owner model validity and model limit; later callbacks may have changed earlier candidates. |
+| Freed recipient must abort safely through existing caller | Adopt spawned network-recipient checks at presend and send entry, and after customization/SendEntity. Unwind globals/retains/message limits and publish any reallocated scratch owner with zero valid states before failure. Caller bound to recipient uses `SV_DropClient(true)`; false would invoke QC/convert a freed player. No packet/delta commit after failure, no drop inside a helper still using frame arrays. |
+| Preserving only snapshot no-remove bits misses later dropped-frame replay | Adapt: hidden live custom eligibility clears CURRENT/USABLE and preserves PRESENT/REMOVE/WAIT/RETIRENEW. Existing writer discards USABLE when CURRENT-clear before classifying work, honoring explicit REMOVE. Visible re-entry forces full update from prior CURRENT-clear. No PVS re-query or new hidden-state list in writer. |
+| Parent validation must cover PVS bypass and state packing | Adopt shared raw-offset allocation/alignment/liveness check plus bounded parent walk. Ordinary invalid/cyclic attachment is not admitted. Mandatory owner keeps record with invalid outgoing attachment suppressed, without editing QC fields. `SV_BuildEntityState` also uses safe direct-parent validation, since server/client makestatic call it independently of snapshots. |
+| Reference pvsflags timing differs | Choose QSS-M post-customization sampling explicitly, so callback field mutations affect this recipient's visibility. Do not describe primary pre-callback sampling as equivalent. |
+| Mandatory native owner survives all omission gates | Adopt live owner callback/field mutation with modern requested-hide EXTERIORMODEL; keep classic owner through filters and zero-alpha gate. This hides ordinary modern geometry, not every effect/overlay; classic has no equivalent flag. Preserve prediction/solids metadata and existing model values. |
+| Native client attachment scope was overstated | Corrected: parent transforms/flag inheritance exist, tag-index transform remains TODO and client chain depth ten. Do not import a renderer on that premise. |
+
+Additional main evidence: `pr_edict.c:128` excludes reserved world/client slots
+from the reusable FIFO. Thus entry/post-callback free checks do not require a
+new player generation to detect ordinary allocation reuse. `PF_Remove` itself
+does allow ED_Free, so recipient death must be handled explicitly. Static state
+packing callers in `pr_cmds.c:1795/1976` use the current VM; safe parent-offset
+validation must be current-VM generic, not hardcoded to the server allocator.
+
+One bounded coding worker owns only `Quake/progs.h`, `Quake/server.h` and
+`Quake/sv_main.c`; no client/renderer changes. Copy four field declarations and
+six PVS constants, shared callback/reference/PVS helpers, adapt existing modern
+and classic loops, consume existing custom CURRENT before replayed dirty work,
+and propagate recipient failure at the existing send callers. Preserve stable
+removal boundary and packet framing. Include native server admission of explicit
+emission metadata and alpha-zero entities with trail/emission as references do;
+no model-less client rendering claim. No trace/PHS service or mod-specific rule.
+
+Estimated under300 production lines (updated from250 before code for both
+packing callers and complete recipient-failure cleanup); reopen beyond300 or if
+a parallel state/lifecycle/cache appears. Main reviews every change and requests
+bounded Astra source recheck on the integrated result. Builds/tests/compiler
+checks/probes remain deferred. Full NET-003 visible behavior qualification is
+not established by this design disposition.
