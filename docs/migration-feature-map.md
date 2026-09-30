@@ -307,6 +307,11 @@ fixture or code comparison.
 | FBT-004 — Persistent named profiles, strict storage, selection/save/reset and menu role cycling | MAIN:Quake/vr_fbt_storage.c:2 (VR_FBT); MAIN:Quake/vr_fbt_profile.c:1 (VR_FBT); MAIN:Quake/vr_menu.c:206 (VR_MenuCycleFBTRole) | Quake/vr_fbt*.c;Quake/vr_menu.c; **REUSE**, P3 | Save/reload named profiles across sessions; malformed profile and missing serial never silently reassign roles. |
 | FBT-005 — Optional tracker-less operation and independently negotiated lower-body pose relay | MAIN:Quake/vr.c:1958 (vr_fbt_enabled); MAIN:Quake/vrik_codec.h:2 (VRIK); MAIN:tests/vrik_lowerbody_fixture.c:412 (main) | Quake/vr.c;Quake/vrik_codec.c;Quake/r_vrik.c; **ADAPT**, P3 | Normal HMD/controller VR works without trackers; remote lower body activates only with valid negotiated inputs. |
 
+The current [tracker source checkpoint](tracker-source-checkpoint-2.0.md)
+inspects the actual runtime, identity, calibration, menu and palette consumers
+and records explicit session/ABI/role limitations. Final Linux/ARM software
+qualification remains pending.
+
 The `2.0` branch now directly reuses the source's hardware-independent FBT
 identity manager, pose filter, profile parser and persistent storage. OpenXR
 tracker snapshots now reach the role manager with explicit list/assign commands
