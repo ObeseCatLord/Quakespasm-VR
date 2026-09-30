@@ -67,3 +67,34 @@ Report actual call/signature/permission/lifetime gaps with evidence separately
 from intentional differences and remaining execution unknowns. No builds,
 tests, probes, nested agents, telemetry or edits. This is a source audit, not a
 new architecture decision or certified senior-skill gate.
+
+## Bounded source audit and correction plan
+
+Requested local Astra Max inspected the integrated append/directory adapter and
+the retained native file service at27ba9c8d. Effective settings metadata was not
+exposed; this is a source advisory, not certified review or runtime qualification.
+Main spot-checked the two actionable findings against the current implementation:
+
+| Finding / evidence | Disposition before code |
+| --- | --- |
+| PF_fopen grows qcfiles with Mem_Realloc and reads the new slot's file before initialization; mem.c:120 does not zero realloc growth | Adopt: memset exactly the added slot immediately after growth, before occupancy inspection. Keep native dynamic capacity, VM ownership and handle numbering. |
+| Read refills advance fileoffset by all fetched bytes, while cacheoffset tracks consumption; PF_fseek returns the refill endpoint | Adopt: read-mode prior-position query becomes fileoffset - cachesize + cacheoffset. Keep native PAK filebase, refill accounting, seek/reset and write-mode positions. |
+
+The append/directory patch introduced neither defect. This supersedes the earlier
+instruction to leave native seek calculations untouched only for this confirmed
+read-position error. One bounded worker owns only Quake/pr_ext.c: one slot memset
+and one read-position expression/comment (under six changed production lines).
+No alternative table, per-character reader, path-policy change or new file owner.
+Reopen if more state/policy is needed; main reviews the diff before commit.
+
+Other advisory comparisons accept the ordinary 110-113 signatures/VM dispatch,
+append/replace modes, denied/failed-open behavior, PAK bounds and owner teardown
+at source level. Deliberate native differences remain: canonical data/ writes,
+restricted read fallback, whole-line consumption with bounded output, interior
+CR preservation and an empty non-null final blank line. Primary's fixed table
+and byte-at-a-time reader are not copied. Failed seeks, malformed/oversized inputs
+and allocation exhaustion are not qualified by this bounded audit.
+
+Add table growth/reuse and cached read-position save/restore to the final isolated
+Linux/ARM checks, alongside cache/PAK boundaries and existing cases. No tests,
+builds, compiler checks, probes or actual file writes until full implementation.
