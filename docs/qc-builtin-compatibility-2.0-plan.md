@@ -59,3 +59,13 @@ SSQC and CSQC for registered names, mixed-case names, absent/empty names and a
 named dynamic-number entry; verify that invoking returned numbers still follows
 the existing VM permission/binding rules. Add core and collision cases when
 their adapter slices are implemented. No assets or deployed game state change.
+
+## First-slice source disposition
+
+The helper change is implemented. Personal local Astra Max accepted it with no
+introduced P1/P2: unsuccessful lookup retains zero, successful lookup returns
+the assigned number immediately, and comparison follows primary's case behavior.
+The reviewer verified existing documented/dynamic number initialization and
+confirmed that allocation and VM invocation permissions are unchanged. No
+builds, tests or probes were performed. The remaining audit findings above are
+still open; this acceptance covers only the first slice.

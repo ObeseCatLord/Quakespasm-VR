@@ -6020,14 +6020,19 @@ static void PF_builtinsupported (void)
 {
 	const char	*biname = G_STRING (OFS_PARM0);
 	unsigned int i;
+
+	G_FLOAT (OFS_RETURN) = 0;
+	if (!biname || !*biname)
+		return;
+
 	for (i = 0; i < countof (extensionbuiltins); i++)
 	{
-		if (!strcmp (extensionbuiltins[i].name, biname))
+		if (!q_strcasecmp (extensionbuiltins[i].name, biname))
 		{
 			G_FLOAT (OFS_RETURN) = extensionbuiltins[i].number;
+			return;
 		}
 	}
-	G_FLOAT (OFS_RETURN) = 0;
 }
 
 static void PF_checkbuiltin (void)
