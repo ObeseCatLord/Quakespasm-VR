@@ -2785,7 +2785,7 @@ Allways appends a 0 byte.
 */
 byte *COM_LoadFile (const char *path, unsigned int *path_id)
 {
-	int			h;
+	int			h, nread;
 	byte	   *buf;
 	qfilesize_t len;
 
@@ -2803,8 +2803,10 @@ byte *COM_LoadFile (const char *path, unsigned int *path_id)
 
 	((byte *)buf)[len] = 0;
 
-	Sys_FileRead (h, buf, len);
+	nread = Sys_FileRead (h, buf, len);
 	COM_CloseFile (h);
+	if (nread != len)
+		Sys_Error ("COM_LoadFile: Error reading %s", path);
 
 	return buf;
 }

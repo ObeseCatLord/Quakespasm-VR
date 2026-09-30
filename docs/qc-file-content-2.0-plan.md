@@ -9,7 +9,7 @@ Previously repaired ownership, append/mkdir and cached position are not reopened
 | --- | --- |
 | PF_fseek pr_ext.c:3621 commits requested logical offset and cache invalidation even when Sys_fseek fails; native Unix sys_sdl_unix.c:62 returns fseeko status. | Compute target locally. Commit fileoffset/cache reset only on successful seek. Preserve prior-position return, filebase and existing raw-int seek API. No new offset policy. |
 | PF_fgets pr_ext.c:3545 consumes an overlong physical line while retaining a prefix; its last retained CR is stripped as though it were the real line ending. | Track actual output truncation. Strip trailing CR only when the retained result reached the physical line end. Preserve native whole-line consumption, capacity and blank/EOF behavior. |
-| PF_buf_loadfile trusts COM_LoadFile, which ignores Sys_FileRead count in common.c:2806; unread allocation contents may be parsed after a release-build short read. | Pending bounded disposition below; preserve embedded/native VFS reading and primary failure semantics, not a separate QC filesystem. |
+| PF_buf_loadfile trusts COM_LoadFile, which ignores Sys_FileRead count in common.c:2806; unread allocation contents may be parsed after a release-build short read. | Copy the primary count/close/fatal check at existing COM_LoadFile, as adopted below; preserve embedded/native VFS reads without a separate QC filesystem. |
 
 ## Checked-load decision reopened before coding
 
@@ -53,3 +53,23 @@ remainder and only removes CR from an untruncated physical line ending. Main
 reviewed both complete diffs and the native fseeko wrapper/cache loop; scoped
 git diff --check passes. Seven net lines in pr_ext.c; no executable checks.
 The checked native-loader disposition remains pending before common.c edits.
+
+## Adopted checked-load source disposition
+
+The focused requested-Astra advice verified the embedded memory pack and
+withdrew its stream alternative. Main adopts the actual primary count/close/
+Sys_Error sequence at existing COM_LoadFile. Missing files still return NULL;
+successful empty files still return a terminated buffer. No QC-only soft-failure
+claim, new helper or VFS branch is added. This preserves the primary fatal
+short-read contract and native memory/file handle resolution; assertion-enabled
+builds may stop earlier at the existing native read assertion.
+
+## Checked native-loader source integration
+
+COM_LoadFile now captures native read count, closes its duplicated handle and
+rejects an incomplete buffer through the primary Sys_Error message/sequence.
+Two net lines in common.c; main reviewed the complete two-hunk diff against
+primary2163 and the native embedded/physical handle branches. Together with
+the two-wrapper correction, the repair is nine net production lines across
+existing owners. Scoped whitespace checks pass. No executable checks ran;
+final software and broader MOD-005 qualification remain open.
