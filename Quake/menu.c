@@ -31,6 +31,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "addon_catalog.h"
 #include "custom_avatar.h"
 #include "voice.h"
+#include "mod_browser_keyboard.h"
 
 void (*vid_menucmdfn) (void); // johnfitz
 void (*vid_menukeyfn) (int key);
@@ -4336,6 +4337,8 @@ static menuticker_t		 m_mods_ticker;
 static filelist_item_t **mods_sorted;
 static filelist_item_t **mods_filtered;
 static char				 mods_search[MODS_SEARCH_MAX + 1];
+static qboolean mods_keyboard;
+static int mods_keyboard_cursor;
 static qboolean		 mods_catalogue_view;
 static int				 mods_catalogue_control_hover;
 static int				 mods_catalogue_indices[ADDON_CATALOG_MAX_ENTRIES];
@@ -4447,6 +4450,7 @@ static qboolean M_Mods_SetCatalogue (qboolean catalogue)
 	if (mods_catalogue_view == catalogue)
 		return false;
 	mods_catalogue_view = catalogue;
+	mods_keyboard = false;
 	mods_catalogue_last_state = AddonCatalog_State ();
 	M_Mods_UpdateFilter ();
 	return true;
@@ -4471,6 +4475,7 @@ static qboolean M_Mods_IsInstalledGameDir (const char *gamedir)
 
 static void M_Mods_PlayInstalled (const char *gamedir)
 {
+	mods_keyboard = false;
 	IN_Activate ();
 	key_dest = key_game;
 	m_state = m_none;
@@ -4623,10 +4628,122 @@ static void M_Menu_Mods_f (void)
 	mods_search[0] = '\0';
 	mods_catalogue_view = false;
 	mods_catalogue_details = false;
+	mods_keyboard = false;
 	M_Mods_RebuildInstalled ();
 	M_Mods_UpdateFilter ();
 
 	M_Ticker_Init (&m_mods_ticker);
+}
+
+static void M_Mods_Char (int key);
+
+static void M_Mods_KeyboardSet (qboolean enabled)
+{
+	mods_keyboard = enabled;
+	scrollbar_grab = slider_grab = false;
+	scrollbar_size = 0;
+	if (enabled)
+		mods_keyboard_cursor = mods_search[0] ? MOD_BROWSER_KEY_COUNT - 1 : 0;
+	M_MenuChanged ();
+}
+
+/* Adapt the inherited keyboard to the native bounded filter owner. */
+static void M_Mods_KeyboardActivate (void)
+{
+	const size_t length = strlen (mods_search);
+	const int key = mods_keyboard_cursor;
+	if (key < 26)
+		M_Mods_Char ('A' + key);
+	else if (key < 36)
+		M_Mods_Char ('0' + key - 26);
+	else if (key == 36)
+	{
+		if (length && mods_search[length - 1] != ' ')
+			M_Mods_Char (' ');
+	}
+	else if (key <= 39)
+		M_Mods_Char ("-_."[key - 37]);
+	else if (key == 40 || key == 41)
+	{
+		if (length)
+		{
+			mods_search[key == 40 ? length - 1 : 0] = '\0';
+			M_Mods_UpdateFilter ();
+		}
+	}
+	else
+		M_Mods_KeyboardSet (false);
+}
+
+static void M_Mods_KeyboardKey (int key)
+{
+	switch (key)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+	case K_YBUTTON:
+		M_Mods_KeyboardSet (false);
+		break;
+	case K_LEFTARROW:
+	case K_RIGHTARROW:
+		mods_keyboard_cursor = (mods_keyboard_cursor + MOD_BROWSER_KEY_COUNT +
+			(key == K_LEFTARROW ? -1 : 1)) % MOD_BROWSER_KEY_COUNT;
+		break;
+	case K_UPARROW:
+	case K_VR_RIGHT_STICK_UP:
+	case K_DOWNARROW:
+	case K_VR_RIGHT_STICK_DOWN:
+		mods_keyboard_cursor = ModBrowser_KeyVertical (mods_keyboard_cursor,
+			key == K_UPARROW || key == K_VR_RIGHT_STICK_UP ? -1 : 1);
+		break;
+	case K_BACKSPACE:
+	case K_DEL:
+	case K_XBUTTON:
+	{
+		const size_t length = strlen (mods_search);
+		if (length)
+		{
+			mods_search[key == K_BACKSPACE ? length - 1 : 0] = '\0';
+			M_Mods_UpdateFilter ();
+		}
+		break;
+	}
+	case K_MOUSE1:
+		if (!ModBrowser_Contains (ModBrowser_KeyRect (mods_keyboard_cursor), m_mouse_x, m_mouse_y))
+			return;
+		/* fall through */
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		M_Mods_KeyboardActivate ();
+		break;
+	default:
+		return;
+	}
+	S_LocalSound ("misc/menu1.wav");
+}
+
+static void M_Mods_KeyboardDraw (cb_context_t *cbx)
+{
+	char field[MODS_SEARCH_MAX + 2];
+	M_PrintWhite (cbx, 8, 4, mods_catalogue_view ? "SEARCH CATALOGUE" : "SEARCH INSTALLED");
+	Draw_Fill (cbx, 8, 24, 304, 22, 4, 0.95f);
+	q_snprintf (field, sizeof (field), "%s_", mods_search);
+	M_PrintWhite (cbx, 16, 31, field);
+	for (int key = 0; key < MOD_BROWSER_KEY_COUNT; ++key)
+	{
+		const mod_browser_rect_t r = ModBrowser_KeyRect (key);
+		char glyph[2] = {key < 26 ? 'A' + key : '0' + key - 26, 0};
+		const char *label = key < 36 ? glyph :
+			key == 36 ? "SP" : key == 37 ? "-" : key == 38 ? "_" :
+			key == 39 ? "." : key == 40 ? "Backspace" : key == 41 ? "Clear" : "Done";
+		M_Mouse_UpdateCursor (&mods_keyboard_cursor, r.x, r.x + r.w - 1, r.y, r.h - 1, key);
+		Draw_Fill (cbx, r.x, r.y, r.w, r.h, key == mods_keyboard_cursor ? 14 : 4, 0.9f);
+		M_PrintWhite (cbx, r.x + (r.w - (int)strlen (label) * CHARACTER_SIZE) / 2, r.y + 7, label);
+	}
+	M_PrintWhite (cbx, 8, 180, "Stick/arrows: choose  Trigger/A: enter");
+	M_PrintWhite (cbx, 8, 190, "Y/B/Esc: done   X/Del: clear");
 }
 
 static void M_Mods_Draw (cb_context_t *cbx)
@@ -4644,6 +4761,11 @@ static void M_Mods_Draw (cb_context_t *cbx)
 				mods_catalogue_refresh_pending = false;
 		}
 		mods_catalogue_last_state = state;
+	}
+	if (mods_keyboard)
+	{
+		M_Mods_KeyboardDraw (cbx);
+		return;
 	}
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	qpic_t *p = Draw_CachePic ("gfx/p_mods.lmp");
@@ -4756,6 +4878,7 @@ static void M_Mods_Draw (cb_context_t *cbx)
 			M_PrintWhite (cbx, MENU_LABEL_X, 32, mods_search[0] ? "No installed mods match." : "No installed mods found.");
 	}
 	M_PrintWhite (cbx, 16, 160, "Filter:");
+	M_PrintWhite (cbx, 16, 180, "Y: search keyboard");
 	M_DrawTextBox (cbx, 72, 152, MODS_SEARCH_WIDTH, 1);
 	{
 		const int length = (int)strlen (mods_search);
@@ -4772,6 +4895,7 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, mods_catalogue_view ? 200 : 208, 144, 7, 0);
 	if (mods_catalogue_view)
 		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, 144, 7, 1);
+	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 72, 312, 152, 24, 2);
 	if (num_mods > 0)
 		Draw_Character (cbx, MENU_CURSOR_X, 32 + (mods_cursor - first_mod) * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
 	if (num_mods > MAX_MODS_ON_SCREEN)
@@ -4780,6 +4904,11 @@ static void M_Mods_Draw (cb_context_t *cbx)
 
 static void M_Mods_Key (int key)
 {
+	if (mods_keyboard)
+	{
+		M_Mods_KeyboardKey (key);
+		return;
+	}
 	if (mods_catalogue_view && mods_catalogue_details)
 	{
 		if (key == K_MOUSE2 || key == K_ESCAPE || key == K_BBUTTON ||
@@ -4804,6 +4933,12 @@ static void M_Mods_Key (int key)
 				M_Mods_ConfirmCatalogueInstall ();
 			return;
 		}
+		return;
+	}
+
+	if (key == K_YBUTTON || (key == K_MOUSE1 && !scrollbar_grab && M_Mouse_InRect (72, 312, 152, 176)))
+	{
+		M_Mods_KeyboardSet (true);
 		return;
 	}
 
@@ -7351,6 +7486,11 @@ qboolean M_VRPointerCanClick (void)
 {
 	return V_TrackedSessionActive () && m_vr_pointer_valid && m_vr_pointer_state == m_state && key_dest == key_menu &&
 		   m_state != m_none && M_Mouse_ClickValid ();
+}
+
+qboolean M_VRPointerRequiresHit (void)
+{
+	return m_state == m_mods && mods_keyboard;
 }
 
 qboolean M_VRPointerBindingGrab (void)

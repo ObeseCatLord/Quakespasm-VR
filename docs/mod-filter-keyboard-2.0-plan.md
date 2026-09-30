@@ -103,3 +103,9 @@ existing boundary, not another input service. The write set above is amended
 before implementing that correction; the <=230-line estimate remains adequate.
 Effective model settings are unexposed, so this is a requested-Astra advisory,
 not a certified senior-skill pass. No executable checks have run.
+
+The final bounded source recheck confirmed all three findings resolved, with
+no new P1/P2 finding in the slice. A missed VR trigger press latches the existing
+menu_trigger_key to -1, which both native dispatch paths ignore; release
+hysteresis clears it. Holding a missed press while moving onto a key cannot
+activate that key later. No additional input-state flag was introduced.

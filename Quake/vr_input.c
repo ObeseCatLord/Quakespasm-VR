@@ -4168,7 +4168,11 @@ void VR_InputMenuPanelTrigger (const vrxr_frame_t *frame, qboolean panel_drawn)
 	if (!state->trigger_down)
 		return;
 	if (!state->menu_trigger_key)
-		state->menu_trigger_key = panel_drawn && M_VRPointerCanClick () ? K_MOUSE1 : K_ENTER;
+		/* A keyboard miss consumes this press until release. -1 is ignored by
+		 * VR_InputAddKey; retain the native trigger owner instead of rearming
+		 * when a held ray later crosses a key. Other menus keep Enter fallback. */
+		state->menu_trigger_key = panel_drawn && M_VRPointerCanClick () ? K_MOUSE1 :
+			M_VRPointerRequiresHit () ? -1 : K_ENTER;
 
 	/* Carry the full pre-render ownership snapshot forward. The selected menu
 	 * key remains held across frames and hover changes until trigger release. */

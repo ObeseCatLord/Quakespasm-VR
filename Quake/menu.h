@@ -78,6 +78,7 @@ void	 M_SetVRPointerPosition (int x, int y, qboolean valid);
 void	 M_SetVRPointerPixelPosition (int x, int y, qboolean valid);
 qboolean M_VRPointerPixelInMenuCanvas (int x, int y);
 qboolean M_VRPointerCanClick (void);
+qboolean M_VRPointerRequiresHit (void);
 qboolean M_VRPointerBindingGrab (void);
 
 void M_Menu_Main_f (void);
