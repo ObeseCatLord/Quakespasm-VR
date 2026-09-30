@@ -132,3 +132,49 @@ unnecessary. Source depth budget: donor named helpers/inventory/completion and
 current typed/binding/save/input owners only. No generic movement re-review,
 revival, new mod abilities, physical melee, wheel, graphics or runtime tests.
 Expected300–450 net lines, no new owner; reopen above450 or broader dispatch.
+
+## Adopted source disposition and one reopened lifetime question
+
+Main spot-checked the requested-Astra source advice against the donor inventory,
+completion and callback bodies, current fresh saved-player caller and native
+retention. Effective settings remain unobservable; this is source advice only.
+
+| Recommendation | Disposition before implementation |
+| --- | --- |
+| Serialization/corpse encoding must never call transition QC | Adopt: keep incoming model evidence in passive serialization and dead-changelevel transfers. Only a fresh live-body restore rejects an expired incoming fist model and invokes W_ChangeWeapon(selected,1). Preserve fresh QC model until that repair. |
+| Saved restore must propagate cancellation beyond the callee | Adopt qboolean owner-survival return and a narrow Host_Spawn_f early return before alpha/frags, saved-slot consumption, placement and signon. Missing optional APIs mean unchanged live-owner success. Existing admission permits active pre-begin clients; do not require spawned. |
+| Four callback wrappers duplicate borrowing | Adopt one private invocation/unwind helper with explicit named signatures and encoded arguments at callers. Reuse current input snapshot. Borrow host_client/sv_player and context/parameter/return/basis/trace only; preserve gameplay globals and surviving VM unwind after cancellation. |
+| Recovery must not run at every accepted head | Adopt existing actual-PostThink completion, before the mod-owned bypass, retaining the binding through callbacks. Copy native six-second fully frozen limbo retry with finite clocks/flags and reversal reset. |
+| Forced native relocation can double-publish an epoch | Adopt captured existing epoch and one publication if still unpublished, coordinated with generic successful respawn. Preserve authored hold and accepted queues; color cleanup publishes none. |
+| Destination history needs a new identity registry | Reject: use inherited current reference/alignment/range/class admission and native retention during the callback. No claim of historical identity across the six-second wait. |
+| Pending cleanup belongs in the transient think window | Reject: extend existing slot metadata/reset owners with timer/pending bit; set pending on dead mod-owned plunge and keep it until the guarded layer disappears or lifecycle resets. |
+| Invalid typed berserk state means expired | Reject: validity and active result are separate. Missing/mistyped/nonfinite state cannot authorize expiration cleanup; no selected-weapon/program-pin/physical-profile gate. |
+| csf_clear_all selectively removes only priority70 | Reject that unproven guarantee. Preserve donor call and exact admission; csf_clear(self,100) remains the separate inactive-berserk cleanup. Do not claim stronger callee behavior without QC evidence. |
+
+Revised stage2 ownership is sv_phys.c plus only the saved-restore return contract
+in server.h and caller cancellation in host_cmd.c. Target350–450 net lines,
+including required lifetime adaptation; no stage2 sv_main.c change is expected.
+
+Main found one necessary question before coding: a fresh saved-player helper
+must not overwrite an enclosing cancellation binding. Verified pr_ext.c:2434–2451
+and its server registry entry6377 permit clientcommand(other,"spawn") for an
+active pre-begin client; host_cmd.c:5124 registers spawn and Host_Spawn_f permits
+src_client/unspawned entry. This can enter the saved-restore path during another
+player's QC callback. Native sv_player context for that unusual command remains
+an existing separate limitation; it does not make overwriting the enclosing
+binding safe. Current BindPolicy overwrites its single global record, so a new
+bounded saved-restore record would lose parent cancellation/unwind information.
+Actual execution is unverified; the permitted returning source route is verified.
+
+Reopen that lifetime design only. Lean: copy the existing native temporary-scope
+previous-pointer pattern at the existing respawn binding, with bounded stack
+borrowing/restoration and cancellation reaching enclosing live records. Reuse
+the same policy records and hooks, no persistent registry/generations/allocation
+or new respawn state machine. Compare a copied previous binding with moving
+binding ownership into the existing scope; prefer the smaller justified adapter.
+Skipping optional behavior solely because the helper is nested or replacing
+command/spawn dispatch is rejected. The reviewer must verify reachability,
+challenge necessity and give the smallest exact ownership/budget disposition
+before production stage2 changes. The integrated generic2e7536b9 remains the
+behavioral base; this question is introduced by the proposed additional callback
+boundary, not permission to rewrite native QC/physics generally.
