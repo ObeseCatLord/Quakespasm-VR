@@ -63,8 +63,9 @@ would multiply working policy and is rejected. No protocol or Vulkan edits.
 
 Stage1: generic COOP-006. Copy reference anchors/ranking/cooldown/placement and
 join/changelevel hooks, reusing current typed cache, safety and relocation.
-Capture the true pre-death body pose once in the existing world tracker, including
-world/projectile deaths outside PostThink. Preserve once-only shared key/death
+Capture a finite frame-start/body-owner fallback in the existing world tracker,
+including world/projectile deaths outside PostThink. This is not an exact hook
+at arbitrary QC damage. Preserve once-only shared key/death
 reconciliation. Restore input only for the same live client/VM owner and preserve
 actual QC impulse consumption and authored angle changes. Reuse movement
 discontinuity without clearing accepted command history.
@@ -97,3 +98,47 @@ classic/disable and mixed desktop/VR input. Verify prediction teleport fencing
 and intentional QC effects. Stage2 covers native QBJ3 freeze/thaw and orphaned
 effects without clearing active berserk. User live headset/multiplayer and
 performance trials remain deferred; no measurement is required for this plan.
+
+## Adopted local Astra source disposition
+
+Requested Astra/max read the pinned source; effective settings were not exposed,
+so this is source advice rather than formal review certification. Main checked
+the donor begin-before-PreThink ordering, native continuation skips, typed void
+bypass and join distinctions. Reopen the following contracts before code:
+
+| Finding | Disposition |
+| --- | --- |
+| Donor BeginPostThink actually precedes PlayerPreThink | Adopt: carry one existing policy scope from before PreThink through any continuation; finish once after native pose/FF/input unwind. Filter all actual QC/button owners during cooldown, including shared-QC rebinding, without changing accepted queue records. |
+| Retention/pointer equality cannot identify client-slot reuse | Adopt: extend existing revive/lifecycle cancellation rather than create another identity registry. Clear transient anchors/timers/wipe state in current slot/map resets and cancel borrowed input restoration before disconnect/free/reuse/abort. |
+| Typed plunge/void bypass is necessary for generic policy | Adopt stage1 passive ModOwnsLifecycle bypass from actual reference. Defer active recovery/orphan-effect callbacks to stage2. Neither physical-contact melee nor a new mod whitelist is a prerequisite. |
+| Frame-start fallback is not the exact arbitrary QC death position | Adapt: retain a finite body-owner/frame-start fallback; capture inventory before StartFrame can strip it. Update only from surviving restored body owners, not temporary weapon poses or stripped corpses. Preserve existing once-only shared reconciliation. |
+| Fresh joins run before spawned and map-initial joins differ | Adopt: copy the reference initial-spawn distinction into native client/server bookkeeping; use current saved-client identity to preserve living saves and distinguish dead-saved/newcomer placement. Native64-parm changelevel extraction remains. |
+| Null teammate anchor, force_retouch and discontinuity need adaptation | Adopt: share the revive-factored relocation helper with explicit death angles; death candidates stay dry and teammate candidates obey existing water policy. Restore current invocation's retouch only for committed relocation. Native QC fallback retains spawn effects. Publish native discontinuity even for ordinary successful respawn, without retiring queues. |
+| Numeric conversion/timers can invalidate optional policy | Adopt finite/range checks. Nonpositive/nonfinite delay never locks input indefinitely; invalid candidate geometry/ranking leaves native spawning intact. |
+
+The estimate remains600–850 net lines, not a target to fill. Native callbacks,
+inventory, input scopes, placement and shared world-death ownership remain.
+
+## Performance fork requiring disposition before coding
+
+`SV_CoopRespawnTouchesHazardTrigger` currently scans every non-player edict for
+every candidate (`sv_phys.c:4930–4950`). It is currently used by infrequent manual
+placement. Copying donor safe-origin sampling before/after every private command
+would put repeated whole-map scans on a high-frequency path, even for living
+players on jumbo maps. This is verified source cost structure, not a benchmark.
+
+Native `world.c:352–385` already traverses linked trigger area nodes for overlap;
+`SV_TouchLinks:2429` consumes that collector. Prefer reusing this spatial owner
+for a read-only bounded overlap predicate, without executing touch QC, changing
+links or introducing a hazard cache. Consider extending the private traversal
+with optional predicate/bounds inputs and a narrow public query; preserve current
+touch list collection unchanged. Fixed-size truncated candidate lists and dummy
+live-edict relinking are rejected because they can change placement correctness.
+Alternatively retain the scan but sample safe anchors only at existing world-body
+boundaries; reviewer must assess whether that loses useful inherited behavior.
+
+Open: whether that small `world.c`/`world.h` boundary is justified, sampling rate,
+unlinked-trigger equivalence and callback-free traversal ownership. Stage1 must
+not start by quietly accepting per-command whole-world scans. A chosen extension
+requires explicit write-set revision before production changes and final
+software checks comparing trigger/hazard eligibility and relocation behavior.
