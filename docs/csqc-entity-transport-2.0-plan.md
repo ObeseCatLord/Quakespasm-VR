@@ -146,3 +146,15 @@ web GPT coding agent owns only those files. Main owns `sv_main.c`, `server.h`,
 free/teardown hooks. No overlapping edits; main reviews and integrates every
 agent change. Scope stays NET-009 until its source implementation is coherent;
 no declarations-only completion claim.
+
+### Visibility debt separation at the existing pending-word boundary
+
+Before production, main identifies one necessary detail of replay reconciliation:
+a dropped-frame replay can occur in BeginFrame after the frame's recipient
+visibility snapshot was collected. Old update bits must not make a currently
+hidden entity eligible. Add one internal CURRENT marker to the existing pending
+word, owned only by native snapshot visibility; never log/replay it or expose
+it as a QC SendFlags bit. Frame replay restores delivery debt only (USABLE and
+REMOVE), not visibility or PRESENT policy. This prevents a second PVS pass or
+parallel eligibility table. Free clears CURRENT while preserving removal debt;
+current visible reused slots receive atomic remove/full-create as above.
