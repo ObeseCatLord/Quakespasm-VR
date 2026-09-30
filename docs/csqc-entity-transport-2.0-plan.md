@@ -239,3 +239,44 @@ adapter is one extra sequence integer per allocated custom slot and one internal
 flag. No changes to ordinary native entities, renderer or client wire format.
 Expected correction under60 lines. Request bounded local advisory recheck of
 actual ACK/free/drop/visibility/update and sign-on paths after integration.
+
+### Reopen stable lifetime boundary after retry liveness finding
+
+Advisory on `c702d64f` closes prespawn capacity and traces the stale mapping fix,
+but finds a new P1: writer advances the exact required removal ACK on every dirty
+atomic retry. At normal RTT>one snapshot, ACKn always arrives after n+1 was sent;
+WAIT never clears and client lifecycle resets continuously. Main verifies the
+exact-equality predicate and unconditional emitted-sequence overwrite in source.
+Pause production in this region and reopen the architecture decision, as the
+workspace discipline requires after repeated interaction repairs.
+
+Mostly-worked smallest correction: reuse the same pending word and sequence
+array as a **stable first-emitted boundary**, not newest retry target. Add one
+internal RETIRENEW bit only to distinguish a genuinely subsequent retirement
+from a retry of the outstanding boundary. New ED_Free of an entity carrying
+PRESENT marks RETIRENEW; live PRESENT becoming hidden/native similarly marks it.
+A SendEntity rejection/free of a PRESENT entity that emits remove-only is a new
+retirement too. Unsent RETIRENEW blocks an older ACK from clearing WAIT. The
+first emitted remove for that retirement sets the boundary sequence and clears
+RETIRENEW. Atomic retries retain the boundary. A matching entity removal log
+in an ACK packet at-or-after that stable boundary clears WAIT, never delivery
+REMOVE or a newer RETIRENEW. A later retirement replaces the boundary when first
+emitted, so older ACKs cannot discharge it. Internal bits never reach QC or wire.
+
+Alternatives: freeze sequence with exact equality still fails if first packet
+was lost; clear WAIT from any older removal ACK loses a newer lifetime; scan the
+whole history for every candidate adds repeated searches; a new wire generation,
+reliable channel or another state machine is unnecessary. Main lean is the one-bit
+stable-boundary adapter, but local Astra must challenge its necessity and seek
+simplification before code. Compare update/visibility/free/replay interactions as
+one lifetime owner, rather than adding independent fixes. No user taste decision.
+
+Required source traces: ACKn after atomic retry n+1 while always dirty; lost first
+boundary and ACK of later retry; new free before first new removal emission;
+new free plus new removal emission before old ACK; hidden/native transition
+while an older atomic boundary is pending; callback false/free; dropped-frame
+replay of old removal after a boundary ACK. Existing native sequence-ordering
+contracts remain the assumption; no new wrap/dialect protocol is introduced.
+Expected correction under30 lines plus one pending flag. Scope must stay within
+the original native pending/frame owners and under650-line production estimate.
+All tests/probes remain deferred; this is a design reopening, not source closure.
