@@ -142,3 +142,26 @@ unlinked-trigger equivalence and callback-free traversal ownership. Stage1 must
 not start by quietly accepting per-command whole-world scans. A chosen extension
 requires explicit write-set revision before production changes and final
 software checks comparing trigger/hazard eligibility and relocation behavior.
+
+## Adopted spatial-query disposition
+
+The bounded local Astra source assessment selected a40–80-net-line extension of
+the existing area traversal. Main verified the native traversal and TouchLinks
+call, the raw candidate bounds, and native LinkEdict split/expansion rules.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Whole-world scan repeats for each accepted candidate/body-owner sample | Adopt the native spatial trigger owner; no hazard cache or second index. This is source scaling evidence, not a measured latency result. |
+| Linked traversal cannot include stale unlinked trigger bounds | Adopt linked active trigger semantics explicitly, matching native touch processing and documented relinking requirements. Unlinked/inactive stale bounds no longer veto optional placement. Do not claim arbitrary QC-edited unlinked edict equivalence. |
+| Preserve native TouchLinks collector behavior | Extend its private traversal with explicit bounds and an optional pure C predicate; list mode retains exact ordering/capacity/self filtering. Query mode early-exits, allocates no candidate list and executes no QC. |
+| Player candidate bounds must not gain linked-bound expansion | Pass origin+mins/maxs exactly; retain trigger-side absolute bounds and inclusive overlap. Reject invalid bounds/world state conservatively for optional placement. |
+| Do not downgrade body sampling to world-frame-only for cost | Retain body-owner sampling. An optional unchanged-safe-record shortcut may compare origin, angles and view angles together, never cache safety or skip later candidate validation/inventory. |
+
+Production slice ownership is `Quake/world.c`, `Quake/world.h` and only the
+existing hazard predicate/caller in `Quake/sv_phys.c`. Target40–80 net lines;
+reopen above100, a new cache/index, or native touch/QC behavior changes. It is
+sequenced before generic respawn integration; no revival helpers exist or are
+required. Stage1 may subsequently edit other sv_phys regions after this slice
+is reviewed and committed. No builds/tests/fixtures until full implementation.
+Final software cases include linked hazards, split/bound equality, dense trigger
+lists, relinking, unchanged ordinary touches and placement refusal/fallback.
