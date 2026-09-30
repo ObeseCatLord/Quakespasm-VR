@@ -3388,6 +3388,21 @@ static size_t qcfiles_max;
 
 #define QC_FILE_BASE 1
 
+static void PF_QCCreatePath (char *path)
+{
+	char *s;
+
+	for (s = path + 1; *s; s++)
+	{
+		if (*s == '/')
+		{
+			*s = 0;
+			Sys_mkdir (path);
+			*s = '/';
+		}
+	}
+}
+
 static size_t PF_QCHandleIndex (float handle, size_t base, size_t limit)
 {
 	double offset = (double)handle - base;
@@ -3429,12 +3444,14 @@ static void PF_fopen (void)
 		break;
 	case 1: // append
 		q_snprintf (name, sizeof (name), "%s/%s", com_gamedir, fname);
-		file = Sys_fopen (name, "w+b");
+		PF_QCCreatePath (name);
+		file = Sys_fopen (name, "ab");
 		if (file)
 			Sys_fseek (file, 0, SEEK_END);
 		break;
 	case 2: // write
 		q_snprintf (name, sizeof (name), "%s/%s", com_gamedir, fname);
+		PF_QCCreatePath (name);
 		file = Sys_fopen (name, "wb");
 		break;
 	default:
