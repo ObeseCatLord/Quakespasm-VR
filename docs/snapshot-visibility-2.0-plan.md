@@ -122,3 +122,33 @@ metadata, but actual first-person/chase/VR/avatar/particle semantics require
 source review before choosing that presentation adapter. Do not assume setting
 owner modelindex0 is harmless: existing client relink and getentity depend on a
 model. No new behavior is implemented by this evidence checkpoint.
+
+### Remaining ownership and presentation decisions
+
+Further native source reads confirm `ED_Retain` prevents a freed slot from
+entering the reusable list until its matching release (`pr_edict.c:188-202`),
+but does not keep the edict live. The classic gather/sort path therefore needs
+both retention and a post-callback/free check if customization runs during
+gather. Retain every admitted candidate until serialization finishes, including
+the recipient, release every candidate after an overflow break, and skip freed
+candidates during serialization. This is a proposed use of the native lifetime
+owner, not an adopted implementation: reviewer must compare it with callback
+at serialization and reject needless storage or a duplicated state builder.
+
+The destination renderer rejects EXTERIORMODEL in both opaque and transparent
+entity passes (`gl_rmain.c:1198/2317`), while client relink performs lighting,
+trails and emission before omitting the ordinary local player from its draw
+list (`cl_main.c:2366`). Thus the flag hides ordinary geometry without erasing
+the model or native prediction seed, but is not a general suppress-effects
+policy. It also hides geometry in chase view. Existing co-op overlay paths
+have their own eligibility checks, so merely setting this flag cannot qualify
+all presentation consumers. Do not expand the renderer to fix this speculatively.
+The design review must explicitly resolve hidden mandatory-owner semantics and
+the scope of presentation flags before production.
+
+No native VIEWMODEL camera transformation was established by the symbol reads;
+the QSS-M reference additionally uses it for lighting sampling. Copying the
+recipient flag preserves advertised metadata, but must not be described as a
+complete camera-relative or tracked-hand rendering implementation. Keep actual
+native/VR weapon, avatar and attachment transform owners; a demonstrated gap
+would require its own bounded adapter plan rather than a fork renderer import.
