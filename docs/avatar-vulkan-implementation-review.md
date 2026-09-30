@@ -25,6 +25,15 @@ Static rig resolution and repeated consumer validation are candidates for
 centralization once the custom path settles. Preserve distinct main-thread
 admission and frame-owned GPU publication; they have different lifetimes.
 
+The initial finding table above is historical. Subsequent
+[desktop repairs](avatar-desktop-repairs-2.0-plan.md),
+[tracked endpoints](avatar-tracked-endpoints-2.0-plan.md) and
+[animal Hip correction](avatar-tracked-hip-2.0-plan.md) supersede its missing
+palette-adapter statuses. The latest bounded Hip source review accepted
+`b64fbe74`'s inverse-presented goal, 96-unit bound, confidence blend and semantic
+branch restoration. Numerical/asset/Linux/ARM qualification remains deferred;
+the earlier table and isolated timings do not certify overall avatar parity.
+
 ## CPU retarget cost and asset alternatives
 
 An isolated `-O2` Linux timing probe using the existing synthetic 19-joint

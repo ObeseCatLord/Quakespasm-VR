@@ -38,3 +38,24 @@ negative limits and negative/past-end offsets; full/partial/empty replacements,
 case sensitivity, real temporary capacity and termination. Invalid numeric
 argument conversion and whole-registry compatibility are not established by
 this bounded repair; MOD-001 still requires broader final acceptance.
+
+## Implementation and source disposition
+
+`9b5c992d` implements the one-file repair. The replacement helper and thin
+wrappers were copied directly from the pinned primary file. A bounded local
+Astra advisory accepted the actual change with no actionable residual defect.
+Main checked the load-bearing buffer lifetime, both-offset calls and exact
+capacity/copy/termination formulas against the reference and native consumers.
+
+| Review finding | Disposition |
+|---|---|
+| Freed array reused by cvar-list refill or later deletion | Fixed: NULL assignment precedes native refill/reset; original range/VM-owner checks retained. |
+| Pointer-size replacement bound | Fixed by the copied shared primary helper; sensitive/insensitive wrappers keep native registrations and temporary owner. |
+| Missing second offset and negative clamp mismatch | Fixed: both independently clamped offsets used; omitted/negative limit chooses full native comparison. |
+| Retain native lexical ordering rather than primary equality-only helper | Confirmed adaptation; no common string-helper or dispatch rewrite. |
+
+All three trigger outcomes are source-derived, not executed. `git diff --check`
+passed. Both-VM availability and numeric registrations are unchanged. Effective
+reviewer model metadata is unavailable; requested-Astra/Max advisory is not a
+certified senior-skill pass. No builds/tests/compiler/runtime/probes/fixtures
+were run; broader interface and end-of-implementation Linux/ARM checks remain.
