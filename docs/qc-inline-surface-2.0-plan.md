@@ -51,5 +51,31 @@ world/inline models, native vertex lookup and fan indices remain unchanged.
 Malformed vertex/edge storage is still the loader's existing responsibility;
 this slice does not establish a full malformed-BSP or surface-interface contract.
 
-No builds, tests or compiler/runtime probes were run. Final local Astra review
-and consolidated Linux/ARM software qualification remain pending.
+Local Astra Max accepted `d99e16a9` for this stated slice, independently tracing
+the guarded face access, native range setup and shared storage. No builds, tests
+or compiler/runtime probes were run. Consolidated Linux/ARM software
+qualification and final migration review remain pending.
+
+## Bounded follow-up before implementation
+
+Astra's neighboring-query comparison identified three inherited native defects;
+main source comparison verified them against primary `Quake/pr_cmds.c`:
+
+- `PF_getsurfaceclippedpoint` accepts a signed negative surface index before
+  pointer arithmetic. Add a negative-index refusal and the existing inline
+  base/remaining-table guards, preserving the copied input point on refusal.
+- `getsurface_clippointpoly` projects with positive signed plane distance,
+  moving off-plane points away from the plane. Copy primary's `-dist` projection
+  into the native helper; retain its callers, squared-distance calculations and
+  native nearest-surface cache. This is not a new cache or clipping algorithm.
+- `PF_getsurfacenormal` clears only return X on failure. Copy the neighboring
+  three-component zero return, matching primary, and use the same local absolute
+  bounds guards before its offset face access.
+
+Write only `Quake/pr_ext.c` in these existing functions. No renderer, new service
+or model-loading policy. Deferred software qualification must include negative
+clipped-point indices, interior/off-plane projection, invalid normal queries
+after nonzero vector returns, world/inline queries and nearest-surface behavior.
+The full surface interface and malformed geometry/cache lifecycle remain outside
+this bounded source checkpoint. Review the final diff with local Astra before
+claiming source acceptance of these additional corrections.
