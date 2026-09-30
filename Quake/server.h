@@ -64,6 +64,13 @@ typedef enum
 #define NUM_BASIC_SPAWN_PARMS 16
 #define NUM_TOTAL_SPAWN_PARMS 64
 
+#define PVSF_NORMALPVS    0x0
+#define PVSF_NOTRACECHECK 0x1
+#define PVSF_USEPHS       0x2
+#define PVSF_IGNOREPVS    0x3
+#define PVSF_MODE_MASK    0x3
+#define PVSF_NOREMOVE     0x80
+
 typedef struct
 {
 	qboolean active; // false if only a net client

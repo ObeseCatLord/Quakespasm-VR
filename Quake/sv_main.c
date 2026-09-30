@@ -2356,6 +2356,9 @@ static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *ms
 
 	for (entnum = client->csqcsnapshotresume; entnum < client->numpendingcsqcentities; ++entnum)
 	{
+		// BeginFrame may have replayed dirty bits after visibility was collected.
+		if (!(client->pendingcsqcentities_bits[entnum] & SENDFLAG_CURRENT))
+			client->pendingcsqcentities_bits[entnum] &= ~SENDFLAG_USABLE;
 		unsigned int bits = client->pendingcsqcentities_bits[entnum];
 		unsigned int logbits = 0;
 		qboolean update = false;
@@ -2376,8 +2379,10 @@ static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *ms
 			if (!ed->free && GetEdictFieldEval (ed, SendEntity)->function)
 			{
 				int oldself = pr_global_struct->self;
+				int oldother = pr_global_struct->other;
 				qboolean oldallowoverflow = sv.multicast.allowoverflow;
 				ED_Retain (ed);
+				ED_Retain (client->edict);
 				sv.multicast.allowoverflow = true;
 				pr_global_struct->self = EDICT_TO_PROG (ed);
 				G_INT (OFS_PARM0) = EDICT_TO_PROG (client->edict);
@@ -2386,12 +2391,20 @@ static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *ms
 				G_FLOAT (OFS_PARM1 + 1) = (bits & SENDFLAG_PRESENT) >> 24;
 				G_FLOAT (OFS_PARM1 + 2) = 0;
 				PR_ExecuteProgram (GetEdictFieldEval (ed, SendEntity)->function);
+				qboolean recipient_live = !client->edict->free;
 				update = G_FLOAT (OFS_RETURN) && !ed->free &&
 					GetEdictFieldEval (ed, SendEntity)->function;
 				payload_overflow = sv.multicast.overflowed;
 				sv.multicast.allowoverflow = oldallowoverflow;
 				pr_global_struct->self = oldself;
+				pr_global_struct->other = oldother;
 				ED_Release (ed);
+				ED_Release (client->edict);
+				if (!recipient_live)
+				{
+					SZ_Clear (&sv.multicast);
+					return false;
+				}
 			}
 		}
 		if (!update)
@@ -2459,6 +2472,64 @@ static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *ms
 	return true;
 }
 
+// Raw QC references must be validated before conversion, including in client VM makestatic.
+static edict_t *SV_LiveEntityForOffset (int offset)
+{
+	if (offset < 0 || qcvm->edict_size <= 0 || offset % qcvm->edict_size ||
+		offset / qcvm->edict_size >= qcvm->num_edicts)
+		return NULL;
+	edict_t *ent = EDICT_NUM (offset / qcvm->edict_size);
+	return ent->free ? NULL : ent;
+}
+
+static edict_t *SV_VisibilityParent (edict_t *ent)
+{
+	for (int depth = 0; depth < qcvm->num_edicts; ++depth)
+	{
+		eval_t *val = GetEdictFieldValue (ent, qcvm->extfields.tag_entity);
+		if (!val || !val->edict)
+			return ent;
+		ent = SV_LiveEntityForOffset (val->edict);
+		if (!ent)
+			return NULL;
+	}
+	return NULL; // No acyclic chain can exceed the allocated entity count.
+}
+
+static qboolean SV_CustomizeEntityForClient (edict_t *ent, edict_t *recipient)
+{
+	eval_t *val = GetEdictFieldValue (ent, qcvm->extfields.customizeentityforclient);
+	qboolean visible = true;
+	if (val && val->function)
+	{
+		int oldself = pr_global_struct->self, oldother = pr_global_struct->other;
+		ED_Retain (ent); // The caller retains the recipient for its entire pass.
+		pr_global_struct->self = EDICT_TO_PROG (ent);
+		pr_global_struct->other = EDICT_TO_PROG (recipient);
+		PR_ExecuteProgram (val->function);
+		visible = G_FLOAT (OFS_RETURN) && !ent->free;
+		pr_global_struct->self = oldself;
+		pr_global_struct->other = oldother;
+		ED_Release (ent);
+	}
+	return visible; // QC field mutations intentionally persist across recipients.
+}
+
+static qboolean SV_VisibilityPVS (edict_t *parent, byte *pvs, int flags, qboolean modern)
+{
+	// PHS conservatively bypasses PVS; only modern snapshots bypass zero leaves.
+	return (flags & PVSF_MODE_MASK) >= PVSF_USEPHS || (modern && !parent->num_leafs) ||
+		parent->num_leafs >= MAX_ENT_LEAFS || SV_EdictInPVS (parent, pvs);
+}
+
+static qboolean SV_HasParticleEffect (edict_t *ent, int field)
+{
+	eval_t *val = GetEdictFieldValue (ent, field);
+	// Bound the float before converting/indexing, also rejecting NaN and infinity.
+	return val && val->_float >= 1 && val->_float < MAX_PARTICLETYPES &&
+		sv.particle_precache[(int)val->_float] && sv.particle_precache[(int)val->_float][0];
+}
+
 /*
 SV_BuildEntityState
 copies edict state into a more compact entity_state_t with all the extension fields etc sorted out and neatened up for network precision.
@@ -2467,6 +2538,7 @@ note: ignores  like nodrawtoclient / drawonlytoclient and other client-specific 
 void SV_BuildEntityState (edict_t *ent, entity_state_t *state)
 {
 	eval_t *val;
+	edict_t *parent;
 	state->eflags = 0;
 	if (SV_UsePredThinkPos (ent))
 		VectorCopy (ent->predthinkpos, state->origin);
@@ -2495,11 +2567,12 @@ void SV_BuildEntityState (edict_t *ent, entity_state_t *state)
 		state->colormod[0] = state->colormod[1] = state->colormod[2] = 32;
 	state->traileffectnum = qcvm->extfields.traileffectnum >= 0 ? GetEdictFieldValue (ent, qcvm->extfields.traileffectnum)->_float : 0;
 	state->emiteffectnum = qcvm->extfields.emiteffectnum >= 0 ? GetEdictFieldValue (ent, qcvm->extfields.emiteffectnum)->_float : 0;
-	if ((val = GetEdictFieldValue (ent, qcvm->extfields.tag_entity)) && val->edict)
-		state->tagentity = NUM_FOR_EDICT (PROG_TO_EDICT (val->edict));
+	if ((val = GetEdictFieldValue (ent, qcvm->extfields.tag_entity)) && val->edict &&
+		(parent = SV_LiveEntityForOffset (val->edict)))
+		state->tagentity = NUM_FOR_EDICT (parent);
 	else
 		state->tagentity = 0;
-	if ((val = GetEdictFieldValue (ent, qcvm->extfields.tag_index)))
+	if (state->tagentity && (val = GetEdictFieldValue (ent, qcvm->extfields.tag_index)))
 		state->tagindex = val->_float;
 	else
 		state->tagindex = 0;
@@ -2518,9 +2591,9 @@ void SV_BuildEntityState (edict_t *ent, entity_state_t *state)
 #endif
 }
 
-static void SVFTE_BuildSnapshotForClient (client_t *client)
+static qboolean SVFTE_BuildSnapshotForClient (client_t *client)
 {
-	unsigned int  e, i;
+	unsigned int  e;
 	byte		 *pvs;
 	vec3_t		  org;
 	edict_t		 *ent, *parent;
@@ -2530,13 +2603,15 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	unsigned char eflags;
 	qboolean cancsqc = client->csqcactive && SV_CSQCTransportAllowed (client) &&
 		GetEdictFieldValid (SendEntity) && GetEdictFieldValid (SendFlags);
-	qboolean iscsqc;
+	qboolean iscsqc, visible;
+	int pvs_flags;
 	int			  proged = EDICT_TO_PROG (clent);
 
 	struct entity_num_state_s *ents = snapshot_entstate;
 	size_t					   numents = 0;
 	size_t					   maxents = snapshot_maxents;
 
+	ED_Retain (clent);
 	// find the client's PVS
 	VectorAdd (clent->v.origin, clent->v.view_ofs, org);
 	pvs = SV_FatPVS (org, qcvm->worldmodel);
@@ -2564,63 +2639,65 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	ent = NEXT_EDICT (qcvm->edicts);
 	for (e = 1; e < maxentities; e++, ent = NEXT_EDICT (ent))
 	{
+		iscsqc = false;
+		pvs_flags = 0;
+		if (ent->free)
+			goto invisible;
+		visible = SV_CustomizeEntityForClient (ent, clent);
+		if (clent->free)
+			break;
 		if (ent->free)
 			goto invisible;
 		eflags = 0;
 		// The recipient player always retains the native movement snapshot.
 		iscsqc = cancsqc && ent != clent && GetEdictFieldEval (ent, SendEntity)->function;
+		val = GetEdictFieldValue (ent, qcvm->extfields.pvsflags);
+		pvs_flags = val ? (int)val->_float : PVSF_NORMALPVS;
+		parent = SV_VisibilityParent (ent); // Validate even when PVS is bypassed.
+		if (!parent && ent != clent)
+			goto invisible;
+		val = GetEdictFieldValue (ent, qcvm->extfields.viewmodelforclient);
+		if (val && val->edict == proged)
+			eflags |= EFLAGS_VIEWMODEL;
+		else if (val && val->edict)
+			visible = false;
 		if (ent != clent) // clent is ALLWAYS sent
 		{
 			// ignore ents without visible models
-			if ((!ent->v.modelindex || !PR_GetString (ent->v.model)[0]) && !iscsqc)
-			{
-			invisible:
-				if (cancsqc)
-				{
-					unsigned int bits = client->pendingcsqcentities_bits[e];
-					client->pendingcsqcentities_bits[e] = SVFTE_RetireCSQCBits (bits);
-				}
-				continue;
-			}
-
-			// attached entities should use the pvs of the parent rather than the child (because the child will typically be bugging out around '0 0 0', so
-			// won't be useful)
-			parent = ent;
-			if (parent->num_leafs)
-			{
-				// ignore if not touching a PV leaf
-				for (i = 0; i < parent->num_leafs; i++)
-					if (pvs[parent->leafnums[i] >> 3] & (1 << (parent->leafnums[i] & 7)))
-						break;
-
-				// ericw -- added ent->num_leafs < MAX_ENT_LEAFS condition.
-				//
-				// if ent->num_leafs == MAX_ENT_LEAFS, the ent is visible from too many leafs
-				// for us to say whether it's in the PVS, so don't try to vis cull it.
-				// this commonly happens with rotators, because they often have huge bboxes
-				// spanning the entire map, or really tall lifts, etc.
-				if (i == parent->num_leafs && parent->num_leafs < MAX_ENT_LEAFS)
-					goto invisible; // not visible
-			}
+			if (!visible || ((!ent->v.modelindex || !PR_GetString (ent->v.model)[0]) &&
+				!iscsqc && !SV_HasParticleEffect (ent, qcvm->extfields.emiteffectnum)))
+				goto invisible;
+			if (!(eflags & EFLAGS_VIEWMODEL) && !SV_VisibilityPVS (parent, pvs, pvs_flags, true))
+				goto invisible;
 		}
 
 		val = GetEdictFieldValue (ent, qcvm->extfields.nodrawtoclient);
 		if (val && val->edict == proged)
-			goto invisible;
+			visible = false;
 		val = GetEdictFieldValue (ent, qcvm->extfields.drawonlytoclient);
 		if (val && val->edict && val->edict != proged)
-			goto invisible;
+			visible = false;
+		if (!visible)
+		{
+			if (ent != clent)
+				goto invisible;
+			// Hide ordinary owner geometry without discarding its prediction seed.
+			eflags |= EFLAGS_EXTERIORMODEL;
+		}
+		val = GetEdictFieldValue (ent, qcvm->extfields.exteriormodeltoclient);
+		if (val && val->edict == proged)
+			eflags |= EFLAGS_EXTERIORMODEL;
 
 		if (cancsqc)
 		{
 			unsigned int *bits = &client->pendingcsqcentities_bits[e];
 			if (iscsqc)
 			{
-				*bits |= SENDFLAG_CURRENT;
-				if (!(*bits & SENDFLAG_PRESENT) || (*bits & SENDFLAG_REMOVE))
+				if (!(*bits & SENDFLAG_CURRENT) || !(*bits & SENDFLAG_PRESENT) || (*bits & SENDFLAG_REMOVE))
 					*bits |= SENDFLAG_USABLE;
 				else
 					*bits |= (int)GetEdictFieldEval (ent, SendFlags)->_float & SENDFLAG_USABLE;
+				*bits |= SENDFLAG_CURRENT;
 				continue;
 			}
 			*bits = SVFTE_RetireCSQCBits (*bits);
@@ -2635,6 +2712,8 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 
 		ents[numents].num = e;
 		SV_BuildEntityState (ent, &ents[numents].state);
+		if (!parent) // The mandatory owner survives an invalid attachment without mutating QC.
+			ents[numents].state.tagentity = ents[numents].state.tagindex = 0;
 		if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 		{
 			if (client->edict && ent->v.owner == EDICT_TO_PROG (client->edict))
@@ -2676,17 +2755,33 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 			for (int axis = 0; axis < 3; ++axis)
 				ents[numents].state.velocity[axis] = SVFTE_EncodeVelocity (ent->v.velocity[axis]);
 		}
-		else if (ents[numents].state.alpha == ENTALPHA_ZERO && !ent->v.effects) // don't send invisible entities unless they have effects
+		else if (ents[numents].state.alpha == ENTALPHA_ZERO && !ent->v.effects &&
+			!SV_HasParticleEffect (ent, qcvm->extfields.traileffectnum) &&
+			!SV_HasParticleEffect (ent, qcvm->extfields.emiteffectnum))
 			continue;
 		// EFLAGS_VIEWMODEL was handled above
 		ents[numents].state.eflags |= eflags;
 
 		numents++;
+		continue;
+
+	invisible:
+		if (cancsqc)
+		{
+			unsigned int *bits = &client->pendingcsqcentities_bits[e];
+			if (iscsqc && !ent->free && (pvs_flags & PVSF_NOREMOVE))
+				*bits &= ~(SENDFLAG_CURRENT | SENDFLAG_USABLE);
+			else
+				*bits = SVFTE_RetireCSQCBits (*bits);
+		}
 	}
 
+	qboolean recipient_live = !clent->free;
 	snapshot_entstate = ents;
-	snapshot_numents = numents;
+	snapshot_numents = recipient_live ? numents : 0;
 	snapshot_maxents = maxents;
+	ED_Release (clent);
+	return recipient_live;
 }
 
 void MSG_WriteStaticOrBaseLine (sizebuf_t *buf, int idx, entity_state_t *state, unsigned int protocol_pext2, unsigned int protocol, unsigned int protocolflags)
@@ -3812,7 +3907,7 @@ SV_WriteEntitiesToClient
 
 =============
 */
-void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflowsize)
+static qboolean SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflowsize)
 {
 	edict_t		*clent = client->edict;
 	unsigned int e, i, maxedict = qcvm->num_edicts, j, numents;
@@ -3820,10 +3915,11 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 	byte		*pvs;
 	vec3_t		 org, forward, right, up;
 	float		 miss, dist, size;
-	edict_t		*ent;
+	edict_t		*ent, *parent;
 	eval_t		*val;
 	size_t		 rollbacksize, origmaxsize = msg->maxsize;
 	qboolean	 sort = sv_netsort.value > 1;
+	qboolean     recipient_live = true;
 	float		 scale;
 	const char	*model;
 
@@ -3831,6 +3927,7 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 	if (sv_netsort.value == 1 && dev_overflows.packetsize + 10 > realtime)
 		sort = true;
 
+	ED_Retain (clent); // Slot zero in the gathered list owns this retain exactly once.
 	msg->maxsize = overflowsize;
 
 	if (maxedict > client->limit_entities)
@@ -3862,8 +3959,21 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 	ent = NEXT_EDICT (qcvm->edicts);
 	for (e = 1; e < maxedict; e++, ent = NEXT_EDICT (ent))
 	{
+		if (ent->free)
+			continue;
+		qboolean visible = SV_CustomizeEntityForClient (ent, clent);
+		if (clent->free)
+		{
+			recipient_live = false;
+			goto cleanup;
+		}
+		if (ent->free || (ent != clent && !visible))
+			continue;
 		if (ent != clent) // clent already added before the loop
 		{
+			parent = SV_VisibilityParent (ent);
+			if (!parent)
+				continue;
 			// ignore ents without visible models
 			if (!ent->v.modelindex || !(model = PR_GetString (ent->v.model))[0])
 				continue;
@@ -3872,18 +3982,8 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 			if ((unsigned int)ent->v.modelindex >= client->limit_models)
 				continue;
 
-			// ignore if not touching a PV leaf
-			for (i = 0; i < ent->num_leafs; i++)
-				if (pvs[ent->leafnums[i] >> 3] & (1 << (ent->leafnums[i] & 7)))
-					break;
-
-			// ericw -- added ent->num_leafs < MAX_ENT_LEAFS condition.
-			//
-			// if ent->num_leafs == MAX_ENT_LEAFS, the ent is visible from too many leafs
-			// for us to say whether it's in the PVS, so don't try to vis cull it.
-			// this commonly happens with rotators, because they often have huge bboxes
-			// spanning the entire map, or really tall lifts, etc.
-			if (i == ent->num_leafs && ent->num_leafs < MAX_ENT_LEAFS)
+			val = GetEdictFieldValue (ent, qcvm->extfields.pvsflags);
+			if (!SV_VisibilityPVS (parent, pvs, val ? (int)val->_float : PVSF_NORMALPVS, false))
 				continue; // not visible
 
 			if (sort)
@@ -3931,6 +4031,7 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 			else
 				net_edicts_sorted[numents] = e;
 
+			ED_Retain (ent); // Later customization may free an already gathered candidate.
 			++numents;
 		}
 		else
@@ -3958,6 +4059,9 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 	{
 		e = net_edicts_sorted[j];
 		ent = EDICT_NUM (e);
+		if (ent->free || (ent != clent && (!ent->v.modelindex ||
+			!PR_GetString (ent->v.model)[0] || (unsigned int)ent->v.modelindex >= client->limit_models)))
+			continue;
 
 		rollbacksize = msg->cursize;
 
@@ -4006,12 +4110,18 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 
 		// hide if the current client is specified
 		val = GetEdictFieldValue (ent, qcvm->extfields.nodrawtoclient);
-		if (val && val->edict == EDICT_TO_PROG (clent))
+		if (ent != clent && val && val->edict == EDICT_TO_PROG (clent))
 			continue;
 
 		// hide if the current client is not specified
 		val = GetEdictFieldValue (ent, qcvm->extfields.drawonlytoclient);
-		if (val && val->edict && val->edict != EDICT_TO_PROG (clent))
+		if (ent != clent && val && val->edict && val->edict != EDICT_TO_PROG (clent))
+			continue;
+		val = GetEdictFieldValue (ent, qcvm->extfields.viewmodelforclient);
+		if (ent != clent && val && val->edict)
+			continue;
+		val = GetEdictFieldValue (ent, qcvm->extfields.exteriormodeltoclient);
+		if (ent != clent && val && val->edict == EDICT_TO_PROG (clent))
 			continue;
 
 		// johnfitz -- alpha
@@ -4021,7 +4131,9 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 			ent->alpha = ENTALPHA_ENCODE (val->_float);
 
 		// don't send invisible entities unless they have effects
-		if (ent->alpha == ENTALPHA_ZERO && !((int)ent->v.effects & sv.effectsmask))
+		if (ent != clent && ent->alpha == ENTALPHA_ZERO && !((int)ent->v.effects & sv.effectsmask) &&
+			!SV_HasParticleEffect (ent, qcvm->extfields.traileffectnum) &&
+			!SV_HasParticleEffect (ent, qcvm->extfields.emiteffectnum))
 			continue;
 		// johnfitz
 
@@ -4130,6 +4242,10 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 		}
 	}
 
+	cleanup:
+	// The gather list is valid even if customization aborted before sorting.
+	for (j = 0; j < numents; ++j)
+		ED_Release (EDICT_NUM ((sort ? net_edicts : net_edicts_sorted)[j]));
 	msg->maxsize = origmaxsize;
 
 	// johnfitz -- devstats
@@ -4138,6 +4254,7 @@ void SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflow
 	dev_stats.packetsize = msg->cursize;
 	dev_peakstats.packetsize = q_max (msg->cursize, dev_peakstats.packetsize);
 	// johnfitz
+	return recipient_live;
 }
 
 /*
@@ -4379,18 +4496,22 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 										 // johnfitz
 }
 
-void SV_PresendClientDatagram (client_t *client)
+static qboolean SV_PresendClientDatagram (client_t *client)
 {
 	if (!client->netconnection)
-		return; // botclient
+		return true; // botclient
 	if (!client->spawned)
-		return; // not ready yet.
+		return true; // not ready yet.
+	if (!client->edict || client->edict->free)
+		return false;
 	if (!(client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
-		return; // brute force networking.
-	SVFTE_BuildSnapshotForClient (client);
+		return true; // brute force networking.
+	if (!SVFTE_BuildSnapshotForClient (client))
+		return false;
 	SVFTE_CalcEntityDeltas (client);
 	client->snapshotresume = 0;
 	client->csqcsnapshotresume = 1;
+	return true;
 }
 
 /*
@@ -4443,6 +4564,11 @@ qboolean SV_SendClientDatagram (client_t *client)
 	host_client = client;
 	if (client->spawned)
 	{
+		if (!client->edict || client->edict->free)
+		{
+			SV_DropClient (true);
+			return false;
+		}
 		sv_player = client->edict;
 		if (SV_PrivateWalkTrialSelected (client))
 		{
@@ -4491,7 +4617,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 			if (!SVFTE_WriteCSQCEntitiesToClient (client, &msg, frame, false))
 			{
-				SV_DropClient (false);
+				SV_DropClient (client->edict->free); // Dead recipients cannot enter QC disconnect.
 				return false;
 			}
 
@@ -4526,7 +4652,7 @@ qboolean SV_SendClientDatagram (client_t *client)
 				}
 				if (!SVFTE_WriteCSQCEntitiesToClient (client, &msg, frame, true))
 				{
-					SV_DropClient (false);
+					SV_DropClient (client->edict->free);
 					return false;
 				}
 				if (client->snapshotresume == oldnative && client->csqcsnapshotresume == oldcustom)
@@ -4545,7 +4671,11 @@ qboolean SV_SendClientDatagram (client_t *client)
 				(client->protocol_pext2 & PEXT2_PREDINFO))
 				MSG_WriteShort (&msg, (client->lastmovemessage & 0xffff));
 
-			SV_WriteEntitiesToClient (client, &msg, sizeof (buf));
+			if (!SV_WriteEntitiesToClient (client, &msg, sizeof (buf)))
+			{
+				SV_DropClient (true);
+				return false;
+			}
 		}
 
 		// copy the private datagram if there is space
@@ -5013,7 +5143,8 @@ void SV_SendClientMessages (void)
 		if (!host_client->active)
 			continue;
 
-		SV_PresendClientDatagram (host_client); // generates client snapshots (and updates csqc pending flags)
+		if (!SV_PresendClientDatagram (host_client)) // snapshot cleanup precedes dropping a freed recipient
+			SV_DropClient (true);
 	}
 
 	if (GetEdictFieldValid (SendFlags))
