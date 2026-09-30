@@ -155,26 +155,31 @@ Revised stage2 ownership is sv_phys.c plus only the saved-restore return contrac
 in server.h and caller cancellation in host_cmd.c. Target350–450 net lines,
 including required lifetime adaptation; no stage2 sv_main.c change is expected.
 
-Main found one necessary question before coding: a fresh saved-player helper
-must not overwrite an enclosing cancellation binding. Verified pr_ext.c:2434–2451
-and its server registry entry6377 permit clientcommand(other,"spawn") for an
-active pre-begin client; host_cmd.c:5124 registers spawn and Host_Spawn_f permits
-src_client/unspawned entry. This can enter the saved-restore path during another
-player's QC callback. Native sv_player context for that unusual command remains
-an existing separate limitation; it does not make overwriting the enclosing
-binding safe. Current BindPolicy overwrites its single global record, so a new
-bounded saved-restore record would lose parent cancellation/unwind information.
-Actual execution is unverified; the permitted returning source route is verified.
+## Final lifetime disposition before coding
 
-Reopen that lifetime design only. Lean: copy the existing native temporary-scope
-previous-pointer pattern at the existing respawn binding, with bounded stack
-borrowing/restoration and cancellation reaching enclosing live records. Reuse
-the same policy records and hooks, no persistent registry/generations/allocation
-or new respawn state machine. Compare a copied previous binding with moving
-binding ownership into the existing scope; prefer the smaller justified adapter.
-Skipping optional behavior solely because the helper is nested or replacing
-command/spawn dispatch is rejected. The reviewer must verify reachability,
-challenge necessity and give the smallest exact ownership/budget disposition
-before production stage2 changes. The integrated generic2e7536b9 remains the
-behavioral base; this question is introduced by the proposed additional callback
-boundary, not permission to rewrite native QC/physics generally.
+The follow-up requested-Astra source review caught a concrete error in the
+previous brief: PF_clientcommand dispatches src_client, but spawn is registered
+with Cmd_AddCommand (src_command), and the current source guard rejects it.
+Main verified the complete Cmd_AddCommand2 body: no alternate/twin client
+registration exists. The earlier claim of current reachability is withdrawn.
+The [registration prerequisite](host-command-registration-2.0-plan.md) restores
+the QSS-M source classes for required native player commands, without weakening
+the source guard. After that separate prerequisite, the active pre-begin saved
+spawn route is admitted and the planned cancellation borrowing must nest.
+Runtime execution remains unverified.
+
+| Follow-up recommendation | Main disposition |
+| --- | --- |
+| Current clientcommand(spawn) is rejected | Adopt verified correction above. Repair demonstrated ordinary multiplayer registration as its own zero-net-line prerequisite, not a dispatch rewrite. |
+| Nested borrowed ownership needs traversable parents | Adopt previous, VM, client and edict pointers in the existing policy record and one transient head. Reuse native temporary-scope ownership; no copied second binding representation, registry, heap or generation. |
+| Targeted cancellation must reach every matching scope | Adopt sticky cancellation across the bounded live chain, retaining links for normal unwind. Full abort/VM clear marks all and detaches head before nonlocal unwind. Pop only the current record; never reinitialize a linked record. |
+| Completion survival was cached before new QC callbacks | Adopt recomputation after callback-capable EndPostThink, before shared-death/inventory/ACK writes. This is a stage2 integration requirement, not a demonstrated generic defect before callbacks exist. |
+| Nesting requires a broad command/spawn rewrite | Reject: restore native player registration only; preserve native spawn/context limitations and borrow actual owner for adapter calls. |
+
+Nesting/caller adaptation adds approximately30–50 net lines within sv_phys.c.
+The stage2 target is now400–450 net lines, including the existing planned
+server.h boolean return and Host_Spawn_f cancellation continuation. Reopen
+above450 rather than omit required semantics. Actual generic2e7536b9 remains
+the behavior base. No further source framework or generic movement rewrite is
+authorized. Effective reviewer settings are unobservable: this disposition
+uses requested-Astra/max source advice, not certified model/runtime acceptance.
