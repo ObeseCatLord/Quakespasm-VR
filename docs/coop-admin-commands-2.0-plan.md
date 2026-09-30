@@ -81,3 +81,22 @@ bounded local Astra source review follows implementation.
 Main reviews the copied code against both references and the native boundaries,
 records findings/disposition and commits narrowly. Source checks alone do not
 close the broader co-op saves/late-join/network requirements.
+
+## Bounded source-review disposition and owner amendment
+
+Main verified the requested-Astra findings against the new handler and existing
+key owner. These are inherited defects exposed by the new public command, not
+proof of runtime reproduction. The same owners remain; no parallel inventory,
+callback framework or mod whitelist is justified.
+
+| Finding | Main disposition |
+| --- | --- |
+| Handler retirement check occurs after key owner's post-callback reads/writes | Adopt. Snapshot native client/edict/socket in SV_CoopGiveKeys; revalidate immediately after each key callback before reading or mutating that target or calling another helper. Require the same active/spawned/alive target; stop on retirement. |
+| Key callback helper validates only parameter count | Adopt compatible positive in-range QC body validation, matching give-all. Restore argc with existing self/other/time/parm/return scratch on ordinary return. Unsupported declarations use the existing fallback, without PR_ExecuteProgram on a builtin index. |
+| A later callback can retire the remembered team-key source | Adopt local successful-recipient identity snapshots in the command. After all callbacks select a still-valid successful recipient before rebuilding canonical keys once; do not rebuild after every grant, which could alter counted-key semantics. |
+
+Amended write set adds only `Quake/world.c`'s SV_CoopCallKeyFunction and
+SV_CoopGiveKeys boundary. Expected correction <=90 changed lines there, <=50
+additional handler lines; initial439-line reference adapter is retained.
+Reopen for any broader state owner. Relevant final software checks add callback
+retirement at each helper and retirement of an earlier successful recipient.
