@@ -420,7 +420,7 @@ float CL_KeyState (kbutton_t *key)
 
 cvar_t cl_upspeed = {"cl_upspeed", "200", CVAR_NONE};
 cvar_t cl_forwardspeed = {"cl_forwardspeed", "200", CVAR_ARCHIVE_GAME};
-// Preserve the inherited configuration control and its stock-speed mapping.
+// Retain the inherited stock-speed mapping for VR joystick movement.
 cvar_t cl_desktop_vanilla_run = {"cl_desktop_vanilla_run", "1", CVAR_ARCHIVE};
 cvar_t cl_backspeed = {"cl_backspeed", "200", CVAR_ARCHIVE_GAME};
 cvar_t cl_sidespeed = {"cl_sidespeed", "350", CVAR_NONE};
@@ -517,13 +517,6 @@ static void CL_BaseMoveInternal (usercmd_t *cmd, qboolean isfinal)
 
 	if (cls.signon != SIGNONS)
 		return;
-	if (cl_desktop_vanilla_run.value && !cl_alwaysrun.value && !V_TrackedSessionActive ())
-	{
-		if (forwardspeed == 200.f)
-			forwardspeed *= cl_movespeedkey.value;
-		if (backspeed == 200.f)
-			backspeed *= cl_movespeedkey.value;
-	}
 
 	if (in_strafe.state & 1)
 	{

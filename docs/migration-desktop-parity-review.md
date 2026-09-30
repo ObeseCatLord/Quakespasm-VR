@@ -71,3 +71,9 @@ scoped diff and whitespace; execution remains deferred until implementation
 of the full goal is finished. The final Linux/ARM gate must cover desktop
 Always Run on/off with speed key up/down, custom speeds and mode transitions;
 live headset testing remains user-owned.
+
+The correction is source-integrated: seven production lines removed, one
+comment revised. Main inspected the complete diff against the planned boundary;
+the VR consumer, default, registration, native menu and speed-key XOR are
+unchanged. Scoped whitespace checks pass. No build or runtime test was run;
+broader desktop parity and final Linux/ARM qualification remain pending.
