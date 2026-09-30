@@ -206,3 +206,50 @@ persistent registry. Existing reset/cache/world-death owners remain authoritativ
 The600–850-net-line estimate still applies; stop for main architecture review if
 it is exceeded, if another state machine is needed, or if narrow cleanup guards
 become a broad callback rewrite. No revival dependency or runtime checks.
+
+## Production integration brief: reopen the cleanup boundary
+
+Main has read the complete uncommitted six-file stage1 patch:892 additions,
+45 deletions,847 net lines. This reaches the original estimate before fixing
+the following integration gaps. Reopen the estimate and cleanup design before
+further production edits; do not squeeze omitted semantics into the old limit.
+No co-op revival, new mod abilities, prediction queue retirement or new client
+identity registry is authorized by this correction pass.
+
+| Environment/evidence | Status |
+| --- | --- |
+| Writable 2.0 source: host.c, host_cmd.c, pr_edict.c, server.h, sv_main.c, sv_phys.c | Verified by scoped diff; wheel worker has a disjoint four-file ownership. |
+| BeginPolicy binds one transient state/VM/client/edict through existing shared-QC window or local scope | Verified sv_phys.c:5590 onward; native lifecycle hooks cancel this binding before disconnect/free/reuse/VM clear/host abort. |
+| EndPostThink publishes a movement epoch only through optional relocation | Verified sv_phys.c:5676–5721. Successful ordinary QC fallback currently misses the plan's required discontinuity. |
+| ModOwnsLifecycle converts customflags directly to int | Verified sv_phys.c:592–608. Finite/range admission is absent; host.c:99 also converts an unrestricted feature float to int. |
+| Saved QC inputs hold raw addresses without VM/storage ownership | Verified sv_phys.c:8803–8864. A post-callback restore is unconditional; cancellation alone does not validate surviving global storage. |
+| PostThink weapon-pose cleanup guards entity restoration, scheduled Think wrapper does not | Verified sv_phys.c:4506–4532 and8046–8052; basis globals are unconditionally restored in either path. Actual reachable teardown/replacement paths must be verified rather than assumed. |
+| SetChangeParms temporarily revives a dead player's health/deadflag then restores through host_client | Verified sv_main.c:5491–5530. New restoration has no bounded cancellation owner. Native64-parm extraction shares this callback lifetime. |
+| voice_generation can change without replacing a client | Verified sv_main.c voice negotiation/reset paths. It is not a client identity and cannot safely guard these writebacks. |
+| Runtime correctness, build success and callback teardown reachability | Unverified: no builds/tests/probes allowed until all implementation is complete. |
+
+Current lean: correct numeric admission and publish one epoch for successful
+ordinary respawn; retain native QC spawn effects when optional relocation does
+not happen. Extend the existing temporary input/pose scopes only at demonstrated
+owner-lifetime boundaries. Reuse the single cancellation binding for a bounded
+SetChangeParms adapter if actual callback replacement requires it. A second
+registry, audio-generation borrowing, a general QC wrapper or replacement
+respawn state machine is rejected. Different cleanup findings may be one missing
+lifetime contract; merging them or deleting redundant guards is in bounds.
+
+Open decisions for requested local Astra/max source advice: verify the missing
+discontinuity and numeric problems first; establish which callback teardown/reuse
+paths are actually reachable; choose the smallest surviving-VM/global and
+entity-writeback guards, including scheduled weapon Think and SetChangeParms.
+Challenge whether the847-line implementation is necessary, whether helper
+factoring can remove duplication, and whether a revised bounded estimate is
+justified. Check finite pose admission only where optional placement introduces
+new invalid writes. Do not expand into generic QC error recovery, wheel rendering,
+asset loaders, revival, active QBJ3 cleanup, networking redesign or runtime tests.
+Return prioritized findings with source lines, narrow write boundaries and an
+explicit estimate disposition. Main owns final architecture/integration.
+
+Effective reviewer settings are not exposed by the available agent API; requested
+Astra/max advice cannot be represented as certified completion of the skill's
+effective-setting verification requirement. Final software qualification remains
+pending regardless of the source assessment.
