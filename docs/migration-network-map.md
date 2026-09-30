@@ -1,5 +1,26 @@
 # Networking feature map
 
+## Current-source parser reuse checkpoint (2026-09-30)
+
+The initial NET-008 row below is historical inventory, not an assertion that
+these parser gaps remain in2.0. Main directly inspected the current native
+consumers; no replacement or additional parser layer is needed for this slice:
+
+| Existing consumer | Current source contract |
+| --- | --- |
+| `cl_parse.c:1052` UF_DRAWFLAGS | Reads the flags byte and conditional absolute-light byte when low three bits equal7. Rendering those discarded legacy fields is not established by byte alignment. |
+| `cl_parse.c:3537` setangledelta | Reads three Angle16 values, updates native viewangles and calls V_TrackedAngleDelta; also adjusts same-message server yaw after setangle. `view.c:235` updates tracked view/aim, invalidates motion and adjusts controller yaw through existing owners. |
+| `cl_parse.c:3866` cgamepacket | Requires negotiated public PEXT1_CSQC, executes the existing CSQC_Parse_Event in its VM, and errors when the opaque event handler is missing. Selected private framing deliberately keeps PEXT1 zero (`sv_main.c:3324`); this checkpoint does not add a private event channel or change headers/readiness. |
+
+Preserve these native/public handlers and the existing VR angle adapter. The
+paired typed QC request/event feature has its separate plan; merely sharing an
+FTE opcode name does not make the private dialect equivalent to public PEXT1.
+No production changes, builds, tests, compiler checks or probes were performed
+for this checkpoint. After full implementation, the isolated Linux/ARM checks
+must still cover each payload followed by an ordinary opcode, angle correction
+with/without preceding setangle, permitted VM dispatch and rejected unnegotiated
+events. This is source reuse evidence, not full NET-008 behavior qualification.
+
 The migration retains **donor networking**, reuses QSS-M `03a498aa` directly for
 generic movement/prediction, and integrates the fork's VR behavior at those
 boundaries. The fork's private movement dialect is incompatible with ordinary
