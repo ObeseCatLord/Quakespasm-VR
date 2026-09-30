@@ -424,3 +424,27 @@ state, wire, native sorting and graphics remain. Main reviews the diff, commits,
 then requests a bounded source advisory recheck; no builds/tests/compiler checks,
 probes or fixtures until full implementation finishes. Expected fewer than60
 added production lines remains; widen only on demonstrated additional evidence.
+
+### Connection-retirement source integration checkpoint
+
+`3633bf03` implements the adopted correction only in Quake/sv_main.c (27
+insertions,11 deletions). Main inspected the actual diff and cleanup/caller
+ordering; scoped git diff --check passed, and the coding worker is closed.
+The follow-up requested local Astra advisory inspected that exact commit and
+found no actionable P1/P2. Main accepts the bounded source correction:
+
+| Reviewed boundary | Source disposition |
+| --- | --- |
+| Shared original-connection predicate | Active/socket only; writers separately check captured recipient free, preserving same-connection crash-drop authority. |
+| Modern customization | Stops before per-client state access; publishes current scratch pointer/capacity with count0 and releases retained recipient; presend skips delta calculation. |
+| Classic customization | Stops through existing admitted-list cleanup in either sort mode and restores message size. Native sorter/state serialization remain. |
+| Custom SendEntity / continuation | Captured recipient supplies retain/argument/release; globals/overflow policy restore and multicast clears before false return, preceding pending/frame/resume commit. |
+| Four failure callers | Drop only the same active original connection. Already-retired/replaced slots are not dropped again; free-without-disconnect crash-drops and ordinary custom payload failure keeps native non-crash behavior. |
+
+This supersedes the preceding edict-only retirement acceptance. It relies on
+the verified synchronous callback flow, native host_client restoration, retained
+edict storage and bot entry exclusions; it is not a universal generation guard.
+Effective reviewer settings metadata remains unavailable, so the result is an
+advisory, not certified senior-skill review. No builds, tests, compiler checks,
+probes, fixtures, benchmarks or real sessions ran. The named end-goal Linux/ARM
+cases remain deferred; full NET-003/009 behavior and migration are not certified.

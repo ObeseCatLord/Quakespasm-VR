@@ -351,3 +351,9 @@ sufficient for these connection-retirement paths. The narrow planned correction
 reuses the existing request dispatch's active/socket guard, captured retained
 pointers and native cleanup. No new lifetime/wire/ACK state, frame owner or quad
 views. Final software qualification stays after full implementation.
+
+That correction is now committed in3633bf03 and accepted by the bounded local
+Astra source advisory recorded at the linked NET-003 checkpoint. Both custom
+failure sites and the captured-pointer cleanup are included; native retirement
+ACK state remains unchanged. This closes the confirmed source defect only;
+connection/loss behavior still needs the final Linux/ARM software checks.
