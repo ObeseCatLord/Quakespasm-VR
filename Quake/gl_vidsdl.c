@@ -2111,8 +2111,7 @@ static void GL_InitDevice (void)
 	const qboolean allow_runtime_foveation = COM_CheckParm ("-vk-runtime-foveation") && density_settings_ready;
 	qboolean prefer_fb_eye = false;
 #if defined(VK_QCOM_fragment_density_map_offset)
-	prefer_fb_eye = allow_runtime_foveation && VRF_RequestedMode (vr_foveation.value) == VRF_MODE_EYE_TRACKED &&
-		openxr_vulkan_binding && fragment_density_offset_candidate;
+	prefer_fb_eye = allow_runtime_foveation && openxr_vulkan_binding && fragment_density_offset_candidate;
 #endif
 	const qboolean prefer_fb_fixed = allow_runtime_foveation && VRF_RequestedMode (vr_foveation.value) == VRF_MODE_FIXED &&
 		openxr_vulkan_binding && VRXR_VulkanFoveationSupported ();
