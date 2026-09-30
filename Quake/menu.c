@@ -2798,18 +2798,40 @@ enum
 	VR_OPT_CROSSHAIR_SIZE,
 	VR_OPT_CROSSHAIR_OPACITY,
 	VR_OPT_CROSSHAIR_OFFSET,
+	VR_OPT_WEAPON_SETUP,
 	VR_OPT_GAMEPLAY_SETUP,
 	VR_OPT_FBT_SETUP,
 	VR_OPTIONS_ITEMS
 };
 
 static int vr_options_cursor;
+static qboolean vr_options_weapon_page;
+static int vr_options_weapon_cursor;
 static qboolean vr_options_gameplay_page;
 static int vr_options_gameplay_cursor;
 static qboolean vr_options_joystick_page;
 static int vr_options_joystick_cursor;
 static qboolean vr_options_fbt_page;
 static int vr_options_fbt_cursor;
+
+typedef struct
+{
+	const char *name;
+	const char *label;
+	float fallback;
+	float step;
+	float low;
+	float high;
+} vr_weapon_option_t;
+
+static const vr_weapon_option_t vr_weapon_options[] = {
+	{"vr_gunangle", "Gun Angle", 32.0f, 2.5f, -180.0f, 180.0f},
+	{"vr_gunmodelpitch", "Gun Model Pitch", 0.0f, 0.5f, -90.0f, 90.0f},
+	{"vr_gunmodelscale", "Gun Model Scale", 1.0f, 0.05f, 0.1f, 2.0f},
+	{"vr_gunmodely", "Gun Model Y", 0.0f, 0.1f, -5.0f, 5.0f}
+};
+
+#define VR_WEAPON_OPTIONS_ITEMS ((int)countof (vr_weapon_options))
 
 enum
 {
@@ -2904,6 +2926,7 @@ static void M_Menu_VROptions_f (void)
 	IN_Deactivate (true);
 	key_dest = key_menu;
 	m_state = m_vroptions;
+	vr_options_weapon_page = false;
 	vr_options_gameplay_page = false;
 	vr_options_joystick_page = false;
 	vr_options_fbt_page = false;
@@ -3369,6 +3392,73 @@ static void M_VROptions_GameplayAdjust (int dir)
 	Cvar_SetValueQuick (var, next);
 }
 
+static void M_VROptions_WeaponAdjust (int dir)
+{
+	const vr_weapon_option_t *option = &vr_weapon_options[vr_options_weapon_cursor];
+	cvar_t *var = Cvar_FindVar (option->name);
+	float current, next;
+
+	if (!var)
+		return;
+	current = M_VROptions_ClampFinite (var->value, option->fallback,
+		option->low, option->high);
+	next = CLAMP (option->low, current + dir * option->step, option->high);
+	S_LocalSound ("misc/menu3.wav");
+	Cvar_SetValueQuick (var, next);
+}
+
+static void M_VROptions_WeaponKey (int key)
+{
+	switch (key)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		vr_options_weapon_page = false;
+		break;
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		M_VROptions_WeaponAdjust (1);
+		break;
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		vr_options_weapon_cursor = (vr_options_weapon_cursor +
+			VR_WEAPON_OPTIONS_ITEMS - 1) % VR_WEAPON_OPTIONS_ITEMS;
+		break;
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		vr_options_weapon_cursor = (vr_options_weapon_cursor + 1) %
+			VR_WEAPON_OPTIONS_ITEMS;
+		break;
+	case K_LEFTARROW:
+		M_VROptions_WeaponAdjust (-1);
+		break;
+	case K_RIGHTARROW:
+		M_VROptions_WeaponAdjust (1);
+		break;
+	}
+}
+
+static void M_VROptions_WeaponDraw (cb_context_t *cbx, int top)
+{
+	for (int item = 0; item < VR_WEAPON_OPTIONS_ITEMS; ++item)
+	{
+		const vr_weapon_option_t *option = &vr_weapon_options[item];
+		const cvar_t *var = Cvar_FindVar (option->name);
+		const float value = var && isfinite (var->value) ? var->value : option->fallback;
+		const int y = top + item * CHARACTER_SIZE;
+
+		M_Print (cbx, MENU_LABEL_X, y, option->label);
+		M_Print (cbx, MENU_VALUE_X, y, va ("%.4f", value));
+	}
+	M_Mouse_UpdateListCursor (&vr_options_weapon_cursor, MENU_CURSOR_X, 320,
+		top, CHARACTER_SIZE, VR_WEAPON_OPTIONS_ITEMS, 0);
+	Draw_Character (cbx, MENU_CURSOR_X, top + vr_options_weapon_cursor * CHARACTER_SIZE,
+		12 + ((int)(realtime * 4) & 1));
+}
+
 static void M_VROptions_GameplayKey (int key)
 {
 	switch (key)
@@ -3670,6 +3760,10 @@ static void M_VROptions_Adjust (int dir)
 		Cvar_SetValueQuick (&vr_crosshairy, CLAMP (-10.0f, roundf ((current + dir * 0.05f) * 20.0f) / 20.0f, 10.0f));
 		break;
 	}
+	case VR_OPT_WEAPON_SETUP:
+		if (dir > 0)
+			vr_options_weapon_page = true;
+		break;
 	case VR_OPT_GAMEPLAY_SETUP:
 		if (dir > 0)
 			vr_options_gameplay_page = true;
@@ -3686,6 +3780,11 @@ static void M_VROptions_Adjust (int dir)
 
 static void M_VROptions_Key (int key)
 {
+	if (vr_options_weapon_page)
+	{
+		M_VROptions_WeaponKey (key);
+		return;
+	}
 	if (vr_options_joystick_page)
 	{
 		M_VROptions_JoystickKey (key);
@@ -3761,6 +3860,11 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+	if (vr_options_weapon_page)
+	{
+		M_VROptions_WeaponDraw (cbx, top);
+		return;
+	}
 	if (vr_options_joystick_page)
 	{
 		M_VROptions_JoystickDraw (cbx, top);
@@ -3834,6 +3938,9 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OFFSET, "Crosshair Offset");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OFFSET, va ("%.2f", crosshair_offset));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_WEAPON_SETUP, "Weapon Setup");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_WEAPON_SETUP, "Open");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_GAMEPLAY_SETUP, "Gameplay Setup");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_GAMEPLAY_SETUP, "Open");

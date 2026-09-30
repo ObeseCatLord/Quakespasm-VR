@@ -59,3 +59,15 @@ and ordinary desktop options and graphics behavior remain native. Live headset
 and performance trials remain user work outside this goal.
 
 Source integration and whitespace checks alone do not certify these behaviors.
+
+## Source integration checkpoint
+
+The bounded adapter is source-integrated:109 added production lines in
+`Quake/menu.c`, reusing the existing cvars and four-row table for both adjustment
+and display. Main reviewed the complete diff, primary bounds/steps, native
+registration/consumers, subpage reset/dispatch/back paths and one matching
+draw/pointer row geometry. Native main page now has20 rows at MENU_TOP40 with
+CHARACTER_SIZE8; its last row occupies192..200 in the native200-unit canvas.
+This adds no unrelated renderer or calibration changes. Scoped whitespace
+check passes; final Linux/ARM software and user live qualification remain as
+specified above. No builds/tests or executable probes were run.
