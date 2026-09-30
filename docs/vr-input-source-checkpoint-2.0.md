@@ -61,3 +61,12 @@ release, shared keys/profile changes and authoritative camera discontinuities.
 For haptics check ordinary versus ready paired models, unavailable/stale pair,
 local versus remote sounds, excluded locomotion/damage samples, toggle, focus
 loss and wheel/navigation. Actual headset haptics remain user live testing.
+
+## Paired haptic source integration
+
+The cl_parse.c adapter adds the inherited logical-left pulse through the
+existing V_AkimboPairReady predicate and replaces the stale unmigrated comment
+(three additions/two deletions, one net line). Main compared the primary local
+sound filter/pulse and the native predicate/GL frame lifetime. The predicate
+performs no model load; ordinary dominant feedback and sound admission remain.
+Scoped git diff --check passes; execution remains deferred.

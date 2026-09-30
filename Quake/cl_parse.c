@@ -1768,9 +1768,10 @@ static void CL_TriggerLocalPlayerSoundHaptic (int ent, int channel,
 	if (!CL_IsLocalPlayerHapticSound (ent, channel, sample))
 		return;
 
-	/* The paired viewmodel query has not been migrated; retain only the
-	 * inherited dominant-hand interaction pulse. */
+	/* Query the resident prepared pair; never load models from sound parsing. */
 	VR_InputTriggerHaptic (VR_INPUT_ROLE_RIGHT, 0.005f, 1.0f);
+	if (V_AkimboPairReady ())
+		VR_InputTriggerHaptic (VR_INPUT_ROLE_LEFT, 0.005f, 1.0f);
 }
 
 static void CL_ParseStartSoundPacket (void)
