@@ -938,7 +938,6 @@ static part_type_t *P_GetParticleType (const char *config, const char *name)
 {
 	int			 i;
 	part_type_t *ptype;
-	part_type_t *oldlist = part_type;
 	char		 cfgbuf[MAX_QPATH];
 	const char	*dot = strchr (name, '.');
 	if (dot && (dot - name) < MAX_QPATH - 1)
@@ -964,7 +963,42 @@ static part_type_t *P_GetParticleType (const char *config, const char *name)
 			if (!q_strcasecmp (ptype->config, config)) // must be an exact match.
 				return ptype;
 	}
-	part_type = Mem_Realloc (part_type, sizeof (part_type_t) * (numparticletypes + 1));
+
+	{
+		int		 *nextindices = NULL;
+		int		  runindex = part_run_list ? (int)(part_run_list - part_type) : P_INVALID;
+		size_t	  oldcount = (size_t)numparticletypes;
+		part_type_t *newlist;
+
+		if (numparticletypes == INT_MAX || oldcount > SIZE_MAX / sizeof (*part_type) - 1)
+			Sys_Error ("P_GetParticleType: particle type count overflow");
+		if (oldcount)
+		{
+			if (oldcount > SIZE_MAX / sizeof (*nextindices))
+				Sys_Error ("P_GetParticleType: link repair size overflow");
+			nextindices = Mem_Alloc (oldcount * sizeof (*nextindices));
+			if (!nextindices)
+				Sys_Error ("P_GetParticleType: out of memory repairing links");
+			for (i = 0; i < numparticletypes; i++)
+				nextindices[i] = part_type[i].nexttorun ? (int)(part_type[i].nexttorun - part_type) : P_INVALID;
+		}
+
+		newlist = Mem_Realloc (part_type, (oldcount + 1) * sizeof (*part_type));
+		if (!newlist)
+		{
+			Mem_Free (nextindices);
+			Sys_Error ("P_GetParticleType: out of memory growing particle types");
+		}
+		part_type = newlist;
+		part_run_list = runindex == P_INVALID ? NULL : &part_type[runindex];
+		for (i = 0; i < numparticletypes; i++)
+		{
+			part_type[i].nexttorun = nextindices[i] == P_INVALID ? NULL : &part_type[nextindices[i]];
+			part_type[i].slooks = &part_type[i].looks;
+		}
+		Mem_Free (nextindices);
+	}
+
 	ptype = &part_type[numparticletypes++];
 	memset (ptype, 0, sizeof (*ptype));
 	q_strlcpy (ptype->name, name, sizeof (ptype->name));
@@ -974,20 +1008,11 @@ static part_type_t *P_GetParticleType (const char *config, const char *name)
 	ptype->cliptype = P_INVALID;
 	ptype->emit = P_INVALID;
 
-	if (oldlist)
-	{
-		if (part_run_list)
-			part_run_list = (part_type_t *)((char *)part_run_list - (char *)oldlist + (char *)part_type);
-
-		for (i = 0; i < numparticletypes; i++)
-			if (part_type[i].nexttorun)
-				part_type[i].nexttorun = (part_type_t *)((char *)part_type[i].nexttorun - (char *)oldlist + (char *)part_type);
-	}
-
 	ptype->loaded = 0;
 	ptype->ramp = NULL;
 	ptype->particles = NULL;
 	ptype->beams = NULL;
+	ptype->slooks = &ptype->looks;
 
 	r_plooksdirty = true;
 	return ptype;
@@ -1028,6 +1053,7 @@ static void PScript_RetintEffect (part_type_t *to, part_type_t *from, const char
 
 	//'from' might still have some links so we need to clear those out.
 	to->nexttorun = NULL;
+	to->state &= ~PS_INRUNLIST;
 	to->particles = NULL;
 	to->clippeddecals = NULL;
 	to->beams = NULL;
@@ -1115,20 +1141,39 @@ int PScript_FindParticleType (const char *fullname)
 	}
 	if (!ptype || !ptype->loaded)
 	{
-		if (!q_strncasecmp (name, "te_explosion2_", 14))
+		size_t fullnamelen = strlen (fullname);
+		size_t namelen = strlen (name);
+		char  *saved, *savedname;
+
+		if (fullnamelen > SIZE_MAX - 2 || namelen > SIZE_MAX - fullnamelen - 2)
+			Sys_Error ("PScript_FindParticleType: particle name size overflow");
+		saved = Mem_Alloc (fullnamelen + namelen + 2);
+		if (!saved)
+			Sys_Error ("PScript_FindParticleType: out of memory preserving particle name");
+		memcpy (saved, fullname, fullnamelen + 1);
+		savedname = saved + fullnamelen + 1;
+		memcpy (savedname, name, namelen + 1);
+
+		if (!q_strncasecmp (savedname, "te_explosion2_", 14))
 		{
 			int from = PScript_FindParticleType (va ("%s.te_explosion2", cfg));
 			if (from != P_INVALID)
 			{
-				int to = P_AllocateParticleType (cfg, name);
-				PScript_RetintEffect (&part_type[to], &part_type[from], name + 14);
+				int to = P_AllocateParticleType (cfg, savedname);
+				PScript_RetintEffect (&part_type[to], &part_type[from], savedname + 14);
+				Mem_Free (saved);
 				return to;
 			}
 		}
 		if (*cfg)
 			if (P_LoadParticleSet (cfg, true, true))
-				return PScript_FindParticleType (fullname);
+			{
+				i = PScript_FindParticleType (saved);
+				Mem_Free (saved);
+				return i;
+			}
 
+		Mem_Free (saved);
 		return P_INVALID;
 	}
 	return i;
@@ -3561,6 +3606,7 @@ static qboolean P_LoadParticleSet (char *name, qboolean implicit, qboolean showw
 	strcpy (cfg->name, name);
 	cfg->next = loadedconfigs;
 	loadedconfigs = cfg;
+	name = cfg->name;
 
 	if (!strcmp (name, "classic"))
 	{
@@ -4326,7 +4372,7 @@ void PerpendicularVector (vec3_t dst, const vec3_t src);
 
 int PScript_RunParticleEffectState (vec3_t org, vec3_t dir, float count, int typenum, trailstate_t **tsk)
 {
-	part_type_t *ptype = &part_type[typenum];
+	part_type_t *ptype;
 	int			 i, j, k, l, spawnspc;
 	float		 m, pcount; //, orgadd, veladd;
 	vec3_t		 axis[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, -1}};
@@ -4342,6 +4388,7 @@ int PScript_RunParticleEffectState (vec3_t org, vec3_t dir, float count, int typ
 	if (typenum < 0 || typenum >= numparticletypes)
 		return 1;
 
+	ptype = &part_type[typenum];
 	if (!ptype->loaded)
 		return 1;
 
@@ -6651,6 +6698,9 @@ void PScript_UpdateParticlesSetupTask (void *unused)
 		pe_size2 = PScript_FindParticleType ("PE_SIZE2");
 		pe_size3 = PScript_FindParticleType ("PE_SIZE3");
 		pe_defaulttrail = PScript_FindParticleType ("PE_DEFAULTTRAIL");
+		r_plooksdirty = false;
+		CL_RegisterParticles ();
+		PScript_RecalculateSkyTris ();
 
 		for (j = 0; j < numparticletypes; j++)
 		{
@@ -6665,9 +6715,6 @@ void PScript_UpdateParticlesSetupTask (void *unused)
 				}
 			}
 		}
-		r_plooksdirty = false;
-		CL_RegisterParticles ();
-		PScript_RecalculateSkyTris ();
 	}
 
 	VectorScale (vup, 1.5, pup);

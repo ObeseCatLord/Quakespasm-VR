@@ -2910,6 +2910,7 @@ void R_RenderView (
 
 		task_handle_t update_particles_setup_task = Task_AllocateAndAssignFunc (PScript_UpdateParticlesSetupTask, NULL, 0);
 		Task_AddDependency (before_mark, update_particles_setup_task);
+		Task_AddDependency (store_efrags, update_particles_setup_task);
 
 		task_handle_t update_particles_task = Task_AllocateAndAssignIndexedFunc (PScript_UpdateParticlesTask, Tasks_NumWorkers (), NULL, 0);
 		Task_AddDependency (update_particles_setup_task, update_particles_task);
@@ -2929,6 +2930,8 @@ void R_RenderView (
 		Task_AddDependency (emit_particles_task, draw_particles_task);
 		Task_AddDependency (begin_rendering_task, draw_particles_task);
 		Task_AddDependency (prepare_vrik_palettes_task, draw_particles_task);
+		if (draw_gui_task != INVALID_TASK_HANDLE)
+			Task_AddDependency (draw_particles_task, draw_gui_task);
 		Task_AddDependency (draw_particles_task, draw_done_task);
 
 		task_handle_t build_tlas_task = Task_AllocateAndAssignFunc (R_BuildTopLevelAccelerationStructure, NULL, 0);
@@ -2953,6 +2956,8 @@ void R_RenderView (
 			Task_AddDependency (draw_alpha_entities_task, draw_view_model_task); // not dependent, but mutually exclusive
 
 			Task_AddDependency (draw_particles_task, draw_view_model_task); // only scriptable particles are dependent
+			if (draw_gui_task != INVALID_TASK_HANDLE)
+				Task_AddDependency (draw_view_model_task, draw_gui_task);
 		}
 
 		task_handle_t tasks[] = {

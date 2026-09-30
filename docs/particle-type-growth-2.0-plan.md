@@ -122,3 +122,24 @@ These are lifetime/threading repairs to existing vkQuake particles, not missing
 mod particle types or a renderer port. Runtime/stereo/visual qualification stays
 in the final software pass. Source recheck of these exact added edges precedes
 the production commit; no new allocation or task owner is introduced.
+
+Main's final reader inspection also moves RunParticleEffectState's type-pointer
+formation after its existing index check. P_INVALID from failed precache lookup
+must return the existing fallback without forming an out-of-array/null-base
+pointer first. This preserves the guard and visible fallback behavior.
+
+## Source integration checkpoint
+
+The integrated two-file production patch is52 net lines:47 particle and5 graph.
+It copies the reference pre-growth index repair, retaining native Mem ownership,
+with overflow/allocation guards and no expired-pointer arithmetic. Own-look
+binding, final registration/look ordering, exact nested query-name lifetime and
+retint membership are repaired without changing particle types/materials/shaders.
+The final bounded local Astra recheck found no source blocker in the adopted
+reader-ordering edges or invalid-index correction. Main inspected the full patch
+and scoped `git diff --check` passes. No builds/tests/probes were run.
+
+MOD-009/010 broader content/visual/software coverage remains open. This fixes
+demonstrated native lifetime/threading defects; it does not certify every mod
+effect or claim an improved frame time. Final Linux/ARM qualification remains
+after the full implementation pass.
