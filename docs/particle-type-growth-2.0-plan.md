@@ -105,3 +105,20 @@ visual parity. Add live-source retint to final software acceptance.
 
 Main retains source-only limits and broad MOD-009/010 qualification. Effective
 reviewer settings are unavailable, so no formal skill/model pass is claimed.
+
+## Final source recheck: complete reader ordering
+
+The bounded final Astra recheck accepted the allocation/look/name/retint changes
+but found two more existing readers not excluded by particles→GUI alone. Main
+spot-checked both owners and the actual graph. Reopen the task-edge estimate
+before integration; the same two-file write set and100-net-line cap remain.
+
+| Finding | Disposition |
+| --- | --- |
+| R_StoreEfrags emits static-entity particles while setup can grow/reset types | Adopt store_efrags→update_particles_setup_task. R_MarkSurfaces returns the actual efrag task in both split/combined variants; native serial rendering already marks before particle setup. No opposite dependency exists. |
+| GUI classic fallback can mutate the live list while show-tris counts/draws it | Adopt draw_view_model_task→draw_gui_task when the existing r_showtris task-dependency branch runs and GUI exists. This keeps ordinary GUI exclusion and diagnostic readers ordered, without an unconditional new barrier or lock. |
+
+These are lifetime/threading repairs to existing vkQuake particles, not missing
+mod particle types or a renderer port. Runtime/stereo/visual qualification stays
+in the final software pass. Source recheck of these exact added edges precedes
+the production commit; no new allocation or task owner is introduced.
