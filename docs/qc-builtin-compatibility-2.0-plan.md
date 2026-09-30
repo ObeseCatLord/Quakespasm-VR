@@ -135,3 +135,43 @@ consumption. The documentation parsing-policy correction above is accepted;
 no new parser policy is introduced. Source acceptance does not prove identical
 primary markup output or runtime/desktop/VR rendering. No builds, tests, compiler
 runs or probes were performed. Other registry gaps remain open.
+
+## Buffer file slice: native resource adapters
+
+Register inherited `buf_loadfile` 535 and `buf_writefile` 536 for both VMs.
+Copy primary's append-line algorithm, CRLF handling, sparse-string writes and
+optional start/count arguments onto the existing destination `strbuflist`,
+`PF_bufstr_add_internal`, `qcfiles`, and their existing base offsets. Require
+each supplied buffer/file to belong to the current VM, as primary's getters do.
+No new handle table, lifetime or shutdown owner. Reject nonfinite/out-of-range
+handles before converting them to indices; retain ordinary fractional truncation.
+
+Destination `COM_LoadFile` returns NUL-terminated heap storage (`Mem_AllocNonZero`)
+instead of primary's temporary-hunk `COM_LoadTempFile`. Free that storage after
+appending lines. An absent file returns zero and leaves the buffer untouched;
+an empty readable file returns one without appending a line. Preserve primary's
+line behavior, including no synthetic final blank line after a trailing newline.
+
+Adapt read paths through the existing `QC_FixFileName` policy and normalized
+`data/` path with its permitted read fallback, matching destination `fopen`.
+Do not import a second path policy from primary. This intentionally retains
+donor data-path precedence and config read restrictions; it is not a claim of
+byte-identical primary filesystem precedence. Read packaged files through the
+existing engine filesystem, not direct OS paths.
+
+Writing uses an already-open, current-VM, non-read-only native QC file handle;
+skip sparse NULL entries and append newlines exactly as primary. Clamp optional
+start/count against the existing buffer extent before integer conversion/addition
+to avoid overflowing the range calculation. Nonfinite ranges return zero.
+Report an immediate write error as zero rather than primary's unconditional
+success; no transactional or implicit flush guarantee is added. Existing file
+close/shutdown and buffer shutdown remain authoritative.
+
+Expected scope: two wrappers in `Quake/pr_ext.c` and two nonconflicting registry
+entries. Source-review actual ownership, temporary storage release, path
+precedence, parsing and range math. Final software verification must cover both
+VMs, cross-VM/closed/reused handles, missing/empty/CRLF/blank/unterminated text,
+existing content append, pack reads/data precedence/rejected paths, read-only
+output, sparse buffers, negative/fractional/huge/nonfinite ranges, write failures
+and reload cleanup. Builds/tests/probes remain deferred until all implementation
+is finished; no deployed assets or configs change.
