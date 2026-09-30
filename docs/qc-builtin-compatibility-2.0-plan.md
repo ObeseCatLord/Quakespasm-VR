@@ -323,6 +323,12 @@ toward the plane, and invalid normals clear all components. Native model
 storage, vertex/fan lookup and nearest-surface cache remain. Software
 qualification and broader surface/reflection contracts remain open.
 
+The remaining indexed count/texture/point-attribute wrappers now share the same
+local absolute bounds contract, with copied missing-texture name/dimension
+fallbacks at abaf7747 and bounded requested-Astra source acceptance. Native
+lightmap-coordinate calculations and nearest-surface cache remain. This does
+not certify malformed geometry or complete MOD-005 execution.
+
 The [reflection adapter](qc-reflection-2.0-plan.md) now has bounded local Astra source acceptance:
 the existing field map is rebound after table copying, public field types mask
 internal tags, valid-index server writes use native spatial linking, and zoned

@@ -30,3 +30,19 @@ UV rectangle, as primary does. Primary GL_SetCanvasColor selects blend below
 alpha1 and alpha-test at alpha1; native Draw_SubPicInternal makes the same choice.
 Retain native picture filtering/shaders and successful wrapper argument layout.
 This is source reuse evidence, not rendered alpha/edge/padding qualification.
+
+## Implementation and source disposition
+
+Production666cdab1 copies the planned two lines. Local requested-Astra/Max source
+advisory found no actionable P1/P2 in the exact delta: completed_time matches
+primary and native intermission-score context; the float global is already bound
+by the native registration macro through PR_FindExtGlobal, with NULL for absent
+or incompatible declarations; assignment occurs after client VM selection and
+before the existing HUD/score callbacks. Scheduling, mutexes, canvas, parameters,
+VM/stats restoration and error handling are unchanged by the patch.
+
+Main independently inspected that binding and both callback contexts. Scoped
+git diff --check passes. Effective reviewer settings were not exposed, so this
+is bounded source acceptance without settings certification. No builds, tests,
+compiler/runtime probes or fixtures ran; broader GUI/stereo/runtime acceptance
+remains deferred. The existing picture path remains reused without code changes.
