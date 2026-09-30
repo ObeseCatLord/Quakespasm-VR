@@ -5285,6 +5285,16 @@ static void PF_cl_stringwidth (void)
 	G_FLOAT (OFS_RETURN) = fontsize[0] * r;
 }
 
+static void PF_cl_setcursormode (void)
+{
+	// Inherited fallback: cursor grabbing/hardware cursors are outside the HUD API.
+}
+
+static void PF_cl_loadfont (void)
+{
+	G_FLOAT (OFS_RETURN) = 0;
+}
+
 static void PF_cl_drawsetclip (void)
 {
 	cb_context_t *cbx = vulkan_globals.secondary_cb_contexts[SCBX_GUI];
@@ -5642,6 +5652,110 @@ static void PF_sv_forceinfokey (void)
 	const char *keyname = G_STRING (OFS_PARM1);
 	const char *value = G_STRING (OFS_PARM2);
 	SV_UpdateInfo (edict, keyname, value);
+}
+
+static void PF_cl_sendevent (void)
+{
+	const char *eventname, *eventargs;
+	etype_t types[6] = {ev_void};
+	unsigned int entities[6] = {0};
+	size_t required, remaining;
+	int slots;
+
+	if (cls.state != ca_connected || cls.demoplayback || qcvm->argc < 2)
+		return;
+	eventname = G_STRING (OFS_PARM0);
+	eventargs = G_STRING (OFS_PARM1);
+	if (cls.message.cursize < 0 || cls.message.cursize > cls.message.maxsize)
+		return;
+	remaining = cls.message.maxsize - cls.message.cursize;
+	required = strlen (eventname);
+	if (required >= MSG_READSTRING_SIZE || remaining < 3 || required > remaining - 3)
+	{
+		Con_DPrintf ("sendevent: event name or reliable buffer too large\n");
+		return;
+	}
+	required += 3; // opcode, type terminator, name NUL
+
+	// Preflight the whole inherited request before touching queued traffic.
+	for (slots = 0; slots < 6 && eventargs[slots]; ++slots)
+	{
+		int parm = OFS_PARM0 + (slots + 2) * 3;
+		size_t bytes;
+		switch (eventargs[slots])
+		{
+		case 's': types[slots] = ev_string; break;
+		case 'f': types[slots] = ev_float; break;
+		case 'i': types[slots] = ev_ext_integer; break;
+		case 'v': types[slots] = ev_vector; break;
+		case 'e': types[slots] = ev_entity; break;
+		default: continue; // Like primary, ignored characters still occupy a slot.
+		}
+		if (slots + 2 >= qcvm->argc)
+		{
+			Con_DPrintf ("sendevent: missing argument\n");
+			return;
+		}
+		switch (types[slots])
+		{
+		case ev_string:
+			bytes = strlen (G_STRING (parm));
+			if (remaining - required < 2 || bytes > remaining - required - 2)
+			{
+				Con_DPrintf ("sendevent: reliable buffer full\n");
+				return;
+			}
+			bytes += 2; // type and string NUL
+			break;
+		case ev_entity:
+		{
+			int reference = G_INT (parm);
+			if (qcvm->edict_size > 0 && reference >= 0 && reference % qcvm->edict_size == 0 &&
+				reference / qcvm->edict_size < qcvm->num_edicts)
+			{
+				edict_t *ed = PROG_TO_EDICT (reference);
+				eval_t *entnum = GetEdictFieldValue (ed, ED_FindFieldOffset ("entnum"));
+				double number = entnum ? entnum->_float : reference / qcvm->edict_size;
+				unsigned int ceiling = (cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS) ? 0x7fffff : 0xffff;
+				if (isfinite (number) && number >= 0 && number <= ceiling)
+					entities[slots] = (unsigned int)number;
+			}
+			bytes = 1 + ((entities[slots] > 0x7fff && (cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS)) ? 3 : 2);
+			break;
+		}
+		case ev_vector: bytes = 13; break;
+		default: bytes = 5; break;
+		}
+		if (bytes > remaining - required)
+		{
+			Con_DPrintf ("sendevent: reliable buffer full\n");
+			return;
+		}
+		required += bytes;
+	}
+
+	MSG_WriteByte (&cls.message, clcfte_qcrequest);
+	for (int i = 0; i < slots; ++i)
+	{
+		int parm = OFS_PARM0 + (i + 2) * 3;
+		if (types[i] == ev_void)
+			continue;
+		MSG_WriteByte (&cls.message, types[i]);
+		switch (types[i])
+		{
+		case ev_string: MSG_WriteString (&cls.message, G_STRING (parm)); break;
+		case ev_float: MSG_WriteFloat (&cls.message, G_FLOAT (parm)); break;
+		case ev_ext_integer: MSG_WriteLong (&cls.message, G_INT (parm)); break;
+		case ev_entity: MSG_WriteEntity (&cls.message, entities[i], cl.protocol_pext2); break;
+		case ev_vector:
+			for (int j = 0; j < 3; ++j)
+				MSG_WriteFloat (&cls.message, G_FLOAT (parm + j));
+			break;
+		default: break;
+		}
+	}
+	MSG_WriteByte (&cls.message, ev_void);
+	MSG_WriteString (&cls.message, eventname);
 }
 
 static void PF_cl_readbyte (void)
@@ -6064,6 +6178,9 @@ static struct
 	{"wasfreed",					PF_WasFreed,					PF_WasFreed,					353,	D("float(entity ent)", "Quickly check to see if the entity is currently free. This function is only valid during the two-second non-reuse window, after that it may give bad results. Try one second to make it more robust.")},//(EXT_CSQC) (should be availabe on server too)
 	{"serverkey",					PF_sv_serverkey_s,				PF_cl_serverkey_s,				354,	D("string(string key)", "Look up a key in the server's public serverinfo string")},//
 	{"serverkeyfloat",				PF_sv_serverkey_f,				PF_cl_serverkey_f,				0,		D("float(string key, optional float assumevalue)", "Version of serverkey that returns the value as a float (which avoids tempstrings).")},//
+	{"setcursormode", PF_NoSSQC, PF_cl_setcursormode, 343, "void(float usecursor, ...)", "stub. Inherited no-op cursor fallback."},
+	{"loadfont", PF_NoSSQC, PF_cl_loadfont, 357, "float(string fontname, string fontmaps, string sizes, float slot, ...)", "stub. External font loading is unavailable; returns zero."},
+	{"sendevent", PF_NoSSQC, PF_cl_sendevent, 359, "void(string evname, string evargs, ...)"},
 	{"readbyte",					PF_NoSSQC,						PF_cl_readbyte,					360,	"float()"},// (EXT_CSQC)
 	{"readchar",					PF_NoSSQC,						PF_cl_readchar,					361,	"float()"},// (EXT_CSQC)
 	{"readshort",					PF_NoSSQC,						PF_cl_readshort,				362,	"float()"},// (EXT_CSQC)

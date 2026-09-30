@@ -114,3 +114,20 @@ must preserve framing. Native temp-string truncation must remain explicit.
 Source review and planned checks do not establish full mod/netcode parity. Live
 multiplayer/hardware play remains user-owned; software qualification is required
 at the end of the implementation goal.
+
+## Local Astra source acceptance
+
+Personal local Astra Max reviewed the paired production diff and found no
+introduced P1/P2. It verified primary five-type/six-slot writer behavior,
+transactional byte counts and exact fits, reference/server-number validation,
+complete parameter clearing, seven-argument terminated framing, name truncation
+rejection and temporary string behavior. It also verified ordinary-body dispatch,
+server self/time/argc, normal argc/host-client restoration, signon and enclosing
+requester/socket retirement handling. Main inspected the actual changes and the
+load-bearing native codec/VM/lifecycle paths before recording acceptance.
+
+The standard opcode and CSQC-only 359 use existing protocol, registry, reliable
+buffer and server parser owners. No transport, negotiation, VM or graphics
+replacement was added. Implementation is source-accepted, not runtime-qualified;
+the actual callback-effects/negative-path software matrix above remains required.
+No builds, tests, compiler probes or performance measurements were performed.

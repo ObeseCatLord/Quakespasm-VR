@@ -1906,6 +1906,94 @@ static qboolean SV_ReadVRIKPose(qboolean accept)
     return true;
 }
 
+static qboolean SV_ReadQCRequest (void)
+{
+	char args[8], eventname[MSG_READSTRING_SIZE];
+	char funcname[MSG_READSTRING_SIZE + sizeof (args) + 7];
+	int count = 0, start;
+	dfunction_t *func;
+	client_t *requester = host_client;
+
+	// The VM copies declared parameters, even for a request with no arguments.
+	memset (&qcvm->globals[OFS_PARM0], 0, MAX_PARMS * 3 * sizeof (qcvm->globals[0]));
+	for (;;)
+	{
+		int type = MSG_ReadByte ();
+		int parm = OFS_PARM0 + count * 3;
+		if (msg_badread)
+			return false;
+		if (type == ev_void)
+			break;
+		if (count >= sizeof (args) - 1)
+		{
+			msg_badread = true;
+			return false;
+		}
+		switch (type)
+		{
+		case ev_float:
+			args[count] = 'f';
+			G_FLOAT (parm) = MSG_ReadFloat ();
+			break;
+		case ev_vector:
+			args[count] = 'v';
+			for (int i = 0; i < 3; ++i)
+				G_FLOAT (parm + i) = MSG_ReadFloat ();
+			break;
+		case ev_ext_integer:
+			args[count] = 'i';
+			G_INT (parm) = MSG_ReadLong ();
+			break;
+		case ev_string:
+			args[count] = 's';
+			G_INT (parm) = PR_MakeTempString (MSG_ReadString ());
+			break;
+		case ev_entity:
+		{
+			unsigned int number = MSG_ReadEntity (requester->protocol_pext2);
+			args[count] = 'e';
+			if (number >= (unsigned int)qcvm->num_edicts)
+				number = 0;
+			G_INT (parm) = EDICT_TO_PROG (EDICT_NUM (number));
+			break;
+		}
+		default:
+			msg_badread = true;
+			return false;
+		}
+		if (msg_badread)
+			return false;
+		++count;
+	}
+	args[count] = 0;
+	start = msg_readcount;
+	MSG_ReadStringBuffer (eventname, sizeof (eventname));
+	if (msg_badread || (size_t)(msg_readcount - start) != strlen (eventname) + 1)
+	{
+		msg_badread = true;
+		return false;
+	}
+	if (count)
+		q_snprintf (funcname, sizeof (funcname), "CSEv_%s_%s", eventname, args);
+	else
+		q_snprintf (funcname, sizeof (funcname), "CSEv_%s", eventname);
+	func = ED_FindFunction (funcname);
+	if (!func || func->first_statement <= 0)
+	{
+		SV_ClientPrintf ("qcrequest \"%s\" not supported\n", funcname);
+		return true;
+	}
+
+	int saved_argc = qcvm->argc;
+	pr_global_struct->time = qcvm->time;
+	pr_global_struct->self = EDICT_TO_PROG (requester->edict);
+	qcvm->argc = count;
+	PR_ExecuteProgram (func - qcvm->functions);
+	qcvm->argc = saved_argc;
+	host_client = requester;
+	return true;
+}
+
 qboolean SV_ReadClientMessage (void)
 {
 	int			ccmd;
@@ -2020,6 +2108,17 @@ qboolean SV_ReadClientMessage (void)
 		case clcdp_ackframe:
 			SVFTE_Ack (host_client, MSG_ReadLong ());
 			break;
+
+		case clcfte_qcrequest:
+		{
+			client_t *requester = host_client;
+			struct qsocket_s *socket = requester->netconnection;
+			if (!SV_ReadQCRequest ())
+				return false;
+			if (!requester->active || requester->netconnection != socket)
+				return true; // QC already retired/replaced this client; don't drop it twice.
+			break;
+		}
 		}
 	}
 

@@ -390,6 +390,7 @@ typedef struct
 #define clc_vrikpose	5  // v2 [fixed pose], v3/v4 [byte bodylen][codec body]
 #define clc_voice		6  // [short sequence][long timestamp][byte talkspurt][byte flags][short length][Opus]
 #define clcdp_ackframe	50 // [long] frame sequence. reused by fte replacement deltas
+#define clcfte_qcrequest 81 // typed CSQC arguments, void terminator, event name
 //
 // temp entity events
 //

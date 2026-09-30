@@ -219,16 +219,19 @@ The following slices now have bounded local Astra source acceptance:
 
 The [line-drawing adapter](qc-drawline-2.0-plan.md) also has local Astra source
 acceptance. Remaining demonstrated inherited-call work includes core builtin-name
-discovery, SSQC setcolors, CSQC sendevent and inherited cursor/font no-op
-fallbacks. Remaining VM permission/resource lifetimes and broader contracts
-still require their bounded comparison and final software acceptance.
+discovery and SSQC setcolors. The paired
+[client/server event adapter](qc-events-2.0-plan.md) has local Astra design and
+source acceptance; the inherited cursor/font fallbacks also have bounded local
+Astra source acceptance. Remaining VM
+permission/resource lifetimes and broader contracts still require their bounded
+comparison and final software acceptance.
 
-Fresh event comparison shows that destination lacks both `clcfte_qcrequest` 81
-and its server reader, not just `sendevent` 359. Primary and QSS-M contain the
-paired typed request writer and `CSEv_*` reader. Plan and review that complete
-native-message vertical before porting; a registry-only wrapper would either
-fail to deliver events or cause an unknown-opcode disconnect. No replacement
-transport or generic RPC layer is justified by this missing standard call.
+Event comparison established that destination initially lacked both
+`clcfte_qcrequest` 81 and its server reader, not just `sendevent` 359. The implemented
+paired adapter copies the primary/QSS-M typed request and `CSEv_*` dispatch onto
+native message and VM owners, with reviewed framing/lifecycle corrections.
+A registry-only wrapper would not deliver the inherited behavior. No replacement
+transport or generic RPC layer was introduced for this standard call.
 
 Fresh color comparison also identifies an existing adapter: QSS-M's
 `PF_setcolors` calls native `SV_UpdateInfo` for top/bottom colors. Copying primary's
@@ -262,3 +265,9 @@ and bounded local Astra review. Final deferred software checks must cover explic
 and named invocation, numeric noncollision, CSQC no-effect cursor calls, zero
 font return and SSQC rejection; ordinary bitmap text must still use the native
 renderer. No builds/tests/probes before implementation is finished.
+
+Fallback source acceptance: local Astra verified the exact primary empty cursor
+wrapper, zero font return, unique registry slots and null SSQC handlers. Main
+source inspection also confirmed the native core tables end below slots 343/357.
+No cursor/font resources, capability advertisements or renderer changes were
+added. This accepts the source adapter only; deferred invocation checks remain.
