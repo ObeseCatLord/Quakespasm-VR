@@ -97,3 +97,21 @@ check is POSIX-only. Windows uses native find attributes without opening each
 result. Keep that platform boundary in the adapter: POSIX retains its type/open
 checks; Windows retains native enumeration and directory filtering. The earlier
 generic readability description must not impose a new Windows filter.
+
+## Source acceptance
+
+The adapter is implemented. Personal local Astra Max accepted the final source
+with no remaining introduced P1/P2. It verified owned snapshots, deduplication,
+mounted precedence, finite/bounded conversions, VM ownership, exhaustion and
+shutdown, shared model-only filtering, both-VM handlers and capability.
+The Windows P2 is resolved through the existing native pattern/iteration owner;
+ordinary extension enumeration keeps its output. POSIX and pack matching remain
+the inherited implementations. Main retains the copied primary wildcard body,
+and no new filesystem or platform resource owner is introduced.
+
+Astra also validated the routine `strconv` 249 alias registration: both VM
+handlers reuse 224's existing converter, with named discovery/binding still
+choosing 224. Main's earlier wrapper/helper comparison covers its conversion
+contract. No builds, tests, compiler/runtime or performance probes were run.
+Windows execution remains deferred. Ignored search parameters and bounded path
+changes remain explicit; this source acceptance does not close all MOD features.

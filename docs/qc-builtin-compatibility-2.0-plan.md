@@ -28,7 +28,7 @@ extension table. This slice introduces no new entrypoints, permissions,
 capability advertisements, number allocation or invocation policy. It does not
 claim that core builtin discovery or the rest of the inherited ABI is complete.
 
-## Remaining audit findings
+## Registry audit findings (initial checklist)
 
 These require handler and VM-contract verification before implementation:
 
@@ -187,3 +187,16 @@ index before any table dereference. Astra accepted that correction with no
 remaining P1/P2 in this slice. No builds/tests/compiler runs or probes were
 performed. Existing unrelated native QC API issues were outside the review;
 full filesystem and VM lifecycle acceptance remains at final software checks.
+
+## Alternate string-conversion slot
+
+The initial alias checklist also requires `strconv` 249, alongside existing
+224. Main compared actual primary/destination conversion wrappers and numeric,
+punctuation and alphabetic helper bodies: the contracts match, including
+variadic concatenation, temporary-string limits and color/case conversion.
+Neither destination core tables nor its extension registry occupy 249. Add the
+primary's alternate registration for both VMs, reusing `PF_strconv` directly.
+Keep 224 first so named discovery and `#0` binding keep their existing result;
+explicit 249 calls use the same native handler. No new converter, dynamic number
+or capability claim. Source comparison covers this routine registration; final
+software checks must compare numeric invocation at both slots and named binding.

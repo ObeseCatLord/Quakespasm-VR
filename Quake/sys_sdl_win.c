@@ -486,7 +486,7 @@ static void Sys_FillFindData (winfindfile_t *find)
 		find->base.attribs |= FA_DIRECTORY;
 }
 
-findfile_t *Sys_FindFirst (const char *dir, const char *ext)
+findfile_t *Sys_FindFirstPattern (const char *dir, const char *wildcard)
 {
 	winfindfile_t	*ret;
 	char			 pattern[MAX_OSPATH];
@@ -494,11 +494,7 @@ findfile_t *Sys_FindFirst (const char *dir, const char *ext)
 	HANDLE			 handle;
 	WIN32_FIND_DATAW data;
 
-	if (!ext)
-		ext = "*";
-	else if (*ext == '.')
-		++ext;
-	q_snprintf (pattern, sizeof (pattern), "%s/*.%s", dir, ext);
+	q_snprintf (pattern, sizeof (pattern), "%s/%s", dir, wildcard);
 
 	UTF8ToWideString (pattern, wpattern, countof (wpattern));
 	handle = FindFirstFileW (wpattern, &data);
@@ -514,6 +510,18 @@ findfile_t *Sys_FindFirst (const char *dir, const char *ext)
 	Sys_FillFindData (ret);
 
 	return (findfile_t *)ret;
+}
+
+findfile_t *Sys_FindFirst (const char *dir, const char *ext)
+{
+	char wildcard[MAX_OSPATH];
+
+	if (!ext)
+		ext = "*";
+	else if (*ext == '.')
+		++ext;
+	q_snprintf (wildcard, sizeof (wildcard), "*.%s", ext);
+	return Sys_FindFirstPattern (dir, wildcard);
 }
 
 findfile_t *Sys_FindNext (findfile_t *find)

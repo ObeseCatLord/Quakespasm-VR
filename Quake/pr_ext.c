@@ -3073,6 +3073,214 @@ static qboolean QC_FixFileName (const char *name, const char **result, const cha
 	return true;
 }
 
+
+// Mounted-file search snapshots, adapted from the primary QC API.
+#define MAX_QC_SEARCHES 16
+static struct qcsearch_s
+{
+	qcvm_t *owner;
+	char (*files)[MAX_QPATH];
+	size_t numfiles, maxfiles;
+} qcsearches[MAX_QC_SEARCHES];
+
+static qboolean PF_WildMatch(const char *pattern, const char *text)
+{
+	while (*pattern)
+	{
+		if (*pattern == '*')
+		{
+			while (*pattern == '*')
+				pattern++;
+			if (!*pattern)
+				return true;
+			while (*text)
+			{
+				if (PF_WildMatch(pattern, text))
+					return true;
+				text++;
+			}
+			return false;
+		}
+		if (*pattern == '?')
+		{
+			if (!*text)
+				return false;
+			pattern++;
+			text++;
+			continue;
+		}
+		if (q_tolower(*pattern) != q_tolower(*text))
+			return false;
+		pattern++;
+		text++;
+	}
+	return !*text;
+}
+
+static void PF_SearchAdd (struct qcsearch_s *search, const char *name)
+{
+	size_t i;
+
+	if (strlen (name) >= MAX_QPATH)
+		return;
+	for (i = 0; i < search->numfiles; i++)
+		if (!q_strcasecmp (search->files[i], name))
+			return;
+	if (search->numfiles == search->maxfiles)
+	{
+		if (search->maxfiles > SIZE_MAX / (2 * sizeof (*search->files)))
+			Sys_Error ("PF_SearchAdd: too many search results");
+		search->maxfiles = search->maxfiles ? search->maxfiles * 2 : 32;
+		search->files = Mem_Realloc (search->files, search->maxfiles * sizeof (*search->files));
+	}
+	q_strlcpy (search->files[search->numfiles++], name, MAX_QPATH);
+}
+
+static void PF_SearchLooseDir (struct qcsearch_s *search, const searchpath_t *spath, const char *pattern)
+{
+	const char *slash = strrchr (pattern, '/');
+	const char *basename = slash ? slash + 1 : pattern;
+	size_t prefix = slash ? slash + 1 - pattern : 0;
+	char osdir[MAX_OSPATH];
+	findfile_t *find;
+	int length;
+
+	length = q_snprintf (osdir, sizeof (osdir), "%s/%.*s", spath->filename, (int)prefix, pattern);
+	if (length < 0 || (size_t)length >= sizeof (osdir))
+		return;
+#ifdef _WIN32
+	find = Sys_FindFirstPattern (osdir, basename);
+#else
+	find = Sys_FindFirst (osdir, NULL);
+#endif
+	for (; find; find = Sys_FindNext (find))
+	{
+		char name[MAX_QPATH];
+#ifndef _WIN32
+		char ospath[MAX_OSPATH];
+		FILE *file;
+#endif
+
+		if (find->attribs & FA_DIRECTORY)
+			continue;
+#ifndef _WIN32
+		if (!PF_WildMatch (basename, find->name))
+			continue;
+#endif
+		length = q_snprintf (name, sizeof (name), "%.*s%s", (int)prefix, pattern, find->name);
+		if (length < 0 || (size_t)length >= sizeof (name))
+			continue;
+#ifndef _WIN32
+		length = q_snprintf (ospath, sizeof (ospath), "%s/%s", spath->filename, name);
+		if (length < 0 || (size_t)length >= sizeof (ospath) || !(Sys_FileType (ospath) & FS_ENT_FILE))
+			continue;
+		file = Sys_fopen (ospath, "rb");
+		if (!file)
+			continue;
+		fclose (file);
+#endif
+		PF_SearchAdd (search, name);
+	}
+}
+
+static struct qcsearch_s *PF_GetQCSearch (float handle)
+{
+	size_t index;
+
+	if (!isfinite (handle) || handle < 0 || handle >= MAX_QC_SEARCHES)
+		return NULL;
+	index = (size_t)handle;
+	if (qcsearches[index].owner != qcvm)
+		return NULL;
+	return &qcsearches[index];
+}
+
+static void PF_SearchClear (struct qcsearch_s *search)
+{
+	Mem_Free (search->files);
+	memset (search, 0, sizeof (*search));
+}
+
+static void PF_search_shutdown (void)
+{
+	size_t i;
+	for (i = 0; i < countof (qcsearches); i++)
+		if (qcsearches[i].owner == qcvm)
+			PF_SearchClear (&qcsearches[i]);
+}
+
+static void PF_search_begin (void)
+{
+	const char *pattern = G_STRING (OFS_PARM0);
+	const char *normalized, *fallback;
+	searchpath_t *spath;
+	size_t i;
+	int j;
+
+	G_FLOAT (OFS_RETURN) = -1;
+	if (strlen (pattern) >= MAX_QPATH || !QC_FixFileName (pattern, &normalized, &fallback))
+		return;
+	for (i = 0; i < countof (qcsearches); i++)
+		if (!qcsearches[i].owner)
+			break;
+	if (i == countof (qcsearches))
+		return;
+	qcsearches[i].owner = qcvm;
+	for (spath = com_searchpaths; spath; spath = spath->next)
+	{
+		if (spath->pack)
+		{
+			for (j = 0; j < spath->pack->numfiles; j++)
+			{
+				const char *name = spath->pack->files[j].name;
+				if (spath->rerelease_models && !COM_IsRereleaseModelAsset (name))
+					continue;
+				if (PF_WildMatch (pattern, name))
+					PF_SearchAdd (&qcsearches[i], name);
+			}
+		}
+		else
+			PF_SearchLooseDir (&qcsearches[i], spath, pattern);
+	}
+	if (!qcsearches[i].numfiles)
+	{
+		PF_SearchClear (&qcsearches[i]);
+		return;
+	}
+	G_FLOAT (OFS_RETURN) = i;
+}
+
+static void PF_search_end (void)
+{
+	struct qcsearch_s *search = PF_GetQCSearch (G_FLOAT (OFS_PARM0));
+	if (search)
+		PF_SearchClear (search);
+}
+
+static void PF_search_getsize (void)
+{
+	struct qcsearch_s *search = PF_GetQCSearch (G_FLOAT (OFS_PARM0));
+	G_FLOAT (OFS_RETURN) = search ? search->numfiles : 0;
+}
+
+static void PF_search_getfilename (void)
+{
+	struct qcsearch_s *search = PF_GetQCSearch (G_FLOAT (OFS_PARM0));
+	float requested = G_FLOAT (OFS_PARM1);
+	size_t index;
+	char *out;
+
+	G_INT (OFS_RETURN) = 0;
+	if (!search || !isfinite (requested) || requested < 0 || (double)requested >= search->numfiles)
+		return;
+	index = (size_t)requested;
+	if (index >= search->numfiles)
+		return;
+	out = PR_GetTempString ();
+	q_strlcpy (out, search->files[index], STRINGTEMP_LENGTH);
+	G_INT (OFS_RETURN) = PR_SetEngineString (out);
+}
+
 // small note on access modes:
 // when reading, we fopen files inside paks, for compat with (crappy non-zip-compatible) filesystem code
 // when writing, we directly fopen the file such that it can never be inside a pak.
@@ -5725,6 +5933,7 @@ static struct
 	{"str2chr",						PF_str2chr,						PF_str2chr,						222,	D("float(string str, float index)", "Retrieves the character value at offset 'index'.")},
 	{"chr2str",						PF_chr2str,						PF_chr2str,						223,	D("string(float chr, ...)", "The input floats are considered character values, and are concatenated.")},
 	{"strconv",						PF_strconv,						PF_strconv,						224,	D("string(float ccase, float redalpha, float redchars, string str, ...)", "Converts quake chars in the input string amongst different representations.\nccase specifies the new case for letters.\n 0: not changed.\n 1: forced to lower case.\n 2: forced to upper case.\nredalpha and redchars switch between colour ranges.\n 0: no change.\n 1: Forced white.\n 2: Forced red.\n 3: Forced gold(low) (numbers only).\n 4: Forced gold (high) (numbers only).\n 5+6: Forced to white and red alternately.\nYou should not use this builtin in combination with UTF-8.")},
+	{"strconv", PF_strconv, PF_strconv, 249, "string(float ccase, float redalpha, float redchars, string str, ...)"}, // inherited numeric alias; named lookup retains 224
 	{"strpad",						PF_strpad,						PF_strpad,						225,	D("string(float pad, string str1, ...)", "Pads the string with spaces, to ensure its a specific length (so long as a fixed-width font is used, anyway). If pad is negative, the spaces are added on the left. If positive the padding is on the right.")},	//will be moved
 	{"infoadd",						PF_infoadd,						PF_infoadd,						226,	D("string(infostring old, string key, string value)", "Returns a new tempstring infostring with the named value changed (or added if it was previously unspecified). Key and value may not contain the \\ character.")},
 	{"infoget",						PF_infoget,						PF_infoget,						227,	D("string(infostring info, string key)", "Reads a named value from an infostring. The returned value is a tempstring")},
@@ -5834,6 +6043,10 @@ static struct
 	{"argv",						PF_ArgV,						PF_ArgV,						442,	"string(float n)"},// (KRIMZON_SV_PARSECLIENTCOMMAND
 	{"argc",						PF_ArgC,						PF_ArgC,						0,		"float()"},
 	{"setattachment",				PF_setattachment,				PF_setattachment,				443,	"void(entity e, entity tagentity, string tagname)", ""},// (DP_GFX_QUAKE3MODELTAGS)
+	{"search_begin", PF_search_begin, PF_search_begin, 444, "searchhandle(string pattern, float flags, float quiet, optional string filterpackage)"},
+	{"search_end", PF_search_end, PF_search_end, 445, "void(searchhandle handle)"},
+	{"search_getsize", PF_search_getsize, PF_search_getsize, 446, "float(searchhandle handle)"},
+	{"search_getfilename", PF_search_getfilename, PF_search_getfilename, 447, "string(searchhandle handle, float num)"},
 	{"cvar_string",					PF_cvar_string,					PF_cvar_string,					448,	 "string(string cvarname)"},//DP_QC_CVAR_STRING
 	{"findflags",					PF_findflags,					PF_findflags,					449,	"entity(entity start, .float fld, float match)"},//DP_QC_FINDFLAGS
 	{"findchainflags",				PF_findchainflags,				PF_findchainflags,				450,	"entity(.float fld, float match, optional .entity chainfield)"},//DP_QC_FINDCHAINFLAGS
@@ -6019,6 +6232,7 @@ static struct
 	{"DP_QC_SPRINTF"},
 	{"DP_QC_STRFTIME"},
 	{"DP_QC_STRING_CASE_FUNCTIONS"},
+	{"DP_QC_SEARCH"},
 	{"DP_QC_STRINGBUFFERS"},
 	{"DP_QC_STRINGCOLORFUNCTIONS"},
 	{"DP_QC_STRREPLACE"},
@@ -6255,6 +6469,7 @@ void PF_Fixme (void)
 void PR_ShutdownExtensions (void)
 {
 	PR_UnzoneAll ();
+	PF_search_shutdown ();
 	PF_frikfile_shutdown ();
 	PF_buf_shutdown ();
 	tokenize_flush ();

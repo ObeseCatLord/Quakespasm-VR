@@ -432,6 +432,7 @@ typedef struct searchpath_s
 
 extern searchpath_t *com_searchpaths;
 extern searchpath_t *com_base_searchpaths;
+qboolean COM_IsRereleaseModelAsset (const char *filename);
 
 extern THREAD_LOCAL qfileofs_t com_filesize;
 struct cache_user_s;

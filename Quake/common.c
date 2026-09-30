@@ -2508,7 +2508,7 @@ can be used for detecting a file's presence.
 /* A separately mounted rerelease pack must never supply gameplay files to a
  * classic installation. Its MD5 meshes, animations and indexed skins are a
  * lowest-priority replacement-model source only. */
-static qboolean COM_IsRereleaseModelAsset (const char *filename)
+qboolean COM_IsRereleaseModelAsset (const char *filename)
 {
 	const char *extension;
 

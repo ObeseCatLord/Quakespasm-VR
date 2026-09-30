@@ -109,6 +109,9 @@ typedef struct findfile_s
 } findfile_t;
 
 findfile_t *Sys_FindFirst (const char *dir, const char *ext);
+#ifdef _WIN32
+findfile_t *Sys_FindFirstPattern (const char *dir, const char *pattern);
+#endif
 findfile_t *Sys_FindNext (findfile_t *find);
 
 // Only needs to be called manually when breaking out of the loop,
