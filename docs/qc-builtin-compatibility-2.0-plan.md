@@ -287,3 +287,9 @@ bounded local Astra source acceptance: all public native consumers require
 the current VM, safe handle decoding retains native tables, and copied sort
 tail clearing removes stale aliases. Broader content/error/interface contracts
 and final concurrent-VM qualification remain open.
+
+The [small service-wrapper corrections](qc-service-contracts-2.0-plan.md) now
+have bounded local Astra source acceptance: primary registercvar default/status,
+rejected buffer-add -1, optional cvar exclusion pattern and a full-name sorting
+prefix reset. These retain native services and do not complete the broader
+content/error-contract audit.

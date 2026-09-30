@@ -2635,8 +2635,8 @@ static void PF_cvar_description (void)
 static void PF_registercvar (void)
 {
 	const char *name = G_STRING (OFS_PARM0);
-	const char *value = (qcvm->argc > 1) ? G_STRING (OFS_PARM0) : "";
-	Cvar_Create (name, value);
+	const char *value = (qcvm->argc > 1) ? G_STRING (OFS_PARM1) : "0";
+	G_FLOAT (OFS_RETURN) = Cvar_Create (name, value) ? 1 : 0;
 }
 
 // temp entities + networking
@@ -3969,6 +3969,7 @@ static void PF_bufstr_add (void)
 	const char *string = G_STRING (OFS_PARM1);
 	qboolean	ordered = G_FLOAT (OFS_PARM2);
 
+	G_FLOAT (OFS_RETURN) = -1;
 	if ((unsigned int)bufno >= NUMSTRINGBUFS)
 		return;
 	if (strbuflist[bufno].owningvm != qcvm)
@@ -3999,7 +4000,7 @@ static void PF_buf_cvarlist (void)
 {
 	size_t		 bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 	const char	*pattern = G_STRING (OFS_PARM1);
-	const char	*antipattern = G_STRING (OFS_PARM2);
+	const char	*antipattern = qcvm->argc > 2 ? G_STRING (OFS_PARM2) : "";
 	unsigned int i;
 	cvar_t		*var;
 	int			 plen = strlen (pattern), alen = strlen (antipattern);
@@ -4028,6 +4029,7 @@ static void PF_buf_cvarlist (void)
 		PF_bufstr_add_internal (bufno, var->name, true);
 	}
 
+	PF_buf_sort_sortprefixlen = 0x7fffffff;
 	qsort (strbuflist[bufno].strings, strbuflist[bufno].used, sizeof (char *), PF_buf_sort_ascending);
 }
 

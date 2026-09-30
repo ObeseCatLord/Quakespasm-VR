@@ -22,3 +22,9 @@ and omitted cvar defaults, status for new/existing/command-conflicting names,
 unchanged existing values, rejected buffer-add -1, successful native append,
 optional exclusion patterns and sorting after a prior short-prefix buffer sort.
 These cases remain distinct from complete ABI/mod acceptance.
+
+Source acceptance: local Astra accepted the actual three-wrapper delta with no
+actionable findings. Main confirmed primary default/status and optional-pattern
+lines, native existing-variable/no-overwrite and command-conflict behavior, and
+full-prefix reset immediately before native sorting. No builds/tests/compiler
+or runtime probes were run; the deferred cases above still apply.
