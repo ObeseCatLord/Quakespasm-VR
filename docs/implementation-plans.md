@@ -247,3 +247,5 @@ remaining blocker in this slice. The linked checkpoint retains the failed
 native numerical comparison and exact prepared/captured proof limits. Broader
 wet/cooperative/local/load compatibility remains in the full goal. No new
 production boots code was needed for the actual AD/q30 lifecycle proof.
+
+| Weapon-wheel retained selection and co-op action control | [Before-code source comparison](weapon-wheel-session-parity-2.0-plan.md) | Stable native catalog/renderer retained; inherited remembered selection and player-action toggle have verified source gaps. Literal toggle adapter first; local Astra source disposition before coupled session retention. Final software checks deferred. |
