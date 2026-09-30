@@ -253,3 +253,31 @@ Effective reviewer settings are not exposed by the available agent API; requeste
 Astra/max advice cannot be represented as certified completion of the skill's
 effective-setting verification requirement. Final software qualification remains
 pending regardless of the source assessment.
+
+## Adopted production cleanup disposition
+
+Requested local Astra/max read the857-net-line current patch and challenged the
+need for general VM recovery. Main spot-checked the cited native Think,
+PreThink, disconnect and connection owners, then resolved its missing external
+callback evidence in pr_ext.c. No runtime checks or certified effective-setting
+verification occurred.
+
+| Recommendation | Main disposition before coding |
+| --- | --- |
+| Scheduled Think loses cancellation evidence when the global binding is cleared | Adopt: capture the enclosing existing policy pointer before QC; guard post-callback entity metadata/pose restoration and stop the client continuation when cancelled. Delete the unconditional pose-end wrapper in favor of its existing guarded variant. |
+| Native continuations recognize removal only for command-hook owners | Adopt guards at actual callback exits before subsequent player writes, including ordinary PreThink and custom physics. Preserve surviving VM basis and temporary input restoration; cancellation is not permission to skip global unwind. |
+| SetChangeParms targets mutable host_client; same-address reuse was not established within the six-file review scope | Resolve from actual pr_ext.c:2468–2503: registered server dropclient returns after SV_DropClient; spawnclient calls SV_ConnectClient for an inactive reserved slot, resets the same player edict and returns. With one slot (or all others active), this can replace the target at identical addresses during SetChangeParms. Adopt a bounded callback adapter using the existing transient binding, not an active respawn policy or identity registry. Stable iteration client/edict owns health/deadflag restoration and64-parm publication; cancellation prevents both. |
+| Raw saved input addresses imply general VM-storage recovery | Reject as unproven: native changelevel executes spawn-parm extraction before server reconstruction; Host_Error/EndGame do not return into the scope. Keep VM-clear cancellation and existing unwind, without storage generations or a callback framework. Reopen only for a demonstrated returning destruction path. |
+| Optional placement writes unchecked death pose/teammate yaw | Adopt finite admission before any relocation/contact/retouch mutation. Failure leaves the QC spawn and uses the ordinary successful-spawn epoch path. Manual/join placement returns failure rather than committing invalid angles. |
+| Manual/join relocation builds a full policy record for an anchor-only placement | Adopt deletion: pass no policy for existing non-null-anchor paths, keeping unchanged native retouch and avoiding unused death-pose copies. |
+| Reuse SV_SetClientExtraButtons | Defer until exact equivalence is established; do not broaden the correction to unrelated input behavior. |
+
+Exact correction ownership remains sv_phys.c, sv_main.c and only the narrow
+server.h callback declaration. Factor only the existing binding admission out
+of BeginPostThink; SetChangeParms uses a stack record solely for cancellation.
+Keep its native callback, native64-parm extraction, living-save behavior and
+command/world owners. No QC callback is replaced and no new lifetime registry
+is introduced. Expected completed stage1 size880–940 net lines, bounded by975
+including the justified changelevel adapter. Reopen above975, a second binding
+or a broad callback/movement rewrite. Source review and final Linux/ARM software
+qualification must still cover the actual resulting implementation.
