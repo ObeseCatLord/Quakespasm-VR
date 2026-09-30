@@ -4319,7 +4319,7 @@ static void PF_entityfieldtype (void)
 	if (fldidx >= (unsigned int)qcvm->progs->numfielddefs)
 		G_FLOAT (OFS_RETURN) = ev_void;
 	else
-		G_FLOAT (OFS_RETURN) = qcvm->fielddefs[fldidx].type;
+		G_FLOAT (OFS_RETURN) = qcvm->fielddefs[fldidx].type & ~DEF_SAVEGLOBAL;
 }
 static void PF_getentfldstr (void)
 {
@@ -4341,7 +4341,11 @@ static void PF_putentfldstr (void)
 	edict_t		*ent = G_EDICT (OFS_PARM1);
 	const char	*value = G_STRING (OFS_PARM2);
 	if (fldidx < (unsigned int)qcvm->progs->numfielddefs)
+	{
 		G_FLOAT (OFS_RETURN) = ED_ParseEpair ((void *)&ent->v, qcvm->fielddefs + fldidx, value, true);
+		if (qcvm == &sv.qcvm)
+			SV_LinkEdict (ent, false);
+	}
 	else
 		G_FLOAT (OFS_RETURN) = false;
 }

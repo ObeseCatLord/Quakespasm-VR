@@ -1289,6 +1289,9 @@ static void ED_RezoneString (string_t *ref, const char *str)
 	char  *buf;
 	size_t len = strlen (str) + 1;
 	size_t id;
+	char  *replacement = Mem_Alloc (len);
+	// The input may point into the zone being replaced.
+	memcpy (replacement, str, len);
 
 	if (*ref)
 	{ // if the reference is already a zoned string then free it first.
@@ -1305,9 +1308,7 @@ static void ED_RezoneString (string_t *ref, const char *str)
 		// initialised with
 	}
 
-	buf = Mem_Alloc (len);
-	memcpy (buf, str, len);
-	id = -1 - (*ref = PR_SetEngineString (buf));
+	id = -1 - (*ref = PR_SetEngineString (replacement));
 	// make sure its flagged as zoned so we can clean up properly after.
 	if (id >= qcvm->knownzonesize)
 	{
@@ -1867,6 +1868,14 @@ static void PR_MergeEngineFieldDefs (void)
 		ddef_t *olddefs = qcvm->fielddefs;
 		qcvm->fielddefs = Mem_Alloc (maxdefs * sizeof (*qcvm->fielddefs));
 		memcpy (qcvm->fielddefs, olddefs, qcvm->progs->numfielddefs * sizeof (*qcvm->fielddefs));
+		// Rebind only each name's existing winner before retiring the old table.
+		for (j = 0; j < (unsigned int)qcvm->progs->numfielddefs; j++)
+		{
+			const char *name = PR_GetString (olddefs[j].s_name);
+			ddef_t **def_ptr = HashMap_Lookup (ddef_t *, qcvm->fielddefs_map, &name);
+			if (def_ptr && *def_ptr == &olddefs[j])
+				*def_ptr = &qcvm->fielddefs[j];
+		}
 		if (olddefs != (ddef_t *)((byte *)qcvm->progs + qcvm->progs->ofs_fielddefs))
 			Mem_Free (olddefs);
 

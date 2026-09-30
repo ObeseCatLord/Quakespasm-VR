@@ -51,3 +51,19 @@ the existing code. No new cache/reference-counting/string service. Include this
 small `ED_RezoneString` ordering correction in the write set and source review;
 deferred checks must cover self-assignment, interior aliases, empty strings,
 repeated writes and SSQC/CSQC cleanup without changing literal-byte semantics.
+
+## Main implementation source checkpoint
+
+The three reflection repairs and zoned alias correction are source-integrated.
+The merge loop updates only a map value still pointing to that exact old
+definition; duplicate-name winners and existing map allocation remain unchanged.
+All updates precede old-table retirement. Type masking affects only the exposed
+return. Valid-index SSQC writes relink through the native owner with no trigger
+touch and retain the parser result; CSQC/invalid-index paths do not link.
+Replacement string bytes are copied before prior-zone retirement, while native
+engine-string registration and zone cleanup remain.
+
+Main checked the native hash overwrite/lookup semantics, loader ordering,
+primary type/link contracts and string alias lifetime. Local Astra source review
+of the implementation remains pending. No builds/tests/compiler/runtime probes
+ran; final software and full migration qualification remain pending.
