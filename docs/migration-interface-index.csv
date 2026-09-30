@@ -403,7 +403,7 @@ MAIN,cvar,cl_portpingprobe_enable,0,Quake/net_dgrm.c,59,NET/COOP/MOVE,literal de
 MAIN,cvar,cl_portpingprobe_probes,6,Quake/net_dgrm.c,60,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
 MAIN,cvar,cl_portpingprobe_delay,0.20,Quake/net_dgrm.c,61,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
 MAIN,command,net_stats,NET_Stats_f,Quake/net_dgrm.c,1669,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
-MAIN,command,ban,NET_Ban_f,Quake/net_dgrm.c,1698,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
+MAIN,command,ban,NET_Ban_f,Quake/net_dgrm.c,1698,NET/COOP/MOVE,source-integrated through retained IPv4 ban handler/state/admission; main source review; final Linux/ARM qualification pending
 MAIN,command,test,Test_f,Quake/net_dgrm.c,1700,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
 MAIN,command,test2,Test2_f,Quake/net_dgrm.c,1701,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
 MAIN,cvar,net_messagetimeout,300,Quake/net_main.c,62,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
@@ -1051,7 +1051,7 @@ XR,cvar,cl_portpingprobe_enable,0,Quake/net_dgrm.c,59,NET/COOP/MOVE,literal decl
 XR,cvar,cl_portpingprobe_probes,6,Quake/net_dgrm.c,60,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
 XR,cvar,cl_portpingprobe_delay,0.20,Quake/net_dgrm.c,61,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
 XR,command,net_stats,NET_Stats_f,Quake/net_dgrm.c,1669,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
-XR,command,ban,NET_Ban_f,Quake/net_dgrm.c,1698,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
+XR,command,ban,NET_Ban_f,Quake/net_dgrm.c,1698,NET/COOP/MOVE,source-integrated through retained IPv4 ban handler/state/admission; main source review; final Linux/ARM qualification pending
 XR,command,test,Test_f,Quake/net_dgrm.c,1700,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
 XR,command,test2,Test2_f,Quake/net_dgrm.c,1701,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred
 XR,cvar,net_messagetimeout,300,Quake/net_main.c,62,NET/COOP/MOVE,literal declaration; registration/equivalence not inferred

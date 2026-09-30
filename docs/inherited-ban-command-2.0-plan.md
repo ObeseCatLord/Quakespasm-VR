@@ -30,3 +30,16 @@ console/RCON query/set/off, player-command refusal, no-server refusal,
 matching/nonmatching IPv4 masks and unchanged IPv6 admission. Windows and
 live multiplayer checks remain deferred. No tests/probes/builds are run now;
 source activation alone does not complete networking or the migration goal.
+
+## Source implementation checkpoint
+
+The retained IPv4 handler is enabled and registered in Datagram_Init. Its
+existing address/mask state, initialization and connection-admission predicate
+are preserved. The handler explicitly refuses player/server command sources
+and requests without a local active server; console/RCON query, set and off
+continue through the native command owner. Main compared the activation against
+the primary reference and inspected all existing ban-state users. The change
+is 31 lines in net_dgrm.c; no new address or moderation owner was introduced.
+
+Source review and scoped whitespace checks are complete. No executable checks
+have run; the final Linux/ARM qualification above remains pending.

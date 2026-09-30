@@ -20,7 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 // This is enables a simple IP banning mechanism
-// #define BAN_TEST
+#define BAN_TEST
 
 #include "quakedef.h"
 #include "q_stdinc.h"
@@ -361,22 +361,12 @@ static void NET_Ban_f (void)
 {
 	char addrStr[32];
 	char maskStr[32];
-	void (*print_fn) (const char *fmt, ...) FUNCP_PRINTF (1, 2);
-
-	if (cmd_source != src_client)
+	if (cmd_source != src_command)
+		return;
+	if (!sv.active)
 	{
-		if (!sv.active)
-		{
-			Cmd_ForwardToServer ();
-			return;
-		}
-		print_fn = Con_Printf;
-	}
-	else
-	{
-		if (pr_global_struct->deathmatch)
-			return;
-		print_fn = SV_ClientPrintf;
+		Con_Printf ("ban: no active server\n");
+		return;
 	}
 
 	switch (Cmd_Argc ())
@@ -386,10 +376,10 @@ static void NET_Ban_f (void)
 		{
 			strcpy (addrStr, inet_ntoa (banAddr));
 			strcpy (maskStr, inet_ntoa (banMask));
-			print_fn ("Banning %s [%s]\n", addrStr, maskStr);
+			Con_Printf ("Banning %s [%s]\n", addrStr, maskStr);
 		}
 		else
-			print_fn ("Banning not active\n");
+			Con_Printf ("Banning not active\n");
 		break;
 
 	case 2:
@@ -406,7 +396,7 @@ static void NET_Ban_f (void)
 		break;
 
 	default:
-		print_fn ("BAN ip_address [mask]\n");
+		Con_Printf ("BAN ip_address [mask]\n");
 		break;
 	}
 }
@@ -1390,6 +1380,9 @@ int Datagram_Init (void)
 	if (num_inited == 0)
 		return -1;
 
+#ifdef BAN_TEST
+	Cmd_AddCommand ("ban", NET_Ban_f);
+#endif
 	Cmd_AddCommand ("test", Test_f);
 	Cmd_AddCommand ("test2", Test2_f);
 
