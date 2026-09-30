@@ -1713,11 +1713,14 @@ static qboolean R_AvatarApplyDesktopSupportHand (const r_avatar_rig_t *source,
  * branches; semantic branches already carry the retargeted source pose. */
 static qboolean R_AvatarApplyTrackedAnimalHip(const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target,const r_avatar_presentation_context_t *context,
-	const float *sourcepalette,float *palette,const float *before)
+	const float *sourcepalette,float confidence,float *palette,const float *before)
 {
 	int hip=target->joint[MD5_VRIK_HIP],sourcehip=source->joint[MD5_VRIK_HIP];
 	float inverse[12],delta[12],mapped[12],desired[12];
-	if(hip<0||sourcehip<0)return false;
+	vec3_t goal,position,correction;
+	float distance;
+	if(hip<0||sourcehip<0||!isfinite(confidence))return false;
+	confidence=CLAMP(0.0f,confidence,1.0f);
 	R_AvatarInverseRigid(source->live->joints[sourcehip].bind,inverse);
 	R_AvatarMultiply(sourcepalette+sourcehip*12,inverse,delta);
 	delta[3]=delta[7]=delta[11]=0;
@@ -1725,9 +1728,18 @@ static qboolean R_AvatarApplyTrackedAnimalHip(const r_avatar_rig_t *source,
 	R_AvatarInverseRigid(context->rotation,inverse);
 	R_AvatarMultiply(inverse,mapped,delta);
 	R_AvatarMultiply(delta,palette+hip*12,desired);
-	desired[3]=palette[hip*12+3];
-	desired[7]=palette[hip*12+7];
-	desired[11]=palette[hip*12+11];
+	/* The inverse includes the cached floor translation; bind-relative origins
+	 * alone cannot recover this supplied Hip position. Match the inherited
+	 * bounded blend, independent of the orientation tracker above. */
+	R_AvatarOrigin(sourcepalette+sourcehip*12,goal);
+	R_AvatarPresentationInversePoint(context,goal,goal);
+	R_AvatarOrigin(palette+hip*12,position);
+	VectorSubtract(goal,position,correction);
+	distance=R_AvatarLength3(correction);
+	if(!isfinite(distance))return false;
+	if(distance>96.0f)VectorScale(correction,96.0f/distance,correction);
+	VectorMA(position,confidence,correction,position);
+	R_AvatarSetOrigin(desired,position);
 	if(!R_AvatarSetSubtreeTransform(target,palette,hip,desired))return false;
 	for(int joint=0;joint<R_AvatarJointCount(target->live);++joint){
 		int ancestor=joint,semantic;
@@ -1748,7 +1760,8 @@ static qboolean R_AvatarApplyTrackedAnimalHip(const r_avatar_rig_t *source,
 static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target,const float *sourcepalette,
 	const r_avatar_presentation_context_t *prepared_context,
-	float floor_correction_z,unsigned char tracked_lower_mask,float *palette)
+	float floor_correction_z,unsigned char tracked_lower_mask,
+	const float tracked_lower_confidence[3],float *palette)
 {
 	r_avatar_presentation_context_t built_context;
 	const r_avatar_presentation_context_t *context=prepared_context;
@@ -1769,7 +1782,8 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 	}
 	memcpy(saved,palette,bytes);
 	if((tracked_lower_mask&R_AVATAR_TRACKED_HIP)&&target->profile->preserve_hip_rotation){
-		if(!R_AvatarApplyTrackedAnimalHip(source,target,context,sourcepalette,palette,saved)||
+		if(!R_AvatarApplyTrackedAnimalHip(source,target,context,sourcepalette,
+			tracked_lower_confidence?tracked_lower_confidence[2]:1.0f,palette,saved)||
 			!R_AvatarPaletteValid(target,palette)){
 			memcpy(palette,saved,bytes);
 			complete=false;
@@ -1916,7 +1930,7 @@ qboolean R_AvatarRefineBuiltinPaletteForFrame(const r_avatar_rig_t *source,
 	unsigned char tracked_lower_mask,
 	float (*target_palette)[12],size_t target_capacity,
 	const r_avatar_presentation_context_t *prepared_context,
-	const float tracked_foot_confidence[2])
+	const float tracked_lower_confidence[3])
 {
 	r_avatar_presentation_context_t context;
 	float saved[R_AVATAR_MAX_JOINTS*12];
@@ -1932,7 +1946,8 @@ qboolean R_AvatarRefineBuiltinPaletteForFrame(const r_avatar_rig_t *source,
 	profile=target->profile;
 	if(tracked&&(profile->id==PLAYER_AVATAR_DOG||profile->id==PLAYER_AVATAR_FIEND))
 		return R_AvatarRefineTrackedAnimalPalette(source,target,(const float *)source_palette,
-			prepared_context,floor_correction_z,tracked_lower_mask,(float *)target_palette);
+			prepared_context,floor_correction_z,tracked_lower_mask,
+			tracked_lower_confidence,(float *)target_palette);
 	if (tracked)
 	{
 		if (prepared_context)
@@ -1946,7 +1961,7 @@ qboolean R_AvatarRefineBuiltinPaletteForFrame(const r_avatar_rig_t *source,
 		}
 		return R_AvatarRefineTrackedEndpoints (source, target,
 			(const float *)source_palette, &context, tracked_lower_mask,
-			tracked_foot_confidence, (float *)target_palette);
+			tracked_lower_confidence, (float *)target_palette);
 	}
 	if(!tracked && (profile->id!=PLAYER_AVATAR_DOG &&
 		profile->id!=PLAYER_AVATAR_FIEND && !profile->mirror_outer_leg_poles &&

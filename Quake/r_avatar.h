@@ -264,7 +264,7 @@ qboolean R_AvatarRefineBuiltinPaletteWithContext (const r_avatar_rig_t *source,
 	unsigned char tracked_lower_mask,
 	float (*target_palette)[12], size_t target_capacity,
 	const r_avatar_presentation_context_t *prepared_context);
-/* Frame adapter forwards sender confidence [left foot,right foot] separately
+/* Frame adapter forwards sender confidence [left foot,right foot,Hip] separately
  * from the usable bits. NULL retains the old wrappers' confidence policy. */
 qboolean R_AvatarRefineBuiltinPaletteForFrame (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, qboolean tracked,
@@ -272,7 +272,7 @@ qboolean R_AvatarRefineBuiltinPaletteForFrame (const r_avatar_rig_t *source,
 	unsigned char tracked_lower_mask,
 	float (*target_palette)[12], size_t target_capacity,
 	const r_avatar_presentation_context_t *prepared_context,
-	const float tracked_foot_confidence[2]);
+	const float tracked_lower_confidence[3]);
 
 /* Single-rig semantic body bases: canonical body forward/left/up to this
  * rig's model space and its inverse.  Cross-rig presentation should use the

@@ -1092,7 +1092,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	/* Optional tracked repairs retain successful independent stages. The
 	 * canonical palette and supplied lower targets remain authoritative. */
 	unsigned char tracked_lower_mask = 0;
-	float tracked_foot_confidence[2] = {1.0f, 1.0f};
+	float tracked_lower_confidence[3] = {1.0f, 1.0f, 1.0f};
 	if (lower_input)
 	{
 		const unsigned char usable = lower_input->present_mask &
@@ -1100,21 +1100,24 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		if (usable & R_VRIK_LOWER_BIT (R_VRIK_LOWER_LEFT_FOOT))
 		{
 			tracked_lower_mask |= R_AVATAR_TRACKED_FOOT_L;
-			tracked_foot_confidence[0] = lower_input->confidence[R_VRIK_LOWER_LEFT_FOOT];
+			tracked_lower_confidence[0] = lower_input->confidence[R_VRIK_LOWER_LEFT_FOOT];
 		}
 		if (usable & R_VRIK_LOWER_BIT (R_VRIK_LOWER_RIGHT_FOOT))
 		{
 			tracked_lower_mask |= R_AVATAR_TRACKED_FOOT_R;
-			tracked_foot_confidence[1] = lower_input->confidence[R_VRIK_LOWER_RIGHT_FOOT];
+			tracked_lower_confidence[1] = lower_input->confidence[R_VRIK_LOWER_RIGHT_FOOT];
 		}
 		if (usable & R_VRIK_LOWER_BIT (R_VRIK_LOWER_HIP))
+		{
 			tracked_lower_mask |= R_AVATAR_TRACKED_HIP;
+			tracked_lower_confidence[2] = lower_input->confidence[R_VRIK_LOWER_HIP];
+		}
 	}
 	if (!selection->humanoid)
 		R_AvatarRefineBuiltinPaletteForFrame (source_rig, target_rig, tracked,
 			(const float (*)[12])source_palette, selection->floor_correction_z,
 			tracked_lower_mask, palette, R_VRIK_RENDER_MAX_JOINTS,
-			&selection->presentation, tracked_foot_confidence);
+			&selection->presentation, tracked_lower_confidence);
 	else if (selection->humanoid_ik && tracked &&
 		!R_VRIKRenderRefineHumanoidTracked (selection, &pose, lower_input,
 			&ranger, palette))
