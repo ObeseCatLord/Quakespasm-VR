@@ -98,3 +98,13 @@ and allocation exhaustion are not qualified by this bounded audit.
 Add table growth/reuse and cached read-position save/restore to the final isolated
 Linux/ARM checks, alongside cache/PAK boundaries and existing cases. No tests,
 builds, compiler checks, probes or actual file writes until full implementation.
+
+### Correction integration checkpoint
+
+The bounded coding worker added exactly the planned slot memset and corrected
+read-position expression/comment. Main inspected the two-hunk diff and signed
+long-long cache/offset types; scoped git diff --check passed. The worker is closed.
+The correction keeps all existing handles, ownership, seek/reset, native paths,
+append behavior and filebase accounting. No execution was performed; this is
+main source acceptance of the advisory's narrow repairs, not a further certified
+review or complete file-service qualification.

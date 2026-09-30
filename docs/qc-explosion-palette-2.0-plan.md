@@ -33,3 +33,12 @@ Final Linux/ARM software qualification covers differing start/length, start0
 with positive length, server packet followed by ordinary opcode, both permitted
 VMs, scripted naming and default particles. This does not certify all temporary
 effects or actual desktop/two-eye rendering.
+
+## Source integration checkpoint
+
+`9ebfb93c` changes exactly the two wrappers' palette-length argument from
+OFS_PARM1 to OFS_PARM2. Main inspected the actual diff, registered427 signature,
+native decoder's two distinct palette bytes and retained particle/light/sound
+consumers; scoped git diff --check passed. No particle count, transport, renderer
+or invalid-input policy changed. No execution ran; final qualification remains
+deferred as above.
