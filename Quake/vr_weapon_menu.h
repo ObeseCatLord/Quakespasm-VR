@@ -58,6 +58,8 @@ void VR_WeaponMenu_List_f (void);
  * learned paths and discovered catalog rows until the next game reload. */
 void VR_WeaponMenu_ObserveActive (void);
 void VR_WeaponMenu_ClientReset (void);
+void VR_WeaponMenu_SetDesktopPointer (qboolean pointer_valid,
+	int pointer_x, int pointer_y);
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
 	int pointer_x, int pointer_y, const float world_from_ndc[16],
 	const float ray_origin[3], const float ray_direction[3], qboolean playspace);

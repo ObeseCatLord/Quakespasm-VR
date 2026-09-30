@@ -36,6 +36,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_openxr_vulkan.h"
 #include "vr_openxr_math.h"
 #include "vr_input.h"
+#include "vr_weapon_menu.h"
 #include "vr_foveation_rate_map.h"
 #include "r_vrik_render.h"
 
@@ -7369,6 +7370,8 @@ void VID_FocusGained (void)
 void VID_FocusLost (void)
 {
 	has_focus = false;
+	if (!vulkan_globals.stereo_active)
+		VR_WeaponMenu_Cancel ();
 	if (vulkan_globals.want_full_screen_exclusive)
 	{
 		vid.restart_next_frame = true;

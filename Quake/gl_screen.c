@@ -1904,6 +1904,9 @@ static void SCR_VRWeaponMenuPrepare (void)
 	qboolean pointer_valid;
 	float scale, min_dimension;
 	const unsigned int generation = VR_WeaponMenu_SessionGeneration ();
+	const int requested_mode = isfinite (vr_weaponmenu_mode.value) &&
+		vr_weaponmenu_mode.value >= 0.0f && vr_weaponmenu_mode.value < 2.0f ?
+		(int)vr_weaponmenu_mode.value : 0;
 
 	vr_weapon_menu_panel.valid = false;
 	if (!VR_WeaponMenu_IsOpenVR ())
@@ -1916,9 +1919,13 @@ static void SCR_VRWeaponMenuPrepare (void)
 	{
 		vr_weapon_menu_anchor.valid = 0;
 		vr_weapon_menu_anchor_generation = generation;
-		vr_weapon_menu_anchor_mode = isfinite (vr_weaponmenu_mode.value) &&
-			vr_weaponmenu_mode.value >= 0.0f && vr_weaponmenu_mode.value < 2.0f ?
-			(int)vr_weaponmenu_mode.value : 0;
+		vr_weapon_menu_anchor_mode = requested_mode;
+	}
+	else if (requested_mode != vr_weapon_menu_anchor_mode)
+	{
+		VR_WeaponMenu_Cancel ();
+		vr_weapon_menu_anchor.valid = 0;
+		return;
 	}
 	if (!frame || !frame->should_render || !frame->focused || frame->reference_changed ||
 		glwidth <= 0 || glheight <= 0)
@@ -2424,14 +2431,24 @@ static void SCR_DrawGUI (void *unused)
 SCR_SetupFrame
 ==================
 */
+typedef struct
+{
+	qboolean weapon_menu_pointer_valid;
+	int weapon_menu_pointer_x, weapon_menu_pointer_y;
+} scr_setup_frame_t;
+
 static void SCR_SetupFrame (void *unused)
 {
+	const scr_setup_frame_t *setup = (const scr_setup_frame_t *)unused;
 	if (!vulkan_globals.stereo_active)
 	{
 		SCR_SetUpToDrawConsole ();
 		V_SetupFrame ();
 	}
 	R_PrepareStereoFrame ();
+	VR_WeaponMenu_SetDesktopPointer (setup && setup->weapon_menu_pointer_valid,
+		setup ? setup->weapon_menu_pointer_x : -1,
+		setup ? setup->weapon_menu_pointer_y : -1);
 	// Entity-light fading needs the current frame's actual eye origins in VR.
 	// Keep this before surface marking and all consumers of cl_dlights.
 	if (!con_forcedup)
@@ -2488,6 +2505,7 @@ void SCR_AbortXRFrame (void)
 
 void SCR_UpdateScreen (qboolean use_tasks)
 {
+	scr_setup_frame_t setup_frame = {0};
 	if (!scr_initialized || !con_initialized || in_update_screen)
 		return; // not initialized yet
 
@@ -2525,6 +2543,15 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		V_ClearAkimboPair ();
 		in_update_screen = false;
 		return;
+	}
+	if (VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR () &&
+		vid.width > 0 && vid.height > 0 && glwidth > 0 && glheight > 0)
+	{
+		int mouse_x, mouse_y;
+		IN_GetMousePos (&mouse_x, &mouse_y);
+		setup_frame.weapon_menu_pointer_valid = true;
+		setup_frame.weapon_menu_pointer_x = (int)((double)mouse_x * glwidth / vid.width);
+		setup_frame.weapon_menu_pointer_y = (int)((double)mouse_y * glheight / vid.height);
 	}
 	/* Observe the equipped viewmodel before preparing wheel assets or starting
 	 * draw tasks. Runtime discoveries share the existing catalog. */
@@ -2567,7 +2594,8 @@ void SCR_UpdateScreen (qboolean use_tasks)
 		}
 
 		task_handle_t draw_done_task = Task_AllocateAndAssignFunc (SCR_DrawDone, NULL, 0);
-		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (SCR_SetupFrame, NULL, 0);
+		task_handle_t setup_frame_task = Task_AllocateAndAssignFunc (SCR_SetupFrame,
+			&setup_frame, sizeof (setup_frame));
 		task_handle_t draw_gui_task = Task_AllocateAndAssignFunc (SCR_DrawGUI, NULL, 0);
 		V_RenderView (use_tasks, begin_rendering_task, setup_frame_task, draw_done_task, draw_gui_task);
 		task_handle_t end_rendering_task = GL_EndRendering (use_tasks, true);
@@ -2589,7 +2617,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	else
 	{
 		GL_SynchronizeEndRenderingTask ();
-		SCR_SetupFrame (NULL);
+		SCR_SetupFrame (&setup_frame);
 		V_RenderView (use_tasks, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE);
 		S_ExtraUpdate ();
 		SCR_DrawGUI (NULL);

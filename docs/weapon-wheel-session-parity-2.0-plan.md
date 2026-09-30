@@ -90,3 +90,29 @@ cursor/setup/pointer seams, and only desktop-focus cancellation in gl_vidsdl.c.
 Budget120..200 net lines; reopen above200, a second session/selection owner or
 render scheduling rewrite. Keep native catalog/material/frame/task owners and
 current submission sequence. No tests/builds/probes before full implementation.
+
+## Retained-selection production source checkpoint
+
+The four-file slice is110 net production lines. Main reviewed the complete
+patch against primary vr.c:12250..12292, current action validation, prepared
+frame copying, native IN_GetMousePos scaling and task submission/dependencies.
+One remembered stable ID is separate from effective hover. Weapon hits store
+it; real actions clear it. Misses re-resolve prepared live eligibility and
+playspace target distance/world visibility. Temporary absence publishes none
+without discarding the remembered identity. Existing session cancellation,
+tracking/reference/map/game loss and begin/reset clear the session; a changed
+VR wheel mode now cancels too.
+
+Desktop SDL cursor sampling stays on main and uses existing video-to-render
+coordinate conversion. SCR_SetupFrame consumes a copied12-byte task payload
+after R_PrepareStereoFrame; all existing setup/scene/GUI task edges remain.
+Draw workers use the prepared effective selection and coordinates. Desktop
+release may sample again on main; VR release requires valid tracking/session,
+matching prepared generation and live stable-ID eligibility. Actions keep
+actual-hit and slot/name/policy validation; they cannot be retained. The archived
+player-teleport toggle remains authoritative. Existing selection haptics stay
+in setup with no early fence or scheduling rewrite.
+
+Scoped git diff --check passes. No tests/builds/compiler runs/probes/fixtures or
+benchmarks were performed. Final Linux/ARM software and user live VR acceptance
+remain pending; source integration does not certify those outcomes.
