@@ -28,7 +28,7 @@ Both source and destination buffers must pass that check for copy operations.
 Use one private, stateless index decoder for existing numeric handles. It
 rejects nonfinite, below-base and beyond-table values before float-to-integer
 conversion and returns the table limit as the invalid sentinel. Existing
-caller bounds checks then reject it before any table indexing. Finite positive
+caller bounds checks then reject it before any table indexing. Finite in-range
 fractional handles retain the existing truncation behavior. Keep this helper
 limited to handles; file modes, seek offset representations, buffer string
 indices, formatting and content truncation remain their existing contracts.
@@ -63,3 +63,13 @@ reads, write/append/seek, numeric extremes, copy source/destination permutations
 empty/invalid query returns, buffer-file wrappers and sparse sort followed by
 append/set/free/delete. Repeat across map/client-VM lifetimes. This is source
 adaptation, not software/runtime acceptance.
+
+## Source acceptance
+
+Local Astra accepted the complete bounded file/buffer consumer delta with no
+actionable findings. Main inspected every changed owner check and both copy
+operands, decoder sentinel/ranges, retained native cache/mode/cleanup paths,
+zero query returns and copied sparse-sort tail clearing. Newer file wrappers
+retain their stronger owner/mode/path/start/count checks. No new resource owner
+or same-VM stale-handle guarantee was introduced. No builds, tests, compiler
+or runtime probes were run; deferred concurrent-VM/lifetime qualification remains.

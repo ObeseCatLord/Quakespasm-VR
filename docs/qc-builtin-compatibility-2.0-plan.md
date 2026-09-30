@@ -282,5 +282,8 @@ added. This accepts the source adapter only; deferred invocation checks remain.
 Fresh resource comparison found another concrete remaining boundary: primary
 `PF_GetQCFile`/`PF_GetStrBuf` reject another VM's handle, whereas several native
 legacy file/buffer calls only check that an owner exists. New load/write/search
-adapters already check the current VM. Complete this at the existing native
-handle checks and lifetime owners; do not replace the resource tables.
+adapters already check the current VM. The [resource ownership adapter](qc-resource-ownership-2.0-plan.md) now has
+bounded local Astra source acceptance: all public native consumers require
+the current VM, safe handle decoding retains native tables, and copied sort
+tail clearing removes stale aliases. Broader content/error/interface contracts
+and final concurrent-VM qualification remain open.

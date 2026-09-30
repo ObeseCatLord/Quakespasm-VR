@@ -3389,6 +3389,17 @@ static size_t qcfiles_max;
 
 #define QC_FILE_BASE 1
 
+static size_t PF_QCHandleIndex (float handle, size_t base, size_t limit)
+{
+	double offset = (double)handle - base;
+	size_t index;
+
+	if (!isfinite (offset) || offset < 0 || offset >= (double)limit)
+		return limit;
+	index = (size_t)offset;
+	return index < limit ? index : limit;
+}
+
 static void PF_fopen (void)
 {
 	const char *fname = G_STRING (OFS_PARM0);
@@ -3458,11 +3469,11 @@ static void PF_fopen (void)
 
 static void PF_fgets (void)
 {
-	size_t fileid = G_FLOAT (OFS_PARM0) - QC_FILE_BASE;
+	size_t fileid = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), QC_FILE_BASE, qcfiles_max);
 	G_INT (OFS_RETURN) = 0;
 	if (fileid >= qcfiles_max)
 		Con_Warning ("PF_fgets: invalid file handle\n");
-	else if (!qcfiles[fileid].file)
+	else if (!qcfiles[fileid].file || qcfiles[fileid].owningvm != qcvm)
 		Con_Warning ("PF_fgets: file not open\n");
 	else if (qcfiles[fileid].mode != 0)
 		Con_Warning ("PF_fgets: file not open for reading\n");
@@ -3513,11 +3524,11 @@ static void PF_fgets (void)
 
 static void PF_fputs (void)
 {
-	size_t		fileid = G_FLOAT (OFS_PARM0) - QC_FILE_BASE;
+	size_t		fileid = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), QC_FILE_BASE, qcfiles_max);
 	const char *str = PF_VarString (1);
 	if (fileid >= qcfiles_max)
 		Con_Warning ("PF_fputs: invalid file handle\n");
-	else if (!qcfiles[fileid].file)
+	else if (!qcfiles[fileid].file || qcfiles[fileid].owningvm != qcvm)
 		Con_Warning ("PF_fputs: file not open\n");
 	else if (qcfiles[fileid].mode == 0)
 		Con_Warning ("PF_fgets: file not open for writing\n");
@@ -3527,10 +3538,10 @@ static void PF_fputs (void)
 
 static void PF_fclose (void)
 {
-	size_t fileid = G_FLOAT (OFS_PARM0) - QC_FILE_BASE;
+	size_t fileid = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), QC_FILE_BASE, qcfiles_max);
 	if (fileid >= qcfiles_max)
 		Con_Warning ("PF_fclose: invalid file handle\n");
-	else if (!qcfiles[fileid].file)
+	else if (!qcfiles[fileid].file || qcfiles[fileid].owningvm != qcvm)
 		Con_Warning ("PF_fclose: file not open\n");
 	else
 	{
@@ -3560,11 +3571,11 @@ static void PF_frikfile_shutdown (void)
 static void PF_fseek (void)
 {
 	// returns current position. or changes that position.
-	size_t fileid = G_FLOAT (OFS_PARM0) - QC_FILE_BASE;
+	size_t fileid = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), QC_FILE_BASE, qcfiles_max);
 	G_INT (OFS_RETURN) = 0;
 	if (fileid >= qcfiles_max)
 		Con_Warning ("PF_fread: invalid file handle\n");
-	else if (!qcfiles[fileid].file)
+	else if (!qcfiles[fileid].file || qcfiles[fileid].owningvm != qcvm)
 		Con_Warning ("PF_fread: file not open\n");
 	else
 	{
@@ -3679,11 +3690,11 @@ static void PF_buf_create (void)
 static void PF_buf_del (void)
 {
 	unsigned int i;
-	unsigned int bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	unsigned int bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 
 	if (bufno >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 		return;
 
 	for (i = 0; i < strbuflist[bufno].used; i++)
@@ -3702,11 +3713,12 @@ static void PF_buf_del (void)
 // #442 float(float bufhandle) buf_getsize (DP_QC_STRINGBUFFERS)
 static void PF_buf_getsize (void)
 {
-	int bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	int bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 
+	G_FLOAT (OFS_RETURN) = 0;
 	if ((unsigned int)bufno >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 		return;
 
 	G_FLOAT (OFS_RETURN) = strbuflist[bufno].used;
@@ -3714,19 +3726,19 @@ static void PF_buf_getsize (void)
 // #443 void(float bufhandle_from, float bufhandle_to) buf_copy (DP_QC_STRINGBUFFERS)
 static void PF_buf_copy (void)
 {
-	unsigned int buffrom = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
-	unsigned int bufto = G_FLOAT (OFS_PARM1) - BUFSTRBASE;
+	unsigned int buffrom = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
+	unsigned int bufto = PF_QCHandleIndex (G_FLOAT (OFS_PARM1), BUFSTRBASE, NUMSTRINGBUFS);
 	unsigned int i;
 
 	if (bufto == buffrom) // err...
 		return;
 	if (buffrom >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[buffrom].owningvm)
+	if (strbuflist[buffrom].owningvm != qcvm)
 		return;
 	if (bufto >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufto].owningvm)
+	if (strbuflist[bufto].owningvm != qcvm)
 		return;
 
 	// obliterate any and all existing data.
@@ -3753,21 +3765,22 @@ static int PF_buf_sort_descending (const void *b, const void *a)
 // #444 void(float bufhandle, float sortprefixlen, float backward) buf_sort (DP_QC_STRINGBUFFERS)
 static void PF_buf_sort (void)
 {
-	int			 bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	int			 bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 	int			 sortprefixlen = G_FLOAT (OFS_PARM1);
 	int			 backwards = G_FLOAT (OFS_PARM2);
-	unsigned int s, d;
+	unsigned int s, d, oldused;
 	char	   **strings;
 
 	if ((unsigned int)bufno >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 		return;
 
 	if (sortprefixlen <= 0)
 		sortprefixlen = 0x7fffffff;
 
 	// take out the nulls first, to avoid weird/crashy sorting
+	oldused = strbuflist[bufno].used;
 	for (s = 0, d = 0, strings = strbuflist[bufno].strings; s < strbuflist[bufno].used;)
 	{
 		if (!strings[s])
@@ -3777,6 +3790,8 @@ static void PF_buf_sort (void)
 		}
 		strings[d++] = strings[s++];
 	}
+	if (d < oldused)
+		memset (strings + d, 0, (oldused - d) * sizeof (*strings));
 	strbuflist[bufno].used = d;
 
 	// no nulls now, sort it.
@@ -3789,16 +3804,17 @@ static void PF_buf_sort (void)
 // #445 string(float bufhandle, string glue) buf_implode (DP_QC_STRINGBUFFERS)
 static void PF_buf_implode (void)
 {
-	int			 bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	int			 bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 	const char	*glue = G_STRING (OFS_PARM1);
 	unsigned int gluelen = strlen (glue);
 	unsigned int retlen, l, i;
 	char	   **strings;
 	char		*ret;
 
+	G_INT (OFS_RETURN) = 0;
 	if ((unsigned int)bufno >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 		return;
 
 	// count neededlength
@@ -3849,7 +3865,7 @@ static void PF_buf_implode (void)
 // #446 string(float bufhandle, float string_index) bufstr_get (DP_QC_STRINGBUFFERS)
 static void PF_bufstr_get (void)
 {
-	unsigned int bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	unsigned int bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 	unsigned int index = G_FLOAT (OFS_PARM1);
 	char		*ret;
 
@@ -3858,7 +3874,7 @@ static void PF_bufstr_get (void)
 		G_INT (OFS_RETURN) = 0;
 		return;
 	}
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 	{
 		G_INT (OFS_RETURN) = 0;
 		return;
@@ -3882,14 +3898,14 @@ static void PF_bufstr_get (void)
 // #447 void(float bufhandle, float string_index, string str) bufstr_set (DP_QC_STRINGBUFFERS)
 static void PF_bufstr_set (void)
 {
-	unsigned int bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	unsigned int bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 	unsigned int index = G_FLOAT (OFS_PARM1);
 	const char	*string = G_STRING (OFS_PARM2);
 	unsigned int oldcount;
 
 	if ((unsigned int)bufno >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 		return;
 
 	if (index >= strbuflist[bufno].allocated)
@@ -3949,13 +3965,13 @@ static int PF_bufstr_add_internal (unsigned int bufno, const char *string, int a
 // #448 float(float bufhandle, string str, float order) bufstr_add (DP_QC_STRINGBUFFERS)
 static void PF_bufstr_add (void)
 {
-	size_t		bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	size_t		bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 	const char *string = G_STRING (OFS_PARM1);
 	qboolean	ordered = G_FLOAT (OFS_PARM2);
 
 	if ((unsigned int)bufno >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 		return;
 
 	G_FLOAT (OFS_RETURN) = PF_bufstr_add_internal (bufno, string, ordered);
@@ -3963,12 +3979,12 @@ static void PF_bufstr_add (void)
 // #449 void(float bufhandle, float string_index) bufstr_free (DP_QC_STRINGBUFFERS)
 static void PF_bufstr_free (void)
 {
-	size_t bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	size_t bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 	size_t index = G_FLOAT (OFS_PARM1);
 
 	if ((unsigned int)bufno >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 		return;
 
 	if (index >= strbuflist[bufno].used)
@@ -3981,7 +3997,7 @@ static void PF_bufstr_free (void)
 
 static void PF_buf_cvarlist (void)
 {
-	size_t		 bufno = G_FLOAT (OFS_PARM0) - BUFSTRBASE;
+	size_t		 bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), BUFSTRBASE, NUMSTRINGBUFS);
 	const char	*pattern = G_STRING (OFS_PARM1);
 	const char	*antipattern = G_STRING (OFS_PARM2);
 	unsigned int i;
@@ -3991,7 +4007,7 @@ static void PF_buf_cvarlist (void)
 
 	if ((unsigned int)bufno >= NUMSTRINGBUFS)
 		return;
-	if (!strbuflist[bufno].owningvm)
+	if (strbuflist[bufno].owningvm != qcvm)
 		return;
 
 	// obliterate any and all existing data.
@@ -4019,14 +4035,12 @@ static void PF_buf_loadfile (void)
 {
 	const char *name = G_STRING (OFS_PARM0);
 	const char *fallback;
-	float		handle = G_FLOAT (OFS_PARM1);
-	size_t		bufno;
+	size_t		bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM1), BUFSTRBASE, NUMSTRINGBUFS);
 	char	   *data, *line;
 
 	G_FLOAT (OFS_RETURN) = 0;
-	if (!isfinite (handle) || handle < BUFSTRBASE || handle >= NUMSTRINGBUFS + BUFSTRBASE)
+	if (bufno >= NUMSTRINGBUFS)
 		return;
-	bufno = (size_t)(handle - BUFSTRBASE);
 	if (strbuflist[bufno].owningvm != qcvm || !QC_FixFileName (name, &name, &fallback))
 		return;
 
@@ -4052,23 +4066,16 @@ static void PF_buf_loadfile (void)
 
 static void PF_buf_writefile (void)
 {
-	float		 filehandle = G_FLOAT (OFS_PARM0);
-	float		 bufhandle = G_FLOAT (OFS_PARM1);
 	float		 first = qcvm->argc > 2 ? G_FLOAT (OFS_PARM2) : 0;
 	float		 count = qcvm->argc > 3 ? G_FLOAT (OFS_PARM3) : 0;
-	size_t		 fileid, bufno;
+	size_t		 fileid = PF_QCHandleIndex (G_FLOAT (OFS_PARM0), QC_FILE_BASE, qcfiles_max);
+	size_t		 bufno = PF_QCHandleIndex (G_FLOAT (OFS_PARM1), BUFSTRBASE, NUMSTRINGBUFS);
 	unsigned int start, end, i;
 	struct strbuf *buf;
 
 	G_FLOAT (OFS_RETURN) = 0;
-	if (!isfinite (filehandle) || filehandle < QC_FILE_BASE || (double)filehandle >= (double)qcfiles_max + QC_FILE_BASE ||
-		!isfinite (bufhandle) || bufhandle < BUFSTRBASE || bufhandle >= NUMSTRINGBUFS + BUFSTRBASE ||
-		!isfinite (first) || !isfinite (count))
+	if (fileid >= qcfiles_max || bufno >= NUMSTRINGBUFS || !isfinite (first) || !isfinite (count))
 		return;
-	fileid = (size_t)(filehandle - QC_FILE_BASE);
-	if (fileid >= qcfiles_max)
-		return;
-	bufno = (size_t)(bufhandle - BUFSTRBASE);
 	buf = &strbuflist[bufno];
 	if (qcfiles[fileid].owningvm != qcvm || !qcfiles[fileid].file || qcfiles[fileid].mode == 0 || buf->owningvm != qcvm)
 		return;
