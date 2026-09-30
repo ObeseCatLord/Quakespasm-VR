@@ -324,3 +324,80 @@ runtime probes, fixtures or performance measurements ran. The final Linux/ARM
 software checks and actual scripted effects/visibility qualification remain
 deferred; user live headset/multiplayer/performance tests are outside the goal.
 This source checkpoint does not certify full NET-003 parity or full migration.
+
+## Reopened callback connection-lifetime decision
+
+2026-09-30; brief before correction. The preceding source acceptance remains
+limited to its observed cases. Main subsequently found a distinct disconnect
+path that invalidates its recipient-liveness conclusion: edict retention/free
+checks do not identify a surviving network connection. Reopen this ownership
+decision before changing production; other adopted visibility/renderer behavior
+stays in the existing owners. No new protocol or runtime lifecycle is proposed.
+
+### Verified evidence and minimum reuse
+
+| Load-bearing fact | Direct source evidence |
+| --- | --- |
+| QC can disconnect its recipient during customization or SendEntity | `pr_ext.c:2475` PF_dropclient binds host_client and invokes SV_DropClient(false), then restores the caller. |
+| A disconnected client's body can remain live while network state is destroyed | `host.c:578-615` closes/nulls netconnection, destroys frame/pending arrays, then marks inactive; comment explicitly retains the body. |
+| Same reserved client slot can become a bot during the callback | `pr_ext.c:2451` PF_spawnclient selects an inactive slot, nulls its socket, calls SV_ConnectClient and marks it spawned. `sv_main.c:3628` ConnectClient memsets client_t/rebinds the same reserved edict; spawnclient resets only edict QC payload, not retention header. Active-only checks therefore miss replacement. |
+| Existing request dispatcher already handles this exact distinction | `sv_user.c:2114-2119` captures requester/socket and returns when inactive or socket differs, explicitly avoiding a second drop. Reuse that predicate, no generation counter. |
+| Current writer checks are incomplete | `sv_main.c:2394/2646/2780/3964` check edict free only. Custom writer can subsequently access destroyed pending/frame state; modern collection can do the same or publish old state for a replacement client. |
+| Failure owners can drop a retired/replaced slot twice | Custom writer failure callers near4617/4652, classic failure near4674 and presend caller near5146 unconditionally drop after helper cleanup. They must confirm the original connection before acting. |
+
+The behavioral reference is ordinary inherited QC customization/SendEntity plus
+native disconnect and bot creation. Existing edict retention is still necessary
+for QC entity removal/gather sorting; it cannot preserve frame arrays destroyed
+by disconnect. Snapshot scratch remains the native global allocation, while
+per-client frame arrays remain owned by native SVFTE_DestroyFrames. Replacing
+those owners, deferring all disconnects, copying frames or introducing a client
+generation protocol would duplicate working lifetime policy without evidence.
+
+### Mostly-worked proposal for local Astra advisory
+
+Capture the original socket at each callback-bearing modern/classic/custom pass
+entry; after each QC callback require active, same socket and live recipient.
+On retirement/replacement stop before any subsequent pending/frame/client-state
+access. Preserve existing context, retain, classic admitted-list and multicast
+cleanup. Modern failure still publishes its current scratch pointer/capacity
+with zero valid states. Capture the retained recipient pointer in the custom
+writer rather than releasing a client_t field which QC may have rebound.
+
+At SV_SendClientDatagram entry capture the original socket. On custom/classic
+helper failure, invoke existing drop only if that client remains active with
+the same socket; otherwise return false without touching replacement state.
+At the presend loop capture its current recipient/socket and similarly guard
+the crash-drop after collection failure. For the same original connection,
+free-edict failure remains crash-drop; ordinary custom payload failure retains
+existing non-crash behavior. No altered packet/ACK/budget/no-remove semantics.
+
+Prefer one small stateless active/socket predicate if it reduces duplicated
+conditions; it carries no stored generation, cache or connection policy. The
+existing request-reader literal is its reference. The smallest end-to-end case
+is customization dropping other with a live body: collection must unwind and
+skip delta calculation/second drop. Extend through SendEntity/continuations and
+classic gather; a drop-and-spawnclient callback must not drop/send old state to
+the replacement bot. QC freeing an edict without disconnect remains covered.
+
+Expected write set only Quake/sv_main.c, fewer than60 added production lines.
+Reopen if broader disconnect machinery, another array owner or cross-file client
+generation becomes necessary. Current implementation still needs this correction;
+the prior source checkpoint is not sufficient acceptance for callback retirement.
+
+One local requested-Astra Max design advisory verifies the above load-bearing
+claims, challenges whether the socket predicate is sufficient at every callback
+boundary and failure caller, and seeks deletion/simplification. Exact read scope:
+the named snapshot/custom/classic/presend/send functions; native drop/connect,
+spawn/drop builtins, edict retention and existing request-reader guard only as
+dependencies. No edits, builds, tests, probes, compiler checks, nested agents,
+renderer/protocol/prediction redesign or telemetry. Return prioritized disposition
+with file/line evidence, <=900 words; report missing evidence rather than widen.
+Effective settings evidence is required to certify the skill; otherwise label
+advisory. Main spot-checks and records adopted disposition before coding.
+
+Final Linux/ARM software qualification after full implementation must include
+customization and SendEntity dropping their recipient with a live body, same-slot
+bot replacement, freeing recipient without disconnect, dropping a different
+recipient, sorted/unsorted gather cleanup and continuation failure. Check absence
+of post-retirement packet/delta/frame commits and double drop. User live device,
+multiplayer and timing checks remain deferred/outside the goal.
