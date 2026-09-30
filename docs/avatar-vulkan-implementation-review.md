@@ -147,12 +147,13 @@ and peer counts; do not interpret this isolated number as FPS recovered by
 hand-authoring clips or by importing VRM.
 
 The 2026-09-30 bounded source audit found that the other eight builtin monster
-profiles still lack absolute tracked head/wrist and supplied-foot refinement.
+profiles lacked absolute tracked head/wrist and supplied-foot refinement.
 Generic bind-relative retargeting alone does not establish inherited endpoint
 parity. Vore's final outward-knee policy also needs the reference mirrored pair
-construction rather than the current lateral-only shortcut. The committed
-[tracked endpoint plan](avatar-tracked-endpoints-2.0-plan.md) covers these gaps;
-the older fixture/build results below do not qualify these planned adapters.
+construction rather than the lateral-only shortcut. The committed
+[tracked endpoint plan](avatar-tracked-endpoints-2.0-plan.md) records the adapters
+added in `a117d427` and `7f27631f`; bounded source acceptance is pending. The older
+fixture/build results below do not qualify these new adapters.
 
 The tracked Dog/Fiend refinement now accepts the floor-corrected presentation
 context already staged by `R_VRIKRenderStageFloor`. The legacy entry point still
