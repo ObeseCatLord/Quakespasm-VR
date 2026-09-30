@@ -1,5 +1,11 @@
 # Generic melee fallback
 
+The later [gesture-only plan](migration-gesture-only-melee-2.0-plan.md) and
+[current scope](migration-scope-decisions.md#gesture-only-melee-2026-09-29)
+supersede the historical trigger/contact/animation wording below. Immersive
+recognized melee ignores physical triggers and holds the ready pose; ordinary
+QC attack timing/damage remains. Remaining physical-contact adapters are deferred.
+
 Status: Astra Max reviewed; chosen implementation contract below. User requested built-in melee for uncovered
 mods, reducing per-mod adapters. Scope remains Linux/ARM first, 2.0 only.
 
