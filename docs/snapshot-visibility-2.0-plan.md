@@ -294,3 +294,33 @@ a parallel state/lifecycle/cache appears. Main reviews every change and requests
 bounded Astra source recheck on the integrated result. Builds/tests/compiler
 checks/probes remain deferred. Full NET-003 visible behavior qualification is
 not established by this design disposition.
+
+## Source implementation and integration checkpoint
+
+`72510659` implements the adopted adapter in the three planned files: four QC
+fields, six PVS constants and the existing server snapshot/send owners (210
+insertions, 68 deletions). Main inspected the actual diff and native PVS helper,
+current-VM references, field registration, cleanup lists and failure callers;
+scoped `git diff --check` passed. The bounded coding worker is closed.
+
+The follow-up local requested-Astra advisory inspected that exact commit against
+`2e9a9338`, found no actionable P1/P2 and recommended bounded source acceptance
+without reopening the architecture. Main adopts that recommendation:
+
+| Reviewed invariant | Main source disposition |
+| --- | --- |
+| Callback globals/retention unwind before recipient failure | Accept: customization borrows raw self/other; SendEntity cleanup precedes false return (`sv_main.c:2398`). Existing callers use crash-drop for a freed recipient after helper ownership is released. |
+| Snapshot scratch owner survives failed collection | Accept: current pointer/capacity published and valid count zeroed before release/return (`sv_main.c:2779`); presend does not calculate deltas on failure. |
+| Classic gather cleanup works before sorting and after overflow | Accept: original admitted list selected by sort flag, each admitted entity/recipient released once (`sv_main.c:4245`). Serialization checks free/model/name/limit again. Native sorter remains. |
+| No-remove is compatible with loss replay | Accept: CURRENT/USABLE clear on hidden live custom mapping; CURRENT-clear writer masks replayed USABLE before work classification. Explicit removal debt and stable ACK boundary remain; visible re-entry forces full update. |
+| Attachment/PVS paths share safe current-VM references | Accept: bounded/aligned allocated live-parent checks, normal/ignore/viewmodel path validation, mandatory owner invalid outgoing link suppression, standalone state packing guards. No extra cache or attachment renderer. |
+| Native owner and graphics boundaries remain | Accept bounded source contract: mandatory native record retained across omission gates, modern ordinary geometry flag and classic limitation explicit; no packet format, renderer task or Vulkan changes. |
+
+Reserved client-slot exclusion (`pr_edict.c:128`) and QC-bypassing crash-drop
+(`host.c:578-606`) were directly inspected for the design and remain assumptions
+of this follow-up scope. Effective settings metadata is unavailable, so this is
+an advisory, not a certified senior-skill pass. No builds, tests, compiler checks,
+runtime probes, fixtures or performance measurements ran. The final Linux/ARM
+software checks and actual scripted effects/visibility qualification remain
+deferred; user live headset/multiplayer/performance tests are outside the goal.
+This source checkpoint does not certify full NET-003 parity or full migration.
