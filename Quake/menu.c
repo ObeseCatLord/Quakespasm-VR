@@ -3788,7 +3788,7 @@ static void M_VROptions_Adjust (int dir)
 	case VR_OPT_MENU_SCALE:
 	{
 		const float current = isfinite (vr_menu_scale.value) ? vr_menu_scale.value : 0.13f;
-		Cvar_SetValueQuick (&vr_menu_scale, CLAMP (0.05f, roundf ((current + dir * 0.01f) * 100.0f) / 100.0f, 0.30f));
+		Cvar_SetValueQuick (&vr_menu_scale, CLAMP (0.05f, roundf ((current + dir * 0.01f) * 100.0f) / 100.0f, 0.60f));
 		break;
 	}
 	case VR_OPT_HUD_SCALE:

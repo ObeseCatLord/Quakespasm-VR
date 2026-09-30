@@ -72,6 +72,10 @@ step, draw/ray owner and saved cvar. This routine range repair adds no new
 control or policy. Final qualification includes both maximum panel sizes and
 pointer agreement; no executable check now.
 
+The one-line range repair is source-integrated and main-reviewed against the
+exact primary range and current shared panel consumers. Scoped whitespace
+check passes; no executable checks or broader panel parity claim.
+
 ## Source integration checkpoint
 
 The bounded adapter is source-integrated:109 added production lines in
