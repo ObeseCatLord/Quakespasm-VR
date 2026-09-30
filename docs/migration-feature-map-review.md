@@ -25,6 +25,13 @@ The `.jpeg` lookup was added through its existing loader; higher search-path
 priority still wins. The historical review finding is retained for provenance,
 but its proposed TGA-before-PNG change is not the current migration target.
 
+The OpenVR-runtime release-gate row above is also historical. The later explicit
+OpenXR-and-desktop targets preserve inherited behavior through OpenXR rather
+than requiring a second OpenVR Vulkan compositor. The current readable map and
+CSV VR-002/PLAT-001 now agree on that boundary. Current scope decisions also
+defer physical-contact/Gorilla work, Windows verification and user live-device/
+multiplayer/performance checks; those do not add completion gates in this pass.
+
 No new user permission is needed to preserve the existing requirements. A proposed reduction in inherited OpenVR/legacy-peer compatibility or adoption of substantial optional scope would require an explicit product decision. No such reduction or scope expansion is made here.
 
 Verification for this checkpoint: pinned source-anchor existence; CSV shape/unique feature IDs and readable-table correspondence; document links; preserved source/worktree state; `git diff --check`. No builds, runtime tests, hardware performance claims, release packaging, pushes or deployment were performed for this documentation pass.
