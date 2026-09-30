@@ -73,3 +73,35 @@ with live linked types, same-frame registration/texture weather, map reset/reloa
 task/serial modes and distinct stereo output without double advancement.
 Native desktop classic/FTE visuals and draw batches remain the reference;
 actual user headset/performance checks are deferred. No tests now.
+
+## Adopted requested-Astra disposition and reopened boundary
+
+Main spot-checked native GUI/particle dependencies, serial GUI ordering,
+allocator nullability, setup order, lazy namespace lookup and retint run-list
+insertion. The requested-Astra/max source assessment changed the decision:
+
+| Finding/recommendation | Disposition |
+| --- | --- |
+| GUI CSQC_Hud can request a namespace while particle workers hold raw pointers | Adopt one existing dependency: draw_particles_task precedes draw_gui_task when present. Serial native ordering already draws GUI after V_RenderView. Keep GUI effects for the next particle pass; no new worker locks or owner. |
+| Capture pointers before realloc and repair links afterward | Adopt primary index-capture behavior through one temporary native Mem allocation. Capture nullable run head/next links while live, guard count/size arithmetic, check allocations, restore from indices without post-free arithmetic/comparisons. Bind every type's slooks to its own looks until the existing shared-look rebuild. |
+| Geometric reserve does not close the race or reset-to-defaults look gap | Reject reserve in this slice. No capacity counter/reset policy. Keep contiguous native array, indices and allocator ownership. No measured speedup is claimed. |
+| Registration/sky lookups can add/reset types after look rebuild | Adopt defaults → clear dirty → registration → sky lookup → existing sharing loop. Preserve late dirty invalidation for another registration pass next frame; no fixed-point loader or per-append all-pairs rebuild. |
+| Parser can overwrite com_token/va inputs during lazy load/retint recursion | Adopt exact-content query/name preservation around nested lookup/loading slow paths; use the existing owned cfg->name after P_LoadParticleSet creates it. Do not truncate or change namespace/alias precedence. |
+
+The earlier one-file/setup-only boundary is reopened before implementation:
+authorized production write set is now `Quake/r_part_fte.c` and the single task
+edge in `Quake/gl_rmain.c`, still at most100 net lines. No renderer/shader or
+protocol changes. Main's graph inspection shows draw_gui→draw_done and
+draw_particles→draw_done; adding particles→GUI introduces no reverse edge.
+No implementation may proceed by ignoring the GUI growth path.
+
+The advisory also found primary/native retint copies PS_INRUNLIST while clearing
+destination links, preventing insertion of a new clone if the source is live.
+Separate adopted ownership disposition within this same existing helper: clear
+only that copied membership bit when clone links/particle lists are cleared.
+Preserve all appearance flags and other state; no second list or retint renderer.
+This is an intentional native/reference bug fix, not a claim of exact prior
+visual parity. Add live-source retint to final software acceptance.
+
+Main retains source-only limits and broad MOD-009/010 qualification. Effective
+reviewer settings are unavailable, so no formal skill/model pass is claimed.
