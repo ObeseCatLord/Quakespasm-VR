@@ -64,3 +64,15 @@ At the end of all implementation, qualify ordinary co-op results, deathmatch
 scores and finale in stereo, plus unchanged desktop, native solo, menu/modal
 and CSQC dispatch boundaries. No execution, build or test is authorized for
 this implementation slice before that final gate.
+
+### Native multiplayer intermission source checkpoint
+
+The planned adapter is source-integrated at six replaced lines in
+`Quake/gl_screen.c`. Main inspected the complete diff and both native
+`Sbar_IntermissionOverlay` dispatches: co-op results and deathmatch scores use
+the existing menu canvas; finale also uses it. Connection, signon, world,
+destination, intermission-state and CSQC exclusion remain. The selector still
+requires an XR render frame, so desktop dispatch is unchanged. No additional
+scoreboard invocation or render pass was added. Scoped whitespace checking is
+clean; no build/test/runtime result is claimed. CSQC score/death/intermission
+placement remains a separate required boundary.

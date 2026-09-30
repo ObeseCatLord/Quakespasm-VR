@@ -1767,13 +1767,13 @@ static qboolean SCR_VRMenuRayHit (const vec3_t origin, const vec3_t direction,
 	return !menu_canvas || M_VRPointerPixelInMenuCanvas (*pixel_x, *pixel_y);
 }
 
-/* Sbar_IntermissionOverlay has CSQC and deathmatch canvases in addition to
- * the native solo menu canvas. Only the native solo intermission/finale
- * contract fits this tracked 320x200 panel. */
-static qboolean SCR_VRNativeSoloIntermission (void)
+/* Native solo/multiplayer intermission and finale use CANVAS_MENU. CSQC scores
+ * use CANVAS_CSQC and remain excluded from this tracked 320x200 panel
+ * contract. */
+static qboolean SCR_VRNativeIntermission (void)
 {
 	if (cls.state != ca_connected || cls.signon != SIGNONS || !cl.worldmodel ||
-		key_dest != key_game || cl.maxclients != 1 || cl.gametype != GAME_COOP ||
+		key_dest != key_game ||
 		(cl.intermission != 1 && cl.intermission != 2))
 		return false;
 
@@ -1794,7 +1794,7 @@ static void SCR_VRMenuPrepare (void)
 	 * out of the ordinary desktop GUI path. */
 	const vr_panel_mode_t requested_mode = !frame_available ? VR_PANEL_NONE :
 		scr_drawdialog ? VR_PANEL_MODAL : loading ? VR_PANEL_LOADING :
-		SCR_VRNativeSoloIntermission () ? VR_PANEL_INTERMISSION :
+		SCR_VRNativeIntermission () ? VR_PANEL_INTERMISSION :
 		key_dest == key_menu ? (m_state != m_none ? VR_PANEL_MENU : VR_PANEL_NONE) :
 		scr_con_current > 0 ? VR_PANEL_CONSOLE : VR_PANEL_NONE;
 	vec3_t ray_origin, ray_direction, forward, right, up, down, normal;
