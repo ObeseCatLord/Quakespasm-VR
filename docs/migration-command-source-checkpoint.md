@@ -31,11 +31,11 @@ features; the user does not require legacy settings compatibility.
 | vradjustmpweapon / vradjustmpmuzzle | Separate multiplayer calibration commands are superseded by the user's one shared weapon/muzzle-offset requirement. Their absence is intentional, not a source gap. Shared calibration and multiplayer shot/presentation checks remain required. |
 | gl_describetexturemodes / gl_info | The former enumerates primary OpenGL sampler names; the latter describes its OpenGL device. Native vid_filter/menu.c:2294 and texmgr.c:252–268 retain vkQuake smooth/classic Vulkan sampling, while gl_vidsdl.c:1883/2174 reports native Vulkan device/foveation facts. Preserve the native renderer policy and diagnostics rather than advertise GL state in a Vulkan game. This is not identical interactive-command or all renderer-statistics qualification. |
 | flush / hunk_print | Primary zone.c registers cache-flush/hunk diagnostics for its allocator. The Vulkan base uses native heap/model/GPU lifetime owners. Old allocator command names are not evidence that a second hunk/cache implementation is needed; native memory/large-map behavior keeps its separate acceptance. No equivalent hunk-report claim is made. |
-| imagedump | Primary texmgr.c:219–252 exports current GPU texture content using glGetTexImage; the inherited BASE8c5a6007 blob already contains it at224/626, so this is not newly authored project work. Native imagelist/source reload is not that operation. Texture-export utility remains unclassified against the migration scope; do not silently mark it equivalent or change Vulkan image usage/retirement without its own demonstrated requirement and plan. |
+| imagedump | Primary gl_texmgr.c:219–252 exports current GPU texture content using glGetTexImage; inherited BASE8c5a6007 already contains it, so it is not newly authored project work. Native imagelist/source reload is not that operation. The [native export brief](texture-export-adapter-2.0-plan.md) now classifies the operation for a narrow diagnostic adapter; usage/layout/heap/retirement disposition and implementation remain open. No equivalent-source-export or completed GPU readback claim. |
 
 This source checkpoint now classifies the observed literal Cmd_AddCommand
 differences from the primary flat Quake C/C++ source scan, including the known
-planned -postcfg gap and still-unclassified texture export. That literal scan
+source-integrated -postcfg adapter and planned native texture export. That literal scan
 does not establish macro/dynamic registrations, all source permissions, cvar
 coverage or full behavior. Missing old names are not automatically required or
 evidence of completion. No builds, executable tests, engine probes or benchmarks were run.
