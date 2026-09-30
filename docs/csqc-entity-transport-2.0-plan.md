@@ -162,3 +162,35 @@ current visible reused slots receive atomic remove/full-create as above.
 `pr_ext.c` is added to main ownership for the existing `csqcactive` client-key
 query: report the actual recipient readiness flag instead of its hardcoded zero.
 No new query/capability owner is introduced.
+
+## Source implementation checkpoint (review pending)
+
+Commit `ad2f0ea2` integrates both sides at existing owners, within the estimated
+400-650-line scope (528 inserted production lines). One web GPT worker supplied
+the client codec/mapping/hooks/reliable retry; main reviewed those source changes,
+added allocation-hook liveness refusal, and integrated server, loader and lifetime
+boundaries. The worker's final read-only spot-check was automatically rejected;
+main's direct source/status/diff inspection succeeded without that command.
+
+Primary BeginFrame, wire index encoding, SendEntity payload channel, callback
+admission and enable/disable semantics are reused with native Mem/edict/VM/frame
+owners. The internal CURRENT bit never enters logs or callback flags. Reused
+slots encode removal/full-create in one candidate; only complete emitted
+candidates enter ACK history. Unfit payloads explicitly fail the recipient,
+without a new fragmentation service or silently marking delivery. Native PVS
+and recipient filters remain; this slice does not import primary skyroom/PVS
+policies or a full-game CSQC scene renderer.
+
+SendFlags is cleared once after all recipients collect the generation, before
+mutating SendEntity callbacks, so callback-written next-generation flags survive.
+This deliberately adapts primary's after-all-sends clearing at the same snapshot
+owner rather than clearing per recipient. Mandatory recipient players always
+use native snapshots. Public PEXT1 offers are now selected at the existing
+serverinfo owner; selected private PEXT1 remains zero. Event-service admission
+is unchanged. Parser absence is an explicit native error for opaque payloads.
+Mapping cleanup precedes all client VM edict storage destruction.
+
+Only source reads and `git diff --check` ran. Local Astra advisory source review
+of the coherent implementation is pending; no Linux/ARM build, compiler check,
+fixture, runtime or headset execution has run. NET-009 remains unqualified
+until final normal-session, scripted-effect and packet-loss lifecycle checks.
