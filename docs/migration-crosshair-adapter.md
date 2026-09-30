@@ -63,3 +63,11 @@ and the viewmodel's stair-smoothing offset is applied later in scene setup.
 Both-eye wall alignment, barrel alignment, controller loss, and stairs need
 headset verification before claiming visual parity. Linux compilation alone
 does not close that gate.
+
+Current-source checkpoint (2026-09-30): the historical single-ray limitation
+above is superseded by `R_PrepareVRCrosshair` calling the shared
+`VR_InputCrosshairAimRays` producer for controller mode. It admits one or two
+calibrated rays before recording the immutable frame snapshot. Noncontroller
+mode retains the gameplay-aim ray through `cl.viewangles`; scene tasks do not
+reload weapon models or mutate the command/QC owner. This source wiring does
+not qualify wall/barrel alignment, stairs or physical headset appearance.
