@@ -230,3 +230,17 @@ Only scoped whitespace/source checks were performed in this implementation
 checkpoint. Linux/ARM builds and software qualification remain deferred until
 the complete implementation pass; live device/gaze/performance tests remain the
 user's separate work. Quad views remain excluded.
+
+## Additional application-side evidence (2026-09-30)
+
+Godot's merged [PR112994](https://github.com/godotengine/godot/pull/112994)
+reports Quest Pro eye-foveation rendering after offset-related Vulkan validation
+fixes, and requires update-before-query for fresh centers. Its author explains
+that the runtime-supplied map did not need an application-added offset flag in
+that test, while assuming runtime creation supplied it. This is useful tested
+application precedent, not a normative metadata or synchronization guarantee.
+The source discussion strengthens the existing offset route; it does not alone
+justify removing the temporary gate or extending a Quest result to Steam Frame.
+Next review should weigh this concrete interoperability precedent alongside
+the previously pinned import/graph sequence, without demanding private runtime
+allocation/fence inspection. No new local GPU tests or renderer changes here.
