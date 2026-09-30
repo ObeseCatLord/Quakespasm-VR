@@ -67,6 +67,29 @@ if necessary; target at most250 net production lines. Need requested-local-Astra
 source disposition and verified official Vulkan usage/readback rules before
 implementation. Effective reviewer settings must not be falsely certified.
 
+## Official Vulkan evidence checked before implementation
+
+[vkCmdCopyImageToBuffer](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdCopyImageToBuffer.html)
+requires transfer-source image usage/format support, transfer-destination buffer
+usage, single-sample source and a supported actual copy layout. It also requires
+a recording command buffer outside a render pass and externally synchronized
+command-buffer/pool access. These rules justify a narrow usage/readback adapter,
+not source redecoding or copying borrowed XR render targets.
+
+[vkInvalidateMappedMemoryRanges](https://docs.vulkan.org/refpages/latest/refpages/source/vkInvalidateMappedMemoryRanges.html)
+does not itself synchronize GPU work. Its documented chain requires a device
+write, a memory dependency to host reads, device signal/host wait, then cache
+invalidation. Map the whole private allocation when invalidating WHOLE_SIZE;
+honor noncoherent alignment and prevent concurrent host writes. Native screenshot
+allocation/copy/writer code is reusable evidence, not permission to omit the
+readback buffer's transfer-write→host-read dependency. The final record must
+show that dependency and completed GPU work explicitly.
+
+The [Vulkan synchronization chapter](https://docs.vulkan.org/spec/latest/chapters/synchronization.html)
+distinguishes execution completion from memory availability/visibility. Existing
+CPU task join alone does not make GPU-written bytes available to a host reader.
+No new feature extension is needed merely for this core Vulkan diagnostic.
+
 ## Final qualification
 
 No builds/tests/probes now. After all implementation, Linux/ARM checks cover
