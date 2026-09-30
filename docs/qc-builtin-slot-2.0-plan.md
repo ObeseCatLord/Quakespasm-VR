@@ -123,3 +123,24 @@ search/buffer implementations, unrelated registry gaps, builds/tests/probes or
 nested delegation. Existing cvar/HUD adapters have separate source acceptance.
 Return the critique as the final message; main will spot-check and record an
 adopted/adapted/rejected disposition before production edits.
+
+## Personal local Astra Max disposition
+
+The review verified the existing owners and recommends the adapter with these
+amendments. Main spot-checked the load order, first-name hash behavior, current
+SSQC core 80, extension replacements/disable guard and VM-specific lazy handlers.
+No human decision is needed; no implementation-wide acceptance is claimed.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Match exact name, declared slot and VM; never overwrite donor slots | Adopted. Extend the existing rerelease adapter's table with VM and optional canonical destination-name metadata. |
+| Inspect every candidate for new cases because name hashes retain only the first duplicate | Adopted. New rows scan function declarations; existing three legacy rows keep their existing first-name lookup and semantics. This catches both EX-flags 90 and 430 declarations. |
+| Merge SSQC localsound discovery and named `#0` aliases before binding | Adopted. One small normalization helper serves the existing discovery and zero-declaration loops. Preserve case-insensitive discovery, exact-case binding and all `#0` eligibility checks. Explicit SSQC 177 and ordinary bodies are not reinterpreted. |
+| Expose existing assigned extension numbers with current-VM handler validation | Adopted. One narrow exact-name accessor; no new allocation, eager installation or registry. Lazy `PF_Fixme` targets are valid. |
+| Preserve the exact disable boundary | Adopted. Gate new SSQC numeric remaps when extensions are disabled; leave discovery ungated and CSQC unchanged. Never choose 80 based on the current cvar: toggling it after load does not restore the overwritten slot. |
+| Preserve load order/legacy patches and defer general core discovery | Adopted. Existing copy -> enable -> rerelease order remains. CSQC dprint remaps to native 25; no new general core-name table is required for this slice. |
+
+Expected production scope remains the existing three files and one table owner.
+The review adds the duplicate-declaration guard and resolves alias timing without
+original-slot state or another binder. Final source review follows implementation;
+runtime/software verification remains at the end of the full implementation.
