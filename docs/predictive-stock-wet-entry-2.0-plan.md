@@ -32,8 +32,33 @@ pinned profile, robust elevator requirement, custom-stat disjointness, lifetime,
 ground and input checks. Other supported native states continue using their
 existing authority; no broader replay permission is inferred from selection.
 
-Production ownership is only `Quake/sv_main.c` at initial admission. Keep the
-user's modified `docs/migration-2.0.md` untouched. No renderer changes are needed.
+### Saved ledge-jump boundary (source follow-up before implementation)
+
+`SV_PrivateWalkTrialSelectAtBegin` resets the private waterjump timer. A saved
+stock `FL_WATERJUMP` and `teleport_time` cannot simply become a private timer:
+the selected solver seeds from `private_pmove_waterjump_secs`, and its existing
+policy explicitly distinguishes a witnessed solver-owned jump from QC state.
+Dropping the dry restriction alone would let the solver clear a saved jump.
+
+At the existing `SV_Physics_Client` frame dispatcher, select its native frame
+when the pinned stock player has `FL_WATERJUMP` but no private waterjump timer.
+`SV_Physics_ClientSelectedNativeFrame` already stages native input, consumes
+roomscale once, updates the native jump through `SV_ClientThink`/`SV_WaterJump`,
+and publishes native authority. After QC clears the flag, the ordinary WALK
+dispatcher resumes on the next frame. Keep an existing positive private timer
+on its current selected path. Observe only before callbacks: a provisional
+waterjump created by that command's PreThink must still reach the existing
+stock reconciliation/solver path.
+
+This uses existing authority and native time owners. Reject seeding a new
+private timer from an arbitrary QC flag/deadline or adding a separate recovery
+state. Production ownership extends narrowly to `Quake/sv_phys.c`'s initial
+client dispatcher. Source review must check this ownership boundary before
+commit. Runtime acceptance additionally includes a restored active native
+ledge jump, its expiry and subsequent selected movement.
+
+Keep the user's modified `docs/migration-2.0.md` untouched. No renderer changes
+are needed.
 
 At the end of full implementation, qualify actual new-session and restored
 stock players at water levels 1, 2 and 3 through begin, receipt, physics,
