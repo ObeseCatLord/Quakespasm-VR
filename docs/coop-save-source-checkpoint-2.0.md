@@ -57,3 +57,9 @@ No helper/framework/new resource policy. Main reviews the literal diff and
 scoped whitespace; no builds/tests now. Final qualification covers largest
 valid sound index and rejects MAX_SOUNDS through MAX_MODELS-1 without mutation
 outside the sound array, while model records retain their larger limit.
+
+
+The one-line sound-bound correction is now source-integrated. Main verified the
+full literal diff, array declaration, constants and unchanged model branch/writer;
+scoped whitespace passed. No executable checks were run. This repair closes the
+identified native trailer bound only, not save-body or full dialect qualification.

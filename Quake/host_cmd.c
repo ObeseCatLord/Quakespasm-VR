@@ -2943,7 +2943,7 @@ static void Host_Loadgame_f (void)
 					ext = COM_Parse (ext);
 					idx = atoi (com_token);
 					ext = COM_Parse (ext);
-					if (idx >= 1 && idx < MAX_MODELS)
+					if (idx >= 1 && idx < MAX_SOUNDS)
 						sv.sound_precache[idx] = (const char *)q_strdup (com_token);
 				}
 				else if (!strcmp (com_token, "sv.particle_precache"))
