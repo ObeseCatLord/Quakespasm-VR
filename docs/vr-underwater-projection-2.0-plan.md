@@ -110,3 +110,17 @@ memory and binding selection by mutable global "currently drawing UI" flags.
 Source review must specifically trace both descriptor resets and subpass selection;
 software and live acceptance remain deferred as above. Reopen the decision if
 the patch needs shaders, another pass graph or render targets.
+
+### Source implementation checkpoint
+
+The adapter is implemented within the five planned files; bounded source
+acceptance is pending. `R_PrepareStereoFrame` selects native factors and publishes
+immutable display/scene uniforms. The identity path shares one allocation.
+`R_StereoSceneView` feeds conservative frustum construction and per-eye AO;
+`VRXR_StereoClipForViews` reuses the existing projection/relative transform math.
+`R_BindPipeline` selects display clips for `SUBPASS_UI` and scene clips otherwise.
+Both XR image retirement and fresh frame acquisition clear the scene descriptor.
+The backend, frame graph, shader ABI, masks and foveation policy are unchanged.
+
+Only source comparison/reads and `git diff --check` have occurred. No builds,
+fixtures, runtime, headset or performance checks were performed.

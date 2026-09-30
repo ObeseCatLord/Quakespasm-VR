@@ -4667,6 +4667,7 @@ static void GL_OpenXRRetireImages (void *unused)
 	R_InvalidateStereoReference ();
 	openxr_frame_submitted = false;
 	vulkan_globals.stereo_descriptor_set = VK_NULL_HANDLE;
+	vulkan_globals.stereo_scene_descriptor_set = VK_NULL_HANDLE;
 	if (vulkan_globals.stereo_active)
 	{
 		vid.width = openxr_desktop_width;
@@ -5201,6 +5202,7 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		openxr_image_index = image.index;
 		openxr_frame_submitted = false;
 		vulkan_globals.stereo_descriptor_set = VK_NULL_HANDLE;
+		vulkan_globals.stereo_scene_descriptor_set = VK_NULL_HANDLE;
 		if (!GL_PrepareRuntimeFoveation ())
 		{
 			VRXR_AbortFrame ();

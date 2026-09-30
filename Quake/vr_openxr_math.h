@@ -49,14 +49,15 @@ static inline uint32_t VRXR_PackHiddenAreaVertices(const vrxr_view_t views[2],
 /* Retain donor per-model MVPs. Convert their symmetric 90-degree reversed-Z
  * center clip coordinates to each asymmetric eye, without subtracting large
  * world positions. Relative transforms use the runtime's metre-space poses. */
-static inline int VRXR_StereoClip(const vrxr_frame_t *frame, float units_per_metre,
+static inline int VRXR_StereoClipForViews(const vrxr_frame_t *frame,
+    const vrxr_view_t views[2], float units_per_metre,
     float near_plane, float output[2][16]) {
-  if (!frame || !output || !frame->devices[0].valid || !isfinite(units_per_metre) ||
+  if (!frame || !views || !output || !frame->devices[0].valid || !isfinite(units_per_metre) ||
       units_per_metre<=0 || !isfinite(near_plane) || near_plane<=0) return 0;
   const float (*head)[4]=frame->devices[0].matrix;
   float result[2][16];
   for (int eye=0;eye<2;++eye) {
-    const vrxr_view_t *view=&frame->views[eye];
+    const vrxr_view_t *view=&views[eye];
     if (!isfinite(view->left) || !isfinite(view->right) ||
         !isfinite(view->down) || !isfinite(view->up) ||
         view->left>=view->right || view->down>=view->up) return 0;
@@ -90,6 +91,14 @@ static inline int VRXR_StereoClip(const vrxr_frame_t *frame, float units_per_met
   }
   memcpy(output,result,sizeof(result));
   return 1;
+}
+
+/* Ordinary composition/display clips retain the runtime-located FoV. Scene
+ * effects may supply effective tangents without modifying the XR frame. */
+static inline int VRXR_StereoClip(const vrxr_frame_t *frame, float units_per_metre,
+    float near_plane, float output[2][16]) {
+  return frame && VRXR_StereoClipForViews(frame,frame->views,units_per_metre,
+      near_plane,output);
 }
 
 /* Tangent-space clip planes, inward normals in the renderer's world basis.

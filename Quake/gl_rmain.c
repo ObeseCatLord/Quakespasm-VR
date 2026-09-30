@@ -743,9 +743,29 @@ qboolean R_TrackedHeadBodyOffset (vec3_t world_offset)
 	return true;
 }
 
+/* Frame-setup owned, then immutable for culling, scene recording and AO.
+ * Runtime/display tangents remain untouched for composition, masks and gaze. */
+static float stereo_scene_scale[2] = {1.0f, 1.0f};
+
+qboolean R_StereoSceneView (int eye, vrxr_view_t *out)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	if (!frame || !out || eye < 0 || eye >= 2)
+		return false;
+	*out = frame->views[eye];
+	out->left *= stereo_scene_scale[0];
+	out->right *= stereo_scene_scale[0];
+	out->down *= stereo_scene_scale[1];
+	out->up *= stereo_scene_scale[1];
+	return true;
+}
+
 void R_PrepareStereoFrame (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	float scene_clip[2][16];
+	stereo_scene_scale[0] = stereo_scene_scale[1] = 1.0f;
+	vulkan_globals.stereo_scene_descriptor_set = VK_NULL_HANDLE;
 	stereo_tracking_basis_valid = false;
 	if (!frame)
 	{
@@ -823,13 +843,37 @@ void R_PrepareStereoFrame (void)
 	for (int i = 0; i < 3; ++i) local[i] = head[i][1];
 	R_XRVectorToWorld (local, base_forward, base_right, base_up, stereo_up);
 	VectorAngles (stereo_forward, stereo_up, r_refdef.viewangles);
+	/* Native alternate underwater mode oscillates tangent width/height. Select
+	 * it after tracked center placement, before culling or uniform publication.
+	 * The later native contents/blend query uses this same center. */
+	memcpy (scene_clip, vulkan_globals.stereo_clip_from_center, sizeof (scene_clip));
+	if (!con_forcedup && cl.worldmodel && r_waterwarp.value && r_waterwarp.value != 1 && isfinite (cl.time))
+	{
+		const int contents = Mod_PointInLeaf (r_refdef.vieworg, cl.worldmodel)->contents;
+		if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA)
+		{
+			const double phase = sin (cl.time * 1.5);
+			vrxr_view_t views[2];
+			stereo_scene_scale[0] = 0.97 + phase * 0.03;
+			stereo_scene_scale[1] = 1.03 - phase * 0.03;
+			R_StereoSceneView (0, &views[0]);
+			R_StereoSceneView (1, &views[1]);
+			if (!VRXR_StereoClipForViews (frame, views, units_per_metre, 4.f, scene_clip))
+			{
+				stereo_scene_scale[0] = stereo_scene_scale[1] = 1.0f;
+				memcpy (scene_clip, vulkan_globals.stereo_clip_from_center, sizeof (scene_clip));
+			}
+		}
+	}
 	stereo_bounds[0] = stereo_bounds[2] = FLT_MAX;
 	stereo_bounds[1] = stereo_bounds[3] = -FLT_MAX;
 	stereo_frustum_valid = true;
 	r_stereo_radius = 0;
 	for (int eye = 0; eye < 2; ++eye)
 	{
-		const vrxr_view_t *view = &frame->views[eye];
+		vrxr_view_t effective_view;
+		R_StereoSceneView (eye, &effective_view);
+		const vrxr_view_t *view = &effective_view;
 		for (int i = 0; i < 3; ++i)
 			local[i] = (view->matrix[i][3] - head[i][3]) * units_per_metre;
 		R_XRVectorToWorld (local, base_forward, base_right, base_up, offset);
@@ -864,6 +908,15 @@ void R_PrepareStereoFrame (void)
 	VkBuffer buffer;
 	void *data = R_UniformAllocate (sizeof (uniform), &buffer, &vulkan_globals.stereo_uniform_offset, &vulkan_globals.stereo_descriptor_set);
 	memcpy (data, &uniform, sizeof (uniform));
+	vulkan_globals.stereo_scene_descriptor_set = vulkan_globals.stereo_descriptor_set;
+	vulkan_globals.stereo_scene_uniform_offset = vulkan_globals.stereo_uniform_offset;
+	if (stereo_scene_scale[0] != 1.0f || stereo_scene_scale[1] != 1.0f)
+	{
+		memcpy (uniform.clip, scene_clip, sizeof (uniform.clip));
+		data = R_UniformAllocate (sizeof (uniform), &buffer, &vulkan_globals.stereo_scene_uniform_offset,
+			&vulkan_globals.stereo_scene_descriptor_set);
+		memcpy (data, &uniform, sizeof (uniform));
+	}
 
 	// Worldless stereo frames skip R_SetupViewBeforeMark, which normally prepares these.
 	if (con_forcedup)

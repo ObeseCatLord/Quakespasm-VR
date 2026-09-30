@@ -50,6 +50,7 @@ qboolean GL_OpenXRHiddenAreaWorldEligible (const struct cb_context_s *cbx);
 void GL_InvalidateXRInput (void);
 void GL_EndXRFrame (void);
 void R_PrepareStereoFrame (void);
+qboolean R_StereoSceneView (int eye, vrxr_view_t *out);
 qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction);
 qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t right, vec3_t up, vec3_t forward);
 qboolean R_TrackedHeadEyeHeight (float base_viewheight, float *out_height);
@@ -456,12 +457,14 @@ typedef struct
 	PFN_vkCmdBeginRenderPass2KHR	 vk_cmd_begin_render_pass2;
 	PFN_vkCmdEndRenderPass2KHR	 vk_cmd_end_render_pass2;
 	PFN_vkCmdSetFragmentShadingRateKHR vk_cmd_set_fragment_shading_rate;
-	// Resource mode and one immutable stereo uniform allocation per logical
-	// frame. Runtime handles/lifecycle remain in the OpenXR boundary.
+	// Immutable display clips plus optional scene-effect clips for this frame.
+	// Runtime handles/lifecycle remain in the OpenXR boundary.
 	qboolean stereo_active;
 	VkFormat stereo_color_format;
 	VkDescriptorSet stereo_descriptor_set;
 	uint32_t stereo_uniform_offset;
+	VkDescriptorSet stereo_scene_descriptor_set;
+	uint32_t stereo_scene_uniform_offset;
 	float stereo_clip_from_center[2][16];
 	float stereo_eye_offset[2][4];
 
@@ -1035,9 +1038,15 @@ static inline void R_BindPipeline (cb_context_t *cbx, VkPipelineBindPoint bind_p
 		}
 	}
 	if (vulkan_globals.stereo_active && vulkan_globals.stereo_descriptor_set && bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS)
+	{
+		/* HUD/menu/wheel panels use the ordinary display projection. Scene
+		 * deformation must not move those panels or their interaction rays. */
+		const qboolean scene = cbx->subpass_type != SUBPASS_UI && vulkan_globals.stereo_scene_descriptor_set;
+		const VkDescriptorSet descriptor = scene ? vulkan_globals.stereo_scene_descriptor_set : vulkan_globals.stereo_descriptor_set;
+		const uint32_t offset = scene ? vulkan_globals.stereo_scene_uniform_offset : vulkan_globals.stereo_uniform_offset;
 		vulkan_globals.vk_cmd_bind_descriptor_sets (
-			cbx->cb, bind_point, pipeline.layout.handle, 5, 1, &vulkan_globals.stereo_descriptor_set, 1,
-			&vulkan_globals.stereo_uniform_offset);
+			cbx->cb, bind_point, pipeline.layout.handle, 5, 1, &descriptor, 1, &offset);
+	}
 }
 
 void		   GL_DrawSceneUpscale (cb_context_t *cbx);

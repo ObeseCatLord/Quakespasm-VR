@@ -376,10 +376,10 @@ static ssao_constants_t R_SSAOConstants (void)
 
 static void R_SSAOSetEyeProjection (ssao_constants_t *constants, int eye)
 {
-	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	if (!frame || eye < 0 || eye >= 2)
+	vrxr_view_t scene_view;
+	if (!R_StereoSceneView (eye, &scene_view))
 		return;
-	const vrxr_view_t *view = &frame->views[eye];
+	const vrxr_view_t *view = &scene_view;
 	constants->viewport[0] = ssao_eval_width;
 	constants->viewport[1] = ssao_eval_height;
 	// Mip 1 reduces fixed 2x2 blocks and floors odd extents. The low-resolution
