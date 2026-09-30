@@ -4104,6 +4104,12 @@ static void PF_WasFreed (void)
 static void PF_copyentity (void)
 {
 	edict_t *src = G_EDICT (OFS_PARM0);
+	if (src->free)
+	{
+		Con_Printf ("PF_copyentity: entity is free\n");
+		G_INT (OFS_RETURN) = EDICT_TO_PROG (qcvm->edicts);
+		return;
+	}
 	edict_t *dst = (qcvm->argc < 2) ? ED_Alloc () : G_EDICT (OFS_PARM1);
 	if (src->free || dst->free)
 	{
