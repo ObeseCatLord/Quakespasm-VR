@@ -809,6 +809,12 @@ void Modlist_Init (void)
 	}
 }
 
+void Modlist_Rebuild (void)
+{
+	FileList_Clear (&modlist);
+	Modlist_Init ();
+}
+
 //==============================================================================
 // ericw -- demo list management
 //==============================================================================

@@ -4748,6 +4748,28 @@ static void M_Mods_RebuildInstalled (void)
 		qsort (mods_sorted, VEC_SIZE (mods_sorted), sizeof (*mods_sorted), M_Mods_Compare);
 }
 
+static void M_Mods_RefreshInstalled (void)
+{
+	char selected[sizeof (((filelist_item_t *)0)->name)] = "";
+	if (!mods_catalogue_view && mods_cursor >= 0 && mods_cursor < VEC_SIZE (mods_filtered))
+		q_strlcpy (selected, mods_filtered[mods_cursor]->name, sizeof (selected));
+	VEC_CLEAR (mods_filtered);
+	VEC_CLEAR (mods_sorted);
+	Modlist_Rebuild ();
+	M_Mods_RebuildInstalled ();
+	M_Mods_UpdateFilter ();
+	for (int i = 0; selected[0] && i < num_mods; ++i)
+		if (!q_strcasecmp (mods_filtered[i]->name, selected))
+		{
+			mods_cursor = i;
+			break;
+		}
+	M_Mods_KeepCursorVisible ();
+	scrollbar_grab = slider_grab = false;
+	scrollbar_size = 0;
+	M_MenuChanged ();
+}
+
 static qboolean M_Mods_IsInstalledGameDir (const char *gamedir)
 {
 	for (filelist_item_t *item = modlist; item; item = item->next)
@@ -4876,16 +4898,19 @@ static void M_Mods_FinishCatalogueInstall (void)
 	}
 }
 
-static void M_Mods_PrintWrapped (cb_context_t *cbx, int x, int y, const char *text)
+static void M_Mods_PrintWrapped (cb_context_t *cbx, int x, int y, const char *text, int rows)
 {
 	const int chars_per_line = 36;
 	const size_t length = strlen (text);
-	for (size_t offset = 0; offset < length; offset += chars_per_line, y += CHARACTER_SIZE)
+	for (size_t offset = 0, row = 0; offset < length && row < (size_t)rows;
+		offset += chars_per_line, ++row, y += CHARACTER_SIZE)
 	{
 		char line[37];
 		const size_t count = q_min ((size_t)chars_per_line, length - offset);
 		memcpy (line, text + offset, count);
 		line[count] = '\0';
+		if (row + 1 == (size_t)rows && offset + count < length)
+			memcpy (line + count - 3, "...", 3);
 		M_PrintWhite (cbx, x, y, line);
 	}
 	if (!length)
@@ -4912,8 +4937,7 @@ static void M_Menu_Mods_f (void)
 	mods_catalogue_view = false;
 	mods_catalogue_details = false;
 	mods_keyboard = false;
-	M_Mods_RebuildInstalled ();
-	M_Mods_UpdateFilter ();
+	M_Mods_RefreshInstalled ();
 
 	M_Ticker_Init (&m_mods_ticker);
 }
@@ -5059,13 +5083,13 @@ static void M_Mods_Draw (cb_context_t *cbx)
 		const qboolean installing = state == ADDON_CATALOG_INSTALLING;
 		char line[160];
 		M_PrintWhite (cbx, 16, 32, "Name:");
-		M_Mods_PrintWrapped (cbx, 16, 40, mods_catalogue_approved.name);
+		M_Mods_PrintWrapped (cbx, 16, 40, mods_catalogue_approved.name, 2);
 		M_PrintWhite (cbx, 16, 56, "Gamedir:");
-		M_Mods_PrintWrapped (cbx, 16, 64, mods_catalogue_approved.gamedir);
+		M_PrintScroll (cbx, 16, 64, 288, mods_catalogue_approved.gamedir, realtime * 0.25, false);
 		M_PrintWhite (cbx, 16, 72, "Author:");
-		M_Mods_PrintWrapped (cbx, 16, 80, mods_catalogue_approved.author);
+		M_Mods_PrintWrapped (cbx, 16, 80, mods_catalogue_approved.author, 2);
 		M_PrintWhite (cbx, 16, 96, "Description:");
-		M_Mods_PrintWrapped (cbx, 16, 104, mods_catalogue_approved.description);
+		M_Mods_PrintWrapped (cbx, 16, 104, mods_catalogue_approved.description, 4);
 		q_snprintf (line, sizeof (line), "Package size: %d bytes", mods_catalogue_approved.size);
 		M_PrintWhite (cbx, 16, 144, line);
 		M_PrintWhite (cbx, 16, 152, mods_catalogue_approved.verified ?
@@ -5116,7 +5140,10 @@ static void M_Mods_Draw (cb_context_t *cbx)
 		M_PrintWhite (cbx, 216, 144, "Refresh: X/F1");
 	}
 	else
+	{
 		M_PrintWhite (cbx, 16, 144, "Catalogue: Tab/L3");
+		M_PrintWhite (cbx, 216, 144, "Scan: X/F1");
+	}
 
 	for (int i = 0; i < mods_height; ++i)
 	{
@@ -5178,6 +5205,8 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, mods_catalogue_view ? 200 : 208, 144, 7, 0);
 	if (mods_catalogue_view)
 		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, 144, 7, 1);
+	else
+		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 208, 312, 144, 7, 1);
 	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 72, 312, 152, 24, 2);
 	if (num_mods > 0)
 		Draw_Character (cbx, MENU_CURSOR_X, 32 + (mods_cursor - first_mod) * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
@@ -5192,6 +5221,10 @@ static void M_Mods_Key (int key)
 		M_Mods_KeyboardKey (key);
 		return;
 	}
+	if (key == K_VR_RIGHT_STICK_UP)
+		key = K_PGUP;
+	else if (key == K_VR_RIGHT_STICK_DOWN)
+		key = K_PGDN;
 	if (mods_catalogue_view && mods_catalogue_details)
 	{
 		if (key == K_MOUSE2 || key == K_ESCAPE || key == K_BBUTTON ||
@@ -5233,6 +5266,15 @@ static void M_Mods_Key (int key)
 			S_LocalSound ("misc/menu1.wav");
 			return;
 		}
+		if (!mods_catalogue_view && m_mouse_x >= 208 && m_mouse_x <= 312)
+		{
+			const addon_catalog_state_t state = AddonCatalog_State ();
+			if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING)
+				return;
+			M_Mods_RefreshInstalled ();
+			S_LocalSound ("misc/menu2.wav");
+			return;
+		}
 		if (mods_catalogue_view && m_mouse_x >= 12 && m_mouse_x < 200)
 		{
 			if (AddonCatalog_State () == ADDON_CATALOG_REFRESHING ||
@@ -5260,6 +5302,15 @@ static void M_Mods_Key (int key)
 	if (mods_catalogue_view && (key == K_F1 || key == K_XBUTTON))
 	{
 		M_Mods_RefreshCatalogue ();
+		S_LocalSound ("misc/menu2.wav");
+		return;
+	}
+	if (!mods_catalogue_view && (key == K_F1 || key == K_XBUTTON))
+	{
+		const addon_catalog_state_t state = AddonCatalog_State ();
+		if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING)
+			return;
+		M_Mods_RefreshInstalled ();
 		S_LocalSound ("misc/menu2.wav");
 		return;
 	}

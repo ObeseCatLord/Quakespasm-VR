@@ -80,3 +80,17 @@ pointer hover/scan/scrollbar isolation, catalogue busy/cancel/install completion
 and long metadata with stable confirmation controls. Source/diff review before
 commit; software/rendered UI/controller checks stay deferred. This bounded plan
 does not certify all add-on install paths or broader migration completion.
+
+## Source implementation checkpoint
+
+The delegated adapter adds58 net lines in the three planned files. Main verified
+the native node layout and temporary selection copy, clearing both borrowed
+vectors before native list freeing, ordered rebuild/filter/selection restoration,
+hover/drag retirement, secondary-stick page mapping after keyboard dispatch and
+bounded metadata drawing without changing approved/current record comparison.
+Manual Scan refuses busy catalogue operations. Menu entry follows the primary's
+unconditional native rescan; the catalogue worker does not access modlist. Existing
+completed-install Modlist_Init remains, avoiding an unrelated draw-callback change.
+The Scan drawn/hit area shares native row144; desktop ticker/arrows remain. Scoped
+whitespace checks passed. No builds/tests, rendered UI or controller trials ran;
+the acceptance cases above remain deferred.
