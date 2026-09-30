@@ -1199,16 +1199,19 @@ static qboolean R_AvatarBuildPaletteBodyBasis(const r_avatar_rig_t *rig,const fl
  * every target-model parent link and the retargeted endpoint basis. */
 static qboolean R_AvatarSolvePhysicalPath(const r_avatar_rig_t *rig,float *palette,
 	int root,int endpoint,const float target[3],const float endpointbasis[12],
-	qboolean require_reached)
+	qboolean require_reached,qboolean authored_shambler)
 {
-	int chain[8],count=0,i,iteration,jointcount=R_AvatarJointCount(rig->live);float position[8][3],solved[8][3],length[7],direction[3],endpointtarget[3],total=0,rootdistance,extension=1;float intended[12];
+	int chain[8],count=0,i,iteration,jointcount=R_AvatarJointCount(rig->live);float position[8][3],bindposition[8][3],solved[8][3],length[7],direction[3],endpointtarget[3],total=0,rootdistance,extension=1;float intended[12];
 	if(root<0||endpoint<0||root>=jointcount||endpoint>=jointcount||!R_AvatarOrthonormal(endpointbasis))return false;
 	memcpy(intended,endpointbasis,sizeof(intended));
 	for(i=endpoint;i>=0&&count<8;i=rig->live->joints[i].parent){chain[count++]=i;if(i==root)break;}
 	if(count<3||chain[count-1]!=root)return false;
 	for(i=0;i<count/2;++i){int swap=chain[i];chain[i]=chain[count-1-i];chain[count-1-i]=swap;}
-	for(i=0;i<count;++i)R_AvatarOrigin(palette+chain[i]*12,position[i]);
-	for(i=0;i+1<count;++i){for(int a=0;a<3;++a)direction[a]=position[i+1][a]-position[i][a];length[i]=R_AvatarLength3(direction);if(!isfinite(length[i])||length[i]<.001f)return false;total+=length[i];}
+	for(i=0;i<count;++i){
+		R_AvatarOrigin(palette+chain[i]*12,position[i]);
+		if(authored_shambler)R_AvatarOrigin(rig->live->joints[chain[i]].bind,bindposition[i]);
+	}
+	for(i=0;i+1<count;++i){for(int a=0;a<3;++a)direction[a]=authored_shambler?bindposition[i+1][a]-bindposition[i][a]:position[i+1][a]-position[i][a];length[i]=R_AvatarLength3(direction);if(!isfinite(length[i])||length[i]<.001f)return false;total+=length[i];}
 	memcpy(endpointtarget,target,sizeof(endpointtarget));for(i=0;i<3;++i)direction[i]=endpointtarget[i]-position[0][i];rootdistance=R_AvatarLength3(direction);if(!isfinite(rootdistance)||rootdistance<.0001f)return false;
 	if(rootdistance>total){extension=fminf(rootdistance/total,1.10f);for(i=0;i+1<count;++i)length[i]*=extension;total*=extension;if(rootdistance>total){if(require_reached)return false;for(i=0;i<3;++i)endpointtarget[i]=position[0][i]+direction[i]*total/rootdistance;}}
 	memcpy(solved,position,(size_t)count*sizeof(position[0]));
@@ -1240,7 +1243,7 @@ static qboolean R_AvatarSolvePhysicalPath(const r_avatar_rig_t *rig,float *palet
 			}
 			if(i==3)return false;
 		}
-		if(!R_AvatarBuildRotationToward(original,direction,transport,false))return false;
+		if(!R_AvatarBuildRotationToward(original,direction,transport,authored_shambler))return false;
 		for(i=0;i<3;++i)
 			perpendicular[i]=transport[i*4]*side[0]+transport[i*4+1]*side[1]+transport[i*4+2]*side[2];
 		{
@@ -1275,7 +1278,12 @@ static qboolean R_AvatarSolvePhysicalPath(const r_avatar_rig_t *rig,float *palet
 	}
 	for(i=0;i<3;++i)direction[i]=endpointtarget[i]-solved[count-1][i];
 	if(R_AvatarLength3(direction)>=.01f)return false;
-	for(i=0;i+1<count;++i){float oldnext[3],oldroot[3];R_AvatarOrigin(palette+chain[i]*12,oldroot);R_AvatarOrigin(palette+chain[i+1]*12,oldnext);for(int a=0;a<3;++a){oldnext[a]-=oldroot[a];direction[a]=solved[i+1][a]-solved[i][a];}if(!R_AvatarRotateSubtreeToward(rig,palette,chain[i],oldnext,direction))return false;}
+	for(i=0;i+1<count;++i){float oldnext[3],oldroot[3];R_AvatarOrigin(palette+chain[i]*12,oldroot);R_AvatarOrigin(palette+chain[i+1]*12,oldnext);for(int a=0;a<3;++a){oldnext[a]-=oldroot[a];direction[a]=solved[i+1][a]-solved[i][a];}
+		/* Bind lengths can recover a collapsed incoming Shambler link. Its
+		 * undefined rotation is skipped; translations below reconnect the path. */
+		if(authored_shambler&&R_AvatarLength3(oldnext)==0)continue;
+		if(!R_AvatarRotateSubtreeToward(rig,palette,chain[i],oldnext,direction))return false;
+	}
 	for(i=1;i<count;++i){float current[3],delta[3];R_AvatarOrigin(palette+chain[i]*12,current);for(int a=0;a<3;++a)delta[a]=solved[i][a]-current[a];if(R_AvatarLength3(delta)>.0001f)for(int j=0;j<jointcount;++j)if(R_AvatarDescendant(rig->live,j,chain[i]))for(int a=0;a<3;++a)palette[j*12+a*4+3]+=delta[a];}
 	for(i=0;i<3;++i)intended[i*4+3]=endpointtarget[i];
 	return R_AvatarSetSubtreeTransform(rig,palette,endpoint,intended);
@@ -1512,17 +1520,19 @@ static void R_AvatarRepairShamblerDesktopArms (const r_avatar_rig_t *rig,
 	}
 }
 
-static qboolean R_AvatarSolveDesktopSupportArm (const r_avatar_rig_t *rig,
-	float *palette, const vec3_t target, const float endpointbasis[12])
+static qboolean R_AvatarSolveAnalyticArm (const r_avatar_rig_t *rig,
+	float *palette, qboolean rightside, qboolean tracked,
+	const vec3_t target, const float endpointbasis[12])
 {
-	int upperindex = rig->joint[MD5_VRIK_UPPERARM_L];
-	int lowerindex = rig->joint[MD5_VRIK_LOWERARM_L];
-	int handindex = rig->joint[MD5_VRIK_HAND_L];
+	int upperindex = rig->joint[rightside ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L];
+	int lowerindex = rig->joint[rightside ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L];
+	int handindex = rig->joint[rightside ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L];
 	float *upper, *lower, *hand;
 	float intendedhand[12];
 	vec3_t shoulder, elbow, oldelbow, oldhand, toward, boundedtarget, lateral, forward, up;
 	vec3_t oldupperdir, oldlowerdir, newupperdir, newlowerdir, pole, normal, bend;
-	float upperlength, lowerlength, distance, rawdistance, reach, cosine, along, across;
+	float upperlength, lowerlength, distance, rawdistance, reach, stretch, solveupper,
+		solvelower, cosine, along, across;
 
 	if (upperindex < 0 || lowerindex < 0 || handindex < 0 ||
 		rig->live->joints[lowerindex].parent != upperindex ||
@@ -1543,36 +1553,42 @@ static qboolean R_AvatarSolveDesktopSupportArm (const r_avatar_rig_t *rig,
 	VectorSubtract (oldhand, oldelbow, oldlowerdir);
 	upperlength = VectorLength (oldupperdir);
 	lowerlength = VectorLength (oldlowerdir);
-	if (upperlength < 0.01f || lowerlength < 0.01f)
+	if (!isfinite (upperlength) || !isfinite (lowerlength) ||
+		upperlength < 0.01f || lowerlength < 0.01f)
 		return false;
 	VectorSubtract (target, shoulder, toward);
 	distance = VectorLength (toward);
-	if (distance < 0.001f)
+	if (!isfinite (distance) || distance < 0.001f)
 		return false;
 	rawdistance = distance;
 	VectorScale (toward, 1.0f / distance, toward);
 	reach = upperlength + lowerlength;
 	/* The reference support helper accepts only REACHED, not CLAMPED.
 	 * Its analytic solve labels any stretch CLAMPED, so reject it upfront. */
-	if (rawdistance > reach)
+	if (rawdistance > reach * (tracked ? 1.10f : 1.0f))
 		return false;
 	distance = CLAMP (fabsf (upperlength - lowerlength) + 0.01f, distance,
-		reach);
+		reach * (tracked ? 1.10f : 1.0f));
 	VectorMA (shoulder, distance, toward, boundedtarget);
-	/* Reference desktop pole: left outward and backward, without tracked up. */
+	stretch = distance > reach ? distance / reach : 1.0f;
+	solveupper = upperlength * stretch;
+	solvelower = lowerlength * stretch;
+	/* The inherited analytic profile uses outward/back plus tracked-only up. */
 	for (int axis = 0; axis < 3; ++axis)
-		pole[axis] = -rig->profile->arm_pole_outward * lateral[axis] -
-			rig->profile->arm_pole_back * forward[axis];
+		pole[axis] = (rightside ? 1.0f : -1.0f) *
+			rig->profile->arm_pole_outward * lateral[axis] -
+			rig->profile->arm_pole_back * forward[axis] +
+			(tracked ? rig->profile->arm_pole_up : 0.0f) * up[axis];
 	CrossProduct (toward, pole, normal);
 	if (!VectorNormalize (normal))
 		VectorCopy (up, normal);
 	CrossProduct (normal, toward, bend);
 	if (!VectorNormalize (bend))
 		return false;
-	cosine = CLAMP (-1.0f, (upperlength * upperlength + distance * distance -
-		lowerlength * lowerlength) / (2.0f * upperlength * distance), 1.0f);
-	along = cosine * upperlength;
-	across = sqrtf (q_max (0.0f, 1.0f - cosine * cosine)) * upperlength;
+	cosine = CLAMP (-1.0f, (solveupper * solveupper + distance * distance -
+		solvelower * solvelower) / (2.0f * solveupper * distance), 1.0f);
+	along = cosine * solveupper;
+	across = sqrtf (q_max (0.0f, 1.0f - cosine * cosine)) * solveupper;
 	VectorMA (shoulder, along, toward, elbow);
 	VectorMA (elbow, across, bend, elbow);
 	VectorSubtract (elbow, shoulder, newupperdir);
@@ -1599,6 +1615,12 @@ static qboolean R_AvatarSolveDesktopSupportArm (const r_avatar_rig_t *rig,
 	R_AvatarOrigin (hand, oldhand);
 	R_AvatarSetOrigin (intendedhand, oldhand);
 	return R_AvatarSetSubtreeTransform (rig, palette, handindex, intendedhand);
+}
+
+static qboolean R_AvatarSolveDesktopSupportArm (const r_avatar_rig_t *rig,
+	float *palette, const vec3_t target, const float endpointbasis[12])
+{
+	return R_AvatarSolveAnalyticArm (rig, palette, false, false, target, endpointbasis);
 }
 
 static qboolean R_AvatarApplyDesktopSupportHand (const r_avatar_rig_t *source,
@@ -1661,7 +1683,7 @@ static qboolean R_AvatarApplyDesktopSupportHand (const r_avatar_rig_t *source,
 	memcpy (saved, palette, bytes);
 	if (rig->profile->id == PLAYER_AVATAR_SHAMBLER)
 		reached = R_AvatarSolvePhysicalPath (rig, palette,
-			rig->joint[MD5_VRIK_SHOULDER_L], targetleft, lefttarget, leftbasis, true);
+			rig->joint[MD5_VRIK_SHOULDER_L], targetleft, lefttarget, leftbasis, true, false);
 	else
 		reached = R_AvatarSolveDesktopSupportArm (rig, palette, lefttarget, leftbasis);
 	/* The shared physical solver returns a clamped pose as well. The original
@@ -1754,7 +1776,7 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 		R_AvatarOrigin(sourcepalette+source->joint[arm]*12,targetpoint);
 		R_AvatarPresentationInversePoint(context,targetpoint,targetpoint);
 		uppervalid=R_AvatarSolvePhysicalPath(target,palette,root,target->joint[arm],
-			targetpoint,palette+target->joint[arm]*12,false);
+			targetpoint,palette+target->joint[arm]*12,false,false);
 	}
 	if(uppervalid){
 		float desired[12];
@@ -1774,10 +1796,71 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 		R_AvatarOrigin(sourcepalette+source->joint[leg]*12,targetpoint);
 		R_AvatarPresentationInversePoint(context,targetpoint,targetpoint);
 		if(!R_AvatarSolvePhysicalPath(target,palette,target->joint[upperleg],
-			target->joint[leg],targetpoint,footbasis[side],false)||
+			target->joint[leg],targetpoint,footbasis[side],false,false)||
 			!R_AvatarPaletteValid(target,palette)){
 			memcpy(palette,saved,bytes);
 			complete=false;
+		}
+	}
+	return complete;
+}
+
+/* Generic retargeting supplies bind-relative motion. Tracked head/wrists
+ * additionally need absolute canonical endpoints in the presented target rig.
+ * Each optional stage restores only its own failure, retaining prior successes. */
+static qboolean R_AvatarRefineTrackedEndpoints (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target, const float *sourcepalette,
+	const r_avatar_presentation_context_t *context, float *palette)
+{
+	const int semantics[3] = {MD5_VRIK_HEAD, MD5_VRIK_HAND_L, MD5_VRIK_HAND_R};
+	float saved[R_AVATAR_MAX_JOINTS * 12];
+	const size_t bytes = target->live->joint_count * 12 * sizeof (float);
+	qboolean complete = true;
+
+	if (!context || !R_AvatarFiniteMatrix (context->inverse) ||
+		!R_AvatarPaletteValid (target, palette))
+		return false;
+	for (int stage = 0; stage < 3; ++stage)
+	{
+		const int semantic = semantics[stage];
+		const int sourcejoint = source->joint[semantic];
+		const int endpoint = target->joint[semantic];
+		vec3_t goal, current;
+		qboolean accepted = false;
+		if (sourcejoint < 0 || sourcejoint >= R_AvatarJointCount (source->live) ||
+			endpoint < 0 || endpoint >= R_AvatarJointCount (target->live))
+			continue;
+		R_AvatarOrigin (sourcepalette + sourcejoint * 12, goal);
+		R_AvatarPresentationInversePoint (context, goal, goal);
+		memcpy (saved, palette, bytes);
+		if (semantic == MD5_VRIK_HEAD)
+		{
+			R_AvatarOrigin (palette + endpoint * 12, current);
+			VectorSubtract (goal, current, current);
+			R_AvatarTranslateSubtree (target, palette, endpoint, current);
+			accepted = true;
+		}
+		else if (target->profile->id == PLAYER_AVATAR_SHAMBLER)
+		{
+			const qboolean right = semantic == MD5_VRIK_HAND_R;
+			const int shoulder = target->joint[right ? MD5_VRIK_SHOULDER_R : MD5_VRIK_SHOULDER_L];
+			const int upper = target->joint[right ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L];
+			const int lower = target->joint[right ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L];
+			if (shoulder >= 0 && upper >= 0 && lower >= 0 &&
+				target->live->joints[upper].parent == shoulder &&
+				target->live->joints[lower].parent == upper &&
+				target->live->joints[endpoint].parent == lower)
+				accepted = R_AvatarSolvePhysicalPath (target, palette, shoulder,
+					endpoint, goal, palette + endpoint * 12, false, true);
+			/* A failed physical shoulder chain never selects the shorter arm. */
+		}
+		else
+			accepted = R_AvatarSolveAnalyticArm (target, palette,
+				semantic == MD5_VRIK_HAND_R, true, goal, NULL);
+		if (!accepted || !R_AvatarPaletteValid (target, palette))
+		{
+			memcpy (palette, saved, bytes);
+			complete = false;
 		}
 	}
 	return complete;
@@ -1805,6 +1888,20 @@ qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
 	if(tracked&&(profile->id==PLAYER_AVATAR_DOG||profile->id==PLAYER_AVATAR_FIEND))
 		return R_AvatarRefineTrackedAnimalPalette(source,target,(const float *)source_palette,
 			prepared_context,floor_correction_z,tracked_lower_mask,(float *)target_palette);
+	if (tracked)
+	{
+		if (prepared_context)
+			context = *prepared_context;
+		else
+		{
+			if (!isfinite (floor_correction_z) ||
+				!R_AvatarBuildPresentationContext (source, target, &context))
+				return false;
+			R_AvatarPresentationAddCanonicalZ (&context, floor_correction_z);
+		}
+		return R_AvatarRefineTrackedEndpoints (source, target,
+			(const float *)source_palette, &context, (float *)target_palette);
+	}
 	if(!tracked && (profile->id!=PLAYER_AVATAR_DOG &&
 		profile->id!=PLAYER_AVATAR_FIEND && !profile->mirror_outer_leg_poles &&
 		profile->id!=PLAYER_AVATAR_SHAMBLER && !profile->desktop_support_hand))
