@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_input.h"
 #include "vr_foveation_policy.h"
 #include "vr_fbt_storage.h"
+#include "vr_weapon_calibration.h"
 #include "view.h"
 #include "addon_catalog.h"
 #include "custom_avatar.h"
@@ -2827,6 +2828,7 @@ typedef struct
 } vr_weapon_option_t;
 
 static const vr_weapon_option_t vr_weapon_options[] = {
+	{"vr_gunmodeloffsets", "Weapon Preset", 0.0f, 1.0f, 0.0f, 4.0f},
 	{"vr_gunangle", "Gun Angle", 32.0f, 2.5f, -180.0f, 180.0f},
 	{"vr_gunmodelpitch", "Gun Model Pitch", 0.0f, 0.5f, -90.0f, 90.0f},
 	{"vr_gunmodelscale", "Gun Model Scale", 1.0f, 0.05f, 0.1f, 2.0f},
@@ -3532,7 +3534,8 @@ static void M_VROptions_WeaponDraw (cb_context_t *cbx, int top)
 		const int y = top + item * CHARACTER_SIZE;
 
 		M_Print (cbx, MENU_LABEL_X, y, option->label);
-		M_Print (cbx, MENU_VALUE_X, y, va ("%.4f", value));
+		M_Print (cbx, MENU_VALUE_X, y, item == 0 ?
+			VR_WeaponCalibrationPresetName () : va ("%.4f", value));
 	}
 	M_Mouse_UpdateListCursor (&vr_options_weapon_cursor, MENU_CURSOR_X, 320,
 		top, CHARACTER_SIZE, VR_WEAPON_OPTIONS_ITEMS, 0);

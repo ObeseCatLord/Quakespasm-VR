@@ -120,3 +120,27 @@ Write ownership stays calibration.c/.h and one Weapon Setup menu row; at most
 350 net production lines including data/API glue. Plans/index/source checkpoint
 must retain final software and broader inventory limits. Run no tests/builds
 until all implementation is finished. Reopen before exceeding this boundary.
+
+## Source implementation checkpoint
+
+The adapter is source-integrated in calibration.c/.h and the existing Weapon
+Setup page: five named presets, contextual tables, archived selector, whole-batch
+preflight, private implicit-muzzle application and unchanged public schema API.
+Reload applies selected defaults before authored files; live callbacks do not
+reset/reload slots or change model assets. Shared solo/MP consumers remain.
+The complete production delta is337 net lines, below the350-line boundary.
+
+Main reviewed the full diff, schema/preflight/seed/registration owners, menu
+bounds and actual primary tables. The requested-Astra read-only recheck found
+one P2: generic BlockQuake also appended the Copper fallback, violating the
+eight-row live preservation contract (even though primary appends that fallback).
+Adopted correction: a private reload-defaults argument skips Copper and LimJam
+fallback writes for a live effective BlockQuake selection, while reload retains
+them. Forced Enhanced-gamedir and specialized context branches remain unchanged.
+The same reviewer's bounded recheck closed that P2 with no new concrete blocker.
+Independent enhanced/source/melee/identity/wheel and untargeted slot values are
+preserved at the reviewed boundary. Effective reviewer settings are not exposed;
+no formal model/skill certification or runtime parity is claimed.
+
+Only source comparison and scoped whitespace checks were performed. Final
+Linux/ARM software qualification and broader WPN/profile acceptance remain open.

@@ -61,8 +61,22 @@ static char vr_weapon_calibration_cvar_names[VR_WEAPON_CALIBRATION_MAX_SLOTS]
 static qboolean vr_weapon_calibration_initialized;
 static qboolean vr_weapon_calibration_commands_registered;
 
+enum
+{
+	VR_WEAPON_PRESET_VANILLA,
+	VR_WEAPON_PRESET_ENHANCED,
+	VR_WEAPON_PRESET_AUTHENTIC,
+	VR_WEAPON_PRESET_PLAGUE,
+	VR_WEAPON_PRESET_BLOCKQUAKE,
+	VR_WEAPON_PRESET_COUNT
+};
+
+static cvar_t vr_gunmodeloffsets = {"vr_gunmodeloffsets", "0", CVAR_ARCHIVE};
+static int vr_weapon_preset_accepted = VR_WEAPON_PRESET_VANILLA;
+
 static qboolean VR_WeaponCalibrationPreflightSchema(
 	const vr_weapon_schema_entry_t *entries, size_t count);
+static void VR_WeaponCalibrationPresetChanged(cvar_t *var);
 
 extern cvar_t vr_aimmode;
 extern cvar_t vr_world_scale;
@@ -327,6 +341,149 @@ static const vr_weapon_schema_entry_t vr_enyo_weapon_fallbacks[] = {
 		.held_scale = 0.2f,
 		.has_held_scale = true,
 	},
+};
+
+typedef struct
+{
+	const char *path;
+	vec3_t held;
+	float scale;
+} vr_weapon_preset_row_t;
+
+typedef struct
+{
+	const char *path;
+	vec3_t held;
+	float scale;
+	vec3_t muzzle;
+} vr_weapon_preset_muzzle_row_t;
+
+static const vr_weapon_preset_row_t vr_enhanced_classic_overrides[] = {
+	{"progs/v_shot2.mdl", {-6.0f, 0.3f, 7.0f}, 0.9f},
+	{"progs/v_nail.mdl", {-1.9f, 5.7f, 15.0f}, 0.4f},
+	{"progs/v_nail2.mdl", {5.5f, 3.6f, 19.0f}, 0.4f},
+	{"progs/v_rock.mdl", {10.0f, 1.2f, 13.0f}, 0.5f},
+	{"progs/v_rock2.mdl", {26.0f, 4.5f, 21.0f}, 0.3f},
+	{"progs/v_light.mdl", {12.0f, 3.0f, 13.0f}, 0.5f},
+};
+
+static const vr_weapon_preset_row_t vr_authentic_classic_overrides[] = {
+	{"progs/v_axe.mdl", {-1.0f, 24.0f, 37.0f}, 0.33f},
+	{"progs/v_shot.mdl", {-1.0f, 2.0f, 15.3f}, 0.33f},
+	{"progs/v_shot2.mdl", {-2.0f, 2.0f, 11.4f}, 0.5f},
+	{"progs/v_nail.mdl", {-7.0f, 4.0f, 15.7f}, 0.4f},
+	{"progs/v_nail2.mdl", {-13.6f, 4.0f, 17.8f}, 0.4f},
+	{"progs/v_rock.mdl", {11.0f, 2.0f, 12.5f}, 0.5f},
+	{"progs/v_rock2.mdl", {23.0f, 5.0f, 31.0f}, 0.3f},
+	{"progs/v_light.mdl", {-6.0f, 3.6f, 11.0f}, 0.5f},
+	{"progs/v_prox.mdl", {-2.4f, 1.8f, 14.6f}, 0.5f},
+	{"progs/v_lava.mdl", {-10.2f, 4.0f, 15.7f}, 0.4f},
+	{"progs/v_lava2.mdl", {-13.6f, 4.0f, 17.8f}, 0.4f},
+	{"progs/v_multi.mdl", {11.0f, 2.0f, 12.5f}, 0.5f},
+	{"progs/v_multi2.mdl", {23.0f, 5.0f, 31.0f}, 0.3f},
+	{"progs/v_plasma.mdl", {-6.0f, 3.6f, 11.0f}, 0.5f},
+};
+
+static const vr_weapon_preset_row_t vr_plague_classic_overrides[] = {
+	{"progs/v_shot.mdl", {-1.0f, 1.3f, 7.0f}, 0.6f},
+	{"progs/v_shot2.mdl", {-5.9f, 1.1f, 8.5f}, 0.6f},
+	{"progs/v_nail.mdl", {-11.0f, 5.1f, 19.0f}, 0.32f},
+	{"progs/v_nail2.mdl", {-11.6f, 4.6f, 21.8f}, 0.26f},
+	{"progs/v_rock.mdl", {-3.5f, 2.6f, 12.0f}, 0.36f},
+	{"progs/v_rock2.mdl", {-7.2f, 4.0f, 18.2f}, 0.32f},
+	{"progs/v_light.mdl", {-3.1f, 4.4f, 14.2f}, 0.37f},
+	{"progs/v_laserg.mdl", {-5.0f, 3.4f, 22.0f}, 0.33f},
+	{"progs/v_prox.mdl", {-3.5f, 2.6f, 12.0f}, 0.36f},
+	{"progs/v_lava.mdl", {-11.0f, 5.1f, 19.0f}, 0.32f},
+	{"progs/v_lava2.mdl", {-11.6f, 4.6f, 21.8f}, 0.26f},
+	{"progs/v_multi.mdl", {-3.5f, 2.6f, 12.0f}, 0.36f},
+	{"progs/v_multi2.mdl", {-7.2f, 4.0f, 18.2f}, 0.32f},
+	{"progs/v_plasma.mdl", {-3.1f, 4.4f, 14.2f}, 0.37f},
+};
+
+static const vr_weapon_preset_row_t vr_blockquake_classic[] = {
+	{"progs/v_axe.mdl", {-9.0f, 38.0f, 45.0f}, 0.2f},
+	{"progs/v_shot.mdl", {-7.0f, 6.8f, 35.5f}, 0.2f},
+	{"progs/v_shot2.mdl", {-5.6f, 10.2f, 42.0f}, 0.2f},
+	{"progs/v_nail.mdl", {-9.0f, 15.0f, 40.0f}, 0.2f},
+	{"progs/v_nail2.mdl", {-6.0f, 13.5f, 39.0f}, 0.2f},
+	{"progs/v_rock.mdl", {0.0f, 11.8f, 72.0f}, 0.2f},
+	{"progs/v_rock2.mdl", {26.0f, 13.8f, 69.0f}, 0.2f},
+	{"progs/v_light.mdl", {-9.0f, 13.5f, 51.0f}, 0.2f},
+};
+
+static const vr_weapon_preset_row_t vr_alk_fixed_fallbacks[] = {
+	{"progs/v_saw.mdl", {-6.5f, 27.5f, 42.0f}, 0.25f},
+	{"progs/v_plasma.mdl", {16.0f, 6.0f, 16.0f}, 0.4f},
+};
+
+static const vr_weapon_preset_row_t vr_alk_classic[] = {
+	{"progs/v_shot40fps.mdl", {1.5f, 1.8f, 15.8f}, 0.33f},
+	{"progs/v_shot2_40fps.mdl", {-3.0f, 1.7f, 12.0f}, 0.5f},
+	{"progs/v_nail_alk40fps.mdl", {-6.0f, 3.8f, 17.0f}, 0.38f},
+	{"progs/v_nail3.mdl", {-4.0f, 3.5f, 19.0f}, 0.35f},
+	{"progs/v_rock_40fps.mdl", {-3.0f, 1.25f, 17.0f}, 0.5f},
+	{"progs/v_rock2_40fps.mdl", {20.0f, 8.3f, 21.0f}, 0.38f},
+	{"progs/v_light.mdl", {-4.0f, 3.1f, 13.0f}, 0.5f},
+	{"progs/v_laserg40fps.mdl", {45.0f, 3.0f, 15.0f}, 0.22f},
+	{"progs/v_mine_40fps.mdl", {-3.0f, 1.3f, 15.0f}, 0.5f},
+};
+
+static const vr_weapon_preset_row_t vr_alk_plague[] = {
+	{"progs/v_shot40fps.mdl", {-1.0f, 1.3f, 7.0f}, 0.6f},
+	{"progs/v_shot2_40fps.mdl", {-5.9f, 1.1f, 8.5f}, 0.6f},
+	{"progs/v_nail_alk40fps.mdl", {-11.0f, 5.1f, 19.0f}, 0.32f},
+	{"progs/v_nail3.mdl", {-11.6f, 4.6f, 21.8f}, 0.26f},
+	{"progs/v_rock_40fps.mdl", {-3.5f, 2.6f, 12.0f}, 0.36f},
+	{"progs/v_rock2_40fps.mdl", {-7.2f, 4.0f, 18.2f}, 0.32f},
+	{"progs/v_light.mdl", {-3.1f, 4.4f, 14.2f}, 0.37f},
+	{"progs/v_laserg40fps.mdl", {-5.0f, 3.4f, 22.0f}, 0.33f},
+	{"progs/v_mine_40fps.mdl", {-3.5f, 2.6f, 12.0f}, 0.36f},
+};
+
+static const vr_weapon_preset_row_t vr_dwell_weapon_fallbacks[] = {
+	{"progs/v_axe2.mdl", {-3.5f, 34.0f, 41.5f}, 0.4f},
+	{"progs/v_axeb.mdl", {-4.0f, 24.0f, 37.0f}, 0.4f},
+	{"progs/v_shot.mdl", {1.5f, 1.0f, 10.0f}, 0.3333333f},
+	{"progs/v_shot2.mdl", {-3.5f, 1.0f, 8.5f}, 0.5333333f},
+	{"progs/v_shot3.mdl", {-3.5f, 0.4f, 8.5f}, 0.5333333f},
+	{"progs/v_nail.mdl", {-5.0f, 3.0f, 15.0f}, 0.5f},
+	{"progs/v_nail2.mdl", {0.0f, 3.0f, 19.0f}, 0.5f},
+	{"progs/v_nail3.mdl", {-4.0f, 3.5f, 19.0f}, 0.35f},
+	{"progs/v_rock.mdl", {10.0f, 1.5f, 13.0f}, 0.5f},
+	{"progs/v_rock2.mdl", {10.0f, 7.0f, 19.0f}, 0.5f},
+	{"progs/v_light.mdl", {3.0f, 4.0f, 13.0f}, 0.5f},
+	{"progs/v_rail.mdl", {4.0f, 5.0f, 31.0f}, 0.65f},
+	{"progs/v_rifle.mdl", {1.5f, 1.0f, 10.0f}, 0.5f},
+};
+
+static const vr_weapon_preset_muzzle_row_t vr_qbj3_weapon_fallbacks[] = {
+	{"progs/v_wrench.mdl", {-5.090864f, 45.71518f, 64.70464f}, 0.2f, {0, 0, 0}},
+	{"progs/v_pistol.mdl", {3.388845f, 37.75988f, 56.43581f}, 0.2f, {-9.11632f, 9.013277f, -45.533f}},
+	{"progs/v_flakshotgun.mdl", {11.55282f, 16.95288f, 38.90591f}, 0.2f, {0.1453177f, 2.258818f, -31.45429f}},
+	{"progs/v_tnailgun.mdl", {-3.596274f, 22.3977f, 49.35181f}, 0.2f, {-4.46999f, 4.069127f, -25.89618f}},
+	{"progs/v_rebar.mdl", {7.11163f, 33.89061f, 52.88078f}, 0.2f, {0.4432641f, 12.53425f, 4.832447f}},
+	{"progs/v_grenlauncher.mdl", {3.906817f, 19.53125f, 46.88503f}, 0.2f, {-0.9725167f, 6.330487f, 6.072494f}},
+	{"progs/v_mmml.mdl", {8.254588f, 17.25331f, 53.56533f}, 0.2f, {-0.387794f, 15.84945f, -4.354416f}},
+	{"progs/v_invoker.mdl", {-0.4811821f, 24.50682f, 24.40611f}, 0.2f, {0, 0, 0}},
+	{"progs/v_berserk.mdl", {3.20228348f, 45.25361633f, 34.16704407f}, 0.2f, {0, 0, 0}},
+	{"progs/v_axe.mdl", {0, 0, 0}, 0.33f, {0, 0, 0}},
+	{"progs/v_shot.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_shot2.mdl", {0, 0, 0}, 0.8f, {0, 0, 0}},
+	{"progs/v_nail.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_nail2.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_rock.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_rock2.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_light.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_hammer.mdl", {0, 0, 0}, 0.33f, {0, 0, 0}},
+	{"progs/v_laserg.mdl", {0, 0, 0}, 0.33f, {0, 0, 0}},
+	{"progs/v_prox.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_lava.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_lava2.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_multi.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_multi2.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_plasma.mdl", {0, 0, 0}, 0.5f, {0, 0, 0}},
+	{"progs/v_axe2.mdl", {0, 0, 0}, 0.33f, {0, 0, 0}},
 };
 
 #define VR_WeaponOffsetCvar(slot, field) \
@@ -2268,6 +2425,8 @@ void VR_WeaponCalibrationInit(void)
 		}
 	}
 	vr_weapon_calibration_initialized = true;
+	Cvar_RegisterVariable(&vr_gunmodeloffsets);
+	Cvar_SetCallback(&vr_gunmodeloffsets, VR_WeaponCalibrationPresetChanged);
 }
 
 void VR_WeaponCalibrationRegisterCommands(void)
@@ -2346,14 +2505,16 @@ static qboolean VR_WeaponCalibrationPreflightSchema(
 	return true;
 }
 
-qboolean VR_WeaponCalibrationApplySchema(
-	const vr_weapon_schema_entry_t *entries, size_t count)
+static qboolean VR_WeaponCalibrationApplySchemaMode(
+	const vr_weapon_schema_entry_t *entries, size_t count, qboolean preset_mode)
 {
 	size_t index;
 	int slot;
 
 	if (!VR_WeaponCalibrationPreflightSchema(entries, count))
 		return false;
+	if (preset_mode)
+		VR_WeaponCalibrationAdjustCancel();
 
 	for (index = 0; index < count; ++index)
 	{
@@ -2373,6 +2534,14 @@ qboolean VR_WeaponCalibrationApplySchema(
 			VR_ActivateCalibrationSlot(slot, entry->viewmodel_path);
 		}
 		calibration = &vr_weapon_calibration_slots[slot];
+		if (preset_mode && entry->has_held_offset &&
+			!entry->has_muzzle_offset)
+		{
+			Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X), 0.0f);
+			Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y), 0.0f);
+			calibration->has_muzzle_offset = false;
+			calibration->muzzle_seeded_from_held = false;
+		}
 		if (entry->melee.has_enabled)
 		{
 			calibration->melee.enabled = entry->melee.enabled;
@@ -2470,6 +2639,12 @@ qboolean VR_WeaponCalibrationApplySchema(
 	return true;
 }
 
+qboolean VR_WeaponCalibrationApplySchema(
+	const vr_weapon_schema_entry_t *entries, size_t count)
+{
+	return VR_WeaponCalibrationApplySchemaMode(entries, count, false);
+}
+
 static qboolean VR_WeaponCalibrationApplyEnhancedFallbacks(void)
 {
 	return VR_WeaponCalibrationApplySchema(
@@ -2478,43 +2653,208 @@ static qboolean VR_WeaponCalibrationApplyEnhancedFallbacks(void)
 		sizeof(vr_enhanced_weapon_fallbacks[0]));
 }
 
-static qboolean VR_WeaponCalibrationApplyEnyoFallbacks(void)
+static qboolean VR_WeaponCalibrationGameIs(const char *name)
 {
 	const char *game = COM_SkipPath(com_gamedir);
-
-	if (!game || q_strcasecmp(game, "enyo"))
-		return true;
-	return VR_WeaponCalibrationApplySchema(
-		vr_enyo_weapon_fallbacks,
-		sizeof(vr_enyo_weapon_fallbacks) /
-		sizeof(vr_enyo_weapon_fallbacks[0]));
+	return game && !q_strcasecmp(game, name);
 }
 
-static qboolean VR_WeaponCalibrationApplyAlkalineAxeFallback(void)
+static qboolean VR_WeaponCalibrationADRootPath(const char *path)
 {
-	const char *game = COM_SkipPath(com_gamedir);
-
-	if (!game || (q_strcasecmp(game, "alk") &&
-		q_strcasecmp(game, "limjam")))
-		return true;
-	return VR_WeaponCalibrationApplySchema(vr_alk_axe_fallback,
-		sizeof(vr_alk_axe_fallback) / sizeof(vr_alk_axe_fallback[0]));
+	for (size_t i = 7; i < countof(vr_ad_weapon_fallbacks); ++i)
+		if (!strcmp(path, vr_ad_weapon_fallbacks[i].viewmodel_path))
+			return true;
+	return false;
 }
 
-static qboolean VR_WeaponCalibrationApplyADRootFallbacks(void)
+static qboolean VR_WeaponCalibrationPresetAppendSchema(
+	vr_weapon_schema_entry_t *entries, size_t *count,
+	const vr_weapon_schema_entry_t *source, size_t source_count,
+	qboolean ad_root_only)
 {
-	const char *game = COM_SkipPath(com_gamedir);
+	for (size_t i = 0; i < source_count; ++i)
+	{
+		if (ad_root_only &&
+			!VR_WeaponCalibrationADRootPath(source[i].viewmodel_path))
+			continue;
+		if (*count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
+			return false;
+		entries[*count] = source[i];
+		entries[*count].has_muzzle_offset = false;
+		++*count;
+	}
+	return true;
+}
 
-	/* These installed mods contain byte-identical AD root viewmodels. Their
-	 * own schemas are applied afterward and remain authoritative. */
-	if (!game || (q_strcasecmp(game, "ad") &&
-		q_strcasecmp(game, "q30a1024") &&
-		q_strcasecmp(game, "gibtropolis") &&
-		q_strcasecmp(game, "hwjam4")))
+static qboolean VR_WeaponCalibrationPresetAppendRows(
+	vr_weapon_schema_entry_t *entries, size_t *count,
+	const vr_weapon_preset_row_t *rows, size_t row_count,
+	qboolean ad_root_only)
+{
+	for (size_t i = 0; i < row_count; ++i)
+	{
+		vr_weapon_schema_entry_t *entry;
+		if (ad_root_only && !VR_WeaponCalibrationADRootPath(rows[i].path))
+			continue;
+		if (*count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
+			return false;
+		entry = &entries[(*count)++];
+		memset(entry, 0, sizeof(*entry));
+		strcpy(entry->viewmodel_path, rows[i].path);
+		VectorCopy(rows[i].held, entry->held_offset);
+		entry->held_scale = rows[i].scale;
+		entry->has_held_offset = entry->has_held_scale = true;
+	}
+	return true;
+}
+
+static qboolean VR_WeaponCalibrationPresetAppendQBJ3(
+	vr_weapon_schema_entry_t *entries, size_t *count)
+{
+	for (size_t i = 0; i < countof(vr_qbj3_weapon_fallbacks); ++i)
+	{
+		const vr_weapon_preset_muzzle_row_t *row = &vr_qbj3_weapon_fallbacks[i];
+		vr_weapon_schema_entry_t *entry;
+		if (*count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
+			return false;
+		entry = &entries[(*count)++];
+		memset(entry, 0, sizeof(*entry));
+		strcpy(entry->viewmodel_path, row->path);
+		VectorCopy(row->held, entry->held_offset);
+		VectorCopy(row->muzzle, entry->muzzle_offset);
+		entry->held_scale = row->scale;
+		entry->has_held_offset = entry->has_held_scale =
+			entry->has_muzzle_offset = true;
+	}
+	return true;
+}
+
+static qboolean VR_WeaponCalibrationPresetAppendGeneric(
+	vr_weapon_schema_entry_t *entries, size_t *count, int preset,
+	qboolean ad_root_only)
+{
+	const vr_weapon_preset_row_t *rows = NULL;
+	size_t row_count = 0;
+
+	if (preset == VR_WEAPON_PRESET_BLOCKQUAKE)
+		return VR_WeaponCalibrationPresetAppendRows(entries, count,
+			vr_blockquake_classic, countof(vr_blockquake_classic), ad_root_only);
+	if (!VR_WeaponCalibrationPresetAppendSchema(entries, count,
+		vr_stock_classic_fallbacks, countof(vr_stock_classic_fallbacks),
+		ad_root_only))
+		return false;
+	switch (preset)
+	{
+	case VR_WEAPON_PRESET_ENHANCED:
+		rows = vr_enhanced_classic_overrides;
+		row_count = countof(vr_enhanced_classic_overrides);
+		break;
+	case VR_WEAPON_PRESET_AUTHENTIC:
+		rows = vr_authentic_classic_overrides;
+		row_count = countof(vr_authentic_classic_overrides);
+		break;
+	case VR_WEAPON_PRESET_PLAGUE:
+		rows = vr_plague_classic_overrides;
+		row_count = countof(vr_plague_classic_overrides);
+		break;
+	}
+	return !rows || VR_WeaponCalibrationPresetAppendRows(entries, count,
+		rows, row_count, ad_root_only);
+}
+
+static qboolean VR_WeaponCalibrationBuildPreset(
+	vr_weapon_schema_entry_t *entries, size_t *count, int preset,
+	qboolean reload_defaults)
+{
+	const qboolean additional_ad_root = VR_WeaponCalibrationGameIs("q30a1024") ||
+		VR_WeaponCalibrationGameIs("gibtropolis") ||
+		VR_WeaponCalibrationGameIs("hwjam4");
+	*count = 0;
+	if (VR_WeaponCalibrationGameIs("qbj3"))
+		return VR_WeaponCalibrationPresetAppendQBJ3(entries, count);
+	if (VR_WeaponCalibrationGameIs("ad"))
+		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
+			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks), false) &&
+			(preset != VR_WEAPON_PRESET_PLAGUE ||
+			 VR_WeaponCalibrationPresetAppendRows(entries, count,
+				vr_plague_classic_overrides, countof(vr_plague_classic_overrides), true));
+	if (additional_ad_root)
+	{
+		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
+			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks), false) &&
+			(preset == VR_WEAPON_PRESET_VANILLA ||
+			 VR_WeaponCalibrationPresetAppendGeneric(entries, count, preset, true));
+	}
+	if (VR_WeaponCalibrationGameIs("alk"))
+		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
+			vr_alk_axe_fallback, countof(vr_alk_axe_fallback), false) &&
+			VR_WeaponCalibrationPresetAppendRows(entries, count,
+				vr_alk_fixed_fallbacks, countof(vr_alk_fixed_fallbacks), false) &&
+			VR_WeaponCalibrationPresetAppendRows(entries, count,
+				preset == VR_WEAPON_PRESET_PLAGUE ? vr_alk_plague : vr_alk_classic,
+				countof(vr_alk_classic), false);
+	if (VR_WeaponCalibrationGameIs("enyo"))
+		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
+			vr_enyo_weapon_fallbacks, countof(vr_enyo_weapon_fallbacks), false);
+	if (VR_WeaponCalibrationGameIs("dwell") ||
+		VR_WeaponCalibrationGameIs("dwellv2p2"))
+		return VR_WeaponCalibrationPresetAppendRows(entries, count,
+			vr_dwell_weapon_fallbacks, countof(vr_dwell_weapon_fallbacks), false);
+	if (VR_WeaponCalibrationGameIs("enhanced"))
+		preset = VR_WEAPON_PRESET_ENHANCED;
+	if (!VR_WeaponCalibrationPresetAppendGeneric(entries, count, preset, false))
+		return false;
+	if (preset == VR_WEAPON_PRESET_BLOCKQUAKE && !reload_defaults)
 		return true;
-	return VR_WeaponCalibrationApplySchema(vr_ad_weapon_fallbacks,
-		sizeof(vr_ad_weapon_fallbacks) /
-		sizeof(vr_ad_weapon_fallbacks[0]));
+	return VR_WeaponCalibrationPresetAppendSchema(entries, count,
+			vr_copper_axe_fallback, countof(vr_copper_axe_fallback), false) &&
+		(!VR_WeaponCalibrationGameIs("limjam") ||
+		 VR_WeaponCalibrationPresetAppendSchema(entries, count,
+			vr_alk_axe_fallback, countof(vr_alk_axe_fallback), false));
+}
+
+static qboolean VR_WeaponCalibrationApplyPreset(int preset, qboolean reload_defaults)
+{
+	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	size_t count;
+	return VR_WeaponCalibrationBuildPreset(entries, &count, preset, reload_defaults) &&
+		VR_WeaponCalibrationApplySchemaMode(entries, count, true);
+}
+
+static void VR_WeaponCalibrationSetPresetCvar(int preset)
+{
+	Cvar_SetCallback(&vr_gunmodeloffsets, NULL);
+	Cvar_SetValueQuick(&vr_gunmodeloffsets, (float)preset);
+	Cvar_SetCallback(&vr_gunmodeloffsets, VR_WeaponCalibrationPresetChanged);
+}
+
+static void VR_WeaponCalibrationPresetChanged(cvar_t *var)
+{
+	int requested;
+	if (!isfinite(var->value) || var->value < 0.0f ||
+		var->value >= (float)VR_WEAPON_PRESET_COUNT ||
+		var->value != (float)(int)var->value)
+	{
+		requested = VR_WEAPON_PRESET_VANILLA;
+		VR_WeaponCalibrationSetPresetCvar(requested);
+	}
+	else
+		requested = (int)var->value;
+	if (VR_WeaponCalibrationApplyPreset(requested, false))
+		vr_weapon_preset_accepted = requested;
+	else
+	{
+		Con_Warning("VR: weapon preset refused; keeping prior calibration\n");
+		VR_WeaponCalibrationSetPresetCvar(vr_weapon_preset_accepted);
+	}
+}
+
+const char *VR_WeaponCalibrationPresetName(void)
+{
+	static const char *const names[] = {
+		"Vanilla", "Enhanced", "Authentic", "Plague", "Block-Quake"
+	};
+	return names[vr_weapon_preset_accepted];
 }
 
 static qboolean VR_WeaponCalibrationApplyAD171Aliases(void)
@@ -2559,16 +2899,8 @@ static qboolean VR_WeaponCalibrationApplyAD171Aliases(void)
 
 static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 {
-	return VR_WeaponCalibrationApplyEnhancedFallbacks() &&
-		VR_WeaponCalibrationApplySchema(vr_stock_classic_fallbacks,
-			sizeof(vr_stock_classic_fallbacks) /
-			sizeof(vr_stock_classic_fallbacks[0])) &&
-		(!q_strcasecmp(COM_SkipPath(com_gamedir), "qbj3") ||
-		 VR_WeaponCalibrationApplySchema(vr_copper_axe_fallback,
-			sizeof(vr_copper_axe_fallback) / sizeof(vr_copper_axe_fallback[0]))) &&
-		VR_WeaponCalibrationApplyAlkalineAxeFallback() &&
-		VR_WeaponCalibrationApplyEnyoFallbacks() &&
-		VR_WeaponCalibrationApplyADRootFallbacks() &&
+	return VR_WeaponCalibrationApplyPreset(vr_weapon_preset_accepted, true) &&
+		VR_WeaponCalibrationApplyEnhancedFallbacks() &&
 		VR_WeaponCalibrationApplyAD171Aliases();
 }
 
