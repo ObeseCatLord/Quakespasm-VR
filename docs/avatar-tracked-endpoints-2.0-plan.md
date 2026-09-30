@@ -120,3 +120,21 @@ Model-foot API includes caller capacity in joints. Its side bits are 1<<0 left,
 confidence rejects that side. Output validation must check finite rigid matrices,
 not merely a non-crashing solve. The bounded validation can remain local to the
 CPU adapter rather than expose an animation/cache owner.
+
+## Implementation checkpoint
+
+`a117d427` restores absolute tracked Head and both wrist endpoints, generalizes
+the existing desktop analytic arm math and adds isolated Shambler authored-link
+policy. `7f27631f` reuses native leg math for model-space feet, forwards confidence
+at the renderer boundary and replaces Vore's shortcut with final mirrored policy.
+The native Ranger caller still passes NULL poles/outward vectors; Dog/Fiend and
+custom calibrated humanoid dispatch remain unchanged. Old refinement APIs are
+thin wrappers around the frame entry point with legacy confidence defaults.
+
+Each optional stage leaves a validated palette. Foot orientation retains the
+saved target basis at its solved origin; finite zero confidence is an exact
+no-op. Separate legs capture their seeds before either side changes. There is
+no GPU, shader, descriptor, network-wire or persistent rig-cache addition.
+Production scope stayed within five files and approximately 450 adapted lines.
+`git diff --check` found no whitespace errors. Source acceptance review is pending;
+no build, fixture, runtime, visual or performance qualification was performed.
