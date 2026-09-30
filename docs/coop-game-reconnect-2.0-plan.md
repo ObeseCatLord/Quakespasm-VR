@@ -33,8 +33,10 @@ connections while remaining responsive. Manual connect/disconnect/game cancels.
 
 ## Main's lean and alternatives
 
-Extend `cl_autoreconnect_t` with timed-request policy only: total deadline,
-next attempt time, retry interval, switch-pending flag and explicit timed mode.
+Extend `cl_autoreconnect_t` with next attempt time, retry interval and a
+switch-pending flag only. Positive retry interval identifies timed policy;
+zero retains one-shot behavior. The existing deadline is total expiry in timed
+mode and keeps its existing phase-relative meaning in one-shot mode.
 Keep its existing phases and socket owner. Existing one-shot starts initialize
 the added fields to their inactive values and retain their present timeout and
 failure behavior. The new command starts timed mode after copying and validating
@@ -43,7 +45,9 @@ same cancellation path.
 
 In timed mode, wait_config performs the pending native game switch once at
 the existing frame boundary, waits for queued configs and the requested delay,
-then starts an attempt. Failure returns to wait_config with the next attempt
+then starts an attempt. A changed-game switch also preserves the reference's
+250ms minimum settling time using max(next_attempt, realtime+0.25), without a
+separate timer. Failure returns to wait_config with the next attempt
 time. A total deadline bounds config waits, connection attempts and signon;
 successful full signon wins before expiry. Partial sockets/signons are retired
 before retry or timeout. Never create another socket or duplicate retry owner.
@@ -73,7 +77,8 @@ native reuse; preserve the complete reference timed-command behavior.
 ## Scope, review and acceptance
 
 Write set after stage1 finishes: `Quake/cl_main.c`, `Quake/host_cmd.c`,
-`Quake/common.c`, `Quake/common.h`. Estimate <=450 net added production lines;
+`Quake/common.c`, `Quake/common.h`, plus a narrow `Quake/cmd.c` oversized-line
+refusal for these two new commands only. Estimate <=450 net added production lines;
 reopen for another owner, new state machine or material scope growth. Smallest
 vertical proof: dedicated sender -> queued client command -> installed game
 switch/config drain -> async attempts -> full signon, with cancellation and
@@ -99,3 +104,24 @@ legacy layout continuity only for same endpoint; original numeric control
 endpoint after attachment; ordinary auto-switch and catalogue resume unchanged;
 desktop/VR crossplay. The goal remains active until full implementation and
 consolidated software qualification, excluding the user's live checks.
+
+## Requested-Astra design disposition before code
+
+Main spot-checked native deadline/cancellation/attachment behavior, the primary
+250ms settle requirement, native Cbuf's truncation branch, mount roots,
+registered-game admission and NET_SendToAll's host_client changes. The accepted
+owner reuse remains; no parallel state machine is justified.
+
+| Advisory finding | Main disposition |
+| --- | --- |
+| Total deadline and timed-mode flag duplicate existing state | Adopt simplification above: only next_attempt, retry_interval and switch_pending are added. One-shot starts/cancellation clear them. Timed phase changes never extend the original total deadline. |
+| Primary changed-game settling was omitted | Adopt 250ms minimum after switch plus command-buffer drain. No separate settle timer or GPU stall. |
+| Retry, terminal failure and cancellation differ | Adopt. Ordinary attempt failure/disconnect can reschedule only timed mode; explicit repeated-game mismatch remains terminal. Retire partial sockets/signon before retry/expiry; successful cancellation must not disconnect a fully signed-on client. |
+| Async attachment misses last-endpoint bookkeeping | Adopt. Move the successful numeric-control endpoint/legacy bookkeeping into existing CL_AttachConnection for both callers; no second cache/helper. Snapshot eligible same-endpoint legacy selection before cancellation. |
+| Cbuf truncates before operand validation | Adapt with bounded scope amendment. Retain native parsing/dispatch; after detecting and consuming an oversized line, parse its existing copied prefix with the native tokenizer and refuse these two new command names instead of executing a truncated request. Other commands keep their existing behavior. Direct handler operand lengths and checked 512-byte sender formatting remain required. No parallel parser. |
+| Filesystem query and registered-game admission | Adopt mount-root directory query, including loose-file directories; no pak0 requirement or full modlist walk. Refuse an inadmissible changed-game request before teardown. Same-game reconnect must remain available; no unrelated auto-switch/game policy tightening is intended. |
+| Administrative notification ownership | Adopt initialized sizebuf, exact formatting length check and host_client restoration around inherited bounded NET_SendToAll. No background queue or new transport. |
+
+The source brief and requested-Astra advisory are evidence for this design,
+not proof of executable timing/cancellation/signon behavior. Main remains
+responsible for reviewing the implementation; final software checks are deferred.
