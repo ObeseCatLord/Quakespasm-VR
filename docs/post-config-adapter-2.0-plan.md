@@ -13,7 +13,8 @@ before game search. Its native command-buffer generation suppresses duplicate
 execution and invalidates old queued work on a game change. Filenames are
 inserted in reverse so their text executes in command-line order. Primary
 host.c:1777/1788 queues after startup configs for client/dedicated; common.c:3218
-requeues after game configs and before inherited binding/default adjustments.
+requeues after game configs. In both client paths the primary first queues
+vid_unlock, then postcfg, then inherited binding/default adjustments.
 
 Current native host.c:1414/1423 queues quake.rc or dedicated autoexec/stuffcmds;
 common.c:3541 queues game quake.rc. No postcfg queue/registration exists in
@@ -47,8 +48,14 @@ ordinary COM_LoadFile search. Missing files report failure and leave the
 remaining command buffer/configs intact.
 
 Queue after existing startup config work for client and dedicated modes;
-on game change supersede prior pending generation after quake.rc, before the
-existing client binding adapter. Do not alter ordinary exec/config precedence,
+client startup/game changes must queue vid_unlock before postcfg and the
+existing client binding adapter after it, matching the primary. Main draft
+review directly verified native VID_Unlock(gl_vidsdl.c:854) calls VID_SyncCvars,
+and VID_Restart_f ignores requests while locked. A draft inserting postcfg
+before unlock loses explicit video overrides. Reorder only these boundary
+queue entries; do not add conditional duplicate queues or a video replay owner.
+On game change supersede prior pending generation after quake.rc/vid_unlock.
+Do not alter ordinary exec/config precedence,
 autoexec, stuffcmds, donor video policy or behavior with no -postcfg. Repeated
 queued dispatch for the same generation is consumed once; game changes get a
 new generation. Queued scripts remain ordinary native script text, subject to
