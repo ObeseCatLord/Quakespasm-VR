@@ -64,6 +64,10 @@ Replacement string bytes are copied before prior-zone retirement, while native
 engine-string registration and zone cleanup remain.
 
 Main checked the native hash overwrite/lookup semantics, loader ordering,
-primary type/link contracts and string alias lifetime. Local Astra source review
-of the implementation remains pending. No builds/tests/compiler/runtime probes
-ran; final software and full migration qualification remain pending.
+primary type/link contracts and string alias lifetime. Local Astra accepted
+`0720c36a` within this bounded source scope, independently confirming mutable
+hash-value storage, duplicate preservation, retirement order, SSQC-only no-touch
+linking and replacement-byte lifetime. Review used the explicitly requested
+Astra/max route; effective variant/effort metadata was unavailable. No builds,
+tests or compiler/runtime probes ran; final software and full migration
+qualification remain pending.
