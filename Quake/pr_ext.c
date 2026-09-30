@@ -5400,14 +5400,8 @@ static void PF_cl_drawsubpic (void)
 	PR_DrawQCVM_Mutex (false);
 }
 
-static void PF_cl_drawfill (void)
+static void DrawQC_SolidQuad (const float corners[4][2], const float *rgb, float alpha)
 {
-	int	   i;
-	float *pos = G_VECTOR (OFS_PARM0);
-	float *size = G_VECTOR (OFS_PARM1);
-	float *rgb = G_VECTOR (OFS_PARM2);
-	float  alpha = G_FLOAT (OFS_PARM3);
-
 	VkBuffer	   buffer;
 	VkDeviceSize   buffer_offset;
 	basicvertex_t *vertices = (basicvertex_t *)R_VertexAllocate (6 * sizeof (basicvertex_t), &buffer, &buffer_offset);
@@ -5415,24 +5409,11 @@ static void PF_cl_drawfill (void)
 	basicvertex_t corner_verts[4];
 	memset (&corner_verts, 255, sizeof (corner_verts));
 
-	corner_verts[0].position[0] = pos[0];
-	corner_verts[0].position[1] = pos[1];
-	corner_verts[0].position[2] = 0.0f;
-
-	corner_verts[1].position[0] = pos[0] + size[0];
-	corner_verts[1].position[1] = pos[1];
-	corner_verts[1].position[2] = 0.0f;
-
-	corner_verts[2].position[0] = pos[0] + size[0];
-	corner_verts[2].position[1] = pos[1] + size[1];
-	corner_verts[2].position[2] = 0.0f;
-
-	corner_verts[3].position[0] = pos[0];
-	corner_verts[3].position[1] = pos[1] + size[1];
-	corner_verts[3].position[2] = 0.0f;
-
-	for (i = 0; i < 4; ++i)
+	for (int i = 0; i < 4; ++i)
 	{
+		corner_verts[i].position[0] = corners[i][0];
+		corner_verts[i].position[1] = corners[i][1];
+		corner_verts[i].position[2] = 0.0f;
 		corner_verts[i].color[0] = rgb[0] * 255.0f;
 		corner_verts[i].color[1] = rgb[1] * 255.0f;
 		corner_verts[i].color[2] = rgb[2] * 255.0f;
@@ -5452,6 +5433,71 @@ static void PF_cl_drawfill (void)
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
 		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, cbx->current_pipeline.layout.handle, 0, 1, &char_texture->descriptor_set, 0, NULL);
 	vulkan_globals.vk_cmd_draw (cbx->cb, 6, 1, 0, 0);
+}
+
+static void PF_cl_drawfill (void)
+{
+	float *pos = G_VECTOR (OFS_PARM0);
+	float *size = G_VECTOR (OFS_PARM1);
+	const float corners[4][2] = {
+		{pos[0], pos[1]},
+		{pos[0] + size[0], pos[1]},
+		{pos[0] + size[0], pos[1] + size[1]},
+		{pos[0], pos[1] + size[1]},
+	};
+	DrawQC_SolidQuad (corners, G_VECTOR (OFS_PARM2), G_FLOAT (OFS_PARM3));
+}
+
+static void PF_cl_drawline (void)
+{
+	float width = qcvm->argc > 0 ? G_FLOAT (OFS_PARM0) : 1;
+	const float *pos1 = G_VECTOR (OFS_PARM1);
+	const float *pos2 = G_VECTOR (OFS_PARM2);
+	const float *rgb = G_VECTOR (OFS_PARM3);
+	float alpha = qcvm->argc > 4 ? G_FLOAT (OFS_PARM4) : 1;
+	csqc_display_t display = SCR_GetCSQCDisplay ();
+	float colour[3], corners[4][2];
+
+	if (!isfinite (width) || !isfinite (alpha) || !isfinite (display.scale) || display.scale <= 0)
+		return;
+	for (int i = 0; i < 2; ++i)
+		if (!isfinite (pos1[i]) || !isfinite (pos2[i]) || !isfinite (display.pixel_scale[i]) || display.pixel_scale[i] <= 0)
+			return;
+	for (int i = 0; i < 3; ++i)
+	{
+		if (!isfinite (rgb[i]))
+			return;
+		colour[i] = CLAMP (0, rgb[i], 1);
+	}
+	alpha = CLAMP (0, alpha, 1);
+	if (alpha == 0)
+		return;
+
+	// Build the stroke in source canvas pixels, then let the existing GUI path
+	// apply its desktop canvas or VR panel transform and clipping.
+	double dx = ((double)pos2[0] - pos1[0]) * display.pixel_scale[0];
+	double dy = ((double)pos2[1] - pos1[1]) * display.pixel_scale[1];
+	double length = hypot (dx, dy);
+	if (!isfinite (length) || length == 0)
+		return;
+	double halfwidth = 0.5 * q_max (1.0, (double)width * display.scale);
+	const double offset[2] = {
+		-dy / length * halfwidth / display.pixel_scale[0],
+		dx / length * halfwidth / display.pixel_scale[1],
+	};
+	for (int i = 0; i < 4; ++i)
+	{
+		const float *pos = (i == 0 || i == 3) ? pos1 : pos2;
+		double side = i < 2 ? -1 : 1;
+		for (int j = 0; j < 2; ++j)
+		{
+			double coordinate = (double)pos[j] + side * offset[j];
+			if (!isfinite (coordinate) || fabs (coordinate) > FLT_MAX)
+				return;
+			corners[i][j] = (float)coordinate;
+		}
+	}
+	DrawQC_SolidQuad (corners, colour, alpha);
 }
 
 static void PF_cl_playerkey_internal (int player, const char *key, qboolean retfloat)
@@ -5990,6 +6036,7 @@ static struct
 	{"precache_pic",				PF_NoSSQC,						PF_cl_precachepic,				317,	D("string(string name, optional float flags)", "Forces the engine to load the named image. If trywad is specified, the specified name must any lack path and extension.")},// (EXT_CSQC)
 	{"drawgetimagesize",			PF_NoSSQC,						PF_cl_getimagesize,				318,	D("#define draw_getimagesize drawgetimagesize\nvector(string picname)", "Returns the dimensions of the named image. Images specified with .lmp should give the original .lmp's dimensions even if texture replacements use a different resolution.")},// (EXT_CSQC)
 	{"draw_getimagesize", PF_NoSSQC, PF_cl_getimagesize, 318, "vector(string picname)"},
+	{"drawline", PF_NoSSQC, PF_cl_drawline, 315, "void(float width, vector pos1, vector pos2, vector rgb, float alpha, optional float drawflag)"},
 	{"drawcharacter",				PF_NoSSQC,						PF_cl_drawcharacter,			320,	D("float(vector position, float character, vector size, vector rgb, float alpha, optional float drawflag)", "Draw the given quake character at the given position.\nIf flag&4, the function will consider the char to be a unicode char instead (or display as a ? if outside the 32-127 range).\nsize should normally be something like '8 8 0'.\nrgb should normally be '1 1 1'\nalpha normally 1.\nSoftware engines may assume the named defaults.\nNote that ALL text may be rescaled on the X axis due to variable width fonts. The X axis may even be ignored completely.")},// (EXT_CSQC, [EXT_CSQC_???])
 	{"drawrawstring",				PF_NoSSQC,						PF_cl_drawrawstring,			321,	D("float(vector position, string text, vector size, vector rgb, float alpha, optional float drawflag)", "Draws the specified string without using any markup at all, even in engines that support it.\nIf UTF-8 is globally enabled in the engine, then that encoding is used (without additional markup), otherwise it is raw quake chars.\nSoftware engines may assume a size of '8 8 0', rgb='1 1 1', alpha=1, flag&3=0, but it is not an error to draw out of the screen.")},// (EXT_CSQC, [EXT_CSQC_???])
 	{"drawpic",						PF_NoSSQC,						PF_cl_drawpic,					322,	D("float(vector position, string pic, vector size, vector rgb, float alpha, optional float drawflag)", "Draws an shader within the given 2d screen box. Software engines may omit support for rgb+alpha, but must support rescaling, and must clip to the screen without crashing.")},// (EXT_CSQC, [EXT_CSQC_???])

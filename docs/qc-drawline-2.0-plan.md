@@ -59,3 +59,17 @@ horizontal/vertical/diagonal/reversed and zero-length endpoints, fractional and
 negative widths, alpha/color endpoints, clipping, absolute/relative scales and
 VR panel source extents. Builds and tests remain deferred until implementation
 is finished; headset edge coverage is a later user-owned visual check.
+
+## Local Astra source disposition
+
+Personal local Astra Max found no introduced P1/P2. It verified the unchanged
+drawfill allocation, corners, colors, triangle order, descriptor/pipeline and draw
+command; the new stroke's winding, anisotropic scaling, defaults and finite
+conversion boundaries; slot 315 and native SSQC rejection; and reuse of existing
+canvas/panel transforms and clipping. Main spotchecked the shared submission and
+source-pixel perpendicular math against the actual diff and display contract.
+
+This accepts the bounded source change only. Source-pixel thickness is applied
+before VR panel projection; actual final eye-pixel coverage and OpenGL edge
+equivalence are not proven. No builds, tests, compiler probes or performance
+measurements were performed. The planned final software qualification remains.

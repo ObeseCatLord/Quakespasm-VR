@@ -200,3 +200,36 @@ Keep 224 first so named discovery and `#0` binding keep their existing result;
 explicit 249 calls use the same native handler. No new converter, dynamic number
 or capability claim. Source comparison covers this routine registration; final
 software checks must compare numeric invocation at both slots and named binding.
+
+## Current source checkpoint
+
+The initial checklist above records audit findings, not today's unfinished list.
+The following slices now have bounded local Astra source acceptance:
+
+- Successful extension-name discovery; cvar/HUD wrappers and name aliases;
+  inherited conflicting numeric bindings, using the existing loader and registry.
+- Buffer-file wrappers and [file search](qc-file-search-2.0-plan.md), using native
+  VM-owned resources and platform enumeration; alternate `strconv` 249.
+- [Capability queries](qc-capability-query-2.0-plan.md): primary case/global
+  disable behavior, native protocol/per-capability gates and three verified
+  aliases. Other missing advertisements require contract evidence, not merely
+  an existing handler.
+- [CSQC rain/snow](qc-weather-2.0-plan.md), calling the existing native
+  received-weather backend.
+
+The [line-drawing adapter](qc-drawline-2.0-plan.md) also has local Astra source
+acceptance. Remaining demonstrated inherited-call work includes core builtin-name
+discovery, SSQC setcolors, CSQC sendevent and inherited cursor/font no-op
+fallbacks. Remaining VM permission/resource lifetimes and broader contracts
+still require their bounded comparison and final software acceptance.
+
+Fresh event comparison shows that destination lacks both `clcfte_qcrequest` 81
+and its server reader, not just `sendevent` 359. Primary and QSS-M contain the
+paired typed request writer and `CSEv_*` reader. Plan and review that complete
+native-message vertical before porting; a registry-only wrapper would either
+fail to deliver events or cause an unknown-opcode disconnect. No replacement
+transport or generic RPC layer is justified by this missing standard call.
+
+All source checkpoints remain distinct from runtime parity. No builds, tests or
+compiler probes were run during these implementation slices; deferred Linux/ARM
+qualification must cover the complete interfaces and relevant negative paths.
