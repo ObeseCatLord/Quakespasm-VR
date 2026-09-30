@@ -57,6 +57,26 @@ is deferred until implementation is finished; Windows and live play are later.
    diagnostic. Do not require spawned state: reference events can run during
    signon. Review whether this requires a narrower lifecycle qualification.
 
+## Adopted local Astra Max design disposition
+
+Main spotchecked the review's load-bearing claims in `PR_EnterFunction`,
+`PF_dropclient`/`PF_spawnclient`, `SV_DropClient`, `SV_ConnectClient` and the native
+entity/string codecs. No human decision is required. The adapter remains three
+files, with no new owner or handshake.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Native paired adapter, explicit compatible-peer responsibility, primary five types and signon callbacks. | Adopted. No automatic request traffic; connected/non-demo writer only. |
+| Clear all parameter slots before decode. | Adopted: zero `MAX_PARMS * 3` words. `PR_EnterFunction` copies declared parameters regardless of actual argc; a zero-argument name can otherwise select a typed-name handler and read stale parameter bits. No new signature policy. |
+| Detect callback retirement and slot reuse. | Adopted: enclosing reader snapshots requester/socket, restores `host_client`, and returns success immediately if the slot becomes inactive or its socket changes. Avoid double drop/accounting and subsequent commands applied to a reused slot. |
+| Detect event-name truncation before lookup; preflight missing physical arguments and every serialized byte. | Adopted: compare consumed name bytes against stored length plus NUL, check actual argument positions despite ignored format characters, and preserve queued bytes on writer rejection with a diagnostic. |
+| Preserve primary entity-field/fallback behavior with validated references and codec ceilings. | Adopted: world for invalid references/numbers; ordinary unsigned-short ceiling 65535, replacement-delta ceiling 8388607; use actual sanitized encoding length. |
+| New RPC/queue, declaration-validation layer or wide-number codec changes. | Rejected as unnecessary for the complete inherited five-type vertical. |
+
+Add stale-parameter/zero-argument-name aliases, self-drop, drop-and-slot-reuse,
+signon and subsequent-command cases to final acceptance. Review was source-only;
+no builds, tests, probes or performance measurements were performed.
+
 The framing and callback decisions overlap and should be reviewed together.
 Current lean is the minimal paired adapter plus demonstrated bounds checks,
 not a new negotiation/VM architecture. [unknown] Runtime interoperability and

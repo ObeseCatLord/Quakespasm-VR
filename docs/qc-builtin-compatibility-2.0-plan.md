@@ -230,6 +230,15 @@ native-message vertical before porting; a registry-only wrapper would either
 fail to deliver events or cause an unknown-opcode disconnect. No replacement
 transport or generic RPC layer is justified by this missing standard call.
 
+Fresh color comparison also identifies an existing adapter: QSS-M's
+`PF_setcolors` calls native `SV_UpdateInfo` for top/bottom colors. Copying primary's
+legacy broadcast alone would leave modern userinfo clients inconsistent. Both
+QSS-M and destination `SV_DecodeUserInfo` clamp palette nibbles 14/15 to 13 and
+decode names when any info key changes; primary's direct call preserves the raw
+byte and does not touch names. The color slice must explicitly resolve these
+boundary differences before claiming primary parity. Reuse the existing userinfo
+and broadcast owners; do not create a separate replicated color service.
+
 All source checkpoints remain distinct from runtime parity. No builds, tests or
 compiler probes were run during these implementation slices; deferred Linux/ARM
 qualification must cover the complete interfaces and relevant negative paths.
