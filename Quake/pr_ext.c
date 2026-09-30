@@ -5396,12 +5396,29 @@ static void PF_cl_drawsetclip (void)
 	float w = G_FLOAT (OFS_PARM2) * display.pixel_scale[0];
 	float h = G_FLOAT (OFS_PARM3) * display.pixel_scale[1];
 
-	VkRect2D render_area;
-	render_area.offset.x = x;
-	render_area.offset.y = y;
-	render_area.extent.width = w;
-	render_area.extent.height = h;
-	vkCmdSetScissor (vulkan_globals.secondary_cb_contexts[SCBX_GUI][0].cb, 0, 1, &render_area);
+	VkRect2D render_area = {{0, 0}, {0, 0}};
+	if (vid.width > 0 && vid.height > 0 &&
+		isfinite (display.pixel_scale[0]) && display.pixel_scale[0] > 0.0f &&
+		isfinite (display.pixel_scale[1]) && display.pixel_scale[1] > 0.0f &&
+		isfinite (x) && isfinite (y) && isfinite (w) && isfinite (h) && w > 0.0f && h > 0.0f)
+	{
+		// Retain native independent origin/extent truncation, then intersect
+		// before integer conversion: Vulkan forbids negative scissor offsets.
+		const double origin_x = trunc ((double)x);
+		const double origin_y = trunc ((double)y);
+		const double left = CLAMP (0.0, origin_x, (double)vid.width);
+		const double top = CLAMP (0.0, origin_y, (double)vid.height);
+		const double right = CLAMP (0.0, origin_x + trunc ((double)w), (double)vid.width);
+		const double bottom = CLAMP (0.0, origin_y + trunc ((double)h), (double)vid.height);
+		if (right > left && bottom > top)
+		{
+			render_area.offset.x = (int32_t)left;
+			render_area.offset.y = (int32_t)top;
+			render_area.extent.width = (uint32_t)(right - left);
+			render_area.extent.height = (uint32_t)(bottom - top);
+		}
+	}
+	vkCmdSetScissor (cbx->cb, 0, 1, &render_area);
 }
 static void PF_cl_drawresetclip (void)
 {
