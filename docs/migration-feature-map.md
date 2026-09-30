@@ -17,6 +17,10 @@ physical-contact adapters: mode-on melee uses gestures alone, ignores physical
 attack triggers and holds the VR weapon's ready pose. Historical physical-contact
 rows below remain reference inventory rather than completion gates.
 
+The developer-only `imagedump` texture-export command is also explicitly
+excluded by the user. Its retained readback research does not authorize new
+production work or define a completion gate; native graphics remain required.
+
 This is the working feature checklist for moving the inherited QuakeSpasm OpenVR product and all surviving project work onto vkQuake. It maps **185 behavior/work items**: 124 product, VR, platform and goal items below, 29 [network items](migration-network-map.md), and 32 [renderer/loading/asset items](migration-renderer-map.md). Items overlap where a user behavior crosses subsystem boundaries; this is not a count of independently implemented features. The [combined CSV](migration-feature-map.csv) includes destination owners, source evidence and acceptance criteria.
 
 The [11 optional additions](migration-useful-additions.md) are existing Ironwail/QSS-M features absent from both pinned product branches and vkQuake within the audited scopes. They are recommendations to evaluate, not silent additions to the required release. Features already supplied by vkQuake are explicitly retained rather than ported again.
