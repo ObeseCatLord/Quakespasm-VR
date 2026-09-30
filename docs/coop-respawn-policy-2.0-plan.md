@@ -179,3 +179,30 @@ the full patch and native/reference owners; scoped git diff --check passes.
 No tests/builds/probes were run. Final linked-hazard/touch/placement software
 qualification remains pending. Generic respawn policy itself is not implemented
 by this slice, and no revival code was added.
+
+
+## Adopted shared-QC lifecycle disposition
+
+Local Astra source advice verified the native think-window and continuation
+owners at `5af27619`; main spot-checked the current unchanged owners after the
+spatial prerequisite. Requested Astra/max settings remain unobservable through
+the agent API, so this records source advice, not formal review certification.
+
+| Finding | Disposition |
+| --- | --- |
+| Shared PreThink/PostThink spans several accepted command heads | Adopt bounded policy data by value in `sv_client_think_window_t` only for `shared_qc`. Other lifecycles use stack-local state. The existing `available` flag owns weapon Think scheduling, never policy liveness. |
+| Continuation phases skip callbacks already executed | Adopt an explicit policy pointer through the existing continuation signatures. Capture once immediately before original PreThink; never recapture at AFTER_PRETHINK or AFTER_WEAPON_THINK. Fresh native/cooperative owners use their own scope. |
+| Command completion is not PostThink completion | Adopt an explicit actual-PostThink flag. Finish after friendly-fire/weapon-pose/temporary-input unwind and before inventory refresh. Intermediate shared heads retain policy; maintenance can finish without an ACK. Cancel missing/aborted tails instead of inventing callbacks. |
+| Input borrowing is shorter-lived than shared policy | Adopt per-invocation input exposure and native input-save machinery. Filter after every final staging/rebinding before relevant QC; preserve accepted records and shared snapshots. Never resurrect consumed impulses or overwrite QC-authored angles. Use server QC time for cooldown. |
+| A shared window may exit via several loop breaks | Adopt one outer-window cleanup before its stack expires. Failure, selection loss and continuation failure cancel without retention/relocation. Local input/global borrowing must still unwind at intermediate heads. |
+| Retention cannot distinguish reserved client-slot reuse | Adopt one transient cancellation binding to the current enclosing scope, no per-client identity registry. Cancel before disconnect QC, connect-slot memset, player ED_Free, server VM clear and nonlocal host abort. Validate the captured VM/client/edict and explicit cancellation flag before restoration. Clear borrowed pointers before nonlocal unwind. |
+| Existing temporary writebacks can also affect reused slots | Adapt adjacent input/weapon-pose cleanup and old-invocation ACK/drop guards narrowly. Teardown must unwind VM globals while suppressing writes/completion/drop to a replacement owner. No general movement or callback rewrite. |
+
+The stage1 write set explicitly includes `Quake/host.c` teardown/abort hooks
+and `Quake/pr_edict.c` ED_Free/server-VM-clear hooks, in addition to
+`sv_phys.c`, `sv_main.c`, `server.h` and `host_cmd.c`. These are demonstrated
+incompatibilities at existing lifecycle boundaries, not a new service or
+persistent registry. Existing reset/cache/world-death owners remain authoritative.
+The600–850-net-line estimate still applies; stop for main architecture review if
+it is exceeded, if another state machine is needed, or if narrow cleanup guards
+become a broad callback rewrite. No revival dependency or runtime checks.
