@@ -26,11 +26,23 @@ solver, command scheduler, wire format or cooperative QC replay permissions.
 
 ## Implementation and acceptance
 
-Remove only the stock initial `waterlevel != 0` refusal and its dry diagnostic.
-Retain WALK/SOLID_SLIDEBOX eligibility, observational begin validation, the
-pinned profile, robust elevator requirement, custom-stat disjointness, lifetime,
-ground and input checks. Other supported native states continue using their
-existing authority; no broader replay permission is inferred from selection.
+Reuse `SV_PrivateWalkTrialBeginStateError` and
+`SV_PrivateWalkTrialBuildMoveVars` for stock as well as nonstock initial
+admission. Remove the duplicated stock-only checks and dry diagnostic. The
+stock classifier already retains the ordinary hull requirement, allows WALK
+in liquid and classifies FLY/NOCLIP and actual intermission as native. The shared
+validator still rejects terminal initial owners, customphysics, malformed
+water, ground and input state. Existing pinned-profile, robust-elevator,
+custom-stat and lifetime gates remain before it. No broader replay permission
+is inferred from session selection.
+
+This also prevents a restored stock noclip/FLY player from permanently losing
+selection merely because it initially needs the already-supported native
+owner. Publication and frame dispatch continue to choose the current state;
+normal WALK can return without renegotiating the session. Check this complete
+reuse against the removed checks rather than maintaining another nearly
+identical admission branch. Validate movement settings before either stock or
+nonstock selection, since both publish them.
 
 ### Saved ledge-jump boundary (source follow-up before implementation)
 
