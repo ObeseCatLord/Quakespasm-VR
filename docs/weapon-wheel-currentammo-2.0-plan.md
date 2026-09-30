@@ -34,3 +34,12 @@ then equip the magazine weapon; verify hidden inactive/current active ammo,
 ordinary reserve quantities/dynamic maxima, empty magazine selectability,
 model/selector transitions and both shared presentation paths. These source
 conditions alone do not establish actual mod or rendered behavior.
+
+## Source integration
+
+The repair adds three lines and removes one in the existing visible-row
+assignment. Main inspected the complete diff, primary's equipped-only rule,
+native `SV_CalcStats` currentammo/reserve producers and both draw sentinel
+consumers. Ownership, selectability and capacity resolution remain unchanged.
+Scoped whitespace checking passed; no builds/tests or executable checks ran.
+Final actual program/transport/presentation qualification remains open.

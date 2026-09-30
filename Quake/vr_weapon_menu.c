@@ -1447,7 +1447,9 @@ static int VR_WeaponMenu_BuildVisible (const vr_weapon_menu_catalog_t *catalog,
 		visible[count].entry = entry;
 		visible[count].active = active;
 		visible[count].selectable = VR_WeaponMenu_EntrySelectable (entry, active, stats, num_stats);
-		visible[count].ammo = entry->ammo_stat >= 0 ?
+		/* QuakeC currentammo belongs only to the equipped weapon. */
+		visible[count].ammo = entry->ammo_stat >= 0 &&
+			(entry->ammo_stat != STAT_AMMO || active) ?
 			VR_WeaponMenu_Stat (stats, num_stats, entry->ammo_stat) : -1;
 		visible[count].ammo_max = VR_WeaponCatalog_ResolveAmmoMax (entry->ammo_max,
 			VR_WeaponMenu_Stat (stats, num_stats, entry->ammo_max_stat));
