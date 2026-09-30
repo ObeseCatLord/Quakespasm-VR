@@ -29,3 +29,12 @@ Final software qualification should cover named explicit emission, unnamed and
 removed-slot model fallback, upper bound rejection, and existing static/dynamic
 emission in ordinary desktop/two-eye VR. Source guard parity alone does not
 prove visible effects or performance.
+
+## Source implementation checkpoint
+
+`9e1709c5` applies the same positive/bounded/named predicate to the two specified
+consumers (four added lines, two removed). Main inspected the actual diff against
+the primary guard and confirmed short-circuit ordering before indexing, unchanged
+native emission bodies and unchanged model-defined else-if fallbacks. Scoped
+`git diff --check` passed. The one bounded coding worker is closed. No builds or
+tests ran; final visible effects qualification remains deferred.
