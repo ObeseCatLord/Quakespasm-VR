@@ -57,3 +57,30 @@ moditems fallback, map/VM reload, native custom-stat overrides and actual wheel
 ownership. Array/helper tests alone do not establish those owner round trips.
 Retain desktop/VR crossplay and normal mod behavior; user live device and
 performance trials stay outside completion.
+
+## Adopted requested-Astra source disposition and reopened boundary
+
+Main checked both findings against the actual native producers and encoder.
+The review is source advice; no effective-model/runtime certification is claimed.
+
+| Finding | Disposition before coding |
+| --- | --- |
+| The optional helper runs after an earlier items2 conversion in SV_CalcStats, and legacy clientdata has another unchecked cast/signed shift. | Reopen narrowly: reuse the same typed/ranged helper at both existing items2-to-STAT_ITEMS assembly sites, as well as the six optional reads. Keep their native shift23 packing and missing-field serverflags behavior. Shift normalized items2 through uint32_t, preserving its wire bits without signed-shift overflow. This is the same demonstrated field/conversion boundary in one file, not a new stat subsystem. |
+| Later custom floats do not necessarily override nonzero optional integer stats, because native encoder normalization prefers the integer. | Correct the guarantee: preserve existing custom-stat ordering and precedence, including this native/primary policy. Do not modify the custom-stat switch or encoder. |
+| Binary32 cannot represent every uint32 mask. | Retain this limit: conversion preserves the representable source value, not bits already rounded away by QC storage. No inferred mask bits. |
+| Failure should not mutate a destination; zero is valid. | Adopt: helper writes only after declaration/numeric admission. Invalid/unavailable moditems permits items_dwell; valid zero does not. This is a deliberate invalid-input improvement over primary absence-only fallback. |
+
+Revised bound: at most65 net lines, still `Quake/sv_main.c` only. For each
+STAT_ITEMS assembly, obtain typed/normalized items2 before converting it; on
+failure use that site's existing missing-field serverflags branch. Keep core
+items/serverflags conversions and all other clientdata/stat behavior native.
+`SV_CalcStats` may reuse its validated local items2 for the optional channel;
+avoid a second hash lookup if the existing scope cleanly permits it. No cache
+or additional persistent state. Legacy assembly retains one lookup as before.
+
+Final qualification must exercise both replacement-stat and native clientdata
+items2 packing, invalid/wrong-type fallback and valid zero, while keeping ordinary
+core field values valid. This repair does not claim a whole-engine ISO-C numeric
+audit: native core casts and unsigned-to-signed wire decoding remain outside
+the demonstrated optional-field scope. Actual custom-stat precedence must be
+checked as existing behavior, not promised float-override behavior.
