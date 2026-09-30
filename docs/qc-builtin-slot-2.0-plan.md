@@ -2,6 +2,10 @@
 
 ## Verified problem
 
+Goal and scale: preserve the inherited generic QC contracts on the vkQuake VM
+with a small adapter suitable for this single engine project. No new protocol,
+dispatch service or VM is justified.
+
 The inherited primary registry and vkQuake use incompatible contracts at several
 numeric slots. Destination already has the inherited handlers or fallback
 handlers; changing global slot meanings would break vkQuake's existing mods.
@@ -84,3 +88,38 @@ slots remain unchanged, and forbidden VM targets/disabled extension behavior
 retain their existing policies. Include map reload and independent SSQC/CSQC
 programs. Builds, tests and runtime/compiler probes remain deferred until full
 implementation. Hardware/live multiplayer tests remain the user's checkpoint.
+
+## Senior review environment and claim labels
+
+| Fact | Evidence/state |
+| --- | --- |
+| Writable source | [verified: current commits] `quakespasm-2.0`, branch `2.0`; main owns edits |
+| Behavioral source | [verified: source reads] sibling `quakespasm-openvr/Quake/pr_cmds.c` registry and handlers, read-only |
+| Existing adapter | [verified: source reads] destination `Quake/pr_edict.c:PR_PatchRereleaseBuiltins` and call after `PR_EnableExtensions` |
+| Dynamic allocation | [verified: source reads] `Quake/pr_ext.c:PR_InitExtensions` assigns numbers once; registry handlers are VM-specific |
+| Invocation | [verified: source reads] `pr_exec.c` uses negative `first_statement` to index builtin table; `PF_Fixme` lazily activates registered handlers |
+| Disabled extension behavior | [verified: source reads] `PR_EnableExtensions` returns early for SSQC when `pr_checkextension` is zero; it does not do so for CSQC |
+| Inherited EX functionality | [verified: both handler reads] flags/path/finale return zero in both primary and destination |
+| Third-slice runtime parity | [unverified] no implementation or runtime/compiler verification yet |
+| Ambiguous unnamed declarations | [unknown] a colliding number without an identifiable name cannot establish intended contract |
+| Unrelated user edit | [verified: git status] `docs/migration-2.0.md`; never edit or stage it |
+
+Current leans: extend the existing adapter with destination-name lookup and VM
+qualification; retain lazy binding and existing number allocation. Name discovery
+and named `#0` SSQC localsound likely share the same alias boundary and may be
+merged. Retain donor CSQC localsound 177. Keep general core-name discovery
+separate; dprint's already-existing core number is sufficient for this conflict.
+Preserve the SSQC disable boundary for new extension mappings; do not apply
+ordinary QC bodies or guesses based only on numbers. Rejected alternatives:
+global numeric replacement breaks donor calls; duplicate handler registration
+and another binding table duplicate existing owners; program whitelists are
+unneeded mod policy. These are proposed decisions, not verified conclusions.
+
+Review depth budget: one personal local Astra Max design pass, <=800 words.
+Verify load-bearing claims first, then rank the decisions and challenge the
+necessity of any new owner. Give the highest-risk decision a concrete minimal
+design. The not-list: no full VM/security audit, renderer, networking transport,
+search/buffer implementations, unrelated registry gaps, builds/tests/probes or
+nested delegation. Existing cvar/HUD adapters have separate source acceptance.
+Return the critique as the final message; main will spot-check and record an
+adopted/adapted/rejected disposition before production edits.
