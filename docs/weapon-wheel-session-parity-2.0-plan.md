@@ -65,3 +65,28 @@ and spawn actions, rebuilt release candidates and prepared hover validation use
 that predicate. Main compared those consumers and the primary declaration;
 scoped git diff --check passes. No tests/builds ran. Retained selection remains
 unimplemented and requires the separately requested source disposition.
+
+
+## Adopted local Astra source disposition for retained selection
+
+Requested local Astra/max verified source and corrected its initial task-fence
+recommendation after main challenged the need for a scheduling change. Effective
+settings remain unavailable via the tool, so this is source advice, not formal
+review certification. Main spot-checked setup/task edges, resident frame copying,
+SDL cursor access and action/selection consumers.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Force wheel-open setup to main with an early join | Reject after source reassessment: no demonstrated incompatibility requires moving the existing writer. Keep SCR_SetupFrame after R_PrepareStereoFrame; existing setup->before_mark/GUI/scene dependencies publish one selection/frame. No early join, task resubmission or lost draw parallelism. |
+| SDL mouse/window APIs require main affinity | Adopt: sample/convert desktop cursor once on main before task submission, then let existing setup consume that snapshot. Draw workers read prepared coordinates/selection, never query SDL. Main-thread release may sample again and use the same resolver. |
+| Remember identity separately from effective selection | Adopt one stable catalog ID in the existing session. Weapon hits remember it; real actions clear it. Miss resolves current BuildVisible/EntrySelectable eligibility; temporary absence publishes none but preserves remembered identity. Cancel/begin/reset clears identity. |
+| Panel misses, obstruction and tracking loss differ | Adapt at existing pointer/target seam: invalid tracking/focus/reference still cancels; blocked projection cannot create an action. Retained weapon eligibility additionally checks its existing playspace target geometry/visibility and distance, including model-less labels; no visibility cache. Keep this explicit safety improvement over the donor's eligibility-only retained fallback. |
+| Drawing and release must share the published result | Adopt existing prepared frame for desktop/VR drawing and stable-ID/live-eligibility release. VR fallback requires valid session/tracking and matching prepared selection, not panel intersection. Actual actions still require real hit, slot/name and policy validation; action->miss cannot resurrect a weapon. |
+| Desktop window focus lacks cancellation | Adopt one desktop-only VID_FocusLost cancellation hook. XR keeps runtime focus authority. |
+| Haptics need an early main-thread setup fence | Reject as unsupported by inspected source; current setup already owns selection haptics. Keep effective nonempty-ID transitions there. A future demonstrated runtime affinity requirement can use a bounded transition at the existing final join. |
+
+Revised exact production ownership: vr_weapon_menu.c/.h, narrow gl_screen.c
+cursor/setup/pointer seams, and only desktop-focus cancellation in gl_vidsdl.c.
+Budget120..200 net lines; reopen above200, a second session/selection owner or
+render scheduling rewrite. Keep native catalog/material/frame/task owners and
+current submission sequence. No tests/builds/probes before full implementation.
