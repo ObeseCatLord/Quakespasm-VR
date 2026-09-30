@@ -1,5 +1,10 @@
 # Multiplayer save migration boundary
 
+The [2026-09-30 current-source checkpoint](coop-save-source-checkpoint-2.0.md)
+supersedes historical absent-implementation statements below; this document
+retains planning and earlier software-evidence chronology. Full restoration
+qualification is still pending.
+
 Current local/restored movement evidence is recorded in the
 [local/load checkpoint](predictive-local-load-2.0-plan.md). Actual v5 private
 fastload/autofastload uses reconnect isolation; v7 restored first-player movement,
