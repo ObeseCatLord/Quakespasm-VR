@@ -103,3 +103,31 @@ atomic save boundary, with no remaining P1/P2 source blocker in this slice.
 Only static source review and diff whitespace checks were performed. SDL
 capture, settings round trips and mode-switch execution remain deferred to
 end-of-goal verification.
+
+## Manual capture retry slice
+
+The command-surface audit found the primary's Voice_Restart_f
+(voice.c:184–190): it closes capture and immediately retries through the
+existing capture owner without changing device or permission. Native automatic
+polling/stopped-device recovery remains in Voice_RefreshCapture; menu actions
+already close/reopen, but an explicit retry should not require changing a saved
+microphone toggle or device preference. This is part of AUDIO-003's retry
+behavior, not a second capture loop or permission reset.
+
+Add one local voice_restart command in Quake/voice.c. When initialized, use the
+native profile selector, release any transmitting/captured backlog through
+Voice_StopTransmit, close capture, clear voice_capture_wanted and force the
+existing Voice_RefreshCapture. Keep pending consent, saved transmit/device/mode,
+independent wet monitoring and all settings untouched. Reopening remains subject
+to the current multiplayer/permission/exact-device routing predicate; opt-out
+must not start capture. Do not invoke Voice_FinalizeMenuAction because that
+clears pending confirmations and writes settings. Register alongside native
+voice_status; preserve the existing VOICECHAT-off compile stubs. Estimate <=30
+added lines, no new public API or state. Main source review is sufficient for
+this narrow existing-owner action; there is no new architecture fork.
+
+After full implementation, software checks cover forced retry after capture
+failure, ready capture/backlog retirement, default/exact/missing device,
+transmit opt-out, wet-only monitoring, pending confirmations and desktop/VR
+profile transition. No builds/tests/probes now and no permission changes as a
+side effect of retry.
