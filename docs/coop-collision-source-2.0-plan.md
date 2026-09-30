@@ -17,9 +17,9 @@ No tests/builds until all implementation; revival remains excluded.
 - Existing `SV_IsActiveClientEdict` plus SV_CoopFeatureEnabled already defines
   server eligibility. Factor only the existing profile/client-pair predicate
   into a small static helper reused by native clip and PMove collection.
-  Native clip retains its point/missile restrictions. PMove uses its actual
-  player hull; retain point-hull collision by requiring at least one differing
-  pmove.player_mins/maxs axis before excluding the pair. Never skip monsters,
+  Native clip retains its point/missile restrictions. Use the actual requesting
+  edict mins/maxs for the collector: retain point-hull collision by requiring
+  at least one differing axis before excluding the pair. Never skip monsters,
   brushes, projectiles, world or inactive/non-client bodies.
 - Primary `sv_phys.c:4005–4020` calls SV_ShouldSuppressCoopTelefrag in **both**
   native impact directions. Current2.0 only uses it for triggers; current
@@ -43,3 +43,15 @@ bodies and world/monster collision. Telefrag tests cover both impact directions
 and trigger touches, spawning before begin, same-owner/self damage and ordinary
 enemy/world callbacks. Existing native server snapshot/replay and optional VR
 roomscale must consume the same policy. A source gate is not gameplay proof.
+
+
+## Pre-integration hull-source correction
+
+The worker flagged and main verified that private collision preflight calls the
+collector at `sv_phys.c:9067` before later PMove hull scratch initialization at
+`:9424/10298`. Therefore reading global pmove.player_mins/maxs inside collection
+would make exclusion depend on a previous client's scratch. Adapt the new gate
+to the actual ignore edict's mins/maxs, after the existing pair predicate admits
+that non-null active client. Both movement owners copy that same edict hull for
+actual PMove. No scratch refresh, new hull state or setup owner is needed.
+This amendment precedes the worker correction; the three-file/small scope stays.
