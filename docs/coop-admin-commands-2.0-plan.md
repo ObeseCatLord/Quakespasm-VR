@@ -100,3 +100,16 @@ SV_CoopGiveKeys boundary. Expected correction <=90 changed lines there, <=50
 additional handler lines; initial439-line reference adapter is retained.
 Reopen for any broader state owner. Relevant final software checks add callback
 retirement at each helper and retirement of an earlier successful recipient.
+
+## Stage1 source checkpoint
+
+The four commands are source-integrated in native host_cmd, copied from the
+pinned reference with the stated adaptations. Existing inventory/key/schema
+owners remain. Main reviewed the full delta, adopted the three advisory fixes
+and retained last-successful-source order when selecting a survivor. The
+bounded requested-Astra final recheck found no remaining P1/P2 in this slice.
+Scoped whitespace checks pass. No builds, executable checks or probes ran.
+
+Stage2 timed game reconnect remains in scope under its separate plan; this
+checkpoint does not establish full co-op/save/late-join or migration completion.
+Final Linux/ARM software acceptance remains deferred until implementation ends.

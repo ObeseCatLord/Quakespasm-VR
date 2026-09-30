@@ -1040,22 +1040,25 @@ static qboolean SV_CoopCallKeyFunction (edict_t *player, const char *name,
 	int numparms)
 {
 	dfunction_t *func = ED_FindFunction(name);
-	int old_self, old_other;
+	int old_self, old_other, old_argc;
 	int old_parm[3], old_return[3];
 	float old_time;
 
-	if (!func || func->numparms != numparms)
+	if (!func || func->numparms != numparms || func->first_statement <= 0 ||
+	    func->first_statement >= qcvm->progs->numstatements)
 		return false;
 
 	old_self = pr_global_struct->self;
 	old_other = pr_global_struct->other;
 	old_time = pr_global_struct->time;
+	old_argc = qcvm->argc;
 	memcpy(old_parm, &qcvm->globals[OFS_PARM0], sizeof(old_parm));
 	memcpy(old_return, &qcvm->globals[OFS_RETURN], sizeof(old_return));
 
 	pr_global_struct->self = EDICT_TO_PROG(player);
 	pr_global_struct->other = EDICT_TO_PROG(qcvm->edicts);
 	pr_global_struct->time = qcvm->time;
+	qcvm->argc = numparms;
 	if (numparms == 1)
 		G_INT(OFS_PARM0) = EDICT_TO_PROG(player);
 	PR_ExecuteProgram(func - qcvm->functions);
@@ -1063,6 +1066,7 @@ static qboolean SV_CoopCallKeyFunction (edict_t *player, const char *name,
 	pr_global_struct->self = old_self;
 	pr_global_struct->other = old_other;
 	pr_global_struct->time = old_time;
+	qcvm->argc = old_argc;
 	memcpy(&qcvm->globals[OFS_PARM0], old_parm, sizeof(old_parm));
 	memcpy(&qcvm->globals[OFS_RETURN], old_return, sizeof(old_return));
 	return true;
@@ -1161,31 +1165,64 @@ static void SV_CoopGiveDeclaredCustomKeyMetadata (edict_t *player,
  */
 qboolean SV_CoopGiveKeys (edict_t *player, int key_flags)
 {
-	int	i, type;
+	client_t *client;
+	struct qsocket_s *socket;
+	int	i, type, playernum;
 	eval_t	*val;
-	qboolean native_all;
+	qboolean native_all, native_key;
 	qboolean counted_keys;
 
-	if (!player || player->free || !(key_flags & SV_COOP_GIVEKEYS_ALL))
+	if (!player || player->free || !(key_flags & SV_COOP_GIVEKEYS_ALL) ||
+	    !SV_IsCoopInventoryClient(player))
 		return false;
+	playernum = NUM_FOR_EDICT(player);
+	client = &svs.clients[playernum - 1];
+	if (!client->active || !client->spawned || client->edict != player ||
+	    player->v.health <= 0 || player->v.deadflag != DEAD_NO)
+		return false;
+	socket = client->netconnection;
 
 	/* Prefer a mod's explicit all-keys helper when present (progs_dump family).
 	 * Counted-key Copper descendants expose one-argument helpers instead. Calling
 	 * them grants exactly one key and lets the mod maintain worldtype itself. */
-	native_all = key_flags == SV_COOP_GIVEKEYS_ALL &&
-		SV_CoopCallKeyFunction(player, "GiveAllKeys", 0);
+	native_all = false;
+	if (key_flags == SV_COOP_GIVEKEYS_ALL)
+	{
+		native_all = SV_CoopCallKeyFunction(player, "GiveAllKeys", 0);
+		if (native_all && (!SV_IsCoopInventoryClient(player) ||
+		    !client->active || !client->spawned || client->edict != player ||
+		    client->netconnection != socket || player->v.health <= 0 ||
+		    player->v.deadflag != DEAD_NO))
+			return false;
+	}
 	counted_keys = SV_CoopUsesCountedKeys();
 	if ((key_flags & SV_COOP_GIVEKEYS_SILVER) &&
-	    (!native_all || !((int)player->v.items & IT_KEY1)) &&
-	    (!counted_keys ||
-	     !SV_CoopCallKeyFunction(player, "key_give_silver", 1)))
-		player->v.items = (int)player->v.items | IT_KEY1;
+	    (!native_all || !((int)player->v.items & IT_KEY1)))
+	{
+		native_key = counted_keys &&
+			SV_CoopCallKeyFunction(player, "key_give_silver", 1);
+		if (native_key && (!SV_IsCoopInventoryClient(player) ||
+		    !client->active || !client->spawned || client->edict != player ||
+		    client->netconnection != socket || player->v.health <= 0 ||
+		    player->v.deadflag != DEAD_NO))
+			return false;
+		if (!native_key)
+			player->v.items = (int)player->v.items | IT_KEY1;
+	}
 
 	if ((key_flags & SV_COOP_GIVEKEYS_GOLD) &&
-	    (!native_all || !((int)player->v.items & IT_KEY2)) &&
-	    (!counted_keys ||
-	     !SV_CoopCallKeyFunction(player, "key_give_gold", 1)))
-		player->v.items = (int)player->v.items | IT_KEY2;
+	    (!native_all || !((int)player->v.items & IT_KEY2)))
+	{
+		native_key = counted_keys &&
+			SV_CoopCallKeyFunction(player, "key_give_gold", 1);
+		if (native_key && (!SV_IsCoopInventoryClient(player) ||
+		    !client->active || !client->spawned || client->edict != player ||
+		    client->netconnection != socket || player->v.health <= 0 ||
+		    player->v.deadflag != DEAD_NO))
+			return false;
+		if (!native_key)
+			player->v.items = (int)player->v.items | IT_KEY2;
+	}
 
 	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
 	{

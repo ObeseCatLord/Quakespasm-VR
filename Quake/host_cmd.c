@@ -4145,6 +4145,460 @@ static void Host_Give_f (void)
 	// johnfitz
 }
 
+static qboolean Host_AdminClientActive (client_t *client)
+{
+	return client && client->active && client->edict && !client->edict->free;
+}
+
+static qboolean Host_AdminClientUnchanged (client_t *client,
+	struct qsocket_s *socket, edict_t *edict)
+{
+	return Host_AdminClientActive (client) && client->netconnection == socket &&
+		client->edict == edict;
+}
+
+static client_t *Host_FindClientByCommandArgs (int firstarg)
+{
+	int i;
+
+	if (Cmd_Argc () <= firstarg)
+	{
+		for (i = 0; i < svs.maxclients; i++)
+			if (Host_AdminClientActive (&svs.clients[i]))
+				return &svs.clients[i];
+		return NULL;
+	}
+
+	if (Cmd_Argc () > firstarg + 1 && !strcmp (Cmd_Argv (firstarg), "#"))
+	{
+		i = atoi (Cmd_Argv (firstarg + 1)) - 1;
+		if (i < 0 || i >= svs.maxclients ||
+			!Host_AdminClientActive (&svs.clients[i]))
+			return NULL;
+		return &svs.clients[i];
+	}
+
+	for (i = 0; i < svs.maxclients; i++)
+	{
+		if (!Host_AdminClientActive (&svs.clients[i]))
+			continue;
+		if (!q_strcasecmp (svs.clients[i].name, Cmd_Argv (firstarg)))
+			return &svs.clients[i];
+	}
+
+	return NULL;
+}
+
+static eval_t *Host_GiveAllField (edict_t *ent, const char *name, int *type)
+{
+	ddef_t *def = ED_FindField (name);
+
+	if (!def)
+		return NULL;
+	*type = def->type & ~DEF_SAVEGLOBAL;
+	return GetEdictFieldValue (ent, def->ofs);
+}
+
+static void Host_GiveAllAmmoFloor (edict_t *ent, const char *name, float floor)
+{
+	eval_t *val;
+	int type;
+
+	val = Host_GiveAllField (ent, name, &type);
+	if (val && type == ev_float)
+		val->_float = q_max (val->_float, floor);
+}
+
+static void Host_GiveAllFallback (client_t *client)
+{
+	const int stock_weapon_bits =
+		IT_SHOTGUN | IT_SUPER_SHOTGUN | IT_NAILGUN | IT_SUPER_NAILGUN |
+		IT_GRENADE_LAUNCHER | IT_ROCKET_LAUNCHER | IT_LIGHTNING;
+	eval_t *val;
+	int type, weapon_bits;
+
+	sv_player = client->edict;
+	weapon_bits = stock_weapon_bits | (rogue ? RIT_AXE : IT_AXE);
+	if (rogue)
+		weapon_bits |= RIT_LAVA_NAILGUN | RIT_LAVA_SUPER_NAILGUN |
+			RIT_MULTI_GRENADE | RIT_MULTI_ROCKET | RIT_PLASMA_GUN;
+	if (hipnotic)
+		weapon_bits |= HIT_PROXIMITY_GUN | HIT_LASER_CANNON | HIT_MJOLNIR;
+	weapon_bits |= SV_DeclaredWeaponBits ();
+
+	sv_player->v.items = (int)sv_player->v.items | weapon_bits;
+	val = Host_GiveAllField (sv_player, "weapons", &type);
+	if (val && type == ev_ext_integer)
+		val->_int |= weapon_bits;
+	else if (val && type == ev_float)
+		val->_float = (float)((int)val->_float | weapon_bits);
+
+	sv_player->v.weapon = IT_SHOTGUN;
+	sv_player->v.ammo_shells = q_max (sv_player->v.ammo_shells, 100);
+	sv_player->v.ammo_nails = q_max (sv_player->v.ammo_nails, 200);
+	sv_player->v.ammo_rockets = q_max (sv_player->v.ammo_rockets, 100);
+	sv_player->v.ammo_cells = q_max (sv_player->v.ammo_cells, 100);
+	sv_player->v.currentammo = sv_player->v.ammo_shells;
+
+	Host_GiveAllAmmoFloor (sv_player, "ammo_shells1", 100);
+	Host_GiveAllAmmoFloor (sv_player, "ammo_nails1", 200);
+	Host_GiveAllAmmoFloor (sv_player, "ammo_rockets1", 100);
+	Host_GiveAllAmmoFloor (sv_player, "ammo_cells1", 100);
+	Host_GiveAllAmmoFloor (sv_player, "ammo_lava_nails", 200);
+	Host_GiveAllAmmoFloor (sv_player, "ammo_multi_rockets", 100);
+	Host_GiveAllAmmoFloor (sv_player, "ammo_plasma", 100);
+}
+
+static qboolean Host_GiveAllClient (client_t *client)
+{
+	client_t *old_host_client;
+	edict_t *old_sv_player, *target_edict;
+	struct qsocket_s *target_socket;
+	dfunction_t *func;
+	int saved_self, saved_other, saved_argc, saved_return[3];
+	float saved_time;
+	qboolean callback, unchanged;
+
+	if (!Host_AdminClientActive (client))
+		return false;
+
+	old_host_client = host_client;
+	old_sv_player = sv_player;
+	target_socket = client->netconnection;
+	target_edict = client->edict;
+	host_client = client;
+	sv_player = target_edict;
+
+	func = ED_FindFunction ("GiveAllCommand");
+	callback = func && func->numparms == 0 && func->first_statement > 0 &&
+		func->first_statement < qcvm->progs->numstatements;
+	if (callback)
+	{
+		saved_self = pr_global_struct->self;
+		saved_other = pr_global_struct->other;
+		saved_time = pr_global_struct->time;
+		saved_argc = qcvm->argc;
+		memcpy (saved_return, &qcvm->globals[OFS_RETURN], sizeof (saved_return));
+		pr_global_struct->self = EDICT_TO_PROG (target_edict);
+		pr_global_struct->time = qcvm->time;
+		qcvm->argc = 0;
+		PR_ExecuteProgram (func - qcvm->functions);
+		pr_global_struct->self = saved_self;
+		pr_global_struct->other = saved_other;
+		pr_global_struct->time = saved_time;
+		qcvm->argc = saved_argc;
+		memcpy (&qcvm->globals[OFS_RETURN], saved_return, sizeof (saved_return));
+	}
+	else
+	{
+		Host_GiveAllFallback (client);
+	}
+
+	unchanged = Host_AdminClientUnchanged (client, target_socket, target_edict);
+	if (unchanged)
+		SV_CoopRespawnRefreshClientInventory (target_edict);
+	host_client = old_host_client;
+	sv_player = old_sv_player;
+	return unchanged;
+}
+
+static void Host_SV_GiveAll_f (void)
+{
+	client_t *client;
+	qcvm_t *old_qcvm;
+	int i, count = 0;
+
+	if (cmd_source != src_command)
+		return;
+	if (!sv.active)
+	{
+		Con_Printf ("sv_giveall: no active server\n");
+		return;
+	}
+
+	old_qcvm = qcvm;
+	if (qcvm != &sv.qcvm)
+	{
+		if (qcvm)
+			PR_SwitchQCVM (NULL);
+		PR_SwitchQCVM (&sv.qcvm);
+	}
+
+	if (Cmd_Argc () > 1 && !q_strcasecmp (Cmd_Argv (1), "all"))
+	{
+		for (i = 0; i < svs.maxclients; i++)
+		{
+			client = &svs.clients[i];
+			if (!Host_GiveAllClient (client))
+				continue;
+			Con_Printf ("sv_giveall: gave all weapons/ammo to %s\n", client->name);
+			count++;
+		}
+	}
+	else
+	{
+		client = Host_FindClientByCommandArgs (1);
+		if (Host_GiveAllClient (client))
+		{
+			Con_Printf ("sv_giveall: gave all weapons/ammo to %s\n", client->name);
+			count++;
+		}
+	}
+
+	if (!count)
+		Con_Printf ("sv_giveall: no matching active client\n");
+
+	if (qcvm != old_qcvm)
+	{
+		PR_SwitchQCVM (NULL);
+		if (old_qcvm)
+			PR_SwitchQCVM (old_qcvm);
+	}
+}
+
+static qboolean Host_ParseGiveKeysKind (const char *arg, int *key_flags)
+{
+	if (!arg || !arg[0])
+		return false;
+	if (!q_strcasecmp (arg, "silver") || !q_strcasecmp (arg, "key1"))
+		*key_flags = SV_COOP_GIVEKEYS_SILVER;
+	else if (!q_strcasecmp (arg, "gold") || !q_strcasecmp (arg, "key2"))
+		*key_flags = SV_COOP_GIVEKEYS_GOLD;
+	else if (!q_strcasecmp (arg, "all") || !q_strcasecmp (arg, "both") ||
+		!q_strcasecmp (arg, "keys"))
+		*key_flags = SV_COOP_GIVEKEYS_ALL;
+	else
+		return false;
+	return true;
+}
+
+static const char *Host_GiveKeysKindName (int key_flags)
+{
+	if (key_flags == SV_COOP_GIVEKEYS_SILVER)
+		return "silver key(s)";
+	if (key_flags == SV_COOP_GIVEKEYS_GOLD)
+		return "gold key(s)";
+	return "all door keys";
+}
+
+static qboolean Host_GiveKeysClient (client_t *client, int key_flags)
+{
+	client_t *old_host_client;
+	edict_t *old_sv_player, *target_edict;
+	struct qsocket_s *target_socket;
+	qboolean given, unchanged;
+
+	if (!Host_AdminClientActive (client) || !client->spawned ||
+		client->edict->v.health <= 0)
+		return false;
+
+	old_host_client = host_client;
+	old_sv_player = sv_player;
+	target_socket = client->netconnection;
+	target_edict = client->edict;
+	host_client = client;
+	sv_player = target_edict;
+	given = SV_CoopGiveKeys (target_edict, key_flags);
+	unchanged = Host_AdminClientUnchanged (client, target_socket, target_edict);
+	if (given && unchanged)
+		SV_CoopRespawnRefreshClientInventory (target_edict);
+	host_client = old_host_client;
+	sv_player = old_sv_player;
+	return given && unchanged;
+}
+
+static void Host_SV_GiveKeys_f (void)
+{
+	client_t *client;
+	edict_t *granted_source = NULL;
+	edict_t *granted_edicts[MAX_SCOREBOARD];
+	struct qsocket_s *granted_sockets[MAX_SCOREBOARD];
+	qcvm_t *old_qcvm;
+	int i, count = 0, key_flags = SV_COOP_GIVEKEYS_ALL;
+	int kind_arg;
+	qboolean all_players = false;
+
+	if (cmd_source != src_command)
+		return;
+	if (!sv.active)
+	{
+		Con_Printf ("sv_givekeys: no active server\n");
+		return;
+	}
+
+	if (Cmd_Argc () > 1 && !q_strcasecmp (Cmd_Argv (1), "all"))
+	{
+		all_players = true;
+		kind_arg = 2;
+	}
+	else
+	{
+		kind_arg = Cmd_Argc () > 1 && !strcmp (Cmd_Argv (1), "#") ? 3 : 2;
+	}
+	if (Cmd_Argc () > kind_arg &&
+		!Host_ParseGiveKeysKind (Cmd_Argv (kind_arg), &key_flags))
+	{
+		Con_Printf ("usage: sv_givekeys [playername | # slot | all] "
+			"[silver | gold | all]\n");
+		return;
+	}
+
+	old_qcvm = qcvm;
+	if (qcvm != &sv.qcvm)
+	{
+		if (qcvm)
+			PR_SwitchQCVM (NULL);
+		PR_SwitchQCVM (&sv.qcvm);
+	}
+
+	if (all_players)
+	{
+		for (i = 0; i < svs.maxclients; ++i)
+		{
+			client = &svs.clients[i];
+			if (!Host_GiveKeysClient (client, key_flags))
+				continue;
+			Con_Printf ("sv_givekeys: gave %s to %s\n",
+				Host_GiveKeysKindName (key_flags), client->name);
+			granted_edicts[count] = client->edict;
+			granted_sockets[count] = client->netconnection;
+			count++;
+		}
+	}
+	else
+	{
+		client = Host_FindClientByCommandArgs (1);
+		if (Host_GiveKeysClient (client, key_flags))
+		{
+			Con_Printf ("sv_givekeys: gave %s to %s\n",
+				Host_GiveKeysKindName (key_flags), client->name);
+			granted_edicts[count] = client->edict;
+			granted_sockets[count] = client->netconnection;
+			count++;
+		}
+	}
+
+	if (!count)
+		Con_Printf ("sv_givekeys: no matching active client\n");
+	/* Keep the reference's last successful source when it survives. */
+	for (i = count - 1; i >= 0; --i)
+	{
+		int slot = NUM_FOR_EDICT (granted_edicts[i]) - 1;
+		if (slot < 0 || slot >= svs.maxclients)
+			continue;
+		client = &svs.clients[slot];
+		if (Host_AdminClientUnchanged (client, granted_sockets[i], granted_edicts[i]) &&
+			client->spawned && client->edict->v.health > 0 &&
+			client->edict->v.deadflag == DEAD_NO)
+		{
+			granted_source = granted_edicts[i];
+			break;
+		}
+	}
+	if (granted_source)
+		SV_CoopSharedRebuildGrantedKeys (granted_source);
+
+	if (qcvm != old_qcvm)
+	{
+		PR_SwitchQCVM (NULL);
+		if (old_qcvm)
+			PR_SwitchQCVM (old_qcvm);
+	}
+}
+
+static qboolean Host_ParseServerCheatValue (int arg, qboolean default_value)
+{
+	if (Cmd_Argc () <= arg)
+		return default_value;
+	return atof (Cmd_Argv (arg)) != 0;
+}
+
+static void Host_SV_God_f (void)
+{
+	client_t *client;
+	int i, value_arg;
+	qboolean enable, all;
+
+	if (cmd_source != src_command)
+		return;
+	if (!sv.active)
+	{
+		Con_Printf ("sv_god: no active server\n");
+		return;
+	}
+
+	all = Cmd_Argc () > 1 && !q_strcasecmp (Cmd_Argv (1), "all");
+	value_arg = !all && Cmd_Argc () > 2 && !strcmp (Cmd_Argv (1), "#") ? 3 : 2;
+	enable = Host_ParseServerCheatValue (value_arg, true);
+	if (all)
+	{
+		for (i = 0; i < svs.maxclients; i++)
+		{
+			client = &svs.clients[i];
+			if (!Host_AdminClientActive (client))
+				continue;
+			if (enable)
+				client->edict->v.flags = (int)client->edict->v.flags | FL_GODMODE;
+			else
+				client->edict->v.flags = (int)client->edict->v.flags & ~FL_GODMODE;
+			Con_Printf ("sv_god: %s %s\n", client->name, enable ? "ON" : "OFF");
+		}
+		return;
+	}
+
+	client = Host_FindClientByCommandArgs (1);
+	if (!client)
+	{
+		Con_Printf ("sv_god: no matching active client\n");
+		return;
+	}
+	if (enable)
+		client->edict->v.flags = (int)client->edict->v.flags | FL_GODMODE;
+	else
+		client->edict->v.flags = (int)client->edict->v.flags & ~FL_GODMODE;
+	Con_Printf ("sv_god: %s %s\n", client->name, enable ? "ON" : "OFF");
+}
+
+static void Host_SV_Noclip_f (void)
+{
+	client_t *client;
+	int i, value_arg;
+	qboolean enable, all;
+
+	if (cmd_source != src_command)
+		return;
+	if (!sv.active)
+	{
+		Con_Printf ("sv_noclip: no active server\n");
+		return;
+	}
+
+	all = Cmd_Argc () > 1 && !q_strcasecmp (Cmd_Argv (1), "all");
+	value_arg = !all && Cmd_Argc () > 2 && !strcmp (Cmd_Argv (1), "#") ? 3 : 2;
+	enable = Host_ParseServerCheatValue (value_arg, true);
+	if (all)
+	{
+		for (i = 0; i < svs.maxclients; i++)
+		{
+			client = &svs.clients[i];
+			if (!Host_AdminClientActive (client))
+				continue;
+			client->edict->v.movetype = enable ? MOVETYPE_NOCLIP : MOVETYPE_WALK;
+			Con_Printf ("sv_noclip: %s %s\n", client->name, enable ? "ON" : "OFF");
+		}
+		return;
+	}
+
+	client = Host_FindClientByCommandArgs (1);
+	if (!client)
+	{
+		Con_Printf ("sv_noclip: no matching active client\n");
+		return;
+	}
+	client->edict->v.movetype = enable ? MOVETYPE_NOCLIP : MOVETYPE_WALK;
+	Con_Printf ("sv_noclip: %s %s\n", client->name, enable ? "ON" : "OFF");
+}
+
 static edict_t *FindViewthing (void)
 {
 	int		 i;
@@ -4582,6 +5036,10 @@ void Host_InitCommands (void)
 	Cmd_AddCommand ("fastload", Host_Loadgame_f);
 	Cmd_AddCommand ("save", Host_Savegame_f);
 	Cmd_AddCommand ("give", Host_Give_f);
+	Cmd_AddCommand ("sv_giveall", Host_SV_GiveAll_f);
+	Cmd_AddCommand ("sv_givekeys", Host_SV_GiveKeys_f);
+	Cmd_AddCommand ("sv_god", Host_SV_God_f);
+	Cmd_AddCommand ("sv_noclip", Host_SV_Noclip_f);
 
 	Cmd_AddCommand ("startdemos", Host_Startdemos_f);
 	Cmd_AddCommand ("demos", Host_Demos_f);
