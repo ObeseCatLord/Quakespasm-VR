@@ -194,3 +194,21 @@ Only source reads and `git diff --check` ran. Local Astra advisory source review
 of the coherent implementation is pending; no Linux/ARM build, compiler check,
 fixture, runtime or headset execution has run. NET-009 remains unqualified
 until final normal-session, scripted-effect and packet-loss lifecycle checks.
+
+### Bound reset replay to the existing snapshot-start boundary
+
+Main's integration source inspection identifies a delivery-loop hazard before
+final review: after64 unacknowledged packets BeginFrame can retire the packet
+that logged world removal. Selected native writing previously checks pending
+world removal on every continuation, so a replay can repeatedly reset the custom
+scan to1 during one large burst before the host can read ACKs. Comparing cursor
+inequality alone does not bound this backward restart.
+
+Adapt selected world-reset emission to the snapshot's first packet only;
+continuations keep pending world-reset debt for the next snapshot. Ordinary
+native entities already visit entity0 only through the initial snapshot cursor.
+This aligns the two paths without another packet quota, scheduler or retry
+channel. Every actual world-reset emission still reflags all current custom
+entities, and every selected continuation still includes full native owner and
+movement stats. Old update bits behind scan cursors likewise wait for next
+snapshot, using existing behavior. Expected production correction: one condition.
