@@ -1,5 +1,10 @@
 # Inherited texture export: native readback boundary
 
+**Excluded by user on2026-09-30.** No production implementation was added.
+The [scope decision](migration-scope-decisions.md#developer-texture-export-2026-09-30)
+supersedes the historical implementation authorization below. This document
+preserves research only; texture export is not a completion or testing gate.
+
 2026-09-30. Preliminary verified brief, no implementation authorized by this
 document until the bounded source/design disposition closes the questions
 below. Reuse vkQuake Vulkan/task/staging/texture/writer owners. This classifies

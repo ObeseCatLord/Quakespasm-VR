@@ -84,3 +84,12 @@ The [gesture-only plan](migration-gesture-only-melee-2.0-plan.md) precedes the
 client policy, command-finalization and ready-pose changes. Unknown weapons use
 the shared profile opt-in rather than a per-mod engine patch. Linux/ARM checks
 remain end-of-goal work; live headset testing remains user-deferred.
+
+## Developer texture export (2026-09-30)
+
+The user explicitly dropped the inherited `imagedump` GPU texture-export command
+from the required migration to focus on gameplay and VR. No export implementation
+was added. Its [readback plan](texture-export-adapter-2.0-plan.md) and source
+disposition remain research only; do not implement its proposed image usage,
+warp initialization or writer changes merely to close a historical command row.
+Native screenshots, texture loading, warp rendering and graphics remain required.
