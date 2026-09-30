@@ -51,6 +51,6 @@ Setup entry and one matching four-row draw/pointer list. Main complete-diff
 review verified fixed newline commands, reset/key/draw/back ordering and the
 expanded gameplay enum/cvar bounds. Main requested keypad Enter consistency
 with the existing native pages; the worker added it before integration. The
-bounded patch is95 added/two removed lines (93 net), within120. No fake remote
+bounded patch is94 added/two removed lines (92 net), within120. No fake remote
 state or server/QuakeC edits. Scoped whitespace checks pass; no builds/tests or
 executable qualification. Final Linux/ARM/native command behavior remains open.
