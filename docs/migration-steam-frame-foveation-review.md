@@ -1,5 +1,29 @@
 # Steam Frame runtime foveation: senior design disposition
 
+## Current scope and controller source checkpoint — 2026-09-30
+
+Quad views remain excluded by user direction. Foveation uses the existing
+two-eye stereo path; it does not add peripheral/focus view pairs. Eye tracking
+remains optional, and fixed foveation remains an explicit setting with no
+automatic fallback. The FB/META preference and borrowed-image qualification
+limits below remain in force.
+
+Fresh review of Valve's [Steam Frame input documentation](https://partner.steamgames.com/doc/steamhardware/steamframe/input)
+matches the controller integration in `Quake/vr_openxr.cpp`:
+
+| Source contract | Current implementation and disposition |
+| --- | --- |
+| Request the Frame controller extension and suggest its canonical profile. | Extension discovery/enabling uses `XR_VALVE_frame_controller_interaction`; `create_actions` suggests `/interaction_profiles/valve/frame_controller_valve` only when supported. Retain. |
+| Identify the active controller independently of the headset. | `profile_for_hand` queries each hand's current interaction profile. Retain; no headset-name gate. |
+| Use documented pose, haptic, trigger, squeeze, stick and button paths. | The Frame array uses documented paths, including left D-pad left/right and View, and right A/B and Menu. Retain the existing logical-button adapter in `VR_InputBuildHandDesired`. |
+| Boolean actions may use scalar input with runtime thresholding. | The boolean grip action uses `squeeze/value`, as do the existing Touch/Index bindings. The [OpenXR suggested-binding rules](https://registry.khronos.org/OpenXR/specs/1.0-khr/html/xrspec.html#xrSuggestInteractionProfileBindings) permit that conversion; the runtime owns threshold/hysteresis. A separate `squeeze/click` path does not establish that the current binding is invalid. Retain pending actual control feedback. |
+| Additional touch/button paths are available. | Their availability does not require a new gameplay action or remapping existing controls. No demonstrated behavior gap warrants expanding the action system in this checkpoint. |
+
+This is a source/documentation checkpoint, not an executed controller or
+foveation qualification. No renderer or input production code changed here.
+Consolidated Linux/ARM software checks remain deferred until implementation is
+finished; headset behavior remains user-side testing.
+
 Reviewed on 2026-09-26 against branch `2.0` by Astra (read-only). This is an
 implementation decision and proof plan, not a claim of Steam Frame support or
 measured performance. Valve's [custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
