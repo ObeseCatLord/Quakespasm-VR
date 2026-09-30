@@ -21,3 +21,22 @@ wet-only reflections at the same owners. Software checks should include sample
 table rollover, reused source slots, independent static loops, music EOF,
 voice resets, map teardown and device restart. Hardware listening is reserved
 for the user's later testing.
+
+## Current source-owner checkpoint (2026-09-30)
+
+The historical interface index uses primary settings such as
+`voice_radio_filter` and `snd_reverb_mode`. Their literal absence in2.0 is not a
+missing DSP feature: current `snd_spatial.c:76–84,107–115,499–507` registers and
+projects `snd_spatial_room_*`, `snd_spatial_radio_*` and
+`snd_spatial_voice_reverb` through the existing settings snapshot. The user
+does not require old setting-name compatibility. Keep these owners and do not
+port another audio service from the index alone.
+
+Current `snd_steamaudio.c:99–119,445–462` contains the inherited radio filter,
+compression/drive and voice-reverb send. `snd_room.c:63–161,164–202` retains
+copied scene/simulation worker and result publication; `snd_spatial_world.c`
+adapts native BSP geometry rather than replacing its loader. Room replacement
+and clear (`snd_spatial.c:920–957`) detach under brief callback exclusion and
+join afterward, as the adopted architecture requires. This is bounded source
+evidence for AUDIO-008/009 ownership and reuse, not audible or concurrency
+execution qualification. Those final Linux/ARM checks remain deferred.
