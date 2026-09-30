@@ -2337,9 +2337,17 @@ static void SVFTE_WriteCSQCEntityNum (sizebuf_t *msg, size_t entnum, qboolean re
 		MSG_WriteShort (msg, flags | entnum);
 }
 
+// QC may retire a connection while leaving its recipient edict live.
+static qboolean SV_ClientConnectionMatches (const client_t *client, const struct qsocket_s *socket)
+{
+	return client->active && client->netconnection == socket;
+}
+
 static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
 	struct deltaframe_s *frame, qboolean continuation)
 {
+	struct qsocket_s *socket = client->netconnection;
+	edict_t *clent = client->edict;
 	byte entbuf[MAX_DATAGRAM];
 	qboolean wroteheader = false;
 	qboolean optional_native = false;
@@ -2382,16 +2390,16 @@ static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *ms
 				int oldother = pr_global_struct->other;
 				qboolean oldallowoverflow = sv.multicast.allowoverflow;
 				ED_Retain (ed);
-				ED_Retain (client->edict);
+				ED_Retain (clent);
 				sv.multicast.allowoverflow = true;
 				pr_global_struct->self = EDICT_TO_PROG (ed);
-				G_INT (OFS_PARM0) = EDICT_TO_PROG (client->edict);
+				G_INT (OFS_PARM0) = EDICT_TO_PROG (clent);
 				// Preserve primary's callback arguments; CURRENT is engine-only.
 				G_FLOAT (OFS_PARM1 + 0) = remove ? SENDFLAG_USABLE : (bits & SENDFLAG_USABLE);
 				G_FLOAT (OFS_PARM1 + 1) = (bits & SENDFLAG_PRESENT) >> 24;
 				G_FLOAT (OFS_PARM1 + 2) = 0;
 				PR_ExecuteProgram (GetEdictFieldEval (ed, SendEntity)->function);
-				qboolean recipient_live = !client->edict->free;
+				qboolean recipient_live = SV_ClientConnectionMatches (client, socket) && !clent->free;
 				update = G_FLOAT (OFS_RETURN) && !ed->free &&
 					GetEdictFieldEval (ed, SendEntity)->function;
 				payload_overflow = sv.multicast.overflowed;
@@ -2399,7 +2407,7 @@ static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *ms
 				pr_global_struct->self = oldself;
 				pr_global_struct->other = oldother;
 				ED_Release (ed);
-				ED_Release (client->edict);
+				ED_Release (clent);
 				if (!recipient_live)
 				{
 					SZ_Clear (&sv.multicast);
@@ -2593,6 +2601,7 @@ void SV_BuildEntityState (edict_t *ent, entity_state_t *state)
 
 static qboolean SVFTE_BuildSnapshotForClient (client_t *client)
 {
+	struct qsocket_s *socket = client->netconnection;
 	unsigned int  e;
 	byte		 *pvs;
 	vec3_t		  org;
@@ -2644,7 +2653,7 @@ static qboolean SVFTE_BuildSnapshotForClient (client_t *client)
 		if (ent->free)
 			goto invisible;
 		visible = SV_CustomizeEntityForClient (ent, clent);
-		if (clent->free)
+		if (!SV_ClientConnectionMatches (client, socket) || clent->free)
 			break;
 		if (ent->free)
 			goto invisible;
@@ -2776,7 +2785,7 @@ static qboolean SVFTE_BuildSnapshotForClient (client_t *client)
 		}
 	}
 
-	qboolean recipient_live = !clent->free;
+	qboolean recipient_live = SV_ClientConnectionMatches (client, socket) && !clent->free;
 	snapshot_entstate = ents;
 	snapshot_numents = recipient_live ? numents : 0;
 	snapshot_maxents = maxents;
@@ -3909,6 +3918,7 @@ SV_WriteEntitiesToClient
 */
 static qboolean SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size_t overflowsize)
 {
+	struct qsocket_s *socket = client->netconnection;
 	edict_t		*clent = client->edict;
 	unsigned int e, i, maxedict = qcvm->num_edicts, j, numents;
 	int			 bits;
@@ -3962,7 +3972,7 @@ static qboolean SV_WriteEntitiesToClient (client_t *client, sizebuf_t *msg, size
 		if (ent->free)
 			continue;
 		qboolean visible = SV_CustomizeEntityForClient (ent, clent);
-		if (clent->free)
+		if (!SV_ClientConnectionMatches (client, socket) || clent->free)
 		{
 			recipient_live = false;
 			goto cleanup;
@@ -4543,6 +4553,7 @@ SV_SendClientDatagram
 */
 qboolean SV_SendClientDatagram (client_t *client)
 {
+	struct qsocket_s *socket = client->netconnection;
 	// made static to prevent too big stack usage.
 	// fine as a temporary because only called from the main thread.
 	static byte buf[MAX_DATAGRAM + 1000];
@@ -4617,7 +4628,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 			if (!SVFTE_WriteCSQCEntitiesToClient (client, &msg, frame, false))
 			{
-				SV_DropClient (client->edict->free); // Dead recipients cannot enter QC disconnect.
+				if (SV_ClientConnectionMatches (client, socket))
+					SV_DropClient (client->edict->free); // Dead recipients cannot enter QC disconnect.
 				return false;
 			}
 
@@ -4652,7 +4664,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 				}
 				if (!SVFTE_WriteCSQCEntitiesToClient (client, &msg, frame, true))
 				{
-					SV_DropClient (client->edict->free);
+					if (SV_ClientConnectionMatches (client, socket))
+						SV_DropClient (client->edict->free);
 					return false;
 				}
 				if (client->snapshotresume == oldnative && client->csqcsnapshotresume == oldcustom)
@@ -4673,7 +4686,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 			if (!SV_WriteEntitiesToClient (client, &msg, sizeof (buf)))
 			{
-				SV_DropClient (true);
+				if (SV_ClientConnectionMatches (client, socket))
+					SV_DropClient (true);
 				return false;
 			}
 		}
@@ -5143,7 +5157,9 @@ void SV_SendClientMessages (void)
 		if (!host_client->active)
 			continue;
 
-		if (!SV_PresendClientDatagram (host_client)) // snapshot cleanup precedes dropping a freed recipient
+		client_t *client = host_client;
+		struct qsocket_s *socket = client->netconnection;
+		if (!SV_PresendClientDatagram (client) && SV_ClientConnectionMatches (client, socket))
 			SV_DropClient (true);
 	}
 
