@@ -401,3 +401,26 @@ bot replacement, freeing recipient without disconnect, dropping a different
 recipient, sorted/unsorted gather cleanup and continuation failure. Check absence
 of post-retirement packet/delta/frame commits and double drop. User live device,
 multiplayer and timing checks remain deferred/outside the goal.
+
+### Reopened design disposition before production
+
+Requested local Astra Max accepted the minimum proposal with explicit boundaries.
+Effective settings metadata is unavailable; this is an advisory, not certified
+senior-skill review. Main inspected native frame destruction, drop/connect/bot
+paths, the three callback sites and existing cleanup/callers for integration.
+No human choice remains; adopted contract:
+
+| Advisory recommendation | Main disposition |
+| --- | --- |
+| Edict liveness and active status alone cannot detect retirement/replacement | Adopt original-socket capture at modern/classic/custom pass entry, require active plus same socket and separately live retained recipient after every callback (including continuations). |
+| Failure caller predicate must exclude edict free | Adopt one stateless active/socket helper; writers additionally check free. Caller still crash-drops a freed recipient on the original connection, but never drops a retired/replaced connection. Ordinary custom payload failure keeps its existing non-crash drop. |
+| Stop before destroyed arrays while pairing exact retained pointers | Adopt captured custom-recipient pointer for callback argument/retention/release, restore globals/overflow policy and clear multicast before false return. No post-failure pending-bit write, frame log or resume commit. |
+| Reuse collection cleanup without more rollback | Adopt modern scratch pointer/capacity publication with count0 for either connection invalidation or edict death. Classic uses existing admitted-list cleanup/maxsize restoration. Presend returns before deltas; callers guard their original client/socket. Previously sent continuation packets are not rolled back. |
+| Socket identity is sufficient only for the specified synchronous flow | Accept scoped sufficiency: network passes enter with non-null socket, replacement bots have null. This is not a universal generation guarantee. No new counters/frame owner or callback-free serialization changes justified. |
+
+One bounded coding worker owns only Quake/sv_main.c, exactly these helpers,
+callback-return checks and four failure sites. Existing visibility, pending/ACK
+state, wire, native sorting and graphics remain. Main reviews the diff, commits,
+then requests a bounded source advisory recheck; no builds/tests/compiler checks,
+probes or fixtures until full implementation finishes. Expected fewer than60
+added production lines remains; widen only on demonstrated additional evidence.
