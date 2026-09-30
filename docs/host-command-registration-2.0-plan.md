@@ -50,3 +50,14 @@ begin, name/color, ordinary and team chat, status/ping, kill/pause and permitted
 versus denied cheat/kick/give paths, both desktop and VR. Console-only load/save/
 quit/map/changelevel and server-only source restrictions remain enforced.
 Source inspection alone does not certify multiplayer behavior.
+
+## Source integration checkpoint
+
+The19 registration replacements are source-integrated with zero net production
+lines. Main reviewed the complete diff and native forwarding/source checks:
+player identity/chat retain their handlers, spawn/begin/prespawn retain the
+pre-begin guards, cheats/give/kick retain native deathmatch policy and pause
+retains pausable. Cmd_ExecuteString still admits these from src_command, rejects
+non-client classes from src_client and rejects them from src_server. QSS-M
+source classes match all19; no interception flag or handler was changed. Scoped
+git diff --check passes. No builds, runtime or software acceptance ran.
