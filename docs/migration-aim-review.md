@@ -198,7 +198,30 @@ history setters, centerview implementation, hand admission and renderer:
 
 The web worker was stopped on the user's instruction before integration; its
 bounded clamp/intermission diff is reviewed and completed locally. No more web
-agents will be used for now. The finite deadzone comparison must use native
-double precision so valid fractional values are not rounded merely by entering
-the clamp callback. Effective reviewer settings remain unavailable; these are
+agents will be used for now. The clamp must leave valid fractional values
+unchanged. This checkout's `cvar_t.value` and setter use float; the callback
+retains that native type and leaves an already valid value unchanged.
+Effective reviewer settings remain unavailable; these are
 source dispositions, with final executable qualification still deferred.
+
+The final actual-diff source review found a rejected-transfer edge: if tracking
+is unavailable during 7→5/6, merely clearing validity leaves hand aim in the
+preceding-aim vector. The blended resolver would interpret it as an input delta
+on tracking recovery. Adopted four-line correction: when transfer admission
+fails and hand history is discarded, replace preceding aim with retained
+effective native aim (`cl.viewangles + tracked_withheld_aim`). Keep native command
+angles and visual/head history unchanged. Main verified this consumer arithmetic
+and the actual float cvar declaration; no execution was performed.
+
+### Integrated source checkpoint
+
+The complete repair is 49 net production lines in the existing `Quake/view.c`,
+within the 60-line bound. Main reviewed the whole diff; requested local Astra
+source advice accepted the clamp, capture/accepted transfer, authority/centerview,
+separate movement/firing owners and tracked intermission guard. Its one rejected
+transfer finding is closed by the bounded final recheck: preceding aim now
+matches the resolver's retained effective native aim, with no artificial input
+delta from discarded hand history. No new angle vector, protocol, renderer,
+movement state machine or per-eye update was added. Scoped whitespace checks
+are clean. All final Linux/ARM executable qualification remains pending; this
+is not live tracking, multiplayer, performance or formal model certification.

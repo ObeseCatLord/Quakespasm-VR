@@ -110,6 +110,7 @@ static vec3_t tracked_raw_angles, tracked_withheld_aim;
 static float tracked_yaw;
 static float tracked_local_yaw;
 static qboolean tracked_aim_ready;
+static qboolean tracked_controller_history_valid;
 /* View-owner lifetime for the body-relative eye. Command samples can stop
  * temporarily on focus loss without returning the eye to positional tracking. */
 static qboolean tracked_body_anchor;
@@ -162,6 +163,32 @@ static void V_TrackedAimModeChanged (cvar_t *var)
 		VectorCopy (vec3_origin, tracked_withheld_aim);
 		VectorCopy (cl.viewangles, tracked_previous_aim);
 	}
+	else if (tracked_controller_history_valid && V_UseTrackedView () &&
+		cls.signon == SIGNONS && !cls.demoplayback && !cl.intermission)
+	{
+		/* Seed the inherited mode from hand aim without changing the normal
+		 * controller movement basis or defeating a native angle lock. */
+		tracked_previous_aim[ROLL] = 0;
+		if (CL_AngleLocked ())
+			VectorSubtract (tracked_previous_aim, cl.viewangles, tracked_withheld_aim);
+		else
+		{
+			VectorCopy (tracked_previous_aim, cl.viewangles);
+			VectorCopy (vec3_origin, tracked_withheld_aim);
+		}
+	}
+	else if (tracked_controller_history_valid)
+		/* Discarded hand history must not become fictitious input motion
+		 * when a blended mode resumes after tracking loss. */
+		VectorAdd (cl.viewangles, tracked_withheld_aim, tracked_previous_aim);
+	tracked_controller_history_valid = false;
+}
+
+static void V_TrackedDeadzoneChanged (cvar_t *var)
+{
+	const float value = isfinite (var->value) ? CLAMP (0.0f, var->value, 70.0f) : 30.0f;
+	if (var->value != value)
+		Cvar_SetValueQuick (var, value);
 }
 
 void V_ResetTrackedAim (void)
@@ -175,6 +202,7 @@ void V_ResetTrackedAim (void)
 	view_stair_delta = 0;
 	VR_InputInvalidateMotion ();
 	tracked_aim_ready = false;
+	tracked_controller_history_valid = false;
 	base_player_view = base_angles_valid = false;
 	VectorCopy (vec3_origin, tracked_withheld_aim);
 	tracked_reference_pending = tracked_readback_yaw = tracked_server_yaw_pending = false;
@@ -192,6 +220,7 @@ void V_SetTrackedAngles (const vec3_t angles)
 {
 	// An authoritative absolute angle supersedes uncommitted local turning.
 	tracked_local_yaw = 0;
+	tracked_controller_history_valid = false;
 	VR_InputInvalidateMotion ();
 	VectorCopy (angles, tracked_view_angles);
 	VectorCopy (angles, tracked_previous_aim);
@@ -315,7 +344,20 @@ void V_UpdateTrackedAim (void)
 		}
 	}
 	VectorCopy (orientation, tracked_previous_orientation);
-	VectorCopy (aim, tracked_previous_aim);
+	if (mode != VR_AIMMODE_CONTROLLER)
+		VectorCopy (aim, tracked_previous_aim);
+	else
+	{
+		const int dominant = VR_InputDominantPhysicalHand ();
+		vec3_t hand_aim;
+		/* Preserve the last real hand sample across temporary tracking loss. */
+		if (dominant >= 0 && dominant < 2 && frame->devices[dominant + 1].tracked &&
+			V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, hand_aim))
+		{
+			VectorCopy (hand_aim, tracked_previous_aim);
+			tracked_controller_history_valid = true;
+		}
+	}
 }
 
 const float *V_TrackedViewAngles (void)
@@ -1692,12 +1734,13 @@ void V_StartPitchDrift (void)
 {
 	if (V_UseTrackedView ())
 	{
-		if (tracked_aim_ready && V_TrackedAimMode () != VR_AIMMODE_CONTROLLER && !cls.demoplayback && !cl.intermission && !CL_AngleLocked ())
+		if (tracked_aim_ready && !cls.demoplayback && !cl.intermission && !CL_AngleLocked ())
 		{
 			cl.viewangles[PITCH] = tracked_view_angles[PITCH];
 			cl.viewangles[YAW] = tracked_view_angles[YAW];
 			VectorCopy (cl.viewangles, tracked_previous_aim);
 			VectorCopy (vec3_origin, tracked_withheld_aim);
+			tracked_controller_history_valid = false;
 		}
 		return;
 	}
@@ -2250,6 +2293,11 @@ void V_CalcIntermissionRefdef (void)
 
 	VectorCopy (ent->origin, r_refdef.vieworg);
 	VectorCopy (ent->angles, r_refdef.viewangles);
+	if (V_UseTrackedView ())
+	{
+		r_refdef.viewangles[PITCH] = 0;
+		r_refdef.viewangles[ROLL] = 0;
+	}
 	view->model = NULL;
 	InvalidateTraceLineCache ();
 
@@ -2547,6 +2595,7 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_gunmodelscale);
 	Cvar_RegisterVariable (&vr_gunmodely);
 	Cvar_SetCallback (&vr_aimmode, V_TrackedAimModeChanged);
+	Cvar_SetCallback (&vr_deadzone, V_TrackedDeadzoneChanged);
 	Cmd_AddCommand ("v_cshift", V_cshift_f);
 	Cmd_AddCommand ("bf", V_BonusFlash_f);
 	Cmd_AddCommand ("centerview", V_StartPitchDrift);

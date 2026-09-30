@@ -49,6 +49,17 @@ runtime, packet counter or helper test must keep its proof limitations explicit.
 | Assets, maps and performance mechanisms | Actual PNG/TGA/JPG/JPEG/fullbright MDL/MD3/MD5/static/level loads, WAD3 per-texture palettes, native liquid lightmaps and CPU/GPU lightstyle interpolation, material/texture-cache/recolor identity, precision/clip bias; native worker rendering/loading, large-BSP/no-VIS/visibility/allocation behavior, alias/BLAS batching and scripted particle lifetimes/effects. Source mechanisms are required; measured speedups are not claimed. |
 | Audio and discovery/UI | Actual optional Opus packet/jitter/generation/levels/mute owners and budgets, game/voice HRTF/native fallback/radio/occlusion/reverb/local wet reflections; system-default mic, saved VR default-on opt-out versus desktop opt-in; capture error/profile transitions, meter/HUD/PTT. Steam/rerelease/localization paths, mod launch/filter/catalogue/approval/validated package cancellation, reconnect and UI scale/branding. |
 
+The inherited aim source repairs add focused cases to the VR movement and
+presentation row: deadzone 0/70/out-of-range/nonfinite and unchanged valid
+fractional values; controller-to-head/mouse/blended history with unavailable
+hands, rejected exits during HMD loss, locks, centerview and absolute/relative
+corrections; no retired VR seed
+on a desktop setting change; pitched/rolled native intermission entities with
+one physical-head contribution and unchanged desktop cameras. Native co-op
+results, deathmatch scores and finale use the existing tracked intermission
+panel. CSQC score/death/intermission canvas placement is still an implementation
+boundary and must be completed before this final qualification begins.
+
 Read game assets only from the existing quakespasm_straight installation. Native
 runners may link/copy needed data into disposable writable profiles; saves,
 configs and generated QC programs belong there. The map/mod matrix includes

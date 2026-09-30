@@ -76,3 +76,9 @@ requires an XR render frame, so desktop dispatch is unchanged. No additional
 scoreboard invocation or render pass was added. Scoped whitespace checking is
 clean; no build/test/runtime result is claimed. CSQC score/death/intermission
 placement remains a separate required boundary.
+
+The requested local Astra source recheck of `306509d0` found no introduced
+blocker in the six replaced lines, confirming the native menu-canvas dispatch,
+stereo/frame desktop gate, unchanged modal/loading precedence, single overlay
+call and balanced panel scope. This is source advice; final software and device
+visibility are not certified by that inspection.
