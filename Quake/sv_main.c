@@ -1491,8 +1491,8 @@ void SVFTE_DestroyFrames (client_t *client)
 	client->pendingentities_bits = NULL;
 	client->numpendingentities = 0;
 
-	Mem_Free (client->csqcentities_remove_sequence);
-	client->csqcentities_remove_sequence = NULL;
+	Mem_Free (client->csqcentities_remove_boundary);
+	client->csqcentities_remove_boundary = NULL;
 	Mem_Free (client->pendingcsqcentities_bits);
 	client->pendingcsqcentities_bits = NULL;
 	client->numpendingcsqcentities = 0;
@@ -1540,7 +1540,7 @@ static void SVFTE_SetupFrames (client_t *client)
 	client->pendingentities_bits[0] = UF_REMOVE;
 	client->numpendingcsqcentities = qcvm->num_edicts;
 	client->pendingcsqcentities_bits = Mem_Alloc (client->numpendingcsqcentities * sizeof (*client->pendingcsqcentities_bits));
-	client->csqcentities_remove_sequence = Mem_Alloc (client->numpendingcsqcentities * sizeof (*client->csqcentities_remove_sequence));
+	client->csqcentities_remove_boundary = Mem_Alloc (client->numpendingcsqcentities * sizeof (*client->csqcentities_remove_boundary));
 	client->csqcsnapshotresume = 1;
 }
 static void SVFTE_DroppedFrame (client_t *client, int sequence)
@@ -1601,6 +1601,13 @@ void SV_SetCSQCActive (client_t *client, qboolean active)
 				client->pendingcsqcentities_bits[e] |= SENDFLAG_USABLE;
 }
 
+static unsigned int SVFTE_RetireCSQCBits (unsigned int bits)
+{
+	if (bits & SENDFLAG_PRESENT)
+		bits |= SENDFLAG_REMOVE | SENDFLAG_RETIRENEW;
+	return bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVE | SENDFLAG_REMOVEWAIT | SENDFLAG_RETIRENEW);
+}
+
 void SV_CSQCEntityFreed (edict_t *ed)
 {
 	if (qcvm != &sv.qcvm)
@@ -1612,10 +1619,7 @@ void SV_CSQCEntityFreed (edict_t *ed)
 		if (entnum >= client->numpendingcsqcentities)
 			continue;
 		unsigned int bits = client->pendingcsqcentities_bits[entnum];
-		client->pendingcsqcentities_bits[entnum] =
-			(bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVE)) ?
-			((bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVEWAIT)) | SENDFLAG_REMOVE) :
-			(bits & SENDFLAG_REMOVEWAIT);
+		client->pendingcsqcentities_bits[entnum] = SVFTE_RetireCSQCBits (bits);
 	}
 }
 
@@ -1654,7 +1658,8 @@ void SVFTE_Ack (client_t *client, int sequence)
 		{
 			unsigned int e = frame->ents[i].num;
 			if ((frame->ents[i].csqcbits & SENDFLAG_REMOVE) && e < client->numpendingcsqcentities &&
-				client->csqcentities_remove_sequence[e] == sequence)
+				(client->pendingcsqcentities_bits[e] & (SENDFLAG_REMOVEWAIT | SENDFLAG_RETIRENEW)) == SENDFLAG_REMOVEWAIT &&
+				sequence >= client->csqcentities_remove_boundary[e])
 				client->pendingcsqcentities_bits[e] &= ~SENDFLAG_REMOVEWAIT;
 		}
 		frame->sequence = -1;
@@ -2394,7 +2399,7 @@ static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *ms
 
 		if (!remove && !update)
 		{
-			client->pendingcsqcentities_bits[entnum] &= SENDFLAG_CURRENT | SENDFLAG_REMOVEWAIT;
+			client->pendingcsqcentities_bits[entnum] &= SENDFLAG_CURRENT | SENDFLAG_REMOVEWAIT | SENDFLAG_RETIRENEW;
 			SZ_Clear (&sv.multicast);
 			continue;
 		}
@@ -2428,13 +2433,15 @@ static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *ms
 		}
 		SZ_Write (msg, entmsg.data, entmsg.cursize);
 		wroteheader = true;
-		unsigned int current = client->pendingcsqcentities_bits[entnum] & (SENDFLAG_CURRENT | SENDFLAG_REMOVEWAIT);
-		client->pendingcsqcentities_bits[entnum] = current | (update ? SENDFLAG_PRESENT : 0);
-		if (remove)
+		unsigned int pending = client->pendingcsqcentities_bits[entnum];
+		if (remove && ((pending & SENDFLAG_RETIRENEW) || (!update && (bits & SENDFLAG_PRESENT))))
 		{
-			client->pendingcsqcentities_bits[entnum] |= SENDFLAG_REMOVEWAIT;
-			client->csqcentities_remove_sequence[entnum] = frame->sequence;
+			client->csqcentities_remove_boundary[entnum] = frame->sequence;
+			pending |= SENDFLAG_REMOVEWAIT;
+			pending &= ~SENDFLAG_RETIRENEW;
 		}
+		client->pendingcsqcentities_bits[entnum] =
+			(pending & (SENDFLAG_CURRENT | SENDFLAG_REMOVEWAIT)) | (update ? SENDFLAG_PRESENT : 0);
 		if (frame->numents == frame->maxents)
 		{
 			frame->maxents += 64;
@@ -2546,10 +2553,10 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 			newmax * sizeof (*client->pendingcsqcentities_bits));
 		memset (client->pendingcsqcentities_bits + oldmax, 0,
 			(newmax - oldmax) * sizeof (*client->pendingcsqcentities_bits));
-		client->csqcentities_remove_sequence = Mem_Realloc (client->csqcentities_remove_sequence,
-			newmax * sizeof (*client->csqcentities_remove_sequence));
-		memset (client->csqcentities_remove_sequence + oldmax, 0,
-			(newmax - oldmax) * sizeof (*client->csqcentities_remove_sequence));
+		client->csqcentities_remove_boundary = Mem_Realloc (client->csqcentities_remove_boundary,
+			newmax * sizeof (*client->csqcentities_remove_boundary));
+		memset (client->csqcentities_remove_boundary + oldmax, 0,
+			(newmax - oldmax) * sizeof (*client->csqcentities_remove_boundary));
 		client->numpendingcsqcentities = newmax;
 	}
 
@@ -2571,10 +2578,7 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 				if (cancsqc)
 				{
 					unsigned int bits = client->pendingcsqcentities_bits[e];
-					client->pendingcsqcentities_bits[e] =
-						(bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVE)) ?
-						((bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVEWAIT)) | SENDFLAG_REMOVE) :
-			(bits & SENDFLAG_REMOVEWAIT);
+					client->pendingcsqcentities_bits[e] = SVFTE_RetireCSQCBits (bits);
 				}
 				continue;
 			}
@@ -2619,9 +2623,7 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 					*bits |= (int)GetEdictFieldEval (ent, SendFlags)->_float & SENDFLAG_USABLE;
 				continue;
 			}
-			*bits = (*bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVE)) ?
-				((*bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVEWAIT)) | SENDFLAG_REMOVE) :
-				(*bits & SENDFLAG_REMOVEWAIT);
+			*bits = SVFTE_RetireCSQCBits (*bits);
 		}
 
 		// okay, we care about this entity.
