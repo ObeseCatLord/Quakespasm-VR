@@ -19,7 +19,8 @@ forwarding it as an ordinary player's command. Keep the existing server
 query/connect/delta/async state untouched. This narrow authorization correction
 does not replace the command dispatcher or network owner.
 
-Write set: Quake/net_dgrm.c only, expected <=15 changed lines. Existing
+Write set: Quake/net_dgrm.c only, expected <=35 changed lines, including removal
+of the now-unreachable player-print branch. Existing
 guarded handler, initialization and IPv4 predicate remain reusable. Main
 reviews against the real reference and native source; reopen for another
 address/policy owner. Production remains on2.0, main/user-owned docs untouched.
