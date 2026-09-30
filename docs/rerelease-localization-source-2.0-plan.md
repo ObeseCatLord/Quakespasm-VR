@@ -16,7 +16,7 @@ implementation; Linux/ARM qualification at the end, Windows and live tests later
 | [verified: source] Native `COM_InitSteamAPI` at 4051 already resolves Steam even for valid portable basedirs, then restricts API activation to the selected Steam installation. It has one caller. | Use this existing resolution for optional localization before the API prefix check. No second Steam discovery call is needed. |
 | [verified: source] Native `COM_ValidatePackDirectoryEntries` at 2390 validates names and every entry using subtraction-based 64-bit bounds; PACK directory limit is 2048 entries. Native `Sys_FileSeek` reports success as zero and `Sys_FileOpenRead` returns `qfilesize_t`. | Reuse the validator and limit; adapt primary integer file size and unchecked seeks to native contracts. Malformed optional input must remain nonfatal. |
 | [verified: source] Native `Mem_AllocNonZero`/`Mem_Free` in `Quake/mem.c` share the native allocator and allocation may return NULL. | Use matching native allocation/free and explicit NULL handling. Do not mix primary libc allocations with native localization cleanup. |
-| [verified: source] Native `LOC_LoadFile` at 4680 first calls `COM_LoadFile`, then uses direct/native KPF fallbacks. Native language selection, parsing, UTF8 and reload/shutdown already own the returned text. | Add an exact-English optional read after normal game search fails; keep all other loading and language policy. |
+| [verified: source] Native `LOC_LoadFile` at 4680 first calls `COM_LoadFile`, then tries native direct-root loose files before KPF. Native language selection, parsing, UTF8 and reload/shutdown already own the returned text. | Preserve those loose-file overrides: add an exact-English optional read after direct-root opens fail, before KPF. Keep all other loading and language policy. |
 
 ## Decision and alternatives
 
@@ -41,8 +41,8 @@ across ordinary game/language reloads; reread text through native lifetime.
 Expected production addition under 200 lines. Reopen the design if it requires
 another retained service, altered mount rules or duplicated store policy.
 Smallest end-to-end proof, after all implementation: a classic portable basedir
-prints a missing English key from a separate rerelease pack while active game
-replacement keys and native non-English translations retain precedence, with
+with no native English table prints text from a separate rerelease pack, while
+active game/direct-root tables and native non-English tables retain precedence, with
 no maps/progs/textures imported from that pack.
 
 ## Requested review and final qualification
@@ -60,3 +60,19 @@ non-English and existing English fallback; active game replacement and KPF
 fallback; malformed/truncated/large PACK and optional allocation/read/seek
 failure; repeated language reload/game switch/shutdown; unchanged model-only
 mount and Steam API activation. No tests or builds run at this planning stage.
+
+## Requested-Astra design disposition before coding
+
+Local advisory requested `gpt-6-astra` / `max`; effective settings remain
+unexposed. Main spot-checked the actual direct-root loader and reference's
+whole-file lookup. This is not a certified senior-skill pass.
+
+| Recommendation | Disposition |
+| --- | --- |
+| P2: the initially proposed hook displaced existing direct-root overrides | Adopt. Order is native game search, native direct-root files, separate exact-English PACK, then native KPF. Hook inside the existing `!rw` branch before KPF opens. |
+| Distinguish invalid explicit operand from a trailing flag without an operand | Adopt. An explicit operand suppresses automatic fallback even if unusable; no operand follows the inherited automatic branch. |
+| Preserve whole-file rather than missing-key fallback | Adopt clarification. A successfully loaded native table wins as a whole; do not merge a second rerelease dictionary for its missing keys. FGD supplementation remains its separate existing contract. |
+| One filename and one local eligibility result; reuse native Steam resolution, validator and allocator | Adopt. No mount/service/discovery replacement or additional persistent policy. |
+
+Production file/scope estimate remains unchanged. Software proof is deferred;
+source review establishes the implementation contract only.
