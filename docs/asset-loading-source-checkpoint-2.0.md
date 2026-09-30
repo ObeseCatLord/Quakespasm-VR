@@ -37,3 +37,24 @@ independently of the server-policy coder; no overlapping write set. Source
 comparison/git diff --check only. Final checks include unused frame names,
 indexed multi-skin reload/recolor and truecolor fullbright regressions with
 native workers and serial loading; no new fixtures/tests run during this pass.
+
+
+## Adopted bounded local Astra source disposition
+
+Requested local Astra/max confirmed the empty-name and shared-slot defects.
+Effective settings remain unobservable, so this is source advice, not formal
+review certification. Main checked all texels readers, texture reload and format
+selection. The two-statement estimate is reopened for the necessary consumer.
+
+| Finding | Disposition |
+| --- | --- |
+| MDX recoloring uses skin-zero uploaded dimensions for another skin's copied raw bytes | Adopt repair at R_TranslateNewPlayerSkin: native MDL keeps copied pixels/header dimensions; non-MDL pixels and dimensions must come from the same existing Image_LoadImage decode. Missing/non-indexed data clears recoloring, retaining native material rendering. |
+| Texture source dimensions mutate on external reload while the copied skin buffer does not | Reject metadata-only dimension substitution: a resized image would still permit an overread. Decode indexed MDX data at infrequent recolor/model/skin changes using native source path/path_id; do not add dimension/cache generations. |
+| Native recolor format selection ignores the requested skin | Adapt through existing Mod_Extradata_CheckSkin with the actual requested skin, matching renderer format fallback. Branch on returned poseverttype, never filename. |
+| Correcting a copied MDX texel slot leaves a now-unused cache | Main source-verified simplification: Quake's sole texels reader is R_TranslateNewPlayerSkin; other uses only allocate/free. Remove the MDX-only cached first-frame copy entirely once that consumer decodes safely. Preserve native MDL cached texels and fullbright scan. This supersedes the uncommitted index-only correction and removes duplicate buffer ownership rather than adding state. |
+
+Exact write set expands only to Quake/gl_model.c and R_TranslateNewPlayerSkin in
+Quake/gl_rmisc.c. Estimate20..40 changed lines, largely native consumer reuse;
+reopen above60 or another texture/cache owner. Final checks add resized indexed
+MDX sources, mixed dimensions and enhanced-model fallback for later skin IDs.
+No builds/tests/compiler/probes/fixtures or performance measurements run.
