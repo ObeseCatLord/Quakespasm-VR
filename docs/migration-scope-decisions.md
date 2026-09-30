@@ -13,7 +13,7 @@ their further integration/qualification a completion gate.
   deferred. MOVE-011's physical swim strokes/hand propulsion are deferred too.
 - VR-008's instant-stop option is deferred. Joystick response, movement modes,
   head/hand-relative movement and ordinary release/friction remain required.
-- Ordinary VR swimming, ladders, roomscale, native momentum, physical combat,
+- Ordinary VR swimming, ladders, roomscale, native momentum, weapon gestures,
   prediction, desktop play and mod compatibility remain in scope. Excluding
   propulsion does not exclude tracked hands used for weapons or interaction.
 - Existing code and wire validation are retained unless a concrete integration
@@ -93,3 +93,22 @@ was added. Its [readback plan](texture-export-adapter-2.0-plan.md) and source
 disposition remain research only; do not implement its proposed image usage,
 warp initialization or writer changes merely to close a historical command row.
 Native screenshots, texture loading, warp rendering and graphics remain required.
+
+## Graphics, calibration and performance qualification
+
+The user selected native vkQuake graphics as the baseline, with OpenXR VR and
+tracked player/weapon presentation adapted to it. Existing particle types and
+effects should be reused; no missing type has been established by the current
+particle lifetime audit. Desktop remains native except requested shared features.
+Desktop and VR use the same AO setting/quality choices with mode-specific paths.
+
+One weapon/muzzle calibration serves solo and multiplayer. Useful authored
+weapon offsets remain supported, but preserving separate legacy multiplayer
+offset state or command aliases is not a completion requirement.
+
+The user explicitly deferred performance measurement and live headset/gaze/
+multiplayer testing. Historical frame-time/RSS/route benchmark acceptance text
+is optional research, not a completion gate. Requested performance mechanisms,
+large-map correctness, native graphics, conservative two-eye culling and final
+Linux/ARM software checks remain required. Do not claim measured speedups from
+source inspection or replace a required software check with a counter alone.
