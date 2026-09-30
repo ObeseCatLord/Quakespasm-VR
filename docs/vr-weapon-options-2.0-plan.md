@@ -60,6 +60,18 @@ and performance trials remain user work outside this goal.
 
 Source integration and whitespace checks alone do not certify these behaviors.
 
+## Existing menu-scale range correction
+
+The same primary-control comparison found native menu-scale adjustment capped
+at0.30 versus primary `vr_menu.c:767–768` range0.05..0.6. Native panel and
+view-locked wheel consume finite positive scale (`gl_screen.c:1807/1992`)
+through shared geometry without a0.30 ceiling; no source incompatibility
+justifies halving the inherited selectable size. Correct only the native
+VR_OPT_MENU_SCALE adjustment upper bound to0.60, keeping its existing rounding,
+step, draw/ray owner and saved cvar. This routine range repair adds no new
+control or policy. Final qualification includes both maximum panel sizes and
+pointer agreement; no executable check now.
+
 ## Source integration checkpoint
 
 The bounded adapter is source-integrated:109 added production lines in
