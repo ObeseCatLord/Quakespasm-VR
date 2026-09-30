@@ -2,9 +2,10 @@
 
 The [two-eye density-offset reopening](openxr-density-offsets-2.0-plan.md)
 adds primary Meta/Qualcomm and pinned Godot evidence on application tile offsets
-and all-attachment/MSAA flags. Its forthcoming advisory/disposition supersedes
-the historical offset assumption only where adopted; default/borrowed-image
-qualification below is not silently resolved by this planning checkpoint.
+and all-attachment/MSAA flags. Its adopted requested-Astra advisory uses the
+existing capability-qualified application-offset route and preserves native
+MSAA; the historical assumption that META always translates the map is
+superseded. Default/borrowed-image qualification remains unresolved.
 
 Status: implementation plan amended after the user's clarification on
 2026-09-29: favor Valve's FB/META route where it can work, while retaining KHR

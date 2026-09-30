@@ -1,5 +1,12 @@
 # Steam Frame runtime foveation: senior design disposition
 
+The [adopted two-eye offset disposition](openxr-density-offsets-2.0-plan.md)
+supersedes this historical review's assumption that META profile updates alone
+make Vulkan application tile offsets unnecessary. Official Meta/Qualcomm guidance
+and pinned Godot source support the existing offset adapter, with all-attachment
+flags and actual native samples qualified. The borrowed-image/default-selection
+contract remains open; quad views remain excluded.
+
 ## Current scope and controller source checkpoint — 2026-09-30
 
 Quad views remain excluded by user direction. Foveation uses the existing
