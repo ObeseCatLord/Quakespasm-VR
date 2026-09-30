@@ -280,3 +280,12 @@ contracts remain the assumption; no new wrap/dialect protocol is introduced.
 Expected correction under30 lines plus one pending flag. Scope must stay within
 the original native pending/frame owners and under650-line production estimate.
 All tests/probes remain deferred; this is a design reopening, not source closure.
+
+## Current authoritative review state
+
+The implementation is committed but not source-accepted: `c702d64f` has the
+continuous-dirty ACK liveness finding above. Reset-loop corrections
+`771e6f43`/`7e3c26a5` and loader prespawn ordering are accepted in bounded advisory
+source reviews. Stable-boundary design is under local Astra advisory review;
+no further production fix precedes that disposition. There is no NET-009/full
+migration completion claim. The user-owned migration document remains untouched.
