@@ -21,6 +21,11 @@ vkQuake graphics. No measurements are required by the active user scope.
 | PERF-021 single-pass stereo | gl_vidsdl.c:2076–2079 requires two-view multiview and sufficient descriptors; Shaders/stereo.inc uses independent gl_ViewIndex eye transforms in the shared shader variants. | Final representative real two-layer rendering; backend submission count alone is insufficient. |
 | PERF-022 mj4m1 work reduction | r_alias.c:1146–1174 rejects loaded offscreen models before skin/pose preparation; shared culling/batching/loading above remain active. | Final map correctness/software load and exit; user measures actual frame-time benefit. |
 | PERF-023 additional bounded gains | gl_mesh.c:1491–1502 compares exact untracked pose/cache identity before native BLAS work; :1662/1767 reuse matching poses. Tracked palettes deliberately bypass this cache. CPU polygon release and earlier alias rejection also reduce work through existing owners. | Final cache invalidation and unchanged scene behavior; no numeric improvement claimed. |
+| PERF-009 native jumbo lightmap packing | r_brush.c:1994..2087 GL_SortSurfaces is text-identical to pinned vkQuake, ordering styles/submodels/Morton locality before its shelf allocator. AllocBlock:1310 retains native shelves/bin placement; its sole native delta factors compute-input allocation into GL_AllocateLightmapInputs. | Final atlas/layout and animated moving-brush correctness. Ironwail size-order packing is not substituted because native grouping feeds one coordinate space per compute workgroup. |
+| PERF-014 native brush material grouping | r_brush.c:1053..1166 retains bounded indirect material/atlas/alpha/cutout/liquid/sky groups, descriptor reuse and indexed-indirect emission. foveation filters consume the same groups; direct r_world.c:1234..1493 flushes at material/atlas boundaries. | Final desktop/stereo direct/indirect, liquid/OIT and decal equivalence. No new bindless renderer is required by source evidence. |
+| PERF-015 shared GPU lightmap updates | r_brush.c:3912..4128 retains native style/active-light dirty regions and current/previous moving-submodel transforms; :3751/:3833 preserve image barriers, :3901 the indirect/vertex visibility barrier. update_lightmap.inc:289 admits either actual eye while desktop retains center-facing math. | Final style interpolation/dynamic light expiration/moving brush and both-eye images. See existing stereo lightmap review for historical shader ABI evidence; this inspection runs no shader tools. |
+| PERF-016 native no-VIS behavior | r_world.c:994..1043 selects native Mod_NoVisPVS/eye union, :477..567 uses native leaf culling and atomic surface bits with dependency marks; :1113..1194 retains worker/serial and indirect/direct paths. Native compute has no donor no-dynamic-light restriction. | Final no-VIS sky/liquid/efrag/light/oldskyleaf and serial/worker/direct/indirect correctness. Primary r_world.c:1062..1092 specialized GL GPU cache is not copied into a second cache/renderer. This does not prove equal CPU cost to that specialized path. |
+| PERF-020 Ironwail clip-bias adapter | Shaders/world.vert:45..62 masks the reserved instance bit before indexing and applies reversed-Z -1/1024 after stereo correction, matching Ironwail gl_shaders.h:518..525 math. r_brush.c:1152 and r_world.c batch eligibility retain non-world/non-decal/map_checks rules through current native material paths. | Existing z-fix disposition remains authoritative; final door/lift/decal/near-far/eye imagery remains open, no visible-equivalence claim from math alone. |
 
 These actual jobs are already present; importing another scheduler, loader or
 particle renderer would duplicate working native systems. The particle lifetime
@@ -28,10 +33,9 @@ patch only repairs allocation and reader ordering at the existing native owner.
 Foveation must never narrow visibility to the gaze region: both eye-visible
 world regions remain rendered, with shading density independently selected.
 
-PERF-009 native lightmap packing, PERF-014 brush grouping, PERF-015 lightmap
-updates, PERF-016 no-VIS equivalence, PERF-020 clip bias and optional graphics
-still require their complete existing-source/software dispositions. This bounded
-inspection does not certify them just because related symbols exist. Likewise
+The additional packing/grouping/lightmap/no-VIS/clip-bias source comparison above
+records actual native data and draw owners, not just related symbol names. Their
+final software/visible equivalence and optional graphics coverage remain open. Likewise
 the heap/loading/performance outcome rows remain unproven until relevant map
 software checks; quantitative speed/RSS and headset measurements are user-deferred
 and excluded from completion gates. Historical measurement protocols remain
