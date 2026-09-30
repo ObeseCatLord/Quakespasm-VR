@@ -308,3 +308,18 @@ internal tags, valid-index server writes use native spatial linking, and zoned
 string replacement copies aliased input before retirement. Native VM/hash/parser/
 string owners remain; final qualification is pending. This is a bounded
 reflection checkpoint, not complete VM safety.
+
+The [unsupported debug fallback adapter](qc-debug-fallback-2.0-plan.md) has
+bounded local Astra source acceptance. It routes identified inherited SSQC
+numeric/eligible named declarations through the existing loader to copied error
+stubs, including disabled setup, while preserving native `stof`/`multicast` and
+`ex_draw_*`. It adds no actual debug drawing. Support stays false both before
+and after lazy activation; metadata discovery remains separate from callability.
+
+A literal metadata comparison of the current extension/core-name candidates
+against the pinned interface CSV now finds candidates for all 256 MAIN rows and
+all 256 XR rows. This is source-name coverage only: the script reads registry
+text/CSV without loading or invoking a VM. It does not verify signatures,
+permissions, conditional registrations, handler behavior, error delivery or the
+complete primary history. Broader interface contracts and final software checks
+still remain open; metadata coverage alone cannot complete MOD-001/005.

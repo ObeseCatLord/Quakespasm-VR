@@ -36,9 +36,12 @@ unavailable core name may have a discoverable number, as in primary; use native
 `checkbuiltin` for callability. Numeric declarations and real QC bodies are
 unchanged. All duplicate empty declarations are visited by the native scan.
 
-Do not copy the primary re-release debug drawing names at 81–89: their primary
-handlers are already `PF_Fixme`, and those numbers are occupied by unrelated
-native extensions. Existing reviewed re-release adapters remain separate.
+This core-metadata slice omits the primary re-release debug drawing names at
+81–89: their primary handlers are already `PF_Fixme`, and native extensions
+occupy 81/82 (`stof`/`multicast`); 83–89 already fail. The later
+[debug fallback adapter](qc-debug-fallback-2.0-plan.md) preserves these errors
+through dynamic registry entries and the existing loader, without changing
+native numeric meanings. Existing reviewed re-release adapters remain separate.
 Source comparison also verified primary `PF_finalefinished` and native
 `PF_sv_finalefinished` both return zero at slot 79. Include `finaleFinished`
 metadata with native SSQC handling and native CSQC rejection, without claiming

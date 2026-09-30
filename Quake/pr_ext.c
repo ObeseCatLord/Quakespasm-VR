@@ -283,6 +283,11 @@ static void PF_NotImplemented (void)
 	// placeholder for intentionally not-implemented functions.
 }
 
+static void PF_UnimplementedDebugDraw (void)
+{
+	PR_RunError ("unimplemented builtin");
+}
+
 // maths stuff
 static void PF_Sin (void)
 {
@@ -6413,6 +6418,16 @@ static struct
 	{"ex_CheckPlayerEXFlags",		PF_sv_CheckPlayerEXFlags,		PF_NoCSQC,						0,		"float(entity playerEnt)"},
 	{"ex_walkpathtogoal",			PF_sv_walkpathtogoal,			PF_NoCSQC,						0,		"float(float movedist, vector goal)"},
 	{"ex_localsound",				PF_sv_localsound,				PF_NoCSQC,						0,		"void(entity client, string sample)"},
+	// Inherited core debug calls error; keep native ex_draw_* no-ops separate.
+	{"draw_point", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(vector point, float colormap, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
+	{"draw_line", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(vector start, vector end, float colormap, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
+	{"draw_arrow", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(vector start, vector end, float colormap, float size, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
+	{"draw_ray", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(vector start, vector direction, float length, float colormap, float size, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
+	{"draw_circle", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(vector origin, float radius, float colormap, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
+	{"draw_bounds", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(vector min, vector max, float colormap, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
+	{"draw_worldtext", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(string s, vector origin, float size, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
+	{"draw_sphere", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(vector origin, float radius, float colormap, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
+	{"draw_cylinder", PF_UnimplementedDebugDraw, PF_NoCSQC, 0, "void(vector origin, float halfHeight, float radius, float colormap, float lifetime, float depthtest)", "stub.Inherited debug drawing is unsupported."},
 	// Used in Quake 2026 re-relase update mg3: Not implemented in our side.
 	{"ex_draw_point",				PF_NotImplemented,			    PF_NoCSQC,						0,		"void(vector point, float colormap, float lifetime, float depthtest)"},
 	{"ex_draw_line",				PF_NotImplemented,				PF_NoCSQC,						0,		"void(vector start, vector end, float colormap, float lifetime, float depthtest)"},
@@ -6775,6 +6790,8 @@ static void PF_checkbuiltin (void)
 					}
 				}
 			}
+			else if (qcvm->builtins[binum] == PF_UnimplementedDebugDraw)
+				G_FLOAT (OFS_RETURN) = false;
 			else
 			{
 				G_FLOAT (OFS_RETURN) =

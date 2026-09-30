@@ -1978,7 +1978,8 @@ typedef enum
 {
 	EXBUILTIN_LEGACY,
 	EXBUILTIN_SSQC,
-	EXBUILTIN_CSQC
+	EXBUILTIN_CSQC,
+	EXBUILTIN_SSQC_ERROR
 } exbuiltin_vm_t;
 
 typedef struct
@@ -2009,6 +2010,16 @@ static const exbuiltin_t exbuiltins[] = {
 	{"ex_CheckPlayerEXFlags", -430, 0, EXBUILTIN_SSQC, "ex_CheckPlayerEXFlags"},
 	{"ex_walkpathtogoal", -91, 0, EXBUILTIN_SSQC, "ex_walkpathtogoal"},
 	{"dprint", -277, -25, EXBUILTIN_CSQC, NULL},
+	// These inherited core fallbacks must not alias stof/multicast when disabled.
+	{"draw_point", -81, 0, EXBUILTIN_SSQC_ERROR, "draw_point"},
+	{"draw_line", -82, 0, EXBUILTIN_SSQC_ERROR, "draw_line"},
+	{"draw_arrow", -83, 0, EXBUILTIN_SSQC_ERROR, "draw_arrow"},
+	{"draw_ray", -84, 0, EXBUILTIN_SSQC_ERROR, "draw_ray"},
+	{"draw_circle", -85, 0, EXBUILTIN_SSQC_ERROR, "draw_circle"},
+	{"draw_bounds", -86, 0, EXBUILTIN_SSQC_ERROR, "draw_bounds"},
+	{"draw_worldtext", -87, 0, EXBUILTIN_SSQC_ERROR, "draw_worldtext"},
+	{"draw_sphere", -88, 0, EXBUILTIN_SSQC_ERROR, "draw_sphere"},
+	{"draw_cylinder", -89, 0, EXBUILTIN_SSQC_ERROR, "draw_cylinder"},
 	{NULL, 0, 0, EXBUILTIN_LEGACY, NULL} /* end-of-list. */
 };
 
@@ -2031,6 +2042,8 @@ static void PR_PatchRereleaseBuiltins (void)
 		}
 		if (ex->vm == EXBUILTIN_SSQC && (qcvm != &sv.qcvm || !pr_checkextension.value))
 			continue;
+		if (ex->vm == EXBUILTIN_SSQC_ERROR && qcvm != &sv.qcvm)
+			continue;
 		if (ex->vm == EXBUILTIN_CSQC && qcvm != &cl.qcvm)
 			continue;
 		if (ex->extension_name)
@@ -2047,7 +2060,10 @@ static void PR_PatchRereleaseBuiltins (void)
 		for (i = 0; i < qcvm->progs->numfunctions; i++)
 		{
 			f = &qcvm->functions[i];
-			if (f->first_statement == ex->first_statement && f->s_name && !strcmp (PR_GetString (f->s_name), ex->name))
+			const qboolean empty_error_declaration = ex->vm == EXBUILTIN_SSQC_ERROR &&
+				f->first_statement == 0 && !f->parm_start && !f->locals;
+			if ((f->first_statement == ex->first_statement || empty_error_declaration) &&
+				f->s_name && !strcmp (PR_GetString (f->s_name), ex->name))
 				f->first_statement = patch_statement;
 		}
 	}

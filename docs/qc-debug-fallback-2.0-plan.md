@@ -85,3 +85,14 @@ No human decision or approval is needed for these authorized ABI repairs.
 The proposed write set remains unchanged. Source-only review, main judgment and
 the disposition above guide implementation; the end-of-goal review and actual
 error-delivery/platform acceptance remain required.
+
+## Implementation source checkpoint
+
+The accepted adapter is implemented in the stated native owners. Local Astra
+source review accepted all nine name/number pairs, dynamic SSQC-only registry
+entries, nonrecursive copied error wrapper, category-specific disabled/empty
+declaration handling, duplicate scan and lazy/cached false support reporting.
+Main diff inspection confirms native `stof`, `multicast`, `ex_draw_*`, ordinary
+QC bodies and prior adapter gates remain. Review retains the effective-setting
+provenance limitation above; no builds/tests/compiler/runtime probes ran.
+Actual error delivery and final Linux/ARM/migration qualification remain pending.
