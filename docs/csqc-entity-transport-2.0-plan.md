@@ -283,12 +283,12 @@ All tests/probes remain deferred; this is a design reopening, not source closure
 
 ## Current authoritative review state
 
-The implementation is committed but not source-accepted: `c702d64f` has the
-continuous-dirty ACK liveness finding above. Reset-loop corrections
-`771e6f43`/`7e3c26a5` and loader prespawn ordering are accepted in bounded advisory
-source reviews. Stable-boundary design is under local Astra advisory review;
-no further production fix precedes that disposition. There is no NET-009/full
-migration completion claim. The user-owned migration document remains untouched.
+The stable-boundary correction is committed as `39ea8209` and accepted in the
+bounded local Astra source advisory below. It supersedes the continuously moving
+ACK target in `c702d64f`. Reset-loop corrections `771e6f43`/`7e3c26a5` and loader
+prespawn ordering were accepted in earlier bounded source advisories. This
+qualifies the reviewed source correction only: there is no NET-009 end-to-end or
+full migration completion claim. The user-owned migration document is untouched.
 
 ## Stable-boundary design advisory disposition
 
@@ -312,3 +312,30 @@ client/reference reads. Source correctness, final actual scripted effects,
 normal-session loss recovery, Linux/ARM builds remain unqualified until their
 respective gates. Exactly-once lifecycle callbacks or reliable creation are not
 promised by this unchanged unreliable reference wire contract.
+
+## Stable-boundary source integration checkpoint
+
+Production `39ea8209` changes only `server.h` and `sv_main.c` (30 insertions,
+27 deletions). The main agent inspected the actual helper, ACK guards,
+post-callback emission commit, array allocation/growth/teardown and deferred
+candidate paths; scoped `git diff --check` passed. One coding worker implemented
+the specified transitions and was closed after integration.
+
+The follow-up local requested-Astra source advisory independently inspected the
+exact commit and found no actionable P1/P2 in this bounded correction:
+
+| Load-bearing recommendation | Main disposition and actual source evidence |
+| --- | --- |
+| Fresh free/hidden/native retirement shares one mask helper | Accept: `sv_main.c:1604`, called by free and snapshot transitions, retains RETIRENEW until emission. |
+| ACK discharges only the stable confirmed lifetime | Accept: `sv_main.c:1660`, matching retained removal log, WAIT with no RETIRENEW and sequence at-or-after boundary; clears only WAIT. |
+| Retry and replay must not continually reopen confirmation | Accept: `sv_main.c:2434`, reads live post-callback bits after candidate copy, installs boundary only for a fresh retirement, preserves it for ordinary retries. |
+| Exercise seven adopted transition cases in source | Accept bounded analysis: continuous dirty retry; lost first removal; fresh free before emission; fresh emitted removal before old ACK; hidden/native transition; callback rejection/free; old replay after confirmation. No runtime result is claimed. |
+
+Effective model/effort metadata is unavailable, so this remains an advisory,
+not a certified senior-skill pass. Native sequence ordering and valid retained
+frame ACK contracts remain assumptions. No builds, tests, compiler checks,
+runtime probes, fixtures or benchmarks ran. End-to-end scripted effects and
+loss/lifecycle qualification plus final Linux/ARM checks remain deferred until
+full implementation. The shared snapshot region is now available for the
+separately planned NET-003 design; this checkpoint adds no visibility policy,
+renderer work, protocol owner or quad-view rendering.
