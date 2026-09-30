@@ -79,3 +79,10 @@ after nonzero vector returns, world/inline queries and nearest-surface behavior.
 The full surface interface and malformed geometry/cache lifecycle remain outside
 this bounded source checkpoint. Review the final diff with local Astra before
 claiming source acceptance of these additional corrections.
+
+Follow-up implementation checkpoint: all three corrections are source-integrated.
+Local Astra Max accepted the final diff with no source blockers: normal failure
+clears XYZ, clipped-point refusal preserves the input, guarded arithmetic precedes
+face access, and signed projection matches primary. The native helper's callers,
+distance calculations and nearest-surface cache remain. No builds, tests or
+compiler/runtime probes ran; final consolidated qualification remains pending.

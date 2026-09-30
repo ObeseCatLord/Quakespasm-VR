@@ -2098,7 +2098,10 @@ static void PF_getsurfacenormal (void)
 	unsigned int surfidx = G_FLOAT (OFS_PARM1);
 	qmodel_t	*mod = qcvm->GetModel (ed->v.modelindex);
 
-	if (mod && mod->type == mod_brush && !mod->needload && surfidx < (unsigned int)mod->nummodelsurfaces)
+	if (mod && mod->type == mod_brush && !mod->needload && mod->nummodelsurfaces > 0 &&
+		mod->firstmodelsurface >= 0 && mod->firstmodelsurface < mod->numsurfaces &&
+		surfidx < (unsigned int)mod->nummodelsurfaces &&
+		surfidx < (unsigned int)(mod->numsurfaces - mod->firstmodelsurface))
 	{
 		surfidx += mod->firstmodelsurface;
 		VectorCopy (mod->surfaces[surfidx].plane->normal, G_VECTOR (OFS_RETURN));
@@ -2106,7 +2109,11 @@ static void PF_getsurfacenormal (void)
 			VectorInverse (G_VECTOR (OFS_RETURN));
 	}
 	else
-		G_FLOAT (OFS_RETURN) = 0;
+	{
+		G_FLOAT (OFS_RETURN + 0) = 0;
+		G_FLOAT (OFS_RETURN + 1) = 0;
+		G_FLOAT (OFS_RETURN + 2) = 0;
+	}
 }
 static void PF_getsurfacetexture (void)
 {
@@ -2140,7 +2147,7 @@ static float getsurface_clippointpoly (qmodel_t *model, msurface_t *surf, vec3_t
 	if (*distsquare < bestdist)
 	{ // within a specific range
 		// make sure it's within the poly
-		VectorMA (point, dist, surf->plane->normal, cpoint);
+		VectorMA (point, -dist, surf->plane->normal, cpoint);
 		for (e = surf->firstedge + surf->numedges; e > surf->firstedge; edge++)
 		{
 			edge = model->surfedges[--e];
@@ -2314,7 +2321,9 @@ static void PF_getsurfaceclippedpoint (void)
 
 	if (!model || model->type != mod_brush || model->needload)
 		return;
-	if (surfnum >= model->nummodelsurfaces)
+	if (surfnum < 0 || surfnum >= model->nummodelsurfaces ||
+		model->firstmodelsurface < 0 || model->firstmodelsurface >= model->numsurfaces ||
+		surfnum >= model->numsurfaces - model->firstmodelsurface)
 		return;
 
 	// all polies, we can skip parts. special case.

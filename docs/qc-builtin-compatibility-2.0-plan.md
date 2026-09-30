@@ -294,9 +294,10 @@ rejected buffer-add -1, optional cvar exclusion pattern and a full-name sorting
 prefix reset. These retain native services and do not complete the broader
 content/error-contract audit.
 
-The [inline-surface correction](qc-inline-surface-2.0-plan.md) now has main source
-review: point/triangle bounds select the actual inline face, absolute face-table
-bounds precede access, and degenerate faces return zero triangles. Native model
-storage and vertex/fan lookup remain. Final local Astra review and software
-qualification of this slice are pending; broader surface/reflection contracts
-remain open.
+The [inline-surface corrections](qc-inline-surface-2.0-plan.md) now have bounded
+local Astra source acceptance: point/triangle bounds select the actual inline
+face, absolute face-table bounds precede access, degenerate faces return zero
+triangles, negative clipped-point indices are refused, signed projection moves
+toward the plane, and invalid normals clear all components. Native model
+storage, vertex/fan lookup and nearest-surface cache remain. Software
+qualification and broader surface/reflection contracts remain open.
