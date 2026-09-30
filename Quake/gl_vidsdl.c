@@ -1579,12 +1579,53 @@ static VkSampleCountFlagBits GL_SelectNativeSampleCount (void)
 }
 
 #if defined(VK_QCOM_fragment_density_map_offset)
+typedef struct
+{
+	VkFormat format;
+	VkImageUsageFlags usage;
+	VkResult result;
+	VkImageFormatProperties properties;
+} density_offset_format_cache_entry_t;
+
+#define DENSITY_OFFSET_FORMAT_CACHE_SIZE 5
+static density_offset_format_cache_entry_t density_offset_format_cache[DENSITY_OFFSET_FORMAT_CACHE_SIZE];
+static uint32_t density_offset_format_cache_count;
+
 static qboolean GL_DensityOffsetSceneFormatSupported (VkFormat format, VkImageUsageFlags usage, VkSampleCountFlagBits samples,
 	uint32_t width, uint32_t height)
 {
+	VkResult result;
+	uint32_t i;
 	ZEROED_STRUCT (VkImageFormatProperties, properties);
-	if (vkGetPhysicalDeviceImageFormatProperties (vulkan_physical_device, format, VK_IMAGE_TYPE_2D,
-			VK_IMAGE_TILING_OPTIMAL, usage, VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM, &properties) != VK_SUCCESS)
+
+	for (i = 0; i < density_offset_format_cache_count; ++i)
+	{
+		const density_offset_format_cache_entry_t *entry = &density_offset_format_cache[i];
+		if (entry->format != format || entry->usage != usage)
+			continue;
+		result = entry->result;
+		if (result == VK_SUCCESS)
+			properties = entry->properties;
+		break;
+	}
+
+	if (i == density_offset_format_cache_count)
+	{
+		result = vkGetPhysicalDeviceImageFormatProperties (vulkan_physical_device, format, VK_IMAGE_TYPE_2D,
+			VK_IMAGE_TILING_OPTIMAL, usage, VK_IMAGE_CREATE_FRAGMENT_DENSITY_MAP_OFFSET_BIT_QCOM, &properties);
+		if ((result == VK_SUCCESS || result == VK_ERROR_FORMAT_NOT_SUPPORTED) &&
+			density_offset_format_cache_count < DENSITY_OFFSET_FORMAT_CACHE_SIZE)
+		{
+			density_offset_format_cache_entry_t *entry = &density_offset_format_cache[density_offset_format_cache_count++];
+			entry->format = format;
+			entry->usage = usage;
+			entry->result = result;
+			if (result == VK_SUCCESS)
+				entry->properties = properties;
+		}
+	}
+
+	if (result != VK_SUCCESS)
 		return false;
 	return (properties.sampleCounts & samples) && properties.maxArrayLayers >= 2 &&
 		properties.maxExtent.width >= width && properties.maxExtent.height >= height;
@@ -1619,6 +1660,9 @@ static void GL_InitDevice (void)
 	uint32_t i;
 	int		 arg_index;
 	int		 device_index = 0;
+#if defined(VK_QCOM_fragment_density_map_offset)
+	density_offset_format_cache_count = 0;
+#endif
 	GL_ClearOpenXRFragmentShadingRate ();
 
 	qboolean subgroup_size_control = false;

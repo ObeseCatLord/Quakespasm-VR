@@ -56,3 +56,21 @@ Linux/ARM verification, count real helper queries for unchanged frames, changed
 AO, FSAA and dimensions; compare eligibility and negative oversized/sample
 cases with the uncached reference, and verify recreated devices requery. Only
 the user's later measurements can establish a performance gain.
+
+## Source integration checkpoint
+
+One bounded web worker implemented the existing-helper cache and native-device
+reset in the planned file (46 additions, 2 deletions). Main reviewed the full
+diff and independently checked query inputs, fresh predicate evaluation,
+guarded reset and native instance/device/restart ordering. The requested local
+Astra Max advisor verified actual source and reported no actionable introduced
+P1/P2, including result initialization, failure-property refusal, full-cache
+misses, AO keys, current extent/sample checks and synchronous caller ownership.
+Adopt the patch; no subsequent production correction was required.
+
+Effective model/effort metadata is unexposed, so this is bounded requested-Astra
+source acceptance, not a certified senior-skill pass. Scoped whitespace review
+passes. No build, compiler check, runtime probe, fixture, benchmark or test ran.
+Query-count execution, Linux/ARM qualification and measured performance remain
+deferred. Borrowed density-image metadata/readiness and automatic FB/META
+preference remain separate unfinished migration requirements.
