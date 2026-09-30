@@ -104,6 +104,26 @@ advisory, not a certified senior-skill pass. No human decision is required.
 
 Production ownership and the 350-added-line bound remain as specified above.
 
+## Stage 1 source integration checkpoint
+
+The bounded web worker copied/adapted the inherited parser, FGD-only escape and
+upsert helpers and fallback constants in `Quake/common.c` (346 additions,
+29 deletions). Native language selection, KV parsing, SDL/KPF loading and the
+existing entries/hash owner remain. Actual load success controls non-English
+precedence; only appended keys cause a hash rebuild. FGD values use native
+UTF8 conversion, and the additional text allocation is freed with native load
+and shutdown lifetime. No renderer, VM, protocol or filesystem mount changed.
+
+Main reviewed the full diff and the primary parser/fallback contracts. The same
+requested local Astra Max advisor verified the actual patch and found no
+actionable introduced P1/P2, including both adopted design corrections,
+replacement-only hash behavior, empty/truncated BOM input, pointer ownership,
+reload/game-switch cleanup and both fallback rings. Adopt the implementation.
+Effective settings remain unexposed; bounded source acceptance only, not a
+certified senior-skill pass. Scoped whitespace review passes. No builds,
+compiler checks, engine probes, fixtures, benchmarks or tests ran. Stage 2
+and the consolidated software/visible-text acceptance remain required.
+
 ## Stage 2 source boundary checkpoint
 
 Main source reads establish the next adapter boundary without expanding stage 1:
@@ -132,5 +152,5 @@ Before stage-2 coding, draft the precise reused discovery order and native
 API/allocator adaptations, then obtain a bounded requested-Astra disposition.
 Do not recreate store discovery, export unused content-root APIs, add a second
 localization dictionary or copy the primary filesystem wholesale. No stage-2
-production code or asset copy is authorized by this source checkpoint alone;
+production code or asset copy is selected by this source checkpoint alone;
 the migration task already authorizes finishing its planned implementation.

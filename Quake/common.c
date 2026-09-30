@@ -4420,6 +4420,8 @@ typedef struct
 	unsigned   *indices;
 	locentry_t *entries;
 	char	   *text;
+	char	   *fgdbuffer;
+	qboolean	mg3_fallback;
 } localization_t;
 
 static localization_t localization;
@@ -4472,6 +4474,204 @@ static size_t mz_zip_file_read_func (void *opaque, mz_uint64 ofs, void *buf, siz
 #endif
 }
 
+static void LOC_BuildLookup (void)
+{
+	int i;
+	localization.numindices = localization.numentries * 2; // 50% load factor
+	if (!localization.numindices)
+		return;
+
+	localization.indices = (unsigned *)Mem_Realloc (localization.indices, localization.numindices * sizeof (*localization.indices));
+	memset (localization.indices, 0, localization.numindices * sizeof (*localization.indices));
+
+	for (i = 0; i < localization.numentries; i++)
+	{
+		locentry_t *entry = &localization.entries[i];
+		unsigned	pos = COM_HashString (entry->key) % localization.numindices, end = pos;
+
+		for (;;)
+		{
+			if (!localization.indices[pos])
+			{
+				localization.indices[pos] = i + 1;
+				break;
+			}
+
+			++pos;
+			if (pos == localization.numindices)
+				pos = 0;
+
+			if (pos == end)
+				Sys_Error ("LOC_LoadFile failed");
+		}
+	}
+}
+
+static void LOC_AddOrReplaceFGDEntry (char *key, char *value, int protected_entries)
+{
+	int i;
+	for (i = 0; i < localization.numentries; i++)
+	{
+		if (!strcmp (localization.entries[i].key, key))
+		{
+			if (i >= protected_entries)
+				localization.entries[i].value = value;
+			return;
+		}
+	}
+
+	if (localization.numentries == localization.maxnumentries)
+	{
+		localization.maxnumentries += localization.maxnumentries >> 1;
+		localization.maxnumentries = q_max (localization.maxnumentries, 32);
+		localization.entries = (locentry_t *)Mem_Realloc (localization.entries, sizeof (*localization.entries) * localization.maxnumentries);
+	}
+
+	localization.entries[localization.numentries].key = key;
+	localization.entries[localization.numentries].value = value;
+	localization.numentries++;
+}
+
+static void LOC_DecodeFGDEscapes (char *string, char *end, int lineno, const char *file)
+{
+	char *src = string;
+	char *dst = string;
+	while (src != end)
+	{
+		if (*src == '\\' && src + 1 < end)
+		{
+			char c = src[1];
+			src += 2;
+			switch (c)
+			{
+			case 'n': *dst++ = '\n'; break;
+			case 'r': *dst++ = '\r'; break;
+			case 't': *dst++ = '\t'; break;
+			case 'v': *dst++ = '\v'; break;
+			case 'b': *dst++ = '\b'; break;
+			case 'f': *dst++ = '\f'; break;
+			case '\"':
+			case '\'':
+			case '\\':
+				*dst++ = c;
+				break;
+			default:
+				Con_Printf ("LOC_LoadFile: unrecognized escape sequence \\%c on line %d in '%s'\n", c, lineno, file);
+				*dst++ = c;
+				break;
+			}
+			continue;
+		}
+
+		*dst++ = *src++;
+	}
+	*dst = 0;
+}
+
+static void LOC_ParseLocalizationFGD (char *text, const char *file, int protected_entries)
+{
+	int lineno = 0;
+	char *cursor = text;
+	while (*cursor)
+	{
+		char *line = cursor;
+		char *line_end = cursor;
+		char *scan;
+		char *key;
+		char *key_end;
+		char *value;
+		char *value_end;
+
+		lineno++;
+		while (*line_end && *line_end != '\n')
+			++line_end;
+
+		if (*line_end)
+			*line_end++ = 0;
+
+		while (q_isblank (*line))
+			++line;
+
+		if (*line == 0 || *line == '/')
+		{
+			cursor = line_end;
+			continue;
+		}
+		if (*line != '\"')
+		{
+			cursor = line_end;
+			continue;
+		}
+
+		key = line + 1;
+		key_end = key;
+		while (key_end < line_end)
+		{
+			if (*key_end == '\\' && key_end + 1 < line_end)
+			{
+				key_end += 2;
+				continue;
+			}
+			if (*key_end == '\"')
+				break;
+			++key_end;
+		}
+		if (key_end >= line_end)
+		{
+			cursor = line_end;
+			continue;
+		}
+
+		*key_end = 0;
+		LOC_DecodeFGDEscapes (key, key_end, lineno, file);
+		if (*key == '$')
+			++key;
+
+		scan = key_end + 1;
+		while (scan < line_end && q_isblank (*scan))
+			++scan;
+		if (scan >= line_end || *scan != ':')
+		{
+			cursor = line_end;
+			continue;
+		}
+		++scan;
+		while (scan < line_end && q_isblank (*scan))
+			++scan;
+		if (scan >= line_end || *scan != '\"')
+		{
+			cursor = line_end;
+			continue;
+		}
+
+		value = scan + 1;
+		value_end = value;
+		while (value_end < line_end)
+		{
+			if (*value_end == '\\' && value_end + 1 < line_end)
+			{
+				value_end += 2;
+				continue;
+			}
+			if (*value_end == '\"')
+				break;
+			++value_end;
+		}
+		if (value_end >= line_end)
+		{
+			cursor = line_end;
+			continue;
+		}
+
+		*value_end = 0;
+		LOC_DecodeFGDEscapes (value, value_end, lineno, file);
+		UTF8_ToQuake (value, strlen (value) + 1, value);
+		LOC_AddOrReplaceFGDEntry (key, value, protected_entries);
+
+		cursor = line_end;
+	}
+}
+
 /*
 ================
 LOC_LoadFile
@@ -4480,7 +4680,7 @@ LOC_LoadFile
 static qboolean LOC_LoadFile (const char *file)
 {
 	char  path[1024];
-	int	  i, lineno;
+	int	  lineno;
 	char *cursor;
 
 #ifdef USE_SDL3
@@ -4498,6 +4698,12 @@ static qboolean LOC_LoadFile (const char *file)
 		Mem_Free (localization.text);
 		localization.text = NULL;
 	}
+	if (localization.fgdbuffer)
+	{
+		Mem_Free (localization.fgdbuffer);
+		localization.fgdbuffer = NULL;
+	}
+	localization.mg3_fallback = false;
 	localization.numentries = 0;
 	localization.numindices = 0;
 
@@ -4737,42 +4943,34 @@ loaded:
 		cursor = next;
 	}
 
-	// hash all entries
-
-	localization.numindices = localization.numentries * 2; // 50% load factor
-	if (localization.numindices == 0)
+	if (localization.numentries == 0)
 	{
 		Con_Printf ("No localized strings in file '%s'\n", file);
 		return false;
 	}
 
-	localization.indices = (unsigned *)Mem_Realloc (localization.indices, localization.numindices * sizeof (*localization.indices));
-	memset (localization.indices, 0, localization.numindices * sizeof (*localization.indices));
-
-	for (i = 0; i < localization.numentries; i++)
-	{
-		locentry_t *entry = &localization.entries[i];
-		unsigned	pos = COM_HashString (entry->key) % localization.numindices, end = pos;
-
-		for (;;)
-		{
-			if (!localization.indices[pos])
-			{
-				localization.indices[pos] = i + 1;
-				break;
-			}
-
-			++pos;
-			if (pos == localization.numindices)
-				pos = 0;
-
-			if (pos == end)
-				Sys_Error ("LOC_LoadFile failed");
-		}
-	}
+	LOC_BuildLookup ();
 
 	Con_Printf ("Loaded %d strings from '%s'\n", localization.numentries, file);
 	return true;
+}
+
+static void LOC_LoadFGD (int protected_entries)
+{
+	char *text;
+	int	 oldnumentries = localization.numentries;
+
+	localization.fgdbuffer = (char *)COM_LoadFile ("fgd/messages.fgd", NULL);
+	if (!localization.fgdbuffer)
+		return;
+
+	text = localization.fgdbuffer;
+	if ((unsigned char)(text[0]) == 0xEF && (unsigned char)(text[1]) == 0xBB && (unsigned char)(text[2]) == 0xBF)
+		text += 3;
+
+	LOC_ParseLocalizationFGD (text, "fgd/messages.fgd", protected_entries);
+	if (localization.numentries > oldnumentries)
+		LOC_BuildLookup ();
 }
 /*
 ================
@@ -4820,9 +5018,23 @@ void LOC_Load (void)
 {
 	const char *name = !q_strcasecmp (language.string, "auto") ? LOC_GetSystemLanguage () : language.string;
 	char		path[MAX_QPATH];
+	qboolean	loaded = false;
+	qboolean	nonenglish = false;
+	int		protected_entries;
+
 	// A language is a name, not an arbitrary filesystem path.
-	if (COM_ModForbiddenChars (name) || q_snprintf (path, sizeof (path), "localization/loc_%s.txt", name) >= sizeof (path) || !LOC_LoadFile (path))
+	if (!COM_ModForbiddenChars (name) && q_snprintf (path, sizeof (path), "localization/loc_%s.txt", name) < sizeof (path))
+	{
+		loaded = LOC_LoadFile (path);
+		if (loaded && q_strcasecmp (name, "english"))
+			nonenglish = true;
+	}
+	if (!loaded)
 		LOC_LoadFile ("localization/loc_english.txt");
+
+	protected_entries = nonenglish ? localization.numentries : 0;
+	localization.mg3_fallback = COM_FileExists ("fgd/quake_mg3.fgd", NULL);
+	LOC_LoadFGD (protected_entries);
 }
 
 static void LOC_Language_f (cvar_t *var)
@@ -4863,6 +5075,7 @@ void LOC_Shutdown (void)
 	Mem_Free (localization.indices);
 	Mem_Free (localization.entries);
 	Mem_Free (localization.text);
+	Mem_Free (localization.fgdbuffer);
 	memset (&localization, 0, sizeof (localization));
 }
 
@@ -4903,6 +5116,77 @@ const char *LOC_GetRawString (const char *key)
 	return NULL;
 }
 
+typedef struct
+{
+	const char *key;
+	const char *value;
+} loc_fallback_t;
+
+static const char *LOC_GetMG3Fallback (const char *key)
+{
+	static const loc_fallback_t fallbacks[] = {
+		{"$mg3_qc_upgrade_success", "Upgrade successful: "},
+		{"$mg3_qc_upgrade_fail", "You cannot use this upgrade.\n"},
+		{"$mg3_qc_upgrade_health", "maximum health "},
+		{"$mg3_qc_upgrade_shell", "maximum shells "},
+		{"$mg3_qc_upgrade_nail", "maximum nails "},
+		{"$mg3_qc_upgrade_rocket", "maximum rockets "},
+		{"$mg3_qc_upgrade_cell", "maximum cells "},
+		{"$mg3_qc_armor_shard_touch", "Armor shard acquired.\n"},
+		{"$mg3_qc_axe_button", "Only the axe can activate this.\n"},
+		{"$mg3_qc_hammer", "Hammer acquired.\n"},
+		{"$mg3_qc_lavasuit", "Lava suit acquired.\n"},
+		{"$mg3_qc_lavasuit_wearing_out", "Lava suit is wearing out!\n"},
+		{"$mg3_qc_newgameplus_item", "New Game Plus item acquired.\n"},
+		{"$mg3_qc_ring_of_insight", "Ring of Insight acquired.\n"},
+		{"$mg3_qc_ring_of_oblivion", "Ring of Oblivion acquired.\n"},
+		{"$mg3_qc_rune1", "Rune of Madness acquired.\n"},
+		{"$mg3_qc_rune2", "Rune of Chaos acquired.\n"},
+		{"$mg3_qc_rune3", "Rune of Sorrow acquired.\n"},
+		{"$mg3_qc_rune4", "Rune of Sacrifice acquired.\n"},
+		{"$mg3_qc_sacricie_count_1_more", "One more sacrifice remains.\n"},
+		{"$mg3_qc_sacricie_count_2_more", "Two more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_3_more", "Three more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_4_more", "Four more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_5_more", "Five more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_6_more", "Six more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_7_more", "Seven more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_8_more", "Eight more sacrifices remain.\n"},
+		{"$mg3_qc_sacricie_count_more", "More sacrifices are required.\n"},
+		{"$mg3_qc_sacricie_count_complete", "The sacrifice is complete.\n"},
+		{"$mg3_hub_selected_easy", "Easy difficulty selected.\n"},
+		{"$mg3_hub_selected_normal", "Normal difficulty selected.\n"},
+		{"$mg3_hub_selected_hard", "Hard difficulty selected.\n"},
+		{"$mg3_hub_selected_nightmare", "Nightmare difficulty selected.\n"},
+		{"$mg3_selected_bloody_nightmare", "Bloody Nightmare selected.\n"},
+		{"$mg3_hub_rune1_hint_complete", "The Rune of Madness has been claimed.\n"},
+		{"$mg3_hub_rune2_hint_complete", "The Rune of Chaos has been claimed.\n"},
+		{"$mg3_hub_rune3_hint_complete", "The Rune of Sorrow has been claimed.\n"}
+	};
+	static char buffers[8][128];
+	static int buffer_index;
+	const char *source;
+	char *out;
+	int i, j;
+	if (!localization.mg3_fallback || !key || q_strncasecmp (key, "$mg3_", 5))
+		return NULL;
+	for (i = 0; i < (int)(sizeof (fallbacks) / sizeof (fallbacks[0])); ++i)
+		if (!q_strcasecmp (key, fallbacks[i].key))
+			return fallbacks[i].value;
+
+	source = key + 5;
+	if (!q_strncasecmp (source, "qc_", 3))
+		source += 3;
+	buffer_index = (buffer_index + 1) % (int)(sizeof (buffers) / sizeof (buffers[0]));
+	out = buffers[buffer_index];
+	for (i = 0, j = 0; source[i] && j < (int)sizeof (buffers[0]) - 1; ++i, ++j)
+		out[j] = source[i] == '_' ? ' ' : source[i];
+	out[j] = 0;
+	if (out[0] >= 'a' && out[0] <= 'z')
+		out[0] -= 'a' - 'A';
+	return out;
+}
+
 /*
 ================
 LOC_GetString
@@ -4913,7 +5197,40 @@ Returns localized string if available, or input string otherwise
 const char *LOC_GetString (const char *key)
 {
 	const char *value = LOC_GetRawString (key);
-	return value ? value : key;
+	if (value)
+		return value;
+	value = LOC_GetMG3Fallback (key);
+	if (value)
+		return value;
+
+	if (key && (key[0] == '$') && (key[1] == 'q' || key[1] == 'Q') && (key[2] == 'c' || key[2] == 'C') && (key[3] == '_'))
+	{
+		static char fallback_buffers[8][128];
+		static int fallback_idx = 0;
+		char *buf;
+		int i, j;
+
+		if (!q_strcasecmp (key, "$QC_Door"))
+			return "This door is opened elsewhere.";
+
+		fallback_idx = (fallback_idx + 1) % 8;
+		buf = fallback_buffers[fallback_idx];
+		for (i = 4, j = 0; key[i] && j < 127; i++, j++)
+		{
+			if (key[i] == '_')
+				buf[j] = ' ';
+			else
+				buf[j] = key[i];
+		}
+		buf[j] = '\0';
+
+		if (j > 0 && buf[0] >= 'a' && buf[0] <= 'z')
+			buf[0] = buf[0] - ('a' - 'A');
+
+		return buf;
+	}
+
+	return key;
 }
 
 /*
