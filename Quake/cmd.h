@@ -65,6 +65,9 @@ void Cbuf_Waited (void);
 // so wait sets a flag to inhibit execution of more commands, and we only clear it once we've run a network frame.
 // so this function lets the cbuf know when to clear the flag again (instead of part of cbuf_execute).
 
+void Cmd_QueuePostConfig (void);
+void Cmd_QueuePostConfigAfterGameChange (void);
+
 //===========================================================================
 
 /*

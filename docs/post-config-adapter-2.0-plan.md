@@ -42,7 +42,9 @@ Use unsigned generation values with defined wrap and a matching bounded
 decimal parser for the internally generated command. No new timer, callback,
 per-mod registry or config replay service. Match primary malformed flag rules:
 missing filename or following +/-option prints a diagnostic and is skipped.
-Refuse truncated OS paths rather than opening a different path. Absolute read
+Refuse truncation in the adapter's initial base-root join rather than opening a
+different path. Native fallback retains its existing path construction; this
+does not claim blanket engine path-safety. Absolute read
 failure does not become a game-search fallback. Relative OS failure may use
 ordinary COM_LoadFile search. Missing files report failure and leave the
 remaining command buffer/configs intact.
@@ -58,7 +60,8 @@ On game change supersede prior pending generation after quake.rc/vid_unlock.
 Do not alter ordinary exec/config precedence,
 autoexec, stuffcmds, donor video policy or behavior with no -postcfg. Repeated
 queued dispatch for the same generation is consumed once; game changes get a
-new generation. Queued scripts remain ordinary native script text, subject to
+new generation. Cancellation applies to pending dispatch markers, not script
+text already expanded into the buffer. Queued scripts remain ordinary native script text, subject to
 native command-buffer limits. A public/internal command spelling alone does
 not establish human-only provenance; native source gates/buffering remain.
 
@@ -66,6 +69,28 @@ Keeping only ordinary exec loses declared last-wins startup overrides and
 game-change reapplication. Replacing the config loader duplicates existing
 composition and cannot improve this narrow behavior. Reference queue reuse
 is the smaller complete adapter.
+
+## Source integration and advisory disposition
+
+The four-file adapter is implemented with134 net added production lines. Main
+read the complete helper and boundary diff, confirmed native allocation pairing
+and standard strcmp/UINT_MAX declarations, and corrected the draft's video
+ordering after amending this plan. The existing21-line CSQC dispatch repair
+remains baseline. Final requested-Astra source advisory recommends adoption
+with no demonstrated P1/P2 finding in this slice.
+
+| Review recommendation / qualification | Main disposition |
+| --- | --- |
+| Preserve primary unlock/postcfg/binding ordering on both client paths. | Adopt corrected queues; dedicated startup retains autoexec/stuffcmds with separating newline and later postcfg. |
+| Native loaders and copied command text have compatible ownership. | Adopt both loaders with Mem_Free; no hunk/malloc branches or new loader. |
+| Scan/reverse insertion and bounded unsigned generation are consistent. | Adopt source adapter within150-line ceiling; no new config state owner. |
+| Generation invalidates pending markers, not expanded scripts. | Correct contract above; keep native exec/wait semantics rather than adding transactional replay. |
+| Root-join truncation guard does not qualify native fallback or buffer limits. | Record narrow guard above and existing native limits; do not claim global path safety or atomic insertion. |
+
+Effective reviewer settings were unexposed: requested-Astra source advisory,
+not certified skill/model/runtime acceptance. Scoped whitespace checks passed.
+No builds, tests, engine/compiler probes, fixtures or benchmarks were run;
+the Linux/ARM matrix below remains final software qualification.
 
 ## Final acceptance after full implementation
 

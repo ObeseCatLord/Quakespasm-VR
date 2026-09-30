@@ -95,7 +95,7 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 | ID / behavior | Pinned source evidence | Destination / treatment | Acceptance |
 |---|---|---|---|
 | BASE-001 — Classic single-player campaigns, mission packs, demos and dedicated server operation | MAIN:Quake/host.c:47 (Host_Init); MAIN:Quake/cl_demo.c:468 (CL_PlayDemo_f) | Quake/host.c;Quake/cl_demo.c;Quake/sv_main.c; **KEEP-DONOR**, P0 | Launch id1/Hipnotic/Rogue, record/play demo, run dedicated server and desktop client without a VR runtime. |
-| BASE-002 — Existing console, cvars, aliases, configs, bind commands and startup ordering | MAIN:Quake/cmd.c:777 (Cmd_AddCommand); MAIN:Quake/cvar.c:548 (Cvar_RegisterVariable); MAIN:Quake/cfgfile.c:2 (CFG) | Quake/cmd.c;Quake/cvar.c;Quake/cfgfile.c; **ADAPT**, P2 | Load copied old configs and aliases; retain user overrides, postcfg ordering and unknown-variable compatibility. |
+| BASE-002 — Existing console, cvars, aliases, configs, bind commands and startup ordering | MAIN:Quake/cmd.c:777 (Cmd_AddCommand); MAIN:Quake/cvar.c:548 (Cvar_RegisterVariable); MAIN:Quake/cfgfile.c:2 (CFG) | Quake/cmd.c;Quake/cvar.c;Quake/common.c; **ADAPT**, P2 | Retain native configs/aliases and user overrides including postcfg ordering; legacy saved-setting migration is not required. |
 | BASE-003 — Ordinary mouse/keyboard/joystick desktop movement and demo camera | MAIN:Quake/in_sdl.c:822 (IN_Move); MAIN:Quake/default_cfg.h:4 (bind) | Quake/in_sdl.c;Quake/keys.c;Quake/view.c; **ADAPT**, P1 | Desktop movement and demo turning match reference; enabling then disabling VR releases held keys and restores desktop input. |
 
 ### Inherited VR

@@ -1412,16 +1412,18 @@ void Host_Init (void)
 		// 2026 update compat: enable scr_usekfont (for word wrapping) in case mg3 is used with original id1 data.
 		Cvar_SetValueQuick (&scr_usekfont, mg3 ? 1.0f : 0.0f);
 		Cbuf_InsertText ("exec quake.rc\n");
-		Cbuf_AddText ("vr_migrate_mod_bindings\n");
 		// johnfitz -- in case the vid mode was locked during vid_init, we can unlock it now.
 		// note: two leading newlines because the command buffer swallows one of them.
 		Cbuf_AddText ("\n\nvid_unlock\n");
+		Cmd_QueuePostConfig ();
+		Cbuf_AddText ("vr_migrate_mod_bindings\n");
 	}
 
 	if (cls.state == ca_dedicated)
 	{
 		Cbuf_AddText ("exec autoexec.cfg\n");
-		Cbuf_AddText ("stuffcmds");
+		Cbuf_AddText ("stuffcmds\n");
+		Cmd_QueuePostConfig ();
 		Cbuf_Execute ();
 		if (!sv.active)
 			Cbuf_AddText ("map start\n");

@@ -42,6 +42,8 @@ typedef struct cmdalias_s
 cmdalias_t *cmd_alias;
 
 static qboolean cmd_wait;
+static unsigned cmd_postcfg_generation;
+static unsigned cmd_postcfg_executed_generation = UINT_MAX;
 
 //=============================================================================
 
@@ -300,6 +302,131 @@ void Cmd_Exec_f (void)
 		Con_Printf ("execing %s\n", path);
 	Cbuf_InsertText (buf);
 	Mem_Free (buf);
+}
+
+static qboolean Cmd_IsAbsoluteOSPath (const char *path)
+{
+	return path[0] == '/' || path[0] == '\\' ||
+		(path[0] && path[1] == ':');
+}
+
+static char *Cmd_LoadPostConfig (const char *filename)
+{
+	char os_path[MAX_OSPATH];
+	char *buf;
+
+	if (Cmd_IsAbsoluteOSPath (filename))
+		return (char *)COM_LoadMallocFile_TextMode_OSPath (filename, NULL);
+
+	if ((size_t)q_snprintf (os_path, sizeof (os_path), "%s/%s", com_basedir, filename) >= sizeof (os_path))
+		return NULL;
+	buf = (char *)COM_LoadMallocFile_TextMode_OSPath (os_path, NULL);
+	if (buf)
+		return buf;
+
+	return (char *)COM_LoadFile (filename, NULL);
+}
+
+static void Cmd_InsertPostConfig (const char *filename)
+{
+	char *buf = Cmd_LoadPostConfig (filename);
+
+	if (!buf)
+	{
+		Con_Printf ("couldn't exec postcfg %s\n", filename);
+		return;
+	}
+
+	Con_Printf ("execing postcfg %s\n", filename);
+	Cbuf_InsertText (buf);
+	Mem_Free (buf);
+}
+
+static void Cmd_InsertPostConfigFiles (void)
+{
+	const char *filenames[MAX_NUM_ARGVS];
+	int i, count = 0;
+
+	for (i = 1; i < com_argc; ++i)
+	{
+		if (!com_argv[i] || strcmp (com_argv[i], "-postcfg"))
+			continue;
+		if (i + 1 >= com_argc || !com_argv[i + 1] ||
+			com_argv[i + 1][0] == '-' || com_argv[i + 1][0] == '+')
+		{
+			Con_Printf ("-postcfg requires a cfg filename\n");
+			continue;
+		}
+		filenames[count++] = com_argv[++i];
+	}
+
+	while (count > 0)
+		Cmd_InsertPostConfig (filenames[--count]);
+}
+
+static qboolean Cmd_ParsePostConfigGeneration (const char *text, unsigned *value_out)
+{
+	unsigned value = 0;
+
+	if (!*text)
+		return false;
+	while (*text)
+	{
+		unsigned digit;
+		if (*text < '0' || *text > '9')
+			return false;
+		digit = (unsigned)(*text++ - '0');
+		if (value > (UINT_MAX - digit) / 10)
+			return false;
+		value = value * 10 + digit;
+	}
+	if (value == UINT_MAX)
+		return false;
+	*value_out = value;
+	return true;
+}
+
+static void Cmd_ExecPostConfig_f (void)
+{
+	unsigned generation;
+
+	if (Cmd_Argc () != 2 ||
+		!Cmd_ParsePostConfigGeneration (Cmd_Argv (1), &generation) ||
+		generation != cmd_postcfg_generation ||
+		generation == cmd_postcfg_executed_generation)
+		return;
+
+	cmd_postcfg_executed_generation = generation;
+	Cmd_InsertPostConfigFiles ();
+}
+
+static void Cmd_QueuePostConfigCommand (qboolean supersede_pending)
+{
+	if (!COM_CheckParm ("-postcfg"))
+		return;
+
+	if (supersede_pending)
+	{
+		if (cmd_postcfg_generation == UINT_MAX - 1)
+		{
+			cmd_postcfg_generation = 0;
+			cmd_postcfg_executed_generation = UINT_MAX;
+		}
+		else
+			++cmd_postcfg_generation;
+	}
+
+	Cbuf_AddText (va ("exec_postcfg %u\n", cmd_postcfg_generation));
+}
+
+void Cmd_QueuePostConfig (void)
+{
+	Cmd_QueuePostConfigCommand (false);
+}
+
+void Cmd_QueuePostConfigAfterGameChange (void)
+{
+	Cmd_QueuePostConfigCommand (true);
 }
 
 /*
@@ -596,6 +723,7 @@ void Cmd_Init (void)
 
 	Cmd_AddCommand ("stuffcmds", Cmd_StuffCmds_f);
 	Cmd_AddCommand ("exec", Cmd_Exec_f);
+	Cmd_AddCommand ("exec_postcfg", Cmd_ExecPostConfig_f);
 	Cmd_AddCommand ("echo", Cmd_Echo_f);
 	Cmd_AddCommand ("alias", Cmd_Alias_f);
 	Cmd_AddCommand ("cmd", Cmd_ForwardToServer);
