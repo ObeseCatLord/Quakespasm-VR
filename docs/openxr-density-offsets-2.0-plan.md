@@ -1,6 +1,6 @@
 # Two-eye FB/META density offsets: reopened design brief
 
-2026-09-30; plan before code on2.0. Solo operator, narrow integration, no new
+2026-09-30; plan before code on2.0. Main integration with bounded delegated coding, no new
 renderer or runtime owner. Goal: the existing runtime foveation path follows
 gaze where the supported Vulkan/runtime route uses tile offsets, while retaining
 vkQuake MSAA, desktop graphics, conservative two-eye culling and full-rate
@@ -149,3 +149,45 @@ stereo retry after rejected optional flags/profile. End-to-end GPU validation an
 off/on/off center movement remain actual device work, not counter/mocked proof.
 The user performs live headset/gaze/multiplayer/timing tests separately; no
 Frame/Beyond compatibility or performance gain is certified by source alone.
+
+## Source implementation checkpoint
+
+The bounded Quake/gl_vidsdl.c patch reuses native device and resource owners:
+
+- GL_SelectNativeSampleCount contains the original FSAA16/8/4/2 choices and
+  Intel16 exception, with a defined1x result if its format query fails. Device
+  qualification and resource creation use that one selector. Ordinary frame
+  entry consumes the existing sample_count; it adds no per-frame selector query.
+- GL_DensityOffsetFormatsSupported qualifies actual resolve, optional MSAA color,
+  depth/AO and density usages with the offset flag and actual native samples.
+  Resource activation also checks real scene/density extents. This checks GPU
+  support, not borrowed-image metadata or creation attestation.
+- The complete startup eye candidate requires META image-flags support. A
+  selected FDM device enables its qualified offset capability independently of
+  mutable fixed/eye mode. Explicit fixed with no offset candidate remains possible.
+  No-KHR device preparation under the development switch is retained for later
+  runtime discovery; this preparation does not promise late eye-offset support.
+- MSAA color creation preserves the offset flag already set for scene/resolve.
+  Existing depth flags, two-eye pass-end submission and signed conversion remain.
+  No OIT attachment, shader, render graph or desktop graphics algorithm changed.
+- GL_OpenXRAttach rechecks current META/eye support and requests the offset bit
+  through the existing XR owner. Capability loss requests ordinary stereo before
+  its flag precondition; optional creation rejection retains the existing retry.
+  Eye activation requires enabled offset capability, never automatic fixed mode.
+
+One bounded web coding worker produced the patch; main reviewed the diff and
+corrected unnecessary per-frame native format querying, retained late device
+readiness, and retained offset readiness across fixed-to-eye policy changes.
+Production commit92b68e9d is107 additions/73 deletions in the one planned file.
+Scoped git diff --check passes. Final requested-Astra source advisory found one
+P2 at device selection: when both backends qualify, a saved foveation-off setting
+selects KHR permanently and prevents later META activation without restart. Main
+confirmed the mode predicate in prefer_fb_eye and the exclusive feature selection.
+Adopt the bounded correction: remove that eye-mode predicate from capability
+preparation, preserving the development gate, actual complete candidate and all
+runtime activation/toggle checks. This is capability readiness, not automatic
+foveation activation. No other P1/P2 was reported for92b68e9d. Effective review
+settings remain unexposed; source advisory only. No build, compiler, runtime,
+fixture, benchmark or device check was performed.
+Automatic FB/META preference still requires the explicit remaining contract
+evidence above; this checkpoint does not close that release blocker.
