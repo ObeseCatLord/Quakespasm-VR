@@ -164,6 +164,7 @@ void ED_Free (edict_t *ed)
 
 	SV_GorillaInvalidateSurface (ed);
 	SV_InvalidateRecentTeleportTrigger (ed);
+	SV_CSQCEntityFreed (ed);
 	SV_UnlinkEdict (ed); // unlink from world bsp
 
 	ed->free = true;
@@ -1782,6 +1783,8 @@ void		  PR_SwitchQCVM (qcvm_t *nvm)
 void PR_ClearProgs (qcvm_t *vm)
 {
 	qcvm_t *oldvm = qcvm;
+	if (vm == &cl.qcvm)
+		CL_ClearCSQCEntities (false);
 	if (!vm->progs)
 		return; // wasn't loaded.
 	qcvm = NULL;

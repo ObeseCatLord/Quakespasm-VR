@@ -371,6 +371,7 @@ typedef struct
 #define svcdp_pointparticles	61 // [short] effectnum [vector] start [vector] velocity [short] count
 #define svcdp_pointparticles1	62 // [short] effectnum [vector] start, same as svc_pointparticles except velocity is zero and count is 1
 #define svcfte_spawnbaseline2	66
+#define svcfte_csqcentities		76
 #define svcfte_updatestatstring 78
 #define svcfte_updatestatfloat	79
 #define svcfte_cgamepacket		83

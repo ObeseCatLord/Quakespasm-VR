@@ -249,7 +249,9 @@ struct pr_extfuncs_s
 	QCEXTFUNC (CSQC_Parse_Damage, "float(float save, float take, vector dir)")                                                            \
 	QCEXTFUNC (CSQC_Parse_CenterPrint, "float(string msg)")                                                                               \
 	QCEXTFUNC (CSQC_Parse_Print, "void(string printmsg, float printlvl)") \
-	QCEXTFUNC (CSQC_Input_Frame, "void()")
+	QCEXTFUNC (CSQC_Input_Frame, "void()") \
+	QCEXTFUNC (CSQC_Ent_Update, "void(float isnew)") /*custom entity payload reads*/ \
+	QCEXTFUNC (CSQC_Ent_Remove, "void()")
 
 #define QCEXTFUNC(n, t) func_t n;
 	QCEXTFUNCS_COMMON
@@ -323,6 +325,7 @@ struct pr_extfields_s
 									   /*end of list*/
 #define QCEXTFIELDS_GAME                               \
 	/*stuff used by csqc+ssqc, but not menu*/          \
+	QCEXTFIELD (entnum, ".float") /*server entity number for CSQC networking*/ \
 	QCEXTFIELD (customphysics, ".void()") /*function*/ \
 	QCEXTFIELD (pmove_flags, ".float")                 \
 	QCEXTFIELD (gravity, ".float")		  /*float*/    \

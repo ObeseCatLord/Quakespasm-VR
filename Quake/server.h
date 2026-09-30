@@ -235,6 +235,7 @@ typedef struct client_s
 	qboolean	 pextknown;
 	unsigned int offered_qsvr; // capability received under PROTOCOL_QSVR_PROFILE
 	unsigned int offered_pmove_policies; // consumers offered with the private profile
+	unsigned int offered_pext1; // original public CSQC offer, retained across sign-ons
 	unsigned int offered_pext2; // original public FTE offer, retained across map sign-ons
 	unsigned int protocol_qsvr; // selected private wire profile; zero is public
 	unsigned int protocol_pext1;
@@ -302,9 +303,14 @@ typedef struct client_s
 	size_t		  numpreviousentities;
 	size_t		  maxpreviousentities;
 	unsigned int  snapshotresume;
+	qboolean      csqcactive; // explicit client callback readiness
+	size_t        csqcsnapshotresume;
+	unsigned int *pendingcsqcentities_bits;
+	size_t        numpendingcsqcentities;
 	unsigned int *pendingentities_bits; // UF_ flags for each entity
 	size_t		  numpendingentities;	// realloc if too small
 #define SENDFLAG_PRESENT 0x80000000u	// tracks that we previously sent one of these ents (resulting in a remove if the ent gets remove()d).
+#define SENDFLAG_CURRENT 0x20000000u // current snapshot eligibility, never replayed or exposed to QC
 #define SENDFLAG_REMOVE	 0x40000000u	// for packetloss to signal that we need to resend a remove.
 #define SENDFLAG_USABLE	 0x00ffffffu	// SendFlags bits that the qc is actually able to use (don't get confused if the mod uses SendFlags=-1).
 	struct deltaframe_s
@@ -474,7 +480,7 @@ typedef enum
 #define MSG_ALL			  2 // reliable to all
 #define MSG_INIT		  3 // write to the init string
 #define MSG_EXT_MULTICAST 4 // temporary buffer that can be splurged more reliably / with more control.
-#define MSG_EXT_ENTITY	  5 // for csqc networking. we don't actually support this. I'm just defining it for completeness.
+#define MSG_EXT_ENTITY	  5 // SendEntity payload, using sv.multicast
 
 // clang-format on
 
@@ -556,6 +562,8 @@ void SV_InvalidateRecentTeleportTrigger (edict_t *trigger);
 
 void SVFTE_Ack (client_t *client, int sequence);
 void SVFTE_DestroyFrames (client_t *client);
+void SV_SetCSQCActive (client_t *client, qboolean active);
+void SV_CSQCEntityFreed (edict_t *ed);
 void SV_BuildEntityState (edict_t *ent, entity_state_t *state);
 void SV_SendClientMessages (void);
 void SV_ClearDatagram (void);

@@ -103,6 +103,10 @@ static const char *CL_ServerCommandName (int cmd)
 		return "svc_vrikpose";
 	if (cmd == svc_voice)
 		return "svc_voice";
+	if (cmd == svcdp_csqcentities)
+		return "svcdp_csqcentities";
+	if (cmd == svcfte_csqcentities)
+		return "svcfte_csqcentities";
 	if ((unsigned int)cmd < NUM_SVC_STRINGS && svc_strings[cmd])
 		return svc_strings[cmd];
 	return "unknown";
@@ -1598,6 +1602,7 @@ static void CLFTE_ParseEntitiesUpdate (void)
 				/*removal of world - means forget all entities, aka a full reset*/
 				if (cl_shownet.value >= 3)
 					Con_SafePrintf ("%3i:     Reset all\n", msg_readcount);
+				CL_ClearCSQCEntities (true);
 				for (newnum = 1; newnum < cl.num_entities; newnum++)
 				{
 					entity_t *reset_ent = CL_EntityNum (newnum);
@@ -2289,6 +2294,170 @@ static qboolean CL_ParseServerInfo (void)
 	if (cl.protocol_pext2 || (cl.protocol_pext1 & PEXT1_CSQC))
 		cl.protocol_particles = true; // doesn't have a pext flag of its own, but at least we know what it is.
 	return false;
+}
+
+static void CSQC_ClearCsEdictForSSQC (size_t entnum, qboolean notify)
+{
+	edict_t *ed;
+
+	if (!entnum || entnum >= MAX_EDICTS)
+		Host_Error ("CSQC_ClearCsEdictForSSQC: invalid server entity %zu", entnum);
+	if (entnum >= cl.ssqc_to_csqc_max)
+		return;
+
+	ed = cl.ssqc_to_csqc[entnum];
+	if (!ed)
+		return;
+
+	/* Detach first; a remove callback may keep this edict as a local effect. */
+	cl.ssqc_to_csqc[entnum] = NULL;
+	if (notify && !ed->free)
+	{
+		int oldself = pr_global_struct->self;
+
+		pr_global_struct->time = qcvm->time = cl.time;
+		pr_global_struct->self = EDICT_TO_PROG (ed);
+		if (qcvm->extfuncs.CSQC_Ent_Remove)
+			PR_ExecuteProgram (qcvm->extfuncs.CSQC_Ent_Remove);
+		else
+			ED_Free (ed);
+		/* Restore the raw QC value even if its edict was freed by the callback. */
+		pr_global_struct->self = oldself;
+	}
+	ED_Release (ed);
+}
+
+static void CSQC_UpdateCsEdictForSSQC (size_t entnum)
+{
+	edict_t *ed;
+	eval_t *ev;
+	qboolean isnew;
+	int oldself;
+
+	if (!entnum || entnum >= MAX_EDICTS)
+		Host_Error ("CSQC_UpdateCsEdictForSSQC: invalid server entity %zu", entnum);
+	if (entnum >= cl.ssqc_to_csqc_max)
+	{
+		size_t nc = q_min ((size_t)MAX_EDICTS, entnum + 64);
+		edict_t **nptr = Mem_Realloc (cl.ssqc_to_csqc, nc * sizeof (*cl.ssqc_to_csqc));
+
+		if (!nptr)
+			Sys_Error ("CSQC_UpdateCsEdictForSSQC: realloc failed");
+		cl.ssqc_to_csqc = nptr;
+		memset (cl.ssqc_to_csqc + cl.ssqc_to_csqc_max, 0,
+			(nc - cl.ssqc_to_csqc_max) * sizeof (*cl.ssqc_to_csqc));
+		cl.ssqc_to_csqc_max = nc;
+	}
+
+	pr_global_struct->time = qcvm->time = cl.time;
+	ed = cl.ssqc_to_csqc[entnum];
+	if (ed && ed->free)
+	{
+		/* Retention kept the slot stable, but free edicts are not callable. */
+		CSQC_ClearCsEdictForSSQC (entnum, false);
+		ed = NULL;
+	}
+	isnew = !ed;
+	if (isnew)
+	{
+		ed = ED_Alloc ();
+		if (ed->free)
+			Host_Error ("CSQC_UpdateCsEdictForSSQC: allocation hook freed entity");
+		ED_Retain (ed);
+		cl.ssqc_to_csqc[entnum] = ed;
+		ev = GetEdictFieldValue (ed, qcvm->extfields.entnum);
+		if (ev)
+			ev->_float = entnum;
+	}
+
+	oldself = pr_global_struct->self;
+	G_FLOAT (OFS_PARM0) = isnew;
+	pr_global_struct->self = EDICT_TO_PROG (ed);
+	PR_ExecuteProgram (qcvm->extfuncs.CSQC_Ent_Update);
+	if (ed->free)
+		CSQC_ClearCsEdictForSSQC (entnum, false);
+	pr_global_struct->self = oldself;
+}
+
+void CL_ClearCSQCEntities (qboolean notify)
+{
+	qcvm_t *oldvm = qcvm;
+
+	if (cl.ssqc_to_csqc)
+	{
+		/* Teardown may arrive with the server, client, or no VM active. */
+		if (oldvm != &cl.qcvm)
+		{
+			PR_SwitchQCVM (NULL);
+			PR_SwitchQCVM (&cl.qcvm);
+		}
+		for (size_t entnum = 1; entnum < cl.ssqc_to_csqc_max; entnum++)
+			CSQC_ClearCsEdictForSSQC (entnum, notify);
+		if (oldvm != &cl.qcvm)
+		{
+			PR_SwitchQCVM (NULL);
+			PR_SwitchQCVM (oldvm);
+		}
+	}
+	Mem_Free (cl.ssqc_to_csqc);
+	cl.ssqc_to_csqc = NULL;
+	cl.ssqc_to_csqc_max = 0;
+	if (!notify)
+		cl.csqc_enable_pending = false;
+}
+
+/* The inherited DP/FTE services share the same custom payload and index framing. */
+static void CLFTE_ParseCSQCEntitiesUpdate (void)
+{
+	qcvm_t *oldvm = qcvm;
+	unsigned int entnum;
+	qboolean removeflag;
+
+	/* An opaque payload has no length with which to skip a missing callback. */
+	if (!cl.qcvm.progs || !cl.qcvm.edicts || !cl.qcvm.extfuncs.CSQC_Ent_Update)
+		Host_Error ("Received svc_csqcentities but CSQC_Ent_Update is missing");
+	if (oldvm != &cl.qcvm)
+	{
+		PR_SwitchQCVM (NULL);
+		PR_SwitchQCVM (&cl.qcvm);
+	}
+
+	while (!msg_badread)
+	{
+		entnum = (unsigned short)MSG_ReadShort ();
+		if (msg_badread || !entnum)
+			break; // only the zero short terminates this service
+		removeflag = !!(entnum & 0x8000);
+		if (entnum & 0x4000)
+		{
+			int highbits = MSG_ReadByte ();
+
+			if (msg_badread)
+				break;
+			entnum = (entnum & 0x3fff) | ((unsigned int)highbits << 14);
+		}
+		else
+			entnum &= ~0x8000u;
+
+		if (removeflag)
+		{
+			if (cl_shownet.value >= 3)
+				Con_SafePrintf ("%3i:     CSQC remove %u\n", msg_readcount, entnum);
+			CSQC_ClearCsEdictForSSQC (entnum, true);
+		}
+		else
+		{
+			if (cl_shownet.value >= 3)
+				Con_SafePrintf ("%3i:     CSQC update %u\n", msg_readcount, entnum);
+			CSQC_UpdateCsEdictForSSQC (entnum);
+		}
+	}
+
+	if (oldvm != &cl.qcvm)
+	{
+		PR_SwitchQCVM (NULL);
+		PR_SwitchQCVM (oldvm);
+	}
 }
 
 /*
@@ -3687,6 +3856,11 @@ void CL_ParseServerMessage (void)
 			if (!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
 				Host_Error ("Received svcfte_updateentities but extension not active");
 			CLFTE_ParseEntitiesUpdate ();
+			break;
+
+		case svcdp_csqcentities:
+		case svcfte_csqcentities:
+			CLFTE_ParseCSQCEntitiesUpdate ();
 			break;
 
 		case svcfte_cgamepacket:

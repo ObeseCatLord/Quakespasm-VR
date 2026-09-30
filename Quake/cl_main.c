@@ -2496,6 +2496,27 @@ void CL_AccumulateCmd (void)
 	cl.pendingcmd.seconds = cl.time - cl.pendingcmd.servertime;
 }
 
+/* The loader arms this once after Init. Retry only the bounded reliable write. */
+void CL_TryEnableCSQCEntities (void)
+{
+	if (!cl.csqc_enable_pending || cls.state != ca_connected || cls.demoplayback ||
+		!cl.qcvm.progs || !cl.qcvm.edicts || !cl.qcvm.extfuncs.CSQC_Ent_Update ||
+		!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS) ||
+		!(cl.protocol_qsvr == QSVR_PROTOCOL_PINNED ||
+		  (!cl.protocol_qsvr && (cl.protocol_pext1 & PEXT1_CSQC))))
+		return;
+
+	/* Account for the string command opcode and terminating NUL as well. */
+	if (cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		(size_t)cls.message.cursize + 1 + sizeof ("enablecsqc") >
+		(size_t)cls.message.maxsize)
+		return;
+
+	MSG_WriteByte (&cls.message, clc_stringcmd);
+	MSG_WriteString (&cls.message, "enablecsqc");
+	cl.csqc_enable_pending = false;
+}
+
 /*
 =================
 CL_SendCmd
@@ -2559,6 +2580,7 @@ void CL_SendCmd (void)
 		SZ_Clear (&cls.message);
 		return;
 	}
+	CL_TryEnableCSQCEntities ();
 	// send the reliable message
 	if (!cls.message.cursize)
 		return; // no message at all

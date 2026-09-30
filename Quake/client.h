@@ -368,6 +368,9 @@ typedef struct
 	qboolean	 sendprespawn;
 
 	qcvm_t qcvm; // for csqc.
+	size_t ssqc_to_csqc_max;
+	edict_t **ssqc_to_csqc; // each mapped server index owns a retained client edict
+	qboolean csqc_enable_pending; // loader sets this once after CSQC_Init
 
 	float zoom;
 	float zoomdir;
@@ -511,6 +514,7 @@ extern kbutton_t in_speed;
 void	 CL_InitInput (void);
 void	 CL_AccumulateCmd (void);
 void	 CL_SendCmd (void);
+void	 CL_TryEnableCSQCEntities (void);
 void	 CL_SendMove (const usercmd_t *cmd);
 void CL_PrivateMoveResumeObserved (void);
 int		 CL_ReadFromServer (void);
@@ -546,6 +550,8 @@ void CL_Resume_Record (qboolean recordsignons);
 // cl_parse.c
 //
 void CL_ParseServerMessage (void);
+/* Notify on native world reset; release without callbacks before VM teardown. */
+void CL_ClearCSQCEntities (qboolean notify);
 
 /* Protocol prefix decoded by the serverinfo owner before world loading.
  * The reader consumes MSG bytes, returns an error or NULL, and changes neither

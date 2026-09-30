@@ -1491,6 +1491,12 @@ void SVFTE_DestroyFrames (client_t *client)
 	client->pendingentities_bits = NULL;
 	client->numpendingentities = 0;
 
+	Mem_Free (client->pendingcsqcentities_bits);
+	client->pendingcsqcentities_bits = NULL;
+	client->numpendingcsqcentities = 0;
+	client->csqcsnapshotresume = 1;
+	client->csqcactive = false;
+
 	while (client->numframes > 0)
 	{
 		client->numframes--;
@@ -1530,6 +1536,9 @@ static void SVFTE_SetupFrames (client_t *client)
 	client->pendingentities_bits = Mem_Alloc (client->numpendingentities * sizeof (*client->pendingentities_bits));
 
 	client->pendingentities_bits[0] = UF_REMOVE;
+	client->numpendingcsqcentities = qcvm->num_edicts;
+	client->pendingcsqcentities_bits = Mem_Alloc (client->numpendingcsqcentities * sizeof (*client->pendingcsqcentities_bits));
+	client->csqcsnapshotresume = 1;
 }
 static void SVFTE_DroppedFrame (client_t *client, int sequence)
 {
@@ -1549,8 +1558,71 @@ static void SVFTE_DroppedFrame (client_t *client, int sequence)
 	{
 		if (frame->ents[i].ebits)
 			client->pendingentities_bits[frame->ents[i].num] |= frame->ents[i].ebits;
+		if (frame->ents[i].csqcbits && frame->ents[i].num < client->numpendingcsqcentities)
+			client->pendingcsqcentities_bits[frame->ents[i].num] |=
+				frame->ents[i].csqcbits & (SENDFLAG_USABLE | SENDFLAG_REMOVE);
 	}
 }
+// Reuse the primary packet owner, including packets without ordinary stat writes.
+static struct deltaframe_s *SVFTE_BeginFrame (client_t *client)
+{
+	int sequence = NET_QSocketGetSequenceOut (client->netconnection);
+	struct deltaframe_s *frame = &client->frames[sequence & (client->numframes - 1)];
+	if (frame->sequence != sequence)
+	{
+		if (frame->sequence > client->lastacksequence)
+			SVFTE_DroppedFrame (client, frame->sequence);
+		frame->sequence = sequence;
+		frame->timestamp = qcvm->time;
+		memset (frame->resendstatsnum, 0, sizeof (frame->resendstatsnum));
+		memset (frame->resendstatsstr, 0, sizeof (frame->resendstatsstr));
+		frame->numents = 0;
+	}
+	return frame;
+}
+
+static qboolean SV_CSQCTransportAllowed (const client_t *client)
+{
+	return (sv_protocol_pext1 & PEXT1_CSQC) &&
+		(client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS) &&
+		(client->protocol_qsvr == QSVR_PROTOCOL_PINNED ||
+		 (client->protocol_pext1 & PEXT1_CSQC));
+}
+
+void SV_SetCSQCActive (client_t *client, qboolean active)
+{
+	client->csqcactive = active && SV_CSQCTransportAllowed (client);
+	if (client->csqcactive)
+		for (size_t e = 1; e < client->numpendingcsqcentities; ++e)
+			if (client->pendingcsqcentities_bits[e] & SENDFLAG_PRESENT)
+				client->pendingcsqcentities_bits[e] |= SENDFLAG_USABLE;
+}
+
+void SV_CSQCEntityFreed (edict_t *ed)
+{
+	if (qcvm != &sv.qcvm)
+		return;
+	unsigned int entnum = NUM_FOR_EDICT (ed);
+	for (int i = 0; i < svs.maxclients; ++i)
+	{
+		client_t *client = &svs.clients[i];
+		if (entnum >= client->numpendingcsqcentities)
+			continue;
+		unsigned int bits = client->pendingcsqcentities_bits[entnum];
+		client->pendingcsqcentities_bits[entnum] =
+			(bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVE)) ?
+			((bits & SENDFLAG_PRESENT) | SENDFLAG_REMOVE) : 0;
+	}
+}
+
+static void SVFTE_ResetCSQCState (client_t *client)
+{
+	for (size_t e = 1; e < client->numpendingcsqcentities; ++e)
+		if (client->pendingcsqcentities_bits[e] & SENDFLAG_CURRENT)
+			client->pendingcsqcentities_bits[e] |= SENDFLAG_USABLE;
+	client->csqcsnapshotresume = 1;
+}
+
 void SVFTE_Ack (client_t *client, int sequence)
 { // any gaps in the sequence need to considered dropped
 	struct deltaframe_s *frame;
@@ -1706,25 +1778,18 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 	return true;
 }
 
-static void SVFTE_WriteStats (client_t *client, sizebuf_t *msg)
+static void SVFTE_WriteStats (client_t *client, sizebuf_t *msg, struct deltaframe_s *frame)
 {
 	int					 statsi[MAX_CL_STATS];
 	float				 statsf[MAX_CL_STATS];
 	const char			*statss[MAX_CL_STATS];
 	int					 i;
-	struct deltaframe_s *frame;
-	int					 sequence = NET_QSocketGetSequenceOut (client->netconnection);
 	int					 maxstats;
 
 	if (client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS)
 		maxstats = MAX_CL_STATS;
 	else
 		maxstats = 32;
-
-	frame = &client->frames[sequence & (client->numframes - 1)];
-
-	if (frame->sequence == sequence - (int)client->numframes) // client is getting behind... this may get really spammy, lets hope it clears up at some point
-		SVFTE_DroppedFrame (client, frame->sequence);
 
 	// figure out the current values in a nice easy way (yay for copying to make arrays easier!)
 	SV_CalcStats (client, statsi, statsf, statss);
@@ -1994,7 +2059,7 @@ static short SVFTE_EncodeVelocity (float velocity)
 }
 
 static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
-	size_t overflowsize, qboolean continuation)
+	size_t overflowsize, qboolean continuation, struct deltaframe_s *frame)
 {
 	struct entity_num_state_s *state, *stateend;
 	struct entity_num_state_s *ownerstate = NULL;
@@ -2007,12 +2072,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 	qboolean				   worldreset = false, wrote_optional = false;
 	qboolean				   gorilla_ack = false;
 	int					   ack_flags = 0;
-	int						   sequence = NET_QSocketGetSequenceOut (client->netconnection);
 	size_t					   origmaxsize = msg->maxsize;
 	size_t					   rollbacksize; // I'm too lazy to figure out sizes (especially if someone updates this for bone states or whatever)
-	struct deltaframe_s		  *frame = &client->frames[sequence & (client->numframes - 1)];
-	frame->sequence = sequence; // so we know that it wasn't stale later.
-	frame->timestamp = qcvm->time;
 
 	msg->maxsize = overflowsize;
 
@@ -2021,7 +2082,6 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 
 	MSG_WriteByte (msg, svcfte_updateentities);
 
-	frame->numents = 0;
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
 		move_authority_t authority = selected_engine ?
@@ -2141,6 +2201,7 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 		client->pendingentities_bits[ownernum] = 0;
 		if (worldreset)
 		{
+			SVFTE_ResetCSQCState (client);
 			client->pendingentities_bits[0] = 0;
 			if (frame->numents == frame->maxents)
 			{
@@ -2218,6 +2279,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			client->pendingentities_bits[entnum] = entbits; // make sure those bits get re-applied later.
 			break;
 		}
+		if (entnum == 0 && (logbits & UF_REMOVE))
+			SVFTE_ResetCSQCState (client);
 		if (selected && msg->cursize > rollbacksize)
 			wrote_optional = true;
 		if (frame->numents == frame->maxents)
@@ -2242,6 +2305,132 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 		Con_DWarning ("%i byte packet exceeds standard limit of 1024.\n", msg->cursize);
 	dev_stats.packetsize = msg->cursize;
 	dev_peakstats.packetsize = q_max (msg->cursize, dev_peakstats.packetsize);
+	return true;
+}
+
+static void SVFTE_WriteCSQCEntityNum (sizebuf_t *msg, size_t entnum, qboolean remove)
+{
+	unsigned int flags = remove ? 0x8000 : 0;
+	if (entnum >= 0x4000)
+	{
+		MSG_WriteShort (msg, flags | 0x4000 | (entnum & 0x3fff));
+		MSG_WriteByte (msg, entnum >> 14);
+	}
+	else
+		MSG_WriteShort (msg, flags | entnum);
+}
+
+static qboolean SVFTE_WriteCSQCEntitiesToClient (client_t *client, sizebuf_t *msg,
+	struct deltaframe_s *frame, qboolean continuation)
+{
+	byte entbuf[MAX_DATAGRAM];
+	qboolean wroteheader = false;
+	qboolean optional_native = false;
+	size_t entnum;
+	if (!client->csqcactive || !SV_CSQCTransportAllowed (client) ||
+		!GetEdictFieldValid (SendEntity) || !GetEdictFieldValid (SendFlags))
+	{
+		client->csqcsnapshotresume = client->numpendingcsqcentities;
+		return true;
+	}
+	for (int i = 0; i < frame->numents; ++i)
+		if (frame->ents[i].ebits && frame->ents[i].num)
+			optional_native = true;
+
+	for (entnum = client->csqcsnapshotresume; entnum < client->numpendingcsqcentities; ++entnum)
+	{
+		unsigned int bits = client->pendingcsqcentities_bits[entnum];
+		unsigned int logbits = 0;
+		qboolean update = false;
+		qboolean remove = (bits & SENDFLAG_REMOVE) != 0;
+		qboolean payload_overflow = false;
+		sizebuf_t entmsg = {0};
+		entmsg.data = entbuf;
+		entmsg.maxsize = sizeof (entbuf);
+		entmsg.allowoverflow = true;
+		if (!(bits & (SENDFLAG_USABLE | SENDFLAG_REMOVE)))
+			continue;
+
+		SZ_Clear (&sv.multicast);
+		if ((bits & SENDFLAG_CURRENT) && entnum < (size_t)qcvm->num_edicts)
+		{
+			edict_t *ed = EDICT_NUM (entnum);
+			if (!ed->free && GetEdictFieldEval (ed, SendEntity)->function)
+			{
+				int oldself = pr_global_struct->self;
+				qboolean oldallowoverflow = sv.multicast.allowoverflow;
+				ED_Retain (ed);
+				sv.multicast.allowoverflow = true;
+				pr_global_struct->self = EDICT_TO_PROG (ed);
+				G_INT (OFS_PARM0) = EDICT_TO_PROG (client->edict);
+				// Preserve primary's callback arguments; CURRENT is engine-only.
+				G_FLOAT (OFS_PARM1 + 0) = remove ? SENDFLAG_USABLE : (bits & SENDFLAG_USABLE);
+				G_FLOAT (OFS_PARM1 + 1) = (bits & SENDFLAG_PRESENT) >> 24;
+				G_FLOAT (OFS_PARM1 + 2) = 0;
+				PR_ExecuteProgram (GetEdictFieldEval (ed, SendEntity)->function);
+				update = G_FLOAT (OFS_RETURN) && !ed->free &&
+					GetEdictFieldEval (ed, SendEntity)->function;
+				payload_overflow = sv.multicast.overflowed;
+				sv.multicast.allowoverflow = oldallowoverflow;
+				pr_global_struct->self = oldself;
+				ED_Release (ed);
+			}
+		}
+		if (!update)
+			remove |= (bits & SENDFLAG_PRESENT) != 0;
+
+		if (!remove && !update)
+		{
+			client->pendingcsqcentities_bits[entnum] &= SENDFLAG_CURRENT;
+			SZ_Clear (&sv.multicast);
+			continue;
+		}
+		if (!wroteheader)
+			MSG_WriteByte (&entmsg, svcdp_csqcentities);
+		if (remove)
+		{
+			SVFTE_WriteCSQCEntityNum (&entmsg, entnum, true);
+			logbits |= SENDFLAG_REMOVE;
+		}
+		if (update)
+		{
+			SVFTE_WriteCSQCEntityNum (&entmsg, entnum, false);
+			SZ_Write (&entmsg, sv.multicast.data, sv.multicast.cursize);
+			logbits |= remove ? SENDFLAG_USABLE : (bits & SENDFLAG_USABLE);
+		}
+		if ((update && payload_overflow) || entmsg.overflowed ||
+			(msg->cursize + entmsg.cursize + 2 > msg->maxsize &&
+			 continuation && !optional_native && !wroteheader))
+		{
+			Con_Printf ("%s: CSQC entity %zu payload cannot fit a valid datagram (record %d, used %d, max %d)\n",
+				client->name, entnum, entmsg.cursize, msg->cursize, msg->maxsize);
+			SZ_Clear (&sv.multicast);
+			return false;
+		}
+		if (msg->cursize + entmsg.cursize + 2 > msg->maxsize)
+		{
+			// No delivery or log mutation until the complete candidate fits.
+			SZ_Clear (&sv.multicast);
+			break;
+		}
+		SZ_Write (msg, entmsg.data, entmsg.cursize);
+		wroteheader = true;
+		unsigned int current = client->pendingcsqcentities_bits[entnum] & SENDFLAG_CURRENT;
+		client->pendingcsqcentities_bits[entnum] = current | (update ? SENDFLAG_PRESENT : 0);
+		if (frame->numents == frame->maxents)
+		{
+			frame->maxents += 64;
+			frame->ents = Mem_Realloc (frame->ents, frame->maxents * sizeof (*frame->ents));
+		}
+		frame->ents[frame->numents].num = entnum;
+		frame->ents[frame->numents].ebits = 0;
+		frame->ents[frame->numents].csqcbits = logbits;
+		frame->numents++;
+		SZ_Clear (&sv.multicast);
+	}
+	if (wroteheader)
+		MSG_WriteShort (msg, 0);
+	client->csqcsnapshotresume = entnum;
 	return true;
 }
 
@@ -2314,6 +2503,9 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	edict_t		 *clent = client->edict;
 	eval_t		 *val;
 	unsigned char eflags;
+	qboolean cancsqc = client->csqcactive && SV_CSQCTransportAllowed (client) &&
+		GetEdictFieldValid (SendEntity) && GetEdictFieldValid (SendFlags);
+	qboolean iscsqc;
 	int			  proged = EDICT_TO_PROG (clent);
 
 	struct entity_num_state_s *ents = snapshot_entstate;
@@ -2328,17 +2520,39 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 	if (maxentities > (unsigned int)qcvm->num_edicts)
 		maxentities = (unsigned int)qcvm->num_edicts;
 
+	if (cancsqc && client->numpendingcsqcentities < maxentities)
+	{
+		size_t oldmax = client->numpendingcsqcentities;
+		size_t newmax = maxentities + 64;
+		client->pendingcsqcentities_bits = Mem_Realloc (client->pendingcsqcentities_bits,
+			newmax * sizeof (*client->pendingcsqcentities_bits));
+		memset (client->pendingcsqcentities_bits + oldmax, 0,
+			(newmax - oldmax) * sizeof (*client->pendingcsqcentities_bits));
+		client->numpendingcsqcentities = newmax;
+	}
+
 	// send over all entities (excpet the client) that touch the pvs
 	ent = NEXT_EDICT (qcvm->edicts);
 	for (e = 1; e < maxentities; e++, ent = NEXT_EDICT (ent))
 	{
+		if (ent->free)
+			goto invisible;
 		eflags = 0;
+		// The recipient player always retains the native movement snapshot.
+		iscsqc = cancsqc && ent != clent && GetEdictFieldEval (ent, SendEntity)->function;
 		if (ent != clent) // clent is ALLWAYS sent
 		{
 			// ignore ents without visible models
-			if ((!ent->v.modelindex || !PR_GetString (ent->v.model)[0]))
+			if ((!ent->v.modelindex || !PR_GetString (ent->v.model)[0]) && !iscsqc)
 			{
 			invisible:
+				if (cancsqc)
+				{
+					unsigned int bits = client->pendingcsqcentities_bits[e];
+					client->pendingcsqcentities_bits[e] =
+						(bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVE)) ?
+						((bits & SENDFLAG_PRESENT) | SENDFLAG_REMOVE) : 0;
+				}
 				continue;
 			}
 
@@ -2369,6 +2583,22 @@ static void SVFTE_BuildSnapshotForClient (client_t *client)
 		val = GetEdictFieldValue (ent, qcvm->extfields.drawonlytoclient);
 		if (val && val->edict && val->edict != proged)
 			goto invisible;
+
+		if (cancsqc)
+		{
+			unsigned int *bits = &client->pendingcsqcentities_bits[e];
+			if (iscsqc)
+			{
+				*bits |= SENDFLAG_CURRENT;
+				if (!(*bits & SENDFLAG_PRESENT) || (*bits & SENDFLAG_REMOVE))
+					*bits |= SENDFLAG_USABLE;
+				else
+					*bits |= (int)GetEdictFieldEval (ent, SendFlags)->_float & SENDFLAG_USABLE;
+				continue;
+			}
+			*bits = (*bits & (SENDFLAG_PRESENT | SENDFLAG_REMOVE)) ?
+				((*bits & SENDFLAG_PRESENT) | SENDFLAG_REMOVE) : 0;
+		}
 
 		// okay, we care about this entity.
 		if (numents == maxents)
@@ -2944,17 +3174,21 @@ void SV_SendServerinfo (client_t *client)
 	client->limit_sounds = 0;
 
 	client->protocol_qsvr = 0;
+	client->protocol_pext1 = 0;
 	client->protocol_pext2 = 0;
+	client->csqcactive = false;
 	if (!sv_protocol_pext2)
 	{ // server disabled pext completely, don't bother trying.
 		// make sure we try reenabling it again on the next map though.
 		client->pextknown = false;
 		client->offered_qsvr = 0;
 		client->offered_pmove_policies = 0;
+		client->offered_pext1 = 0;
 		client->offered_pext2 = 0;
 	}
 	else if (client->pextknown)
 	{
+		client->protocol_pext1 = client->offered_pext1 & sv_protocol_pext1;
 		client->protocol_pext2 = client->offered_pext2 & sv_protocol_pext2;
 		if (!(client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS))
 			client->protocol_pext2 &= ~PEXT2_PREDINFO; // stats can't be deltaed if there's no deltas, so just pretend its not supported on its own.
@@ -2966,6 +3200,7 @@ void SV_SendServerinfo (client_t *client)
 			sv.protocol == PROTOCOL_RMQ && sv.protocolflags == (PRFL_FLOATCOORD | PRFL_SHORTANGLE))
 		{
 			client->protocol_qsvr = QSVR_PROTOCOL_PINNED;
+			client->protocol_pext1 = 0;
 			client->protocol_pext2 = QSVR_PEXT2_REQUIRED;
 		}
 	}
@@ -3076,6 +3311,12 @@ retry:
 	MSG_WriteString (&client->message, message);
 
 	MSG_WriteByte (&client->message, svc_serverinfo);
+
+	if (client->protocol_pext1)
+	{
+		MSG_WriteLong (&client->message, PROTOCOL_FTE_PEXT1);
+		MSG_WriteLong (&client->message, client->protocol_pext1);
+	}
 	if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
 	{
 		MSG_WriteLong (&client->message, PROTOCOL_QSVR_PROFILE);
@@ -3239,7 +3480,9 @@ void SV_Pext_f (void)
 			key = strtoul (Cmd_Argv (i), NULL, 0);
 			value = strtoul (Cmd_Argv (i + 1), NULL, 0);
 
-			if (key == PROTOCOL_FTE_PEXT2)
+			if (key == PROTOCOL_FTE_PEXT1)
+				host_client->offered_pext1 = value;
+			else if (key == PROTOCOL_FTE_PEXT2)
 				host_client->offered_pext2 = value;
 			else if (key == PROTOCOL_QSVR_PROFILE && value == QSVR_PROTOCOL_PINNED)
 				host_client->offered_qsvr = value;
@@ -4121,6 +4364,7 @@ void SV_PresendClientDatagram (client_t *client)
 	SVFTE_BuildSnapshotForClient (client);
 	SVFTE_CalcEntityDeltas (client);
 	client->snapshotresume = 0;
+	client->csqcsnapshotresume = 1;
 }
 
 /*
@@ -4198,11 +4442,12 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 		if (client->protocol_pext2 & PEXT2_REPLACEMENTDELTAS)
 		{
+			struct deltaframe_s *frame = SVFTE_BeginFrame (client);
 			SV_WriteDamageToMessage (client->edict, &msg);
 			if (!(client->protocol_pext2 & PEXT2_PREDINFO))
 				SV_WriteClientdataToMessage (client, &msg);
 			else
-				SVFTE_WriteStats (client, &msg);
+				SVFTE_WriteStats (client, &msg, frame);
 			if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 				SV_PrivateWalkTrialSelected (client) &&
 				!SVFTE_WritePrivateMoveStats (client, &msg))
@@ -4211,9 +4456,15 @@ qboolean SV_SendClientDatagram (client_t *client)
 				SV_DropClient (false);
 				return false;
 			}
-			if (!SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf), false))
+			if (!SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf), false, frame))
 			{
 				Con_Printf ("%s: dropping selected private WALK client: mandatory owner snapshot cannot fit\n", client->name);
+				SV_DropClient (false);
+				return false;
+			}
+
+			if (!SVFTE_WriteCSQCEntitiesToClient (client, &msg, frame, false))
+			{
 				SV_DropClient (false);
 				return false;
 			}
@@ -4221,10 +4472,12 @@ qboolean SV_SendClientDatagram (client_t *client)
 			// this delta protocol doesn't wipe old state just because there's a new packet.
 			// the server isn't required to sync with the client frames either
 			// so we can just spam multiple packets to keep our udp data under the MTU
-			while (client->snapshotresume < client->numpendingentities)
+			while (client->snapshotresume < client->numpendingentities ||
+				client->csqcsnapshotresume < client->numpendingcsqcentities)
 			{
 				NET_SendUnreliableMessage (client->netconnection, &msg);
 				SZ_Clear (&msg);
+				frame = SVFTE_BeginFrame (client);
 				if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 					SV_PrivateWalkTrialSelected (client) &&
 					!SVFTE_WritePrivateMoveStats (client, &msg))
@@ -4233,9 +4486,14 @@ qboolean SV_SendClientDatagram (client_t *client)
 					SV_DropClient (false);
 					return false;
 				}
-				if (!SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf), true))
+				if (!SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf), true, frame))
 				{
 					Con_Printf ("%s: dropping selected private WALK client: mandatory owner snapshot cannot fit or optional update cannot advance\n", client->name);
+					SV_DropClient (false);
+					return false;
+				}
+				if (!SVFTE_WriteCSQCEntitiesToClient (client, &msg, frame, true))
+				{
 					SV_DropClient (false);
 					return false;
 				}
@@ -4719,6 +4977,10 @@ void SV_SendClientMessages (void)
 
 		SV_PresendClientDatagram (host_client); // generates client snapshots (and updates csqc pending flags)
 	}
+
+	if (GetEdictFieldValid (SendFlags))
+		for (int e = 1; e < qcvm->num_edicts; ++e)
+			GetEdictFieldEval (EDICT_NUM (e), SendFlags)->_float = 0;
 
 	// build individual updates
 	for (i = 0, host_client = svs.clients; i < svs.maxclients; i++, host_client++)

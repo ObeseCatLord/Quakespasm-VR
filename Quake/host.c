@@ -973,12 +973,13 @@ static void CL_LoadCSProgs (void)
 
 		q_snprintf (versionedname, MAX_QPATH, "csprogsvers/%x.dat", csqchash);
 
-		// try csprogs.dat first, then fall back on progs.dat in case someone tried merging the two.
-		// we only care about it if it actually contains a CSQC_DrawHud, otherwise its either just a (misnamed) ssqc progs or a full csqc progs that would just
-		// crash us on 3d stuff.
-		if ((PR_LoadProgs (versionedname, false, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins) && qcvm->extfuncs.CSQC_DrawHud) ||
-			(PR_LoadProgs ("csprogs.dat", false, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins) && qcvm->extfuncs.CSQC_DrawHud) ||
-			(PR_LoadProgs ("progs.dat", false, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins) && qcvm->extfuncs.CSQC_DrawHud))
+		// Reuse primary callback admission; native 3D/HUD owners remain unchanged.
+		if ((PR_LoadProgs (versionedname, false, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins) &&
+			 (qcvm->extfuncs.CSQC_DrawHud || qcvm->extfuncs.CSQC_DrawScores || qcvm->extfuncs.CSQC_Ent_Update)) ||
+			(PR_LoadProgs ("csprogs.dat", false, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins) &&
+			 (qcvm->extfuncs.CSQC_DrawHud || qcvm->extfuncs.CSQC_DrawScores || qcvm->extfuncs.CSQC_Ent_Update)) ||
+			(PR_LoadProgs ("progs.dat", false, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins) &&
+			 (qcvm->extfuncs.CSQC_DrawHud || qcvm->extfuncs.CSQC_Ent_Update)))
 		{
 			qcvm->max_edicts = CLAMP (MIN_EDICTS, (int)max_edicts.value, MAX_EDICTS);
 			qcvm->edicts = (edict_t *)Mem_Alloc (qcvm->max_edicts * qcvm->edict_size);
@@ -993,8 +994,8 @@ static void CL_LoadCSProgs (void)
 				e->edict_num = i;
 			}
 #endif
-			if (!qcvm->extfuncs.CSQC_DrawHud)
-			{ // no simplecsqc entry points... abort entirely!
+			if (!qcvm->extfuncs.CSQC_DrawHud && !qcvm->extfuncs.CSQC_DrawScores && !qcvm->extfuncs.CSQC_Ent_Update)
+			{ // No admitted entry points; abort entirely!
 				PR_ClearProgs (qcvm);
 				PR_SwitchQCVM (NULL);
 				return;
@@ -1033,6 +1034,8 @@ static void CL_LoadCSProgs (void)
 				G_FLOAT (OFS_PARM2) = 10000 * maj + 100 * (min) + VKQUAKE_VER_PATCH;
 				PR_ExecuteProgram (qcvm->extfuncs.CSQC_Init);
 			}
+			cl.csqc_enable_pending = qcvm->extfuncs.CSQC_Ent_Update != 0;
+			CL_TryEnableCSQCEntities ();
 		}
 		else
 			PR_ClearProgs (qcvm);

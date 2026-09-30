@@ -3674,6 +3674,19 @@ static void Host_Spawn_f (void)
 	host_client->sendsignon = true;
 }
 
+// Readiness is explicit; advertising an extension alone never activates it.
+static void Host_EnableCSQC_f (void)
+{
+	if (cmd_source == src_client)
+		SV_SetCSQCActive (host_client, true);
+}
+
+static void Host_DisableCSQC_f (void)
+{
+	if (cmd_source == src_client)
+		SV_SetCSQCActive (host_client, false);
+}
+
 /*
 ==================
 Host_Begin_f
@@ -4558,6 +4571,8 @@ void Host_InitCommands (void)
 	Cmd_AddCommand ("pause", Host_Pause_f);
 	Cmd_AddCommand ("spawn", Host_Spawn_f);
 	Cmd_AddCommand ("begin", Host_Begin_f);
+	Cmd_AddCommand_ClientCommand ("enablecsqc", Host_EnableCSQC_f);
+	Cmd_AddCommand_ClientCommand ("disablecsqc", Host_DisableCSQC_f);
 	Cmd_AddCommand_ClientCommand ("coop_teleport_player", Host_CoopTeleportPlayer_f);
 	Cmd_AddCommand_ClientCommand ("coop_teleport_spawn", Host_CoopTeleportSpawn_f);
 	Cmd_AddCommand ("prespawn", Host_PreSpawn_f);
