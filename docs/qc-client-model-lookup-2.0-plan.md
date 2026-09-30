@@ -52,3 +52,13 @@ results and surface geometry. Calls through a manually populated callback alone
 cannot qualify actual initialization. This slice does not add complete full-game
 CSQC rendering or local client-only model precaching; broader inherited mod
 interface and desktop/VR qualification remain required.
+
+## Source implementation checkpoint
+
+Commit `6f5f3d85` copies the bounded QSS-M helper with static visibility and
+installs it in actual accepted client initialization before `CSQC_Init`.
+Local requested-Astra Max source review found no actionable introduced defect
+in callback timing, reload reset, live native precache lookup or server isolation.
+Effective reviewer model/effort metadata was unavailable; this is bounded
+advisory source acceptance, not a certified senior-review gate. No builds/tests
+or runtime probes ran; final Linux/ARM actual-loader qualification is pending.

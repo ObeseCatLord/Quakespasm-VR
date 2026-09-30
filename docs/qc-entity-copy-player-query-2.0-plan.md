@@ -82,3 +82,14 @@ Malformed raw entity references, nonfinite/out-of-range float-to-int inputs,
 and shallow zoned-string alias lifetime are not certified by this bounded
 repair. Broader QC interface and end-to-end migration qualification remain
 required; matching wrappers alone do not prove them.
+
+## Source implementation checkpoint
+
+Commits `d5cf72e9` and `7d7104d5` implement the payload, self-copy, free-operand
+and allocation-order guards, numeric entity bounds and allocated scoreboard
+bounds. Main retained native current-VM linking and native userinfo fallback.
+A local requested-Astra Max follow-up found no actionable introduced defect in
+this bounded source slice, including the reusable free-source allocation case.
+Effective reviewer model/effort metadata was unavailable, so this is advisory
+source acceptance rather than a certified senior-review gate. Only source
+inspection and `git diff --check` were performed; final qualification is pending.
