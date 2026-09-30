@@ -339,3 +339,15 @@ loss/lifecycle qualification plus final Linux/ARM checks remain deferred until
 full implementation. The shared snapshot region is now available for the
 separately planned NET-003 design; this checkpoint adds no visibility policy,
 renderer work, protocol owner or quad-view rendering.
+
+## Shared callback connection-lifetime reopening
+
+The [NET-003 reopened brief/disposition](snapshot-visibility-2.0-plan.md#reopened-callback-connection-lifetime-decision)
+also applies to this stream's SendEntity callback and its two failure callers.
+Disconnect can retain a live player body while destroying connection-owned frame
+arrays, and QC can replace that client slot with a bot. The stable removal ACK
+boundary accepted above remains; edict-only callback source acceptance is not
+sufficient for these connection-retirement paths. The narrow planned correction
+reuses the existing request dispatch's active/socket guard, captured retained
+pointers and native cleanup. No new lifetime/wire/ACK state, frame owner or quad
+views. Final software qualification stays after full implementation.
