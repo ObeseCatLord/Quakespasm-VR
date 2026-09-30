@@ -22,6 +22,16 @@ No renderer/model rewrite or new surface-query service/helper is needed for
 these demonstrated incompatibilities. Other query semantics remain subject to
 the broader interface audit; this is not complete surface-API parity.
 
+Source review addition before the remaining edits: native `Mod_LoadSubmodels`
+reads the first-face/count values directly, and `Mod_SetupSubmodels` copies them
+onto shared model storage without an absolute surface-table bounds check.
+Primary `PF_GetBrushSurface` checks the absolute face against `numsurfaces`.
+For these three wrappers, also require nonnegative `firstmodelsurface`, positive
+`nummodelsurfaces`, a base below `numsurfaces`, and an index below the remaining
+table length before adding base and index. The subtraction form prevents index
+addition overflow. Keep these local guards rather than introducing a new model
+loader policy or rewriting neighboring surface services.
+
 Write only `Quake/pr_ext.c` on `2.0`; this plan precedes code. Main source review
 must trace the checked/accessed face and native model range setup. Final local
 Astra and deferred Linux/ARM qualification must include real inline brush
