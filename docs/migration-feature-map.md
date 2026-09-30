@@ -36,7 +36,7 @@ This records the scope inventory, **not migration or runtime parity certificatio
 
 MAIN remains the pinned feature-anchor baseline; product `master` is the
 current behavioral authority. [Later source updates](migration-source-updates.md)
-through `eb5e048d` are tracked separately rather than silently changing the
+through `51b452c0` are tracked separately rather than silently changing the
 anchors. XR supplies later runtime/rendering work but predates four newer MAIN
 baseline commits: `b110a81c` Steam Audio packaging, `91aacd47` GPLv3
 distribution terms, `22a7fce0` teleport occupancy, and `1327f795` frozen
