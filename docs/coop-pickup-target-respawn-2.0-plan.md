@@ -76,3 +76,29 @@ progression repeats, existing overdue think/null callbacks, invalid declarations
 native QC regeneration, callback retirement/recreation and nested target calls.
 Use original assets read-only/disposable profiles. Native weapon/key sharing,
 desktop/private/public movement and VR crossplay remain required.
+
+
+## Adopted requested-Astra source disposition before coding
+
+Main verified force-retouch before client physics, explicit QC touchtriggers,
+actual drop/connect/free cancellation and the private invocation restoration.
+The review changes the boundary; effective model settings remain unobservable.
+
+| Recommendation | Main disposition |
+| --- | --- |
+| Protect original touch before reading accepted inventory, not only SUB_UseTargets | Adopt lifetime-only SV_CoopPickupTouch wrapper at the existing private cancellation owner. Bind original client/edict, execute the original PR_ExecuteProgram directly with native touch semantics, check sticky survival, unbind. World retains normal non-client dispatch. On cancellation break before teleport/shared/target/scheduler work; retained-list cleanup still runs. No isolated input/basis/trace restoration for the original native touch. |
+| Reuse one invocation for target and selector output | Adopt private explicit QC self/other plus optional raw return-cell output, captured before ordinary restoration. Existing respawn calls retain client/world and no output. Narrow public wrappers only: SV_CoopPickupUseTargets(pickup,player,called) and SV_CoopSelectSpawnPoint(player,spawnprog). Policy type stays private; no generic public callback API. |
+| Avoid redundant target and inventory plumbing | Adopt typed five-field snapshot for presence/comparison/clear. Existing before/after inventory captures serve sharing **or** target acceptance; capture pickup declarations only for sharing. Pickup deletion must not discard already accepted sharing, but prevents target/scheduler effects. |
+| Preserve original item lifecycle and controls | Adopt all nine exact controls/defaults/flags, including five notify callbacks; no new classes. Pending positive think includes overdue callbacks. Native scheduler does not require captured inventory gain because equipment can change timers outside that snapshot. |
+| Target function can rewrite fields during dispatch | Adapt primary clearing: clear only surviving typed fields still equal to the dispatched snapshot. Preserve callback-authored replacements. This bounded improvement needs no registry; target strings unchanged before touch alone do not prove every optional custom handler never fired them. Native/custom exact-once behavior stays an explicit final acceptance risk. |
+| Original selector can recreate its caller at same addresses | Adopt existing bind/invoke/unbind wrapper and zero-argument positive in-range body gate. Existing host selection validates encoded return/fallback, but now takes captured player and reports survival separately; retirement prohibits fallback/diagnostics/relocation. This closes the two verified inherited COOP-008 source defects without new generations. |
+
+Authorized write set adds only `Quake/host_cmd.c`'s selector helper and caller;
+five existing production files, target<=450 net lines. Review estimate400–440
+includes original selector scratch deletion. Do not compress checks to fit;
+reopen if exceeded. Cancellation begins before original touch at every eligible
+native/QC-linking entry. Per-dispatch scopes reuse existing sticky owner; no
+scope token crosses files and no new persistent lifecycle state is added.
+The native touch path preserves authored QC scratch, while **supplemental**
+target/selector calls use existing isolation. One worker owns all five precise
+regions; main reviews both reference policy and complete integrated patch.
