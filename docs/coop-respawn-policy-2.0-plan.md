@@ -165,3 +165,17 @@ required. Stage1 may subsequently edit other sv_phys regions after this slice
 is reviewed and committed. No builds/tests/fixtures until full implementation.
 Final software cases include linked hazards, split/bound equality, dense trigger
 lists, relinking, unchanged ordinary touches and placement refusal/fallback.
+
+### Spatial-query source checkpoint
+
+The integrated three-file slice is33 net lines. It extends the existing private
+collector with explicit bounds and predicate mode; the sole TouchLinks caller
+still passes its original linked bounds/list/capacity and no predicate. List
+mode preserves traversal/filter/order/capacity, retention and native QC handling.
+Query mode early-exits with no list allocation or QC; hazard classification
+retains the original non-player/free/solid/touch/classname rules. Public invalid
+world/bounds admission conservatively refuses optional placement. Main compared
+the full patch and native/reference owners; scoped git diff --check passes.
+No tests/builds/probes were run. Final linked-hazard/touch/placement software
+qualification remains pending. Generic respawn policy itself is not implemented
+by this slice, and no revival code was added.

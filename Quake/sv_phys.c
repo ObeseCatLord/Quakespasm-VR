@@ -4914,7 +4914,8 @@ static qboolean SV_CoopRespawnTriggerLooksHazard (edict_t *touch)
 	const char *classname;
 
 	if (!touch || touch->free || touch->v.solid != SOLID_TRIGGER ||
-		!touch->v.touch || !touch->v.classname)
+		!touch->v.touch || !touch->v.classname ||
+		NUM_FOR_EDICT (touch) <= svs.maxclients)
 		return false;
 	classname = PR_GetString (touch->v.classname);
 	if (!classname || !classname[0])
@@ -4930,23 +4931,14 @@ static qboolean SV_CoopRespawnTriggerLooksHazard (edict_t *touch)
 static qboolean SV_CoopRespawnTouchesHazardTrigger (edict_t *ent,
 	vec3_t origin)
 {
-	int i;
 	vec3_t mins, maxs;
 
+	if (!ent || ent->free || !origin)
+		return true;
 	VectorAdd (origin, ent->v.mins, mins);
 	VectorAdd (origin, ent->v.maxs, maxs);
-	for (i = svs.maxclients + 1; i < qcvm->num_edicts; i++)
-	{
-		edict_t *touch = EDICT_NUM (i);
-		if (!SV_CoopRespawnTriggerLooksHazard (touch))
-			continue;
-		if (mins[0] > touch->v.absmax[0] || mins[1] > touch->v.absmax[1] ||
-			mins[2] > touch->v.absmax[2] || maxs[0] < touch->v.absmin[0] ||
-			maxs[1] < touch->v.absmin[1] || maxs[2] < touch->v.absmin[2])
-			continue;
-		return true;
-	}
-	return false;
+	return SV_AnyMatchingTriggerOverlaps (mins, maxs,
+		SV_CoopRespawnTriggerLooksHazard);
 }
 
 static qboolean SV_CoopRespawnCanPlaceAt (edict_t *ent,

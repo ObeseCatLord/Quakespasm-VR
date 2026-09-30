@@ -348,7 +348,9 @@ Spike -- just builds a list of entities (as edict nums uint16_t) within the area
 them and risking the list getting corrupt.
 ====================
 */
-static void SV_AreaTriggerEdicts (edict_t *ent, areanode_t *node, uint16_t *list, int *listcount, const int listspace)
+static qboolean SV_AreaTriggerEdicts (edict_t *ent, areanode_t *node,
+	const vec3_t mins, const vec3_t maxs, uint16_t *list, int *listcount,
+	const int listspace, sv_trigger_predicate_t predicate)
 {
 	link_t	*l, *next;
 	edict_t *touch;
@@ -362,12 +364,18 @@ static void SV_AreaTriggerEdicts (edict_t *ent, areanode_t *node, uint16_t *list
 			continue;
 		if (!touch->v.touch || touch->v.solid != SOLID_TRIGGER)
 			continue;
-		if (ent->v.absmin[0] > touch->v.absmax[0] || ent->v.absmin[1] > touch->v.absmax[1] || ent->v.absmin[2] > touch->v.absmax[2] ||
-			ent->v.absmax[0] < touch->v.absmin[0] || ent->v.absmax[1] < touch->v.absmin[1] || ent->v.absmax[2] < touch->v.absmin[2])
+		if (mins[0] > touch->v.absmax[0] || mins[1] > touch->v.absmax[1] || mins[2] > touch->v.absmax[2] ||
+			maxs[0] < touch->v.absmin[0] || maxs[1] < touch->v.absmin[1] || maxs[2] < touch->v.absmin[2])
 			continue;
+		if (predicate)
+		{
+			if (predicate (touch))
+				return true;
+			continue;
+		}
 
 		if (*listcount == listspace)
-			return; // should never happen
+			return false; // should never happen
 
 		list[*listcount] = NUM_FOR_EDICT (touch);
 		(*listcount)++;
@@ -375,12 +383,37 @@ static void SV_AreaTriggerEdicts (edict_t *ent, areanode_t *node, uint16_t *list
 
 	// recurse down both sides
 	if (node->axis == -1)
-		return;
+		return false;
 
-	if (ent->v.absmax[node->axis] > node->dist)
-		SV_AreaTriggerEdicts (ent, node->children[0], list, listcount, listspace);
-	if (ent->v.absmin[node->axis] < node->dist)
-		SV_AreaTriggerEdicts (ent, node->children[1], list, listcount, listspace);
+	if (maxs[node->axis] > node->dist &&
+		SV_AreaTriggerEdicts (ent, node->children[0], mins, maxs,
+			list, listcount, listspace, predicate))
+		return true;
+	if (mins[node->axis] < node->dist &&
+		SV_AreaTriggerEdicts (ent, node->children[1], mins, maxs,
+			list, listcount, listspace, predicate))
+		return true;
+
+	return false;
+}
+
+qboolean SV_AnyMatchingTriggerOverlaps (const vec3_t mins, const vec3_t maxs,
+	sv_trigger_predicate_t predicate)
+{
+	int i;
+
+	if (!qcvm || qcvm != &sv.qcvm || !qcvm->edicts || qcvm->num_edicts <= 0 ||
+		!qcvm->worldmodel || qcvm->worldmodel->needload ||
+		qcvm->worldmodel->type != mod_brush || qcvm->numareanodes <= 0 ||
+		qcvm->numareanodes > AREA_NODES || !mins || !maxs || !predicate)
+		return true;
+
+	for (i = 0; i < 3; i++)
+		if (!isfinite (mins[i]) || !isfinite (maxs[i]) || mins[i] > maxs[i])
+			return true;
+
+	return SV_AreaTriggerEdicts (NULL, qcvm->areanodes, mins, maxs,
+		NULL, NULL, 0, predicate);
 }
 
 static qboolean SV_IsActiveClientEdict (edict_t *ent)
@@ -2426,7 +2459,8 @@ static void SV_TouchLinks (edict_t *ent)
 	TEMP_ALLOC (uint16_t, list, qcvm->num_edicts);
 
 	listcount = 0;
-	SV_AreaTriggerEdicts (ent, qcvm->areanodes, list, &listcount, qcvm->num_edicts);
+	SV_AreaTriggerEdicts (ent, qcvm->areanodes, ent->v.absmin, ent->v.absmax,
+		list, &listcount, qcvm->num_edicts, NULL);
 	SV_ClearRecentTeleportTriggerIfExited (ent, list, listcount);
 	ED_Retain (ent);
 

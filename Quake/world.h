@@ -77,6 +77,13 @@ void SV_LinkEdict (edict_t *ent, qboolean touch_triggers);
 // sets ent->v.absmin and ent->v.absmax
 // if touchtriggers, calls prog functions for the intersected triggers
 
+typedef qboolean (*sv_trigger_predicate_t) (edict_t *touch);
+/* Tests linked active trigger bounds without allocating a list or executing QC.
+ * The predicate must not run QC, switch VM or mutate edicts/area links.
+ * Invalid server state or bounds return true so optional placement fails closed. */
+qboolean SV_AnyMatchingTriggerOverlaps (const vec3_t mins, const vec3_t maxs,
+	sv_trigger_predicate_t predicate);
+
 /* Collect the world and linked server solids overlapping inclusive world bounds.
  * Returns false for an invalid server world/model or physent overflow. */
 qboolean SV_CollectPMovePhysents (edict_t *ignore, vec3_t boxminmax[2]);
