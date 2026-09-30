@@ -121,8 +121,9 @@ struct Chain {
 	uint32_t width, height;
 	bool acquired, waited;
 	uint32_t copiedMask;
+	XrFoveationProfileFB lastFoveationProfile;
 	Chain() : handle(XR_NULL_HANDLE), index(0), width(0), height(0),
-		acquired(false), waited(false), copiedMask(0) {}
+		acquired(false), waited(false), copiedMask(0), lastFoveationProfile(XR_NULL_HANDLE) {}
 };
 
 struct Tracker { XrSpace space; char serial[256]; XrPath persistent, subaction; bool available; };
@@ -865,10 +866,18 @@ static bool create_swapchains() {
 static bool update_foveation_profile(XrFoveationProfileFB profile) {
 	if(!profile || !g.xr.UpdateSwapchain) return false;
 	for(int eye=0;eye<swapchain_count();++eye) {
+		Chain &chain=g.chain[eye];
+		// Static swapchain state persists; eye profiles still request a fresh
+		// pattern immediately before every META state query.
+		if((profile==g.foveationOff || profile==g.foveationFixed) && chain.lastFoveationProfile==profile) continue;
 		XrSwapchainStateFoveationFB state={XR_TYPE_SWAPCHAIN_STATE_FOVEATION_FB};
 		state.profile=profile;
-		if(!ok("xrUpdateSwapchainFB",g.xr.UpdateSwapchain(g.chain[eye].handle,
-			reinterpret_cast<const XrSwapchainStateBaseHeaderFB *>(&state)))) return false;
+		if(!ok("xrUpdateSwapchainFB",g.xr.UpdateSwapchain(chain.handle,
+			reinterpret_cast<const XrSwapchainStateBaseHeaderFB *>(&state)))) {
+			chain.lastFoveationProfile=XR_NULL_HANDLE;
+			return false;
+		}
+		chain.lastFoveationProfile=profile;
 	}
 	return true;
 }

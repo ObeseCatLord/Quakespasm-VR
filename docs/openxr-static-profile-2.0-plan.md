@@ -55,3 +55,21 @@ are retried and recreated chains start unknown. Runtime image-contract
 qualification, automatic FB/META preference, and the rest of the migration
 remain unfinished. No performance gain is claimed without the user's later
 measurements.
+
+## Source integration checkpoint
+
+One bounded web worker implemented the cache in the planned production file.
+Main checked the actual diff, single setter owner, immutable fixed strength,
+both eye-profile variants, restoration calls and the normal chain reset.
+Requested local Astra Max independently verified those paths and reported no
+actionable P1/P2. Adopt the patch: accepted static state is retained per chain;
+failed setters invalidate only their uncertain chain; repeated eye requests are
+never skipped. The only main addition after that advisory is an explanatory
+comment about preserving META's update/query sequence.
+
+Effective reviewer model/effort metadata is unexposed, so this is bounded
+requested-Astra source acceptance, not a certified senior-skill pass. Scoped
+whitespace review passes. No build, test, compiler, runtime, fixture or benchmark
+ran. Setter call-count execution remains end-of-implementation qualification;
+this optimization does not qualify the borrowed density-image contract or
+remove the temporary FB/META development gate.
