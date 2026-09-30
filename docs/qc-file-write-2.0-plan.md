@@ -48,3 +48,22 @@ nested file; mode2 intentional replacement; failed/denied paths; readonly PAK
 reads and current-VM handles; append-after-seek versus native positional mode2
 writing; shutdown/reload file retirement. No real game files are modified for
 this slice. Source parity alone does not qualify complete MOD-001/005 behavior.
+
+## Source implementation checkpoint
+
+`06cc04ea` adds the primary parent helper and changes exactly the two native
+write cases (18 insertions, one deletion). Main compared the actual diff with
+the inherited helper/open mode and confirmed directory creation follows native
+name normalization, keeps Sys_fopen and does not alter handle/cache owners.
+Scoped `git diff --check` passed; the coding worker is closed. No execution or
+real file operations were performed.
+
+One bounded local Astra source audit may compare the four primitive inherited
+file wrappers/registrations (fopen110, fclose111, fgets112, fputs113) and native
+cached-read/teardown/fseek boundary with primary51b452c0. The native canonical
+data/ path policy, dynamic table and whole-line read capacity are deliberate
+reuse decisions; do not replace them merely for byte-at-a-time source matching.
+Report actual call/signature/permission/lifetime gaps with evidence separately
+from intentional differences and remaining execution unknowns. No builds,
+tests, probes, nested agents, telemetry or edits. This is a source audit, not a
+new architecture decision or certified senior-skill gate.
