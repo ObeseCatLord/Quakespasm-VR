@@ -55,3 +55,16 @@ to the actual ignore edict's mins/maxs, after the existing pair predicate admits
 that non-null active client. Both movement owners copy that same edict hull for
 actual PMove. No scratch refresh, new hull state or setup owner is needed.
 This amendment precedes the worker correction; the three-file/small scope stays.
+
+
+## Source integration checkpoint
+
+The integrated three-file repair is11 net production lines. Main reviewed the
+full patch and both collectors' call/hull initialization order against primary
+native clip/impact policy and current client advertised exclusions. The new
+pair predicate has no state; body collection reads the actual ignore edict
+only after pair admission. Existing point/missile clip, owner/solid filtering,
+capacity/world/monster behavior and retained callback structure remain.
+Both native impact directions now call the same existing telefrag predicate
+as trigger touches. Scoped whitespace passed; no executable checks ran.
+Runtime damage/collision/roomscale/private prediction qualification is pending.

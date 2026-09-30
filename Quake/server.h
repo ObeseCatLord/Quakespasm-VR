@@ -520,6 +520,7 @@ extern cvar_t fraglimit;
 extern cvar_t timelimit;
 
 qboolean SV_CoopFeatureEnabled (const cvar_t *feature, qboolean modern_default);
+qboolean SV_ShouldSuppressCoopTelefrag (edict_t *trigger, edict_t *other);
 qboolean SV_CoopFriendlyFireBegin (edict_t *ent);
 void SV_CoopFriendlyFireEnd (void);
 qboolean SV_CoopFriendlyFireSuspend (void);

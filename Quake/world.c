@@ -601,7 +601,7 @@ static qboolean SV_IsTelefragClient (edict_t *ent)
 	return svs.clients[num - 1].active && svs.clients[num - 1].edict == ent;
 }
 
-static qboolean SV_ShouldSuppressCoopTelefrag (edict_t *trigger, edict_t *other)
+qboolean SV_ShouldSuppressCoopTelefrag (edict_t *trigger, edict_t *other)
 {
 	const char *classname;
 	edict_t *owner;
@@ -628,15 +628,18 @@ static qboolean SV_IsPointMove (moveclip_t *clip)
 		clip->mins[2] == clip->maxs[2];
 }
 
+static qboolean SV_ShouldSkipCoopPlayerPair (edict_t *first, edict_t *second)
+{
+	return coop.value && SV_CoopFeatureEnabled (&sv_coop_noplayerclip, true) &&
+		SV_IsActiveClientEdict (first) && SV_IsActiveClientEdict (second);
+}
+
 static qboolean SV_ShouldSkipCoopPlayerClip (moveclip_t *clip, edict_t *touch)
 {
-	if (!coop.value || !SV_CoopFeatureEnabled (&sv_coop_noplayerclip, true))
-		return false;
 	if (!clip->passedict || clip->type == MOVE_MISSILE || SV_IsPointMove (clip))
 		return false;
 
-	return SV_IsActiveClientEdict (clip->passedict) &&
-		SV_IsActiveClientEdict (touch);
+	return SV_ShouldSkipCoopPlayerPair (clip->passedict, touch);
 }
 
 
@@ -2748,6 +2751,11 @@ static qboolean SV_AreaAddPMovePhysents (edict_t *ignore, areanode_t *node,
 
 		if (ignore && (PROG_TO_EDICT (other->v.owner) == ignore ||
 			PROG_TO_EDICT (ignore->v.owner) == other))
+			continue;
+		if (SV_ShouldSkipCoopPlayerPair (ignore, other) &&
+			(ignore->v.mins[0] != ignore->v.maxs[0] ||
+			ignore->v.mins[1] != ignore->v.maxs[1] ||
+			ignore->v.mins[2] != ignore->v.maxs[2]))
 			continue;
 
 		if (pmove.numphysent >= MAX_PHYSENTS)

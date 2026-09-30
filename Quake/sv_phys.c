@@ -1922,7 +1922,8 @@ static void SV_Impact (edict_t *e1, edict_t *e2)
 	ED_Retain (e1);
 	ED_Retain (e2);
 
-	if (e1->v.touch && e1->v.solid != SOLID_NOT)
+	if (e1->v.touch && e1->v.solid != SOLID_NOT &&
+		!SV_ShouldSuppressCoopTelefrag (e1, e2))
 	{
 		coop_touch_sync = SV_CoopSharedBeginClientTouch (e2);
 		friendly_fire_scope = SV_CoopFriendlyFireBegin (e1);
@@ -1936,7 +1937,8 @@ static void SV_Impact (edict_t *e1, edict_t *e2)
 	}
 
 	// Run e2's touch function if e2 survives e1's callback.
-	if (!e2->free && e2->v.touch && e2->v.solid != SOLID_NOT)
+	if (!e2->free && e2->v.touch && e2->v.solid != SOLID_NOT &&
+		!SV_ShouldSuppressCoopTelefrag (e2, e1))
 	{
 		coop_touch_sync = SV_CoopSharedBeginClientTouch (e1);
 		friendly_fire_scope = SV_CoopFriendlyFireBegin (e2);
