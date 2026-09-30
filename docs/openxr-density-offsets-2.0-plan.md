@@ -93,8 +93,6 @@ renderer work. No edits/builds/tests/compiler checks/probes/nested agents or
 telemetry. Effective settings must be exposed to certify the skill; otherwise
 label advisory. Missing evidence must be reported, not replaced with assumptions.
 
-## Final qualification after implementation
-
 ## Adopted advisory disposition (2026-09-30)
 
 Requested Astra Max returned a source advisory; effective model/effort metadata
@@ -122,6 +120,24 @@ density-image flags or producer completion. Vendor/runtime source or documentati
 must address those specific facts before removing the development gate. Successful
 view creation is insufficient. This is a bounded source-evidence task, separate
 from the user's later live hardware testing.
+
+Main's bounded follow-up read Meta's current [native FFR guide](https://developers.meta.com/vr/documentation/native/android/os-fixed-foveated-rendering/)
+(updated2026-04-07), its linked archived native guide and current Unreal ETFR
+guide. The native Vulkan steps demonstrate paired density-image enumeration and
+render-pass use, but do not specify the missing format/layer/layout/offset flags
+or producer-completion contract. The archived guide uses deprecated VrApi and
+cannot establish this OpenXR contract. Default fixed fallback in Meta's engine
+examples is deliberately not adopted.
+
+The public [Khronos issue102 discussion](https://github.com/KhronosGroup/OpenXR-Docs/issues/102#issuecomment-915528895)
+also asks whether profile updates modify the enumerated map. Its three published
+comments contain no resolution. Primary source inventories at Meta-OpenXR-SDK
+bbed2f20e38a5df7113630771c83cb8279e4fc26 and ValveSoftware/Unity
+329c81f5a97a7f9e7740cf4307f1bfa9ce090b3a do not expose a density-image producer
+implementation in the scoped samples/features. Valve's Unity feature delegates
+to UnityOpenXR native functions; this is not evidence of creation flags or
+synchronization inside the runtime. These bounded reads did not close the gap;
+they do not prove that no relevant documentation/source exists elsewhere.
 
 ### Consolidated qualification
 
