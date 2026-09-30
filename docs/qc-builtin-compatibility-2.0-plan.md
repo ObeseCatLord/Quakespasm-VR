@@ -218,8 +218,9 @@ The following slices now have bounded local Astra source acceptance:
   received-weather backend.
 
 The [line-drawing adapter](qc-drawline-2.0-plan.md) also has local Astra source
-acceptance. Remaining demonstrated inherited-call work includes core builtin-name
-discovery and SSQC setcolors. The paired
+acceptance. [Core builtin-name discovery](qc-core-discovery-2.0-plan.md) also has
+bounded local Astra source acceptance, using copied metadata and native dispatch.
+SSQC setcolors remains open. The paired
 [client/server event adapter](qc-events-2.0-plan.md) has local Astra design and
 source acceptance; the inherited cursor/font fallbacks also have bounded local
 Astra source acceptance. Remaining VM

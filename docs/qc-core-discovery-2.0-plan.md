@@ -64,3 +64,12 @@ native extension names and normalized SSQC localsound; named core `#0`
 invocation must match the corresponding numeric handler. Unsupported CSQC core
 calls must retain native rejection. Unknown names and real QC bodies must not
 be remapped; disabled SSQC setup must retain its program-reload requirement.
+
+## Source acceptance
+
+Local Astra accepted all 68 metadata pairs and both native fall-throughs, with
+no actionable findings. Main spot-check confirmed the primary aliases, native
+slot 79 zero fallback, unchanged core arrays and extension-first binding. The
+adapter supplies no handlers and broadens no VM permission. Native CSQC
+exclusions and startup-disabled SSQC reload behavior remain. No builds, tests
+or compiler probes were run; the final qualification above is still required.

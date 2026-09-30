@@ -6531,6 +6531,91 @@ static const char *PR_NormalizeBuiltinName (const char *name, qboolean exact)
 	return name;
 }
 
+static int PR_CoreBuiltinNumber (const char *name, qboolean exact)
+{
+	// Primary name/number metadata only; native core tables still own dispatch.
+	static const struct
+	{
+		const char *name;
+		int number;
+	} names[] = {
+		{"makevectors", 1},
+		{"setorigin", 2},
+		{"setmodel", 3},
+		{"setsize", 4},
+		{"break", 6},
+		{"random", 7},
+		{"sound", 8},
+		{"normalize", 9},
+		{"error", 10},
+		{"objerror", 11},
+		{"vlen", 12},
+		{"vectoyaw", 13},
+		{"spawn", 14},
+		{"remove", 15},
+		{"traceline", 16},
+		{"checkclient", 17},
+		{"find", 18},
+		{"precache_sound", 19},
+		{"precache_model", 20},
+		{"stuffcmd", 21},
+		{"findradius", 22},
+		{"bprint", 23},
+		{"sprint", 24},
+		{"dprint", 25},
+		{"ftos", 26},
+		{"vtos", 27},
+		{"coredump", 28},
+		{"traceon", 29},
+		{"traceoff", 30},
+		{"eprint", 31},
+		{"walkmove", 32},
+		{"droptofloor", 34},
+		{"lightstyle", 35},
+		{"rint", 36},
+		{"floor", 37},
+		{"ceil", 38},
+		{"checkbottom", 40},
+		{"pointcontents", 41},
+		{"fabs", 43},
+		{"aim", 44},
+		{"cvar", 45},
+		{"localcmd", 46},
+		{"nextent", 47},
+		{"particle", 48},
+		{"ChangeYaw", 49},
+		{"changeyaw", 49},
+		{"vectoangles", 51},
+		{"WriteByte", 52},
+		{"WriteChar", 53},
+		{"WriteShort", 54},
+		{"WriteLong", 55},
+		{"WriteCoord", 56},
+		{"WriteAngle", 57},
+		{"WriteString", 58},
+		{"WriteEntity", 59},
+		{"movetogoal", 67},
+		{"precache_file", 68},
+		{"makestatic", 69},
+		{"changelevel", 70},
+		{"cvar_set", 72},
+		{"cvar_setlong", 72},
+		{"centerprint", 73},
+		{"ambientsound", 74},
+		{"precache_model2", 75},
+		{"precache_sound2", 76},
+		{"precache_file2", 77},
+		{"setspawnparms", 78},
+		{"finaleFinished", 79},
+	};
+	if (!name || !*name)
+		return 0;
+	for (unsigned int i = 0; i < countof (names); ++i)
+		if (!(exact ? strcmp (name, names[i].name) : q_strcasecmp (name, names[i].name)))
+			return names[i].number;
+	return 0;
+}
+
 static void PF_builtinsupported (void)
 {
 	const char	*biname = G_STRING (OFS_PARM0);
@@ -6549,6 +6634,7 @@ static void PF_builtinsupported (void)
 			return;
 		}
 	}
+	G_FLOAT (OFS_RETURN) = PR_CoreBuiltinNumber (biname, false);
 }
 
 static void PF_checkbuiltin (void)
@@ -6798,6 +6884,12 @@ void PR_EnableExtensions (ddef_t *pr_globaldefs)
 					qcvm->functions[i].first_statement = -extensionbuiltins[j].number;
 					break;
 				}
+			}
+			if (qcvm->functions[i].first_statement == 0)
+			{
+				int number = PR_CoreBuiltinNumber (name, true);
+				if (number > 0 && number < qcvm->numbuiltins)
+					qcvm->functions[i].first_statement = -number;
 			}
 		}
 	}
