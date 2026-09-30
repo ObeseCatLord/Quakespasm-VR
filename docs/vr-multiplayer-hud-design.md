@@ -34,3 +34,33 @@ owners above. No demonstrated placement incompatibility was found in this
 bounded source comparison, so no HUD or Vulkan rewrite is warranted. This is
 source evidence only, not device visibility, arbitrary roster-size or overall VR
 parity proof. End-of-implementation software qualification remains required.
+
+## Native multiplayer intermission adapter plan (2026-09-30)
+
+Source comparison demonstrates a remaining placement gap: primary
+`51b452c0:Quake/vr.c:VR_Draw2D` draws ordinary intermission/finale overlays
+through its tracked panel without a single-player restriction. Current
+`gl_screen.c:SCR_VRNativeSoloIntermission` requires `cl.maxclients == 1` and
+`GAME_COOP`, leaving native multiplayer intermissions on the flat path.
+Current `sbar.c:Sbar_IntermissionOverlay` dispatches ordinary co-op results
+or the native deathmatch scoreboard; both draw on `CANVAS_MENU`. The existing
+menu panel already owns that canvas and its physical transform. Finale also
+uses `CANVAS_MENU`.
+
+Adopt a minimal adapter: remove only the solo/gametype admission restriction
+and rename the helper to describe native intermission. Keep connection/signon,
+world, destination, intermission-state and CSQC-score exclusion checks. Keep
+the existing prepared anchor, draw dispatch, canvas and panel cleanup. Budget:
+at most eight changed production lines in `Quake/gl_screen.c`; no new panel,
+scoreboard renderer, roster policy or per-eye gameplay/QC invocation.
+
+Retaining flat native multiplayer overlays would preserve the demonstrated
+placement regression. A second scoreboard pass would duplicate the existing
+draw owner, so neither alternative is adopted. CSQC score/death/intermission
+placement is a separate unresolved canvas boundary, not silently closed by
+this native-only change. Arbitrary roster size is not certified here.
+
+At the end of all implementation, qualify ordinary co-op results, deathmatch
+scores and finale in stereo, plus unchanged desktop, native solo, menu/modal
+and CSQC dispatch boundaries. No execution, build or test is authorized for
+this implementation slice before that final gate.
