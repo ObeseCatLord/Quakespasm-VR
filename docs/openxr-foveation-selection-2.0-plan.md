@@ -1,5 +1,11 @@
 # Prefer FB/META foveation with KHR capability fallback
 
+The [two-eye density-offset reopening](openxr-density-offsets-2.0-plan.md)
+adds primary Meta/Qualcomm and pinned Godot evidence on application tile offsets
+and all-attachment/MSAA flags. Its forthcoming advisory/disposition supersedes
+the historical offset assumption only where adopted; default/borrowed-image
+qualification below is not silently resolved by this planning checkpoint.
+
 Status: implementation plan amended after the user's clarification on
 2026-09-29: favor Valve's FB/META route where it can work, while retaining KHR
 shading rate where FB/META cannot. Quad views are excluded from 2.0 after the
