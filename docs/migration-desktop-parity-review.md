@@ -77,3 +77,30 @@ comment revised. Main inspected the complete diff against the planned boundary;
 the VR consumer, default, registration, native menu and speed-key XOR are
 unchanged. Scoped whitespace checks pass. No build or runtime test was run;
 broader desktop parity and final Linux/ARM qualification remain pending.
+
+## Native desktop UI source checkpoint (2026-09-30)
+
+Main checked UI-005 against current production and pinned vkQuake. Resolution
+scaling is already native: `SCR_UpdateRelativeScale` derives menu/status/console
+scales, runs during initialization, cvar changes and video changes, and retains
+the donor's `scr_relativescale=2` default. The native game-options slider selects
+relative scale or manual absolute scale; pointer dragging and scrollbar ownership
+remain in `M_UpdateMouse`. The VR panel code separately inverts native canvas
+scales into the inherited physical `vr_menu_scale/vr_hud_scale` sizes. Copying
+the primary's additional `SCR_ApplyAutoScale` cvar writer would duplicate working
+native scaling policy. Retain vkQuake's owner; old `scr_autoscale` aliases are
+outside the user's legacy-settings requirement.
+
+Current `SCR_CenterPrint` already reuses native `COM_WordWrap` at 40 columns,
+counts the prepared lines/max-width, and draws every prepared line. There is no
+need to copy a second wrapping helper from primary. Native server `PF_GetStringArg`
+and `PF_VarString` already resolve `LOC_GetString/LOC_Format` before sending;
+client centerprint dispatch supplies the resulting text to the same wrapper.
+Existing localization loaders and lookup precedence remain their native owners.
+
+This source checkpoint corrects the stale assertion that UI-005 still has no
+integration. It does not certify every string, resolution or pointer interaction.
+Final Linux/ARM qualification must cover resize/manual/relative controls,
+desktop sliders, localized long words/explicit newlines/truncation, finale text
+and independent stereo canvas sizes. No production change, tests, build or
+runtime probe was performed for this checkpoint.
