@@ -1278,7 +1278,7 @@ static bool discover_runtime() {
 	if(g.vulkanSwapchainImageFlagsSupported) enabled.push_back(XR_META_VULKAN_SWAPCHAIN_CREATE_INFO_EXTENSION_NAME);
 	XrInstanceCreateInfo create={XR_TYPE_INSTANCE_CREATE_INFO};
 	std::strncpy(create.applicationInfo.applicationName,"Quakespasm VR",sizeof(create.applicationInfo.applicationName)-1);
-	create.applicationInfo.applicationVersion=1; std::strncpy(create.applicationInfo.engineName,"Quakespasm",sizeof(create.applicationInfo.engineName)-1);
+	create.applicationInfo.applicationVersion=1; std::strncpy(create.applicationInfo.engineName,"vkQuake",sizeof(create.applicationInfo.engineName)-1);
 	create.applicationInfo.engineVersion=1; create.applicationInfo.apiVersion=XR_API_VERSION_1_0;
 	create.enabledExtensionCount=(uint32_t)enabled.size(); create.enabledExtensionNames=enabled.data();
 	if(!ok("xrCreateInstance",g.xr.CreateInstance(&create,&g.instance))) return false;

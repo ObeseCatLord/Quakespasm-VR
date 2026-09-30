@@ -24,3 +24,8 @@ and embedded resource packaging, current native configs/defaults and profile/
 save lookup, including ordinary desktop without a runtime. Windows builds and
 live runtime behavior are deferred. No builds/tests/probes now; main reviews
 the literal diff and source identity producers before committing.
+
+The one-line engine-name correction is source-integrated and main-reviewed.
+Application identity and versions retain their existing values; no header,
+config or lifecycle owner changed. Scoped whitespace checking passed; final
+metadata/config/package software qualification remains pending.
