@@ -44,3 +44,30 @@ movement, co-op inventory and collision rules, and cross-play effects. Include
 the no-friendly-fire option on and off, native and physical attacks, self
 damage and delayed projectiles. Any difference outside the deliberate shared
 features needs a specific disposition before declaring parity.
+
+## Always Run source correction plan — 2026-09-30
+
+The inherited `CL_BaseMoveInternal` desktop premultiplier doubles stock
+forward/back speeds when `cl_alwaysrun` is off and
+`cl_desktop_vanilla_run` is on. Native vkQuake does not have that block; its
+menu resets both speeds to 200 when toggling Always Run. Consequently the
+current desktop path still requests 400 with Always Run off and the speed
+key released. This is a demonstrated desktop difference, not a reason to
+replace movement or prediction.
+
+The minimal correction removes only that desktop premultiplier and revises
+the cvar comment. Keep the native speed-key/Always Run XOR, movement sampling,
+predictive command owner and menu. Retain the existing cvar default and its
+`VR_InputMove` consumer: setting the default to zero instead would also change
+VR joystick speed with Always Run off. No new setting or movement policy is
+needed; preserving the legacy desktop override is outside the user's scope.
+
+Requested local Astra/max read-only advice confirmed this coupling and the
+minimal deletion. Effective model/effort metadata is not exposed by the agent
+API, so this is source advice, not formal reviewer certification. Main source
+comparison checked native `CL_BaseMove`, the actual Always Run menu branch,
+cvar registration and the VR consumer. After implementation, inspect the
+scoped diff and whitespace; execution remains deferred until implementation
+of the full goal is finished. The final Linux/ARM gate must cover desktop
+Always Run on/off with speed key up/down, custom speeds and mode transitions;
+live headset testing remains user-owned.
