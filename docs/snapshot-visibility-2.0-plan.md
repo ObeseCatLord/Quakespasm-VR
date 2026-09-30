@@ -93,3 +93,32 @@ Check native desktop geometry/particles, VR two-eye culling and avatar/weapon
 presentation. No mod-special-case engine rules. Performance measurement and
 live headset tests remain user-deferred. Source predicates alone cannot qualify
 user-observable scripted effects or full migration parity.
+
+## Additional direct reference checks before design review
+
+Actual primary `cl_main.c:CL_RelinkEntities` (model-null rejection near2221,
+emission near2425) and pinned QSS-M (2136/2362) also skip model-less entities
+before scripted emission. Destination does the same. Therefore no inherited
+working model-less **rendering** behavior is established: preserve the native
+client scene path in this slice. Server-only emitter state eligibility can
+match reference transport, but must not be described as rendered particle parity.
+Primary's bounded/named particle-index check is separately useful evidence;
+any repair at that existing consumer requires its own demonstrated gap/plan.
+The current getentity builtin likewise rejects entities lacking a model.
+
+Classic clients use the separate native `SV_WriteEntitiesToClient`, which retains
+its two-pass distance sorting and serialization; QSS-M has customization and
+view/exterior suppression at its immediate serialization loop. Do not copy its
+`EDICT_TO_PROG(client_t *)` calls: the recipient is the native client edict. A
+shared callback-context/liveness adapter is reusable, but adding callbacks to
+native gather/sort must not let previously collected entity slots be freed and
+reused before serialization. Resolve this ownership in the verified brief before
+editing that path, retaining native sort rather than transplanting QSS-M's writer.
+
+The destination attachment client already inherits view/exterior flags and its
+renderer consumes EXTERIORMODEL; that is not proof of complete VIEWMODEL behavior.
+The existing flags can hide owner geometry without clearing model/collision
+metadata, but actual first-person/chase/VR/avatar/particle semantics require
+source review before choosing that presentation adapter. Do not assume setting
+owner modelindex0 is harmless: existing client relink and getentity depend on a
+model. No new behavior is implemented by this evidence checkpoint.
