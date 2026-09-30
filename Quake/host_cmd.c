@@ -2251,6 +2251,8 @@ void Host_CoopAutosaveFrame (void)
 	int kill_bucket;
 	int serverflags;
 	int slots;
+	double kill_interval_value;
+	double slots_value;
 	float min_interval;
 	const char *reason;
 	char savename[MAX_QPATH];
@@ -2259,6 +2261,26 @@ void Host_CoopAutosaveFrame (void)
 	 * untouched until saved client snapshots and deferred parms are consumed. */
 	if (sv.loadgame_multiplayer &&
 		(Host_LoadgameHasPendingClients () || Host_LoadgameHasPendingSpawnParms ()))
+		return;
+
+	kill_interval_value = (double)sv_coop_autosave_kill_interval.value;
+	slots_value = (double)sv_coop_autosave_slots.value;
+	min_interval = sv_coop_autosave_min_interval.value;
+	if (!isfinite (realtime) || !isfinite (kill_interval_value) ||
+		!isfinite (slots_value) || !isfinite (min_interval))
+		return;
+	if (qcvm == &sv.qcvm &&
+		(!isfinite (qcvm->time) ||
+		(pr_global_struct &&
+		(!isfinite (pr_global_struct->found_secrets) ||
+		(double)pr_global_struct->found_secrets < (double)INT_MIN ||
+		(double)pr_global_struct->found_secrets > (double)INT_MAX ||
+		!isfinite (pr_global_struct->killed_monsters) ||
+		(double)pr_global_struct->killed_monsters < (double)INT_MIN ||
+		(double)pr_global_struct->killed_monsters > (double)INT_MAX ||
+		!isfinite (pr_global_struct->serverflags) ||
+		(double)pr_global_struct->serverflags < (double)INT_MIN ||
+		(double)pr_global_struct->serverflags > (double)INT_MAX))))
 		return;
 
 	if (!sv.active || sv.state != ss_active || sv.paused || svs.maxclients <= 1 ||
@@ -2297,9 +2319,11 @@ void Host_CoopAutosaveFrame (void)
 
 	found_secrets = (int)pr_global_struct->found_secrets;
 	killed_monsters = (int)pr_global_struct->killed_monsters;
-	kill_interval = (int)sv_coop_autosave_kill_interval.value;
-	if (kill_interval < 1)
-		kill_interval = 1;
+	if (kill_interval_value < 1.0)
+		kill_interval_value = 1.0;
+	else if (kill_interval_value > (double)INT_MAX)
+		kill_interval_value = (double)INT_MAX;
+	kill_interval = (int)kill_interval_value;
 	kill_bucket = killed_monsters / kill_interval;
 	serverflags = (int)pr_global_struct->serverflags;
 
@@ -2329,18 +2353,17 @@ void Host_CoopAutosaveFrame (void)
 	if (realtime < sv.coop_autosave_retry_realtime)
 		return;
 
-	min_interval = sv_coop_autosave_min_interval.value;
 	if (min_interval < 0)
 		min_interval = 0;
 	if (sv.coop_autosave_last_realtime > 0 &&
 		realtime - sv.coop_autosave_last_realtime < min_interval)
 		return;
 
-	slots = (int)sv_coop_autosave_slots.value;
-	if (slots < 1)
-		slots = 1;
-	if (slots > COOP_AUTOSAVE_MAX_SLOTS)
-		slots = COOP_AUTOSAVE_MAX_SLOTS;
+	if (slots_value < 1.0)
+		slots_value = 1.0;
+	else if (slots_value > (double)COOP_AUTOSAVE_MAX_SLOTS)
+		slots_value = (double)COOP_AUTOSAVE_MAX_SLOTS;
+	slots = (int)slots_value;
 	q_snprintf (savename, sizeof (savename), "coop_auto%i",
 		sv.coop_autosave_next_slot % slots);
 

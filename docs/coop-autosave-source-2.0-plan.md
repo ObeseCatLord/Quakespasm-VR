@@ -62,3 +62,16 @@ join/restoration, pause/intermission, every progress gate, slot resize/rotation,
 failed-write backoff and successful native save restoration. Disk failure must
 leave the prior slot intact. No headset/performance test is implied. Broader
 COOP-010/011 save dialect/identity acceptance remains a separate requirement.
+
+## Source integration checkpoint
+
+The one coding worker implemented23 net lines in the existing autosave routine.
+Main reviewed the entire patch against the primary routine and native writer:
+finite/time/QC range validation precedes casts/state changes; double clamps
+preserve finite truncation/default/bounds behavior without float INT_MAX
+rounding. Invalid settings/progress leave pending rotation and baselines intact.
+The existing reset on ordinary disabled state, join/restoration/intermission
+refusal, trigger priority, failed-write backoff and successful publication
+updates remain. Scoped whitespace passed; no executable checks were run.
+This is source integration only. Final slot/gate/write-failure/restoration
+Linux/ARM qualification and broader COOP-010/011 remain pending.
