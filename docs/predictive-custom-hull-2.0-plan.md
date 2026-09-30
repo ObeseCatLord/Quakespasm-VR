@@ -1,6 +1,8 @@
 # Reuse native Quake hull coordinates in shared PMove
 
-Status: verified implementation brief before production edits. Cooperative
+Status: implemented with final bounded personal Astra Max source acceptance.
+Builds and runtime qualification remain deferred until full implementation ends.
+The verified brief and dispositions preceded production edits. Cooperative
 state source audit found this concrete collision gap. Main integrates on `2.0`;
 references and the user's modified migration document remain untouched.
 
@@ -112,3 +114,26 @@ validate the loaded brush world model before using its hull dimensions. Do not
 rotate the `actor_mins - clip_mins` center; only the compiled hull rotates.
 The sphere already contains its unrotated shape, so no extra union is needed.
 Existing collection capacity/failure handling remains unchanged.
+
+## Implementation checkpoint
+
+The shared trace now uses native compiled hull0/1/2 selection and placement,
+including rotation and world-space endpoints. It no longer rejects BSP traces
+using unqualified render bounds; box rejection uses its already-expanded planes
+exactly once. The existing server collection envelope includes the rotated
+compiled hull for custom bounds. Matching ordinary hull1 retains its previous
+envelope without the extra radius computation. No new solver, queue, contact
+owner, protocol or per-mod rule was added.
+
+Personal local `gpt-6-astra`/`max` reviewed the actual two-helper delta and direct
+dependencies after implementation. No P1/P2 finding remained. Main checked
+offset/endpos initialization, box setup at both caller families, loaded world
+validation, the hull1-only fast path, unrotated center and existing reach math.
+Production scope is 45 additions and 16 deletions across `Quake/pmove.c` and
+`Quake/sv_phys.c`. Scoped whitespace checks pass; no compiler or execution checks
+were run in this pass.
+
+End-of-implementation acceptance above remains pending. Source acceptance does
+not establish arbitrary exact-size geometry, collision outside linked brush
+bounds, runtime parity or measured performance. Larger custom candidate sets
+retain the existing capacity/error path.

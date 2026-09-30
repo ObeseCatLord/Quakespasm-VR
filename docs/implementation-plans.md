@@ -119,7 +119,10 @@ A current cooperative source audit found liquid execution, imported ladder
 controls and native-to-command return present. Its concrete missing collision
 boundary is addressed by the
 [native custom-hull reuse plan](predictive-custom-hull-2.0-plan.md), written
-before production changes. Broader authored state checks remain qualification;
+before production changes. Native selection/offsets, exact box rejection and
+the conservative custom collection envelope are now source-integrated with
+final personal Astra Max acceptance. Stock collection remains unchanged;
+end-of-implementation qualification is pending. Broader authored state checks remain qualification;
 plain replay of arbitrary server-only QC is not implied by the standard builtin.
 
 The [stock activation plan](predictive-stock-activation-2.0-plan.md) was committed

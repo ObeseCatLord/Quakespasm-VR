@@ -7971,13 +7971,39 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 
 	if (!isfinite (seconds) || seconds <= 0)
 		return false;
+	if (!qcvm || !qcvm->worldmodel || qcvm->worldmodel->needload ||
+		qcvm->worldmodel->type != mod_brush)
+		return false;
 	speed = 0;
 	for (i = 0; i < 3; i++)
 	{
 		if (!isfinite (ent->v.origin[i]) || !isfinite (ent->v.velocity[i]) ||
-			!isfinite (ent->v.mins[i]) || !isfinite (ent->v.maxs[i]))
+			!isfinite (ent->v.mins[i]) || !isfinite (ent->v.maxs[i]) ||
+			ent->v.mins[i] > ent->v.maxs[i])
 			return false;
 		speed = fmaxf (speed, fabsf (ent->v.velocity[i]));
+	}
+	vec3_t actor_mins, actor_maxs;
+	VectorCopy (ent->v.mins, actor_mins);
+	VectorCopy (ent->v.maxs, actor_maxs);
+	const float width = actor_maxs[0] - actor_mins[0];
+	const int hull_index = width < 3 ? 0 : width <= 32 ? 1 : 2;
+	const hull_t *hull = &qcvm->worldmodel->hulls[hull_index];
+	if (hull_index != 1 || !VectorCompare (actor_mins, hull->clip_mins) ||
+		!VectorCompare (actor_maxs, hull->clip_maxs))
+	{
+		/* Native BSP traces use compiled hulls. Include their possible rotated
+		 * envelope as well as authored bounds; keep stock collection unchanged. */
+		vec3_t extents;
+		for (i = 0; i < 3; ++i)
+			extents[i] = fmaxf (fabsf (hull->clip_mins[i]), fabsf (hull->clip_maxs[i]));
+		const float radius = VectorLength (extents);
+		for (i = 0; i < 3; ++i)
+		{
+			const float center = ent->v.mins[i] - hull->clip_mins[i];
+			actor_mins[i] = fminf (actor_mins[i], center - radius);
+			actor_maxs[i] = fmaxf (actor_maxs[i], center + radius);
+		}
 	}
 	acceleration = fmaxf (fabsf (vars->accelerate), fabsf (vars->airaccelerate)) *
 		fabsf (vars->maxspeed);
@@ -7997,8 +8023,8 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 		return false;
 	for (i = 0; i < 3; i++)
 	{
-		bounds[0][i] = ent->v.origin[i] + ent->v.mins[i] - reach;
-		bounds[1][i] = ent->v.origin[i] + ent->v.maxs[i] + reach;
+		bounds[0][i] = ent->v.origin[i] + actor_mins[i] - reach;
+		bounds[1][i] = ent->v.origin[i] + actor_maxs[i] + reach;
 		if (command && command->vr_gorilla.flags)
 		{
 			/* PMove traces the head-to-palm reach as well as the body.

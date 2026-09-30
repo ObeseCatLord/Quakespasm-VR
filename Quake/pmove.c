@@ -294,11 +294,12 @@ int PM_ExtraBoxContents (vec3_t p)
 
 static qboolean PM_TransformedHullCheck (qmodel_t *model, vec3_t start, vec3_t end, vec3_t player_mins, vec3_t player_maxs, trace_t *trace, vec3_t origin, vec3_t angles)
 {
-	vec3_t		start_l, end_l;
+	vec3_t		start_l, end_l, offset;
 	int		i;
 	vec3_t		axis[3], start_t, end_t;
 	hull_t		*hull;
 
+	VectorCopy (origin, offset);
 	VectorSubtract (start, origin, start_l);
 	VectorSubtract (end, origin, end_l);
 
@@ -311,7 +312,15 @@ static qboolean PM_TransformedHullCheck (qmodel_t *model, vec3_t start, vec3_t e
 	// filtering still uses the caller mask; raw CLIP leaves are not solid here.
 	if (model && model->type == mod_brush)
 	{
-		hull = &model->hulls[(player_maxs[0]-player_mins[0] < 3) ? 0 : 1];
+		/* Match native SV_HullForEntity placement, including foot-origin and
+		 * large actors. These are Quake's compiled hulls, not arbitrary boxes. */
+		const float width = player_maxs[0] - player_mins[0];
+		hull = &model->hulls[width < 3 ? 0 : width <= 32 ? 1 : 2];
+		VectorSubtract (hull->clip_mins, player_mins, offset);
+		VectorAdd (offset, origin, offset);
+		VectorSubtract (start, offset, start_l);
+		VectorSubtract (end, offset, end_l);
+		VectorCopy (end_l, trace->endpos);
 		if (angles[0] || angles[1] || angles[2])
 		{
 			AngleVectors (angles, axis[0], axis[1], axis[2]);
@@ -326,14 +335,7 @@ static qboolean PM_TransformedHullCheck (qmodel_t *model, vec3_t start, vec3_t e
 		}
 		else
 		{
-			for (i = 0; i < 3; i++)
-			{
-				if (start_l[i]+player_mins[i] > model->maxs[i] && end_l[i]+player_mins[i] > model->maxs[i])
-					return false;
-				if (start_l[i]+player_maxs[i] < model->mins[i] && end_l[i]+player_maxs[i] < model->mins[i])
-					return false;
-			}
-
+			/* Model/render bounds need not contain every collision brush. */
 			SV_RecursiveHullCheck (hull, start_l, end_l, trace, CONTENTMASK_FROMQ1 (CONTENTS_SOLID));
 		}
 	}
@@ -341,16 +343,17 @@ static qboolean PM_TransformedHullCheck (qmodel_t *model, vec3_t start, vec3_t e
 	{
 		for (i = 0; i < 3; i++)
 		{
-			if (start_l[i]+player_mins[i] > box_planes[0+i*2].dist && end_l[i]+player_mins[i] > box_planes[0+i*2].dist)
+			/* PM_HullForBox already expands these planes by the actor bounds. */
+			if (start_l[i] > box_planes[0+i*2].dist && end_l[i] > box_planes[0+i*2].dist)
 				return false;
-			if (start_l[i]+player_maxs[i] < box_planes[1+i*2].dist && end_l[i]+player_maxs[i] < box_planes[1+i*2].dist)
+			if (start_l[i] < box_planes[1+i*2].dist && end_l[i] < box_planes[1+i*2].dist)
 				return false;
 		}
 
 		SV_RecursiveHullCheck (&box_hull, start_l, end_l, trace, CONTENTMASK_FROMQ1 (CONTENTS_SOLID));
 	}
 
-	VectorAdd (trace->endpos, origin, trace->endpos);
+	VectorAdd (trace->endpos, offset, trace->endpos);
 	return true;
 }
 
