@@ -240,7 +240,8 @@ void R_StoreEfrags (efrag_t **ppefrag)
 		pent = pefrag->entity;
 		if ((pent->visframe != r_framecount) && (cl_numvisedicts < cl_maxvisedicts))
 		{
-			if (pent->netstate.emiteffectnum > 0)
+			if (pent->netstate.emiteffectnum > 0 && pent->netstate.emiteffectnum < MAX_PARTICLETYPES &&
+				cl.particle_precache[pent->netstate.emiteffectnum].name)
 			{
 				float  t = cl.time - cl.oldtime;
 				vec3_t axis[3];

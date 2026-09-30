@@ -2339,7 +2339,8 @@ void CL_RelinkEntities (void)
 
 		ent->forcelink = false;
 
-		if (ent->netstate.emiteffectnum > 0)
+		if (ent->netstate.emiteffectnum > 0 && ent->netstate.emiteffectnum < MAX_PARTICLETYPES &&
+			cl.particle_precache[ent->netstate.emiteffectnum].name)
 		{
 			vec3_t axis[3];
 			AngleVectors (ent->angles, axis[0], axis[1], axis[2]);
