@@ -76,3 +76,38 @@ degenerate or missing joints, independent arm rollback, unchanged dominant
 wrist, tracked bypass and calibrated custom-avatar regression. Relevant live
 appearance/headset/performance checks stay with the user. Source registration
 or compilation alone cannot prove avatar behavior or finish the migration.
+
+## Source implementation checkpoint
+
+The one-file adapter is implemented in `Quake/r_avatar.c`; source review is
+pending. It copies the reference Shambler authored-bend solve and support
+endpoint calibration. Each optional arm and support solve has rollback;
+ordinary frame palette publication and attached-prop owners are unchanged.
+
+The existing physical solver has one `require_reached` argument: desktop
+support refuses overreach rather than accepting its shortened target, while
+both existing tracked callers pass `false` and retain their prior behavior.
+The copied Ogre analytic specialization refuses stretch upfront because the
+reference labels any analytic stretch `CLAMPED` and its support helper only
+accepts `REACHED`. A final original-endpoint distance check also refuses inner
+reach shortening. This is a narrow correction to the reference's status-only
+check: unsupported contact preserves the original palette rather than claiming
+a reached grip. The profile pole, wrist basis and dominant prop frame remain.
+
+Only source reads and `git diff --check` have been performed. No builds,
+fixtures, software execution or hardware/performance qualification occurred.
+
+## Bounded local Astra source disposition
+
+The existing local requested-Astra/Max reviewer found a near-antipodal
+transport mismatch: the reused rotation helper collapsed tiny nonzero cross
+axes into an arbitrary antipode, while the reference Shambler transport keeps
+every nonzero axis. Adopted with a narrow helper argument: the new desktop
+Shambler transport requests reference continuity; existing tracked/subtree
+callers retain their previous threshold. No separate solver is added.
+
+The reviewer source-accepted the strict-reach change, explicit `false` tracked
+callers, original endpoint check, byte-identical dominant wrist and optional
+support rollback. The transport correction awaits the final source recheck.
+Effective model/effort metadata was unavailable; this is bounded advisory
+source evidence and no executed acceptance or certified model provenance.

@@ -1113,7 +1113,8 @@ static float R_AvatarLength3(const float v[3])
 	return sqrtf(DotProduct(v,v));
 }
 
-static qboolean R_AvatarBuildRotationToward(const float from[3],const float to[3],float out[12])
+static qboolean R_AvatarBuildRotationToward(const float from[3],const float to[3],
+	float out[12],qboolean preserve_nonzero_axis)
 {
 	float a[3],b[3],axis[3],fallback[3],cosine,sine,one;
 	memcpy(a,from,sizeof(a));memcpy(b,to,sizeof(b));
@@ -1121,7 +1122,7 @@ static qboolean R_AvatarBuildRotationToward(const float from[3],const float to[3
 	cosine=fmaxf(-1.0f,fminf(1.0f,DotProduct(a,b)));
 	axis[0]=a[1]*b[2]-a[2]*b[1];axis[1]=a[2]*b[0]-a[0]*b[2];axis[2]=a[0]*b[1]-a[1]*b[0];
 	sine=R_AvatarLength3(axis);
-	if(sine<0.000001f) {
+	if(sine==0 || (!preserve_nonzero_axis && sine<0.000001f)) {
 		if(cosine>0.0f){R_AvatarIdentity(out);return true;}
 		fallback[0]=0;fallback[1]=1;fallback[2]=0;
 		if(fabsf(DotProduct(fallback,a))>.9f){fallback[0]=0;fallback[1]=0;fallback[2]=1;}
@@ -1148,7 +1149,7 @@ static qboolean R_AvatarRotateSubtreeToward(const r_avatar_rig_t *rig,float *pal
 	int root,const float from[3],const float to[3])
 {
 	float before[12],desired[12],inverse[12],delta[12];
-	if(root<0||root>=R_AvatarJointCount(rig->live)||!R_AvatarBuildRotationToward(from,to,delta))return false;
+	if(root<0||root>=R_AvatarJointCount(rig->live)||!R_AvatarBuildRotationToward(from,to,delta,false))return false;
 	memcpy(before,palette+root*12,sizeof(before));R_AvatarMultiply(delta,before,desired);
 	/* This is a pivoted branch rotation: preserve the root origin before
 	 * deriving the global delta applied to each child. */
@@ -1197,7 +1198,8 @@ static qboolean R_AvatarBuildPaletteBodyBasis(const r_avatar_rig_t *rig,const fl
  * FABRIK selects positions; subtree rotations and translations then preserve
  * every target-model parent link and the retargeted endpoint basis. */
 static qboolean R_AvatarSolvePhysicalPath(const r_avatar_rig_t *rig,float *palette,
-	int root,int endpoint,const float target[3],const float endpointbasis[12])
+	int root,int endpoint,const float target[3],const float endpointbasis[12],
+	qboolean require_reached)
 {
 	int chain[8],count=0,i,iteration,jointcount=R_AvatarJointCount(rig->live);float position[8][3],solved[8][3],length[7],direction[3],endpointtarget[3],total=0,rootdistance,extension=1;float intended[12];
 	if(root<0||endpoint<0||root>=jointcount||endpoint>=jointcount||!R_AvatarOrthonormal(endpointbasis))return false;
@@ -1208,7 +1210,7 @@ static qboolean R_AvatarSolvePhysicalPath(const r_avatar_rig_t *rig,float *palet
 	for(i=0;i<count;++i)R_AvatarOrigin(palette+chain[i]*12,position[i]);
 	for(i=0;i+1<count;++i){for(int a=0;a<3;++a)direction[a]=position[i+1][a]-position[i][a];length[i]=R_AvatarLength3(direction);if(!isfinite(length[i])||length[i]<.001f)return false;total+=length[i];}
 	memcpy(endpointtarget,target,sizeof(endpointtarget));for(i=0;i<3;++i)direction[i]=endpointtarget[i]-position[0][i];rootdistance=R_AvatarLength3(direction);if(!isfinite(rootdistance)||rootdistance<.0001f)return false;
-	if(rootdistance>total){extension=fminf(rootdistance/total,1.10f);for(i=0;i+1<count;++i)length[i]*=extension;total*=extension;if(rootdistance>total){for(i=0;i<3;++i)endpointtarget[i]=position[0][i]+direction[i]*total/rootdistance;}}
+	if(rootdistance>total){extension=fminf(rootdistance/total,1.10f);for(i=0;i+1<count;++i)length[i]*=extension;total*=extension;if(rootdistance>total){if(require_reached)return false;for(i=0;i<3;++i)endpointtarget[i]=position[0][i]+direction[i]*total/rootdistance;}}
 	memcpy(solved,position,(size_t)count*sizeof(position[0]));
 	for(i=0;i<3;++i)direction[i]=endpointtarget[i]-position[0][i];
 	rootdistance=R_AvatarLength3(direction);
@@ -1238,7 +1240,7 @@ static qboolean R_AvatarSolvePhysicalPath(const r_avatar_rig_t *rig,float *palet
 			}
 			if(i==3)return false;
 		}
-		if(!R_AvatarBuildRotationToward(original,direction,transport))return false;
+		if(!R_AvatarBuildRotationToward(original,direction,transport,false))return false;
 		for(i=0;i<3;++i)
 			perpendicular[i]=transport[i*4]*side[0]+transport[i*4+1]*side[1]+transport[i*4+2]*side[2];
 		{
@@ -1303,6 +1305,375 @@ static qboolean R_AvatarPaletteValid(const r_avatar_rig_t *rig,const float *pale
 {
 	for(int joint=0;joint<R_AvatarJointCount(rig->live);++joint)
 		if(!R_AvatarOrthonormal(palette+joint*12))return false;
+	return true;
+}
+
+/* Pure desktop repair math adapted from master r_alias.c at 51b452c0.
+ * This refines one frame palette; raster, attached props and shadows reuse it. */
+static void R_AvatarSetOrigin (float matrix[12], const float origin[3])
+{
+	matrix[3] = origin[0]; matrix[7] = origin[1]; matrix[11] = origin[2];
+}
+
+static void R_AvatarTranslateSubtree (const r_avatar_rig_t *rig, float *palette,
+	int root, const float offset[3])
+{
+	for (int joint = 0; joint < R_AvatarJointCount (rig->live); ++joint)
+		if (R_AvatarDescendant (rig->live, joint, root))
+			for (int axis = 0; axis < 3; ++axis)
+				palette[joint * 12 + axis * 4 + 3] += offset[axis];
+}
+
+static qboolean R_AvatarRepairShamblerDesktopArm (const r_avatar_rig_t *rig,
+	float *palette, int shoulder, int upper, int lower, int hand)
+{
+	const md5_skeleton_view_t *live = rig->live;
+	const int chain[4] = {shoulder, upper, lower, hand};
+	vec3_t bindposition[4], position[4], solved[4], direction, bindchord;
+	vec3_t chord, mappedchord, outward, relative, perpendicular;
+	float length[3], bindinverse[12], shoulderdelta[12], correction[12];
+	float transport[12], intendedhand[12];
+	float distance, total = 0.0f, minreach, strongestmagnitude = 0.0f;
+	float bend[2];
+	int i, iteration, strongest = -1;
+
+	if (!live || !palette || shoulder < 0 || upper < 0 || lower < 0 || hand < 0 ||
+		shoulder >= R_AvatarJointCount (live) || upper >= R_AvatarJointCount (live) ||
+		lower >= R_AvatarJointCount (live) || hand >= R_AvatarJointCount (live) ||
+		live->joints[upper].parent != shoulder ||
+		live->joints[lower].parent != upper || live->joints[hand].parent != lower)
+		return false;
+	for (i = 0; i < 4; ++i)
+	{
+		R_AvatarOrigin (live->joints[chain[i]].bind, bindposition[i]);
+		R_AvatarOrigin (palette + chain[i] * 12, position[i]);
+		if (!isfinite (bindposition[i][0]) || !isfinite (bindposition[i][1]) ||
+			!isfinite (bindposition[i][2]) || !isfinite (position[i][0]) ||
+			!isfinite (position[i][1]) || !isfinite (position[i][2]))
+			return false;
+	}
+	for (i = 0; i < 3; ++i)
+	{
+		VectorSubtract (bindposition[i + 1], bindposition[i], direction);
+		length[i] = VectorLength (direction);
+		if (length[i] < 0.001f || !isfinite (length[i]))
+			return false;
+		total += length[i];
+	}
+	minreach = q_max (0.0f, q_max (length[0], q_max (length[1], length[2])) -
+		(total - q_max (length[0], q_max (length[1], length[2]))));
+	VectorSubtract (bindposition[3], bindposition[0], bindchord);
+	VectorSubtract (position[3], position[0], chord);
+	distance = VectorLength (chord);
+	if (!VectorNormalize (bindchord) || !VectorNormalize (chord) ||
+		!isfinite (distance) || distance < minreach - 0.001f ||
+		distance > total + 0.001f)
+		return false;
+	/* The raw wrist endpoint is authoritative.  Seed its physical chain from
+	 * the bind arm's authored outward bend plane instead of the crossed raw
+	 * intermediates, then constrain that seed with bind segment lengths. */
+	for (i = 1; i < 3; ++i)
+	{
+		float magnitude;
+		VectorSubtract (bindposition[i], bindposition[0], relative);
+		VectorMA (relative, -DotProduct (relative, bindchord), bindchord,
+			perpendicular);
+		magnitude = VectorLength (perpendicular);
+		if (magnitude > 0.001f && (strongest < 0 || magnitude > strongestmagnitude))
+		{
+			VectorScale (perpendicular, 1.0f / magnitude, outward);
+			strongestmagnitude = magnitude;
+			strongest = i;
+		}
+	}
+	/* Preserve the bind shoulder's complete twist before aligning its transported
+	 * chord to the raw wrist chord.  Transport = C * D is equivariant under an
+	 * arbitrary global rigid transform, unlike a basis rebuilt from chords
+	 * alone. */
+	R_AvatarInverseRigid (live->joints[shoulder].bind, bindinverse);
+	R_AvatarMultiply (palette + shoulder * 12, bindinverse, shoulderdelta);
+	mappedchord[0] = shoulderdelta[0] * bindchord[0] +
+		shoulderdelta[1] * bindchord[1] + shoulderdelta[2] * bindchord[2];
+	mappedchord[1] = shoulderdelta[4] * bindchord[0] +
+		shoulderdelta[5] * bindchord[1] + shoulderdelta[6] * bindchord[2];
+	mappedchord[2] = shoulderdelta[8] * bindchord[0] +
+		shoulderdelta[9] * bindchord[1] + shoulderdelta[10] * bindchord[2];
+	if (strongest < 0 || !R_AvatarBuildRotationToward (mappedchord, chord,
+		correction, true))
+		return false;
+	R_AvatarMultiply (correction, shoulderdelta, transport);
+	for (i = 0; i < 4; ++i)
+	{
+		VectorSubtract (bindposition[i], bindposition[0], relative);
+		solved[i][0] = position[0][0] + transport[0] * relative[0] +
+			transport[1] * relative[1] + transport[2] * relative[2];
+		solved[i][1] = position[0][1] + transport[4] * relative[0] +
+			transport[5] * relative[1] + transport[6] * relative[2];
+		solved[i][2] = position[0][2] + transport[8] * relative[0] +
+			transport[9] * relative[1] + transport[10] * relative[2];
+	}
+	/* The transported authored side defines which of the two planar solutions
+	 * is anatomical after the endpoint is pinned to the raw retarget pose. */
+	perpendicular[0] = transport[0] * outward[0] + transport[1] * outward[1] +
+		transport[2] * outward[2];
+	perpendicular[1] = transport[4] * outward[0] + transport[5] * outward[1] +
+		transport[6] * outward[2];
+	perpendicular[2] = transport[8] * outward[0] + transport[9] * outward[1] +
+		transport[10] * outward[2];
+	VectorCopy (perpendicular, outward);
+	VectorCopy (position[0], solved[0]);
+	VectorCopy (position[3], solved[3]);
+	for (iteration = 0; iteration < 64; ++iteration)
+	{
+		VectorCopy (position[3], solved[3]);
+		for (i = 2; i >= 0; --i)
+		{
+			VectorSubtract (solved[i], solved[i + 1], direction);
+			if (!VectorNormalize (direction)) return false;
+			VectorMA (solved[i + 1], length[i], direction, solved[i]);
+		}
+		VectorCopy (position[0], solved[0]);
+		for (i = 1; i < 4; ++i)
+		{
+			VectorSubtract (solved[i], solved[i - 1], direction);
+			if (!VectorNormalize (direction)) return false;
+			VectorMA (solved[i - 1], length[i - 1], direction, solved[i]);
+		}
+		VectorSubtract (position[3], solved[3], direction);
+		if (VectorLength (direction) < 0.001f)
+			break;
+	}
+	VectorSubtract (position[3], solved[3], direction);
+	if (VectorLength (direction) >= 0.01f)
+		return false;
+	for (i = 1; i < 3; ++i)
+	{
+		VectorSubtract (solved[i], solved[0], relative);
+		VectorMA (relative, -DotProduct (relative, chord), chord, perpendicular);
+		bend[i - 1] = DotProduct (perpendicular, outward);
+	}
+	if (bend[0] < -0.001f && bend[1] < -0.001f)
+	{
+		for (i = 1; i < 3; ++i)
+		{
+			VectorSubtract (solved[i], solved[0], relative);
+			VectorMA (relative, -2.0f * DotProduct (relative, outward), outward,
+				relative);
+			VectorAdd (solved[0], relative, solved[i]);
+		}
+		for (i = 1; i < 3; ++i)
+		{
+			VectorSubtract (solved[i], solved[0], relative);
+			VectorMA (relative, -DotProduct (relative, chord), chord, perpendicular);
+			bend[i - 1] = DotProduct (perpendicular, outward);
+		}
+	}
+	/* A summed bend can hide one inward intermediate behind a larger outward
+	 * neighbour.  Do not mutate a raw retarget palette unless both joints are
+	 * on the authored side; unsupported mixed paths remain animation-authored. */
+	if (bend[0] <= 0.001f || bend[1] <= 0.001f)
+		return false;
+	memcpy (intendedhand, palette + hand * 12, sizeof (intendedhand));
+	for (i = 0; i < 3; ++i)
+	{
+		vec3_t oldnext;
+		R_AvatarOrigin (palette + chain[i] * 12, position[i]);
+		R_AvatarOrigin (palette + chain[i + 1] * 12, oldnext);
+		VectorSubtract (oldnext, position[i], oldnext);
+		VectorSubtract (solved[i + 1], solved[i], direction);
+		if (!R_AvatarRotateSubtreeToward (rig, palette, chain[i], oldnext,
+			direction))
+			return false;
+	}
+	for (i = 1; i < 4; ++i)
+	{
+		R_AvatarOrigin (palette + chain[i] * 12, position[i]);
+		VectorSubtract (solved[i], position[i], direction);
+		R_AvatarTranslateSubtree (rig, palette, chain[i], direction);
+	}
+	return R_AvatarSetSubtreeTransform (rig, palette, hand, intendedhand);
+}
+
+static void R_AvatarRepairShamblerDesktopArms (const r_avatar_rig_t *rig,
+	float *palette)
+{
+	float saved[R_AVATAR_MAX_JOINTS * 12];
+	const size_t bytes = rig->live->joint_count * 12 * sizeof (float);
+	for (int side = 0; side < 2; ++side)
+	{
+		memcpy (saved, palette, bytes);
+		if (!R_AvatarRepairShamblerDesktopArm (rig, palette,
+			rig->joint[side ? MD5_VRIK_SHOULDER_R : MD5_VRIK_SHOULDER_L],
+			rig->joint[side ? MD5_VRIK_UPPERARM_R : MD5_VRIK_UPPERARM_L],
+			rig->joint[side ? MD5_VRIK_LOWERARM_R : MD5_VRIK_LOWERARM_L],
+			rig->joint[side ? MD5_VRIK_HAND_R : MD5_VRIK_HAND_L]) ||
+			!R_AvatarPaletteValid (rig, palette))
+			memcpy (palette, saved, bytes);
+	}
+}
+
+static qboolean R_AvatarSolveDesktopSupportArm (const r_avatar_rig_t *rig,
+	float *palette, const vec3_t target, const float endpointbasis[12])
+{
+	int upperindex = rig->joint[MD5_VRIK_UPPERARM_L];
+	int lowerindex = rig->joint[MD5_VRIK_LOWERARM_L];
+	int handindex = rig->joint[MD5_VRIK_HAND_L];
+	float *upper, *lower, *hand;
+	float intendedhand[12];
+	vec3_t shoulder, elbow, oldelbow, oldhand, toward, boundedtarget, lateral, forward, up;
+	vec3_t oldupperdir, oldlowerdir, newupperdir, newlowerdir, pole, normal, bend;
+	float upperlength, lowerlength, distance, rawdistance, reach, cosine, along, across;
+
+	if (upperindex < 0 || lowerindex < 0 || handindex < 0 ||
+		rig->live->joints[lowerindex].parent != upperindex ||
+		rig->live->joints[handindex].parent != lowerindex ||
+		!R_AvatarBuildPaletteBodyBasis (rig, palette, lateral, forward, up))
+		return false;
+	upper = palette + upperindex * 12;
+	lower = palette + lowerindex * 12;
+	hand = palette + handindex * 12;
+	/* The retargeter supplied the anatomical wrist basis.  The reach solve
+	 * rotates complete arm subtrees, so restore that intended basis once the
+	 * wrist has reached its solved endpoint. */
+	memcpy (intendedhand, endpointbasis ? endpointbasis : hand, sizeof (intendedhand));
+	R_AvatarOrigin (upper, shoulder);
+	R_AvatarOrigin (lower, oldelbow);
+	R_AvatarOrigin (hand, oldhand);
+	VectorSubtract (oldelbow, shoulder, oldupperdir);
+	VectorSubtract (oldhand, oldelbow, oldlowerdir);
+	upperlength = VectorLength (oldupperdir);
+	lowerlength = VectorLength (oldlowerdir);
+	if (upperlength < 0.01f || lowerlength < 0.01f)
+		return false;
+	VectorSubtract (target, shoulder, toward);
+	distance = VectorLength (toward);
+	if (distance < 0.001f)
+		return false;
+	rawdistance = distance;
+	VectorScale (toward, 1.0f / distance, toward);
+	reach = upperlength + lowerlength;
+	/* The reference support helper accepts only REACHED, not CLAMPED.
+	 * Its analytic solve labels any stretch CLAMPED, so reject it upfront. */
+	if (rawdistance > reach)
+		return false;
+	distance = CLAMP (fabsf (upperlength - lowerlength) + 0.01f, distance,
+		reach);
+	VectorMA (shoulder, distance, toward, boundedtarget);
+	/* Reference desktop pole: left outward and backward, without tracked up. */
+	for (int axis = 0; axis < 3; ++axis)
+		pole[axis] = -rig->profile->arm_pole_outward * lateral[axis] -
+			rig->profile->arm_pole_back * forward[axis];
+	CrossProduct (toward, pole, normal);
+	if (!VectorNormalize (normal))
+		VectorCopy (up, normal);
+	CrossProduct (normal, toward, bend);
+	if (!VectorNormalize (bend))
+		return false;
+	cosine = CLAMP (-1.0f, (upperlength * upperlength + distance * distance -
+		lowerlength * lowerlength) / (2.0f * upperlength * distance), 1.0f);
+	along = cosine * upperlength;
+	across = sqrtf (q_max (0.0f, 1.0f - cosine * cosine)) * upperlength;
+	VectorMA (shoulder, along, toward, elbow);
+	VectorMA (elbow, across, bend, elbow);
+	VectorSubtract (elbow, shoulder, newupperdir);
+	VectorSubtract (boundedtarget, elbow, newlowerdir);
+	if (!R_AvatarRotateSubtreeToward (rig, palette, upperindex, oldupperdir,
+		newupperdir))
+		return false;
+	/* The upper correction carried the lower chain along, so measure its
+	 * direction again before the elbow correction.  Move the complete lower
+	 * subtree to the analytic elbow first; setting only its root would detach
+	 * the hand and its descendants. */
+	R_AvatarOrigin (lower, oldelbow);
+	VectorSubtract (elbow, oldelbow, oldelbow);
+	R_AvatarTranslateSubtree (rig, palette, lowerindex, oldelbow);
+	R_AvatarOrigin (lower, oldelbow);
+	R_AvatarOrigin (hand, oldhand);
+	VectorSubtract (oldhand, oldelbow, oldlowerdir);
+	if (!R_AvatarRotateSubtreeToward (rig, palette, lowerindex, oldlowerdir,
+		newlowerdir))
+		return false;
+	R_AvatarOrigin (hand, oldhand);
+	VectorSubtract (boundedtarget, oldhand, oldhand);
+	R_AvatarTranslateSubtree (rig, palette, handindex, oldhand);
+	R_AvatarOrigin (hand, oldhand);
+	R_AvatarSetOrigin (intendedhand, oldhand);
+	return R_AvatarSetSubtreeTransform (rig, palette, handindex, intendedhand);
+}
+
+static qboolean R_AvatarApplyDesktopSupportHand (const r_avatar_rig_t *source,
+	const r_avatar_rig_t *rig, const r_avatar_presentation_context_t *context,
+	const float *sourcepalette, float *palette)
+{
+	float attach[12], leftcanonical[12], targetrotation[12], leftbasis[12];
+	float sourceleftbind[12], targetleftbind[12], targetleftcanonical[12];
+	float sourceleftinverse[12], leftcorrection[12];
+	float saved[R_AVATAR_MAX_JOINTS * 12], identity[12];
+	vec3_t lefttarget, griporigin;
+	int sourceleft, sourceright, targetleft, targetright;
+	size_t bytes;
+	qboolean reached;
+
+	if (!sourcepalette || !R_AvatarPaletteValid (source, sourcepalette) ||
+		!R_AvatarPaletteValid (rig, palette) || !context ||
+		!R_AvatarFiniteMatrix (context->inverse))
+		return false;
+	sourceleft = source->joint[MD5_VRIK_HAND_L];
+	sourceright = source->joint[MD5_VRIK_HAND_R];
+	targetleft = rig->joint[MD5_VRIK_HAND_L];
+	targetright = rig->joint[MD5_VRIK_HAND_R];
+	R_AvatarIdentity (identity);
+	if (sourceleft < 0 || sourceright < 0 || targetleft < 0 || targetright < 0 ||
+		sourceleft >= R_AvatarJointCount (source->live) ||
+		sourceright >= R_AvatarJointCount (source->live) ||
+		targetleft >= R_AvatarJointCount (rig->live) ||
+		targetright >= R_AvatarJointCount (rig->live) ||
+		!R_AvatarBuildAttachedPropTransform (context, sourcepalette + sourceright * 12,
+			source->live->joints[sourceright].bind, palette + targetright * 12,
+			rig->live->joints[targetright].bind, identity, attach))
+		return false;
+	R_AvatarMultiply (attach, sourcepalette + sourceleft * 12, leftcanonical);
+	/* The right-hand attachment establishes only the shared prop frame.  A
+	 * Ranger left wrist and a monster left wrist do not share a local bind
+	 * basis, so transport the target's authored left basis independently while
+	 * retaining the attached grip point.  At bind this reduces exactly to the
+	 * target Hand_L matrix instead of imposing Ranger's palm orientation. */
+	memcpy (sourceleftbind, source->live->joints[sourceleft].bind,
+		sizeof (sourceleftbind));
+	memcpy (targetleftbind, rig->live->joints[targetleft].bind,
+		sizeof (targetleftbind));
+	sourceleftbind[3] = sourceleftbind[7] = sourceleftbind[11] = 0.0f;
+	targetleftbind[3] = targetleftbind[7] = targetleftbind[11] = 0.0f;
+	R_AvatarInverseRigid (sourceleftbind, sourceleftinverse);
+	R_AvatarMultiply (context->rotation, targetleftbind,
+		targetleftcanonical);
+	R_AvatarMultiply (sourceleftinverse, targetleftcanonical,
+		leftcorrection);
+	R_AvatarOrigin (leftcanonical, griporigin);
+	R_AvatarMultiply (leftcanonical, leftcorrection, leftcanonical);
+	R_AvatarSetOrigin (leftcanonical, griporigin);
+	R_AvatarInverseRigid (context->rotation, targetrotation);
+	R_AvatarMultiply (targetrotation, leftcanonical, leftbasis);
+	R_AvatarOrigin (leftcanonical, lefttarget);
+	R_AvatarPresentationInversePoint (context, lefttarget, lefttarget);
+	R_AvatarSetOrigin (leftbasis, lefttarget);
+	bytes = (size_t)R_AvatarJointCount (rig->live) * 12 * sizeof (*palette);
+	memcpy (saved, palette, bytes);
+	if (rig->profile->id == PLAYER_AVATAR_SHAMBLER)
+		reached = R_AvatarSolvePhysicalPath (rig, palette,
+			rig->joint[MD5_VRIK_SHOULDER_L], targetleft, lefttarget, leftbasis, true);
+	else
+		reached = R_AvatarSolveDesktopSupportArm (rig, palette, lefttarget, leftbasis);
+	/* The shared physical solver returns a clamped pose as well. The original
+	 * requested grip, not the solver's shortened endpoint, defines success. */
+	if (!reached || !R_AvatarPaletteValid (rig, palette) ||
+		R_AvatarJointDistance (palette + targetleft * 12, leftbasis) >= 0.01f ||
+		memcmp (palette + targetright * 12, saved + targetright * 12,
+			sizeof (leftbasis)))
+	{
+		memcpy (palette, saved, bytes);
+		return false;
+	}
 	return true;
 }
 
@@ -1383,7 +1754,7 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 		R_AvatarOrigin(sourcepalette+source->joint[arm]*12,targetpoint);
 		R_AvatarPresentationInversePoint(context,targetpoint,targetpoint);
 		uppervalid=R_AvatarSolvePhysicalPath(target,palette,root,target->joint[arm],
-			targetpoint,palette+target->joint[arm]*12);
+			targetpoint,palette+target->joint[arm]*12,false);
 	}
 	if(uppervalid){
 		float desired[12];
@@ -1403,7 +1774,7 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
 		R_AvatarOrigin(sourcepalette+source->joint[leg]*12,targetpoint);
 		R_AvatarPresentationInversePoint(context,targetpoint,targetpoint);
 		if(!R_AvatarSolvePhysicalPath(target,palette,target->joint[upperleg],
-			target->joint[leg],targetpoint,footbasis[side])||
+			target->joint[leg],targetpoint,footbasis[side],false)||
 			!R_AvatarPaletteValid(target,palette)){
 			memcpy(palette,saved,bytes);
 			complete=false;
@@ -1435,7 +1806,8 @@ qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
 		return R_AvatarRefineTrackedAnimalPalette(source,target,(const float *)source_palette,
 			prepared_context,floor_correction_z,tracked_lower_mask,(float *)target_palette);
 	if(!tracked && (profile->id!=PLAYER_AVATAR_DOG &&
-		profile->id!=PLAYER_AVATAR_FIEND && !profile->mirror_outer_leg_poles))
+		profile->id!=PLAYER_AVATAR_FIEND && !profile->mirror_outer_leg_poles &&
+		profile->id!=PLAYER_AVATAR_SHAMBLER && !profile->desktop_support_hand))
 		return true;
 	bytes=target->live->joint_count*12*sizeof(float);
 	memcpy(saved,target_palette,bytes);
@@ -1449,6 +1821,24 @@ qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
 		goto rollback;
 	for(joint=0;joint<R_AvatarJointCount(target->live);++joint)
 		if(!R_AvatarOrthonormal(target_palette[joint]))goto rollback;
+	if (!tracked)
+	{
+		/* Optional repairs are independent of the posture/leg rollback above. */
+		if (profile->id == PLAYER_AVATAR_SHAMBLER)
+			R_AvatarRepairShamblerDesktopArms (target, (float *)target_palette);
+		if (profile->desktop_support_hand && source_palette &&
+			R_AvatarJointCount (source->live) <= R_AVATAR_MAX_JOINTS)
+		{
+			if (prepared_context)
+				context = *prepared_context;
+			else if (R_AvatarBuildPresentationContext (source, target, &context))
+				R_AvatarPresentationAddCanonicalZ (&context, floor_correction_z);
+			else
+				return true;
+			R_AvatarApplyDesktopSupportHand (source, target, &context,
+				(const float *)source_palette, (float *)target_palette);
+		}
+	}
 	return true;
 rollback:
 	memcpy(target_palette,saved,bytes);

@@ -2,6 +2,14 @@
 
 Branch `2.0`, reviewed 2026-09-26. Source behavior is `quakespasm-openvr/Quake/r_alias.c` equipment filtering and attachment. The selected-avatar render view remains owned by the original player entity; no renderer rewrite is warranted.
 
+Current-reference correction (2026-09-29): the optional fixed waist socket
+mentioned as open below is inactive in the pinned master reference: only
+Dog/Fiend enable its profile flag, and desktop Dog/Fiend are explicitly excluded.
+Custom package profiles do not expose that policy. No new waist runtime is
+required. The active missing desktop refinements are the Shambler anatomical
+arms and Ogre/Shambler support hand, covered by the
+[bounded reference repair plan](avatar-desktop-repairs-2.0-plan.md).
+
 The verified rerelease pack in the local game directory matches `COM_VerifyRereleaseModelPack`'s Ranger mesh and animation CRCs. Its Gun and Axe are leaf joints. The inherited fully-owned triangle rule selects 170 Gun and 142 Axe triangles, and every selected vertex is unit-weighted to its sole respective joint. Therefore their geometry can be stored once in bone-local space and transformed rigidly per player. This conclusion applies to the byte-verified Ranger asset, not arbitrary MD5 replacements.
 
 | Review recommendation | Disposition |
