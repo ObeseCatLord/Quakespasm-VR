@@ -23,8 +23,8 @@ Source presence is not runtime qualification. No tests/builds/probes run here.
 
 1. Extract the existing CSQC display/inverse-viewport transform into one small
    `gl_screen.c` helper. Parameters are explicit canvas bounds, physical scale,
-   prepared anchor/basis and bottom-versus-center vertical alignment. The HUD
-   call must produce the existing bottom-anchored transform unchanged; the
+   prepared anchor/basis and explicit source pivot. The HUD
+   call must produce the existing y=0-anchored transform unchanged; the
    intermission call uses canonical 320x200 centered bounds at `vr_menu_scale`.
    Retain the inherited AD-wide gameplay predicate; add no new mod cases.
 2. Admit gameplay HUD+scores and scores-only score/death states through the
@@ -34,11 +34,13 @@ Source presence is not runtime qualification. No tests/builds/probes run here.
 3. Reuse active panel plus existing CSQC display-override presence to convert
    native `CANVAS_SBAR` and `CANVAS_MENU` on that panel. Pixel scales from the
    override map each native source unit to the same physical size as QC glyphs.
-   Center the native 320x48 strip at the bottom; retain the native VR 416x200
-   score surface alignment already used by classic/modern panels. Apply only
+   Center the native 320x48 strip horizontally, with its source y=0 at the
+   unchanged HUD target; retain the native VR 416x200
+   score surface starting at source y=-152 and ending at y=48. Apply only
    in that scoped override, so desktop, modern HUD, menu and console stay native.
-   Route the existing voice-status canvas through the same panel-local score
-   surface; no independent voice HUD or new context-state flag is needed.
+   Keep the existing classic-layout flag true for CSQC physical HUDs too,
+   reusing inventory, voice and mini-score policy without editing their draw
+   owners. No independent voice HUD or new context-state flag is needed.
 4. Admit CSQC intermission through the existing intermission mode. Prepare its
    display and CSQC transform alongside the existing native menu transform,
    from the same immutable anchor. Those are two canvas transforms, not two
@@ -67,7 +69,7 @@ work. Verify the claimed overlap and native canvas conversion before critiquing.
 
 ## Ownership, bound and failure path
 
-Production scope: `Quake/gl_screen.c`, `Quake/gl_draw.c`, `Quake/sbar.c` only,
+Production scope after review: `Quake/gl_screen.c`, `Quake/gl_draw.c` only,
 at most 300 net lines. Reuse current `csqc_display_t`, native render-task/VM
 mutex, panel begin/end and draw owners. No shaders, renderer state machine,
 new protocol, input subsystem, VM registry, mod policy, avatar or demo work.
@@ -92,3 +94,28 @@ modern/native HUD, menu/modal/loading and non-VR-runtime operation. Include
 current Linux and Linux ARM software paths at the final consolidated gate.
 Live headset, roster readability and performance measurements remain the user's
 later checks. No claims of arbitrary roster fit or runtime parity from source.
+
+## Adopted local Astra source dispositions, before coding
+
+Main checked the load-bearing source findings against native viewport/panel
+composition, `Sbar_DrawClassic` inventory admission, and primary's VR canvas
+bypass/HUD transform. The requested review is source advice, not model/runtime
+certification.
+
+| Finding | Disposition |
+| --- | --- |
+| The proposed bottom alignment would move native inventory when CSQC scores activate. | Adopt correction: shared transform uses explicit source pivot `(W/2,0)` for unchanged HUD and `(160,100)` for centered intermission. Native SBAR maps source y=0; native MENU maps y=-152. No bottom-at-200 policy. |
+| Scores-only loses forced VR inventory when the classic-layout flag is disabled. | Adopt: set the existing classic-layout flag for every classic physical HUD, including CSQC; keep native inventory/voice/mini-score consumers unchanged. Override conversion takes precedence for the two affected canvases. This removes the proposed sbar.c edit. |
+| Intermission error recovery cannot reuse the CSQC matrix after clearing the override. | Adopt: preserve native matrix and add one alternative from the same anchor; choose again after longjmp using volatile recovery state. Native fallback uses its original matrix and no override. |
+| One scalar canvas scale is insufficient, and centering all 416 shifts names. | Adopt: use independent override pixel scales; preserve alignment of the first 320 units. Native HUD converter requires active panel, classic-layout flag and existing override, limiting it to the gameplay placement. Intermission QC uses its own canonical full-viewport canvas. |
+| Override changes do not invalidate cached canvas; arbitrary QC callback ordering must stay native. | Adopt: install override before first canvas selection after panel begin, clear/end on success and existing error cleanup. Preserve native HUD→scores call/clip semantics rather than adding resets or transactional draw rollback. |
+
+For native HUD conversion, framebuffer viewport x is `(glwidth-320*px)/2`;
+native canvas height is 48 (SBAR) or 200 (MENU), source y is 0 or -152,
+and GL_Viewport's lower-origin y argument is
+`glheight-(source_y+canvas_height)*py`. This explicitly inverts the CSQC
+full-viewport mapping and keeps each native pixel at the HUD's physical scale.
+The current wrapper's classic flag already owns the required inventory, voice
+and mini-score behavior; no second consumer predicate or new context flag is
+needed. Keep callback dispatch distinct for HUD+scores, HUD-only native
+deathmatch fallback, and scores-only explicit scores/death.
