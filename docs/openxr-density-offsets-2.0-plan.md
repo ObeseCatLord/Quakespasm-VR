@@ -95,6 +95,36 @@ label advisory. Missing evidence must be reported, not replaced with assumptions
 
 ## Final qualification after implementation
 
+## Adopted advisory disposition (2026-09-30)
+
+Requested Astra Max returned a source advisory; effective model/effort metadata
+was not exposed, so this is not a certified senior-skill pass. Main independently
+confirmed the sample selector runs after density activation, MSAA creation clears
+the offset flag, and unsupported META flags are rejected before ordinary-swapchain
+retry. No human choice is needed for the following bounded correction.
+
+| Decision | Disposition before code |
+| --- | --- |
+| Placement plus borrowed contract | Adopt the existing application-offset route, with complete graphics/META prerequisites. Reject the assumption that profile updates universally translate Vulkan maps. Retain the temporary development gate until runtime evidence establishes density creation flags, RG8/layers, layout and producer completion. Automatic FB/META preference remains unfinished product policy, not replaced by permanent opt-in. |
+| Native samples and attachment flags | Extract the existing native selector once, preserving its choices and Intel exception. Use it for initial capability qualification and before resource activation/allocation. Qualify actual single-sample color/resolve usage, optional MSAA color usage and native samples, depth usage with AO sampled bit only when requested, and density offset-format capability. Never lower MSAA to enable foveation. |
+| Device selection | Require META additional-image-flags support and complete offset capability for the eye route before it wins FB selection. Enable the existing selected feature/extension chain. Explicit fixed mode may use the existing non-offset route; eye mode may not silently claim support without established placement. |
+| Attachment after rediscovery | Recheck META flag support. If it has disappeared, request ordinary stereo directly; rejected optional creation still uses the existing XR retry. Request the existing offset bit when the route remains qualified. |
+| Existing frame and pass owners | Keep paired validity/profile restoration, VRF_DensityOffset and native render-pass-end submission. No additional gaze action, OIT offset flags, runtime owner, eye views, or render-graph rewrite. |
+
+Production write set remains Quake/gl_vidsdl.c, expected 100–140 added lines,
+reopen before exceeding150. Main will review the patch and request a bounded
+source advisory; builds/tests/probes remain deferred until full implementation.
+
+### Remaining contract evidence
+
+Godot's import convention and requested color flags do not attest to borrowed
+density-image flags or producer completion. Vendor/runtime source or documentation
+must address those specific facts before removing the development gate. Successful
+view creation is insufficient. This is a bounded source-evidence task, separate
+from the user's later live hardware testing.
+
+### Consolidated qualification
+
 Linux/ARM software checks: actual feature-chain selection and QCOM/EXT aliases;
 image creation/retirement with all density-pass attachments at 1x/default4x,
 both OIT variants and AO; native sample settings preserved; paired aligned center
