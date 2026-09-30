@@ -131,7 +131,7 @@ MAIN,command,playdemo,CL_PlayDemo_f,Quake/cl_main.c,2887,MOD-002;UI-004,literal 
 MAIN,command,timedemo,CL_TimeDemo_f,Quake/cl_main.c,2888,MOD-002;UI-004,literal declaration; registration/equivalence not inferred
 MAIN,command,tracepos,CL_Tracepos_f,Quake/cl_main.c,2890,MOD-002;UI-004,literal declaration; registration/equivalence not inferred
 MAIN,command,viewpos,CL_Viewpos_f,Quake/cl_main.c,2891,MOD-002;UI-004,literal declaration; registration/equivalence not inferred
-MAIN,command,qs_reconnect_game,CL_AutoReconnectGame_f,Quake/cl_main.c,2893,MOD-002;UI-004,literal declaration; registration/equivalence not inferred
+MAIN,command,qs_reconnect_game,CL_AutoReconnectGame_f,Quake/cl_main.c,2893,MOD-002;UI-004,source-integrated through native command/async reconnect owners; bounded requested-Astra source acceptance; final Linux/ARM qualification pending
 MAIN,command,cmdlist,Cmd_List_f,Quake/cmd.c,777,BASE-002,literal declaration; registration/equivalence not inferred
 MAIN,command,unalias,Cmd_Unalias_f,Quake/cmd.c,778,BASE-002,literal declaration; registration/equivalence not inferred
 MAIN,command,unaliasall,Cmd_Unaliasall_f,Quake/cmd.c,779,BASE-002,literal declaration; registration/equivalence not inferred
@@ -348,7 +348,7 @@ MAIN,command,sv_giveall,Host_SV_GiveAll_f,Quake/host_cmd.c,3875,COOP-008;COOP-01
 MAIN,command,sv_givekeys,Host_SV_GiveKeys_f,Quake/host_cmd.c,3876,COOP-008;COOP-010;COOP-011,source-integrated via native command/inventory adapters; bounded Astra source acceptance; final Linux/ARM qualification pending
 MAIN,command,sv_god,Host_SV_God_f,Quake/host_cmd.c,3877,COOP-008;COOP-010;COOP-011,source-integrated via native command/inventory adapters; bounded Astra source acceptance; final Linux/ARM qualification pending
 MAIN,command,sv_noclip,Host_SV_Noclip_f,Quake/host_cmd.c,3878,COOP-008;COOP-010;COOP-011,source-integrated via native command/inventory adapters; bounded Astra source acceptance; final Linux/ARM qualification pending
-MAIN,command,sv_reconnect_game,Host_SV_ReconnectGame_f,Quake/host_cmd.c,3879,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
+MAIN,command,sv_reconnect_game,Host_SV_ReconnectGame_f,Quake/host_cmd.c,3879,COOP-008;COOP-010;COOP-011,source-integrated through native command/async reconnect owners; bounded requested-Astra source acceptance; final Linux/ARM qualification pending
 MAIN,command,startdemos,Host_Startdemos_f,Quake/host_cmd.c,3881,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
 MAIN,command,demos,Host_Demos_f,Quake/host_cmd.c,3882,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
 MAIN,command,stopdemo,Host_Stopdemo_f,Quake/host_cmd.c,3883,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
@@ -778,7 +778,7 @@ XR,command,playdemo,CL_PlayDemo_f,Quake/cl_main.c,2887,MOD-002;UI-004,literal de
 XR,command,timedemo,CL_TimeDemo_f,Quake/cl_main.c,2888,MOD-002;UI-004,literal declaration; registration/equivalence not inferred
 XR,command,tracepos,CL_Tracepos_f,Quake/cl_main.c,2890,MOD-002;UI-004,literal declaration; registration/equivalence not inferred
 XR,command,viewpos,CL_Viewpos_f,Quake/cl_main.c,2891,MOD-002;UI-004,literal declaration; registration/equivalence not inferred
-XR,command,qs_reconnect_game,CL_AutoReconnectGame_f,Quake/cl_main.c,2893,MOD-002;UI-004,literal declaration; registration/equivalence not inferred
+XR,command,qs_reconnect_game,CL_AutoReconnectGame_f,Quake/cl_main.c,2893,MOD-002;UI-004,source-integrated through native command/async reconnect owners; bounded requested-Astra source acceptance; final Linux/ARM qualification pending
 XR,command,cmdlist,Cmd_List_f,Quake/cmd.c,777,BASE-002,literal declaration; registration/equivalence not inferred
 XR,command,unalias,Cmd_Unalias_f,Quake/cmd.c,778,BASE-002,literal declaration; registration/equivalence not inferred
 XR,command,unaliasall,Cmd_Unaliasall_f,Quake/cmd.c,779,BASE-002,literal declaration; registration/equivalence not inferred
@@ -996,7 +996,7 @@ XR,command,sv_giveall,Host_SV_GiveAll_f,Quake/host_cmd.c,3875,COOP-008;COOP-010;
 XR,command,sv_givekeys,Host_SV_GiveKeys_f,Quake/host_cmd.c,3876,COOP-008;COOP-010;COOP-011,source-integrated via native command/inventory adapters; bounded Astra source acceptance; final Linux/ARM qualification pending
 XR,command,sv_god,Host_SV_God_f,Quake/host_cmd.c,3877,COOP-008;COOP-010;COOP-011,source-integrated via native command/inventory adapters; bounded Astra source acceptance; final Linux/ARM qualification pending
 XR,command,sv_noclip,Host_SV_Noclip_f,Quake/host_cmd.c,3878,COOP-008;COOP-010;COOP-011,source-integrated via native command/inventory adapters; bounded Astra source acceptance; final Linux/ARM qualification pending
-XR,command,sv_reconnect_game,Host_SV_ReconnectGame_f,Quake/host_cmd.c,3879,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
+XR,command,sv_reconnect_game,Host_SV_ReconnectGame_f,Quake/host_cmd.c,3879,COOP-008;COOP-010;COOP-011,source-integrated through native command/async reconnect owners; bounded requested-Astra source acceptance; final Linux/ARM qualification pending
 XR,command,startdemos,Host_Startdemos_f,Quake/host_cmd.c,3881,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
 XR,command,demos,Host_Demos_f,Quake/host_cmd.c,3882,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
 XR,command,stopdemo,Host_Stopdemo_f,Quake/host_cmd.c,3883,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred

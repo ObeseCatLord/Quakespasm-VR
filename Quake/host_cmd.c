@@ -4599,6 +4599,76 @@ static void Host_SV_Noclip_f (void)
 	Con_Printf ("sv_noclip: %s %s\n", client->name, enable ? "ON" : "OFF");
 }
 
+static void Host_SV_ReconnectGame_f (void)
+{
+	const char *game, *server;
+	double delay, retry_interval, timeout;
+	char command[512];
+	byte data[1024];
+	sizebuf_t msg = {0};
+	client_t *saved_host_client;
+	int written, failed;
+
+	if (cmd_source != src_command)
+		return;
+	if (!sv.active)
+	{
+		Con_Printf ("sv_reconnect_game: no active server\n");
+		return;
+	}
+	if (Cmd_Argc () < 3)
+	{
+		Con_Printf ("sv_reconnect_game <game> <server> [delay] [retry] [timeout]\n");
+		return;
+	}
+
+	game = Cmd_Argv (1);
+	server = Cmd_Argv (2);
+	if (!COM_IsSafeGameDirName (game))
+	{
+		Con_Printf ("sv_reconnect_game: invalid game directory \"%s\"\n", game);
+		return;
+	}
+	if (!COM_IsSafeServerAddress (server))
+	{
+		Con_Printf ("sv_reconnect_game: invalid server address \"%s\"\n", server);
+		return;
+	}
+
+	delay = Cmd_Argc () > 3 ? atof (Cmd_Argv (3)) : 8.0;
+	retry_interval = Cmd_Argc () > 4 ? atof (Cmd_Argv (4)) : 2.0;
+	timeout = Cmd_Argc () > 5 ? atof (Cmd_Argv (5)) : 120.0;
+	if (!isfinite (delay) || !isfinite (retry_interval) || !isfinite (timeout))
+	{
+		Con_Printf ("sv_reconnect_game: timing values must be finite\n");
+		return;
+	}
+	delay = CLAMP (0.0, delay, 60.0);
+	retry_interval = CLAMP (0.5, retry_interval, 15.0);
+	timeout = CLAMP (delay + retry_interval, timeout, 300.0);
+
+	written = q_snprintf (command, sizeof (command),
+		"qs_reconnect_game \"%s\" \"%s\" %.3g %.3g %.3g\n",
+		game, server, delay, retry_interval, timeout);
+	if (written < 0 || (size_t)written >= sizeof (command))
+	{
+		Con_Printf ("sv_reconnect_game: command is too long\n");
+		return;
+	}
+
+	msg.data = data;
+	msg.maxsize = sizeof (data);
+	MSG_WriteByte (&msg, svc_stufftext);
+	MSG_WriteString (&msg, command);
+	saved_host_client = host_client;
+	failed = NET_SendToAll (&msg, 5.0);
+	host_client = saved_host_client;
+
+	Con_Printf ("sv_reconnect_game: sent %s", command);
+	if (failed)
+		Con_Printf ("sv_reconnect_game: failed to notify %d client(s)\n", failed);
+}
+
 static edict_t *FindViewthing (void)
 {
 	int		 i;
@@ -5040,6 +5110,7 @@ void Host_InitCommands (void)
 	Cmd_AddCommand ("sv_givekeys", Host_SV_GiveKeys_f);
 	Cmd_AddCommand ("sv_god", Host_SV_God_f);
 	Cmd_AddCommand ("sv_noclip", Host_SV_Noclip_f);
+	Cmd_AddCommand ("sv_reconnect_game", Host_SV_ReconnectGame_f);
 
 	Cmd_AddCommand ("startdemos", Host_Startdemos_f);
 	Cmd_AddCommand ("demos", Host_Demos_f);

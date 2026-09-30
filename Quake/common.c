@@ -3439,6 +3439,36 @@ qboolean COM_ModForbiddenChars (const char *p)
 	return !*p || !strcmp (p, ".") || strstr (p, "..") || strstr (p, "/") || strstr (p, "\\") || strstr (p, ":") || strstr (p, "\"") || strstr (p, ";");
 }
 
+qboolean COM_IsSafeGameDirName (const char *game)
+{
+	const unsigned char *p;
+
+	if (!game || !*game || strlen (game) >= MAX_QPATH ||
+		!strcmp (game, ".") || strstr (game, ".."))
+		return false;
+
+	for (p = (const unsigned char *)game; *p; ++p)
+		if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+			(*p >= '0' && *p <= '9') || *p == '_' || *p == '-' || *p == '.'))
+			return false;
+
+	return true;
+}
+
+qboolean COM_IsSafeServerAddress (const char *server)
+{
+	const unsigned char *p;
+
+	if (!server || !*server || strlen (server) >= NET_NAMELEN)
+		return false;
+
+	for (p = (const unsigned char *)server; *p; ++p)
+		if (*p <= 32 || *p == '"' || *p == '\'' || *p == '\\' || *p == ';')
+			return false;
+
+	return true;
+}
+
 //==============================================================================
 // johnfitz -- dynamic gamedir stuff -- modified by QuakeSpasm team.
 //==============================================================================
@@ -3631,6 +3661,25 @@ command history. This is com_basedir in portable mode and userdir otherwise.
 const char *COM_GetWriteRoot (void)
 {
 	return host_parms->userdir == host_parms->basedir ? com_basedir : host_parms->userdir;
+}
+
+qboolean COM_GameDirExists (const char *dir)
+{
+	char path[MAX_OSPATH];
+	int i;
+
+	if (!COM_IsSafeGameDirName (dir))
+		return false;
+
+	for (i = 0; i < com_numbasedirs; ++i)
+	{
+		int written = q_snprintf (path, sizeof (path), "%s/%s", com_basedirs[i], dir);
+		if (written >= 0 && (size_t)written < sizeof (path) &&
+			(Sys_FileType (path) & FS_ENT_DIRECTORY))
+			return true;
+	}
+
+	return false;
 }
 
 /* Catalogue installation state is based on the primary pak, not merely a

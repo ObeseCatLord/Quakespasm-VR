@@ -167,6 +167,7 @@ void Cbuf_Execute (void)
 	char *text;
 	char  line[1024];
 	int	  quotes, comment;
+	qboolean oversized;
 
 	while (cmd_text.cursize && !cmd_wait)
 	{
@@ -187,7 +188,8 @@ void Cbuf_Execute (void)
 				break;
 		}
 
-		if (i > (int)sizeof (line) - 1)
+		oversized = i > (int)sizeof (line) - 1;
+		if (oversized)
 		{
 			memcpy (line, text, sizeof (line) - 1);
 			line[sizeof (line) - 1] = 0;
@@ -209,6 +211,18 @@ void Cbuf_Execute (void)
 			i++;
 			cmd_text.cursize -= i;
 			memmove (text, text + i, cmd_text.cursize);
+		}
+
+		if (oversized)
+		{
+			Cmd_TokenizeString (line);
+			if (Cmd_Argc () &&
+				(!q_strcasecmp (Cmd_Argv (0), "qs_reconnect_game") ||
+				 !q_strcasecmp (Cmd_Argv (0), "sv_reconnect_game")))
+			{
+				Con_Warning ("Cbuf_Execute: refusing oversized %s command\n", Cmd_Argv (0));
+				continue;
+			}
 		}
 
 		// execute the command line

@@ -125,3 +125,26 @@ owner reuse remains; no parallel state machine is justified.
 The source brief and requested-Astra advisory are evidence for this design,
 not proof of executable timing/cancellation/signon behavior. Main remains
 responsible for reviewing the implementation; final software checks are deferred.
+
+## Source implementation and review checkpoint
+
+Both commands are registered through the native command owner. The sender
+validates operands and finite timings, formats a bounded ordinary stuffed
+command, uses the inherited notification bound and restores host_client. The
+receiver checks installed directories and game admission before disconnecting,
+then extends the existing CL reconnect policy with only the three planned
+fields. Game switching, config drain, async connection attempts, cancellation
+and successful attachment continue through their existing owners.
+
+| Implementation finding | Main disposition |
+| --- | --- |
+| Requested-Astra P2: total expiry preceded a completed signon | Adopted. wait_signon with an attached fully signed-on connection finishes successfully before timed expiry. The later duplicate success block was removed. Final bounded advisory confirmed the defect resolved with no remaining P1/P2 source findings. |
+| Worker narrowed existing endpoint/cache storage unnecessarily | Corrected. Existing MAX_OSPATH capacities remain; only the new command operands enforce NET_NAMELEN. Numeric control-endpoint documentation remains with shared attachment. |
+| Directory existence bit test | Verified against native Unix Sys_FileType: missing/unsupported entries return FS_ENT_NONE zero; directories return FS_ENT_DIRECTORY. Existing mount-root ownership remains. |
+
+The five-file production delta adds 302 net lines, within the planned bound.
+Main inspected the source corrections and scoped whitespace checks passed.
+The advisory's effective model settings remain unexposed; it is not a certified
+senior-skill pass. No builds, tests or engine probes have run. The complete
+Linux/ARM acceptance matrix above remains pending, and this checkpoint does
+not declare full migration or executable reconnect behavior complete.

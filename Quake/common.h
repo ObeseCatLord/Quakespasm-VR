@@ -352,6 +352,9 @@ void COM_SwitchGame (const char *paths);
 void COM_WriteSelectedBaseDir (void);
 
 const char *COM_GetWriteRoot (void);
+qboolean COM_IsSafeGameDirName (const char *game);
+qboolean COM_IsSafeServerAddress (const char *server);
+qboolean COM_GameDirExists (const char *dir);
 /* True when pak0.pak exists for a game directory in any mounted content root. */
 qboolean COM_GameDirHasPak0 (const char *dir);
 qboolean COM_ValidateAddonPackFile (const char *path, int expected_size);

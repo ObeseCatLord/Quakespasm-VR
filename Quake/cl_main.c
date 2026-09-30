@@ -91,6 +91,9 @@ typedef struct
 	char modname[MAX_QPATH];
 	unsigned int legacy_qsvr;
 	double deadline;
+	double next_attempt;
+	double retry_interval;
+	qboolean switch_pending;
 } cl_autoreconnect_t;
 
 static cl_autoreconnect_t cl_autoreconnect;
@@ -441,6 +444,9 @@ void CL_CancelAutoReconnect (void)
 	NET_DatagramConnectCancel ();
 	CL_ServerModDownload_Cancel ();
 	cl_autoreconnect.state = cl_autoreconnect_idle;
+	cl_autoreconnect.next_attempt = 0.0;
+	cl_autoreconnect.retry_interval = 0.0;
+	cl_autoreconnect.switch_pending = false;
 }
 
 static void CL_AutoReconnectFinish (qboolean failed)
@@ -458,6 +464,8 @@ static void CL_AutoReconnectFinish (qboolean failed)
 static void CL_AttachConnection (const char *host, unsigned int legacy_qsvr,
 	struct qsocket_s *netcon)
 {
+	const char *endpoint;
+
 	cls.legacy_qsvr = legacy_qsvr;
 	cls.netcon = netcon;
 	Con_DPrintf ("CL_EstablishConnection: connected to %s\n", host);
@@ -466,6 +474,20 @@ static void CL_AttachConnection (const char *host, unsigned int legacy_qsvr,
 	cls.signon = 0;
 	SZ_Clear (&cls.message);
 	MSG_WriteByte (&cls.message, clc_nop); // NAT Fix from ProQuake
+
+	cl_last_connect_valid = false;
+	cl_last_connect_legacy_qsvr = legacy_qsvr;
+	/* Keep the numeric control endpoint, including its port. Reverse DNS is
+	 * only a display name, and the accepted game socket may use another port. */
+	endpoint = !q_strcasecmp (host, "local") ? "local" :
+		NET_QSocketGetConnectAddressString (netcon);
+	if ((!endpoint || !*endpoint) && host && strlen (host) < sizeof (cl_last_connect_endpoint))
+		endpoint = host;
+	if (endpoint && *endpoint && strlen (endpoint) < sizeof (cl_last_connect_endpoint))
+	{
+		q_strlcpy (cl_last_connect_endpoint, endpoint, sizeof (cl_last_connect_endpoint));
+		cl_last_connect_valid = true;
+	}
 }
 
 static qboolean CL_TryEstablishConnection (const char *host, unsigned int legacy_qsvr)
@@ -488,20 +510,81 @@ static qboolean CL_TryEstablishConnection (const char *host, unsigned int legacy
 	return true;
 }
 
+static qboolean CL_AutoReconnectTimed (void)
+{
+	return cl_autoreconnect.retry_interval > 0.0;
+}
+
+static void CL_AutoReconnectRetryTimed (void)
+{
+	NET_DatagramConnectCancel ();
+	if (cls.state == ca_connected && cls.signon != SIGNONS)
+		CL_Disconnect ();
+	cl_autoreconnect.state = cl_autoreconnect_wait_config;
+	cl_autoreconnect.next_attempt = realtime + cl_autoreconnect.retry_interval;
+}
+
+static void CL_AutoReconnectTimedOut (void)
+{
+	NET_DatagramConnectCancel ();
+	if (cls.state == ca_connected && cls.signon != SIGNONS)
+		CL_Disconnect ();
+	Con_Warning ("Reconnect to %s for game %s timed out.\n",
+		cl_autoreconnect.endpoint, cl_autoreconnect.modname);
+	CL_AutoReconnectFinish (true);
+}
+
 void CL_AutoReconnectFrame (void)
 {
+	qboolean timed;
+
 	if (cl_autoreconnect.state == cl_autoreconnect_idle)
 		return;
+	if (cl_autoreconnect.state == cl_autoreconnect_wait_signon &&
+		cls.state == ca_connected && cls.signon == SIGNONS)
+	{
+		CL_AutoReconnectFinish (false);
+		return;
+	}
+	timed = CL_AutoReconnectTimed ();
+	if (timed && realtime >= cl_autoreconnect.deadline)
+	{
+		CL_AutoReconnectTimedOut ();
+		return;
+	}
 	if (cl_autoreconnect.state == cl_autoreconnect_wait_config)
 	{
-		if (realtime >= cl_autoreconnect.deadline)
+		if (!timed && realtime >= cl_autoreconnect.deadline)
 		{
 			Con_Warning ("Server gamedir switch to %s timed out before configuration settled.\n", cl_autoreconnect.modname);
 			CL_AutoReconnectFinish (true);
 			return;
 		}
+		if (timed && cl_autoreconnect.switch_pending)
+		{
+			char paths[MAX_QPATH + sizeof (GAMENAME) + 2];
+
+			cl_autoreconnect.switch_pending = false;
+			if (!q_strcasecmp (cl_autoreconnect.modname, GAMENAME))
+				q_strlcpy (paths, GAMENAME, sizeof (paths));
+			else
+				q_snprintf (paths, sizeof (paths), "%s;%s", GAMENAME, cl_autoreconnect.modname);
+			COM_SwitchGame (paths);
+			cl_autoreconnect.next_attempt = q_max (cl_autoreconnect.next_attempt,
+				realtime + 0.25);
+			return;
+		}
 		if (cmd_text.cursize)
 			return;
+		if (timed && realtime < cl_autoreconnect.next_attempt)
+			return;
+		if (timed && !COM_GameDirMatches (cl_autoreconnect.modname))
+		{
+			Con_Warning ("Reconnect stopped because game %s is no longer active.\n",
+				cl_autoreconnect.modname);
+			CL_AutoReconnectFinish (true);
+			return;
+		}
 
 		if (!q_strcasecmp (cl_autoreconnect.endpoint, "local"))
 		{
@@ -512,11 +595,15 @@ void CL_AutoReconnectFrame (void)
 			{
 				Con_Warning ("Server gamedir switched to %s, but local reconnect failed.\n",
 					cl_autoreconnect.modname);
-				CL_AutoReconnectFinish (true);
+				if (timed)
+					CL_AutoReconnectRetryTimed ();
+				else
+					CL_AutoReconnectFinish (true);
 				return;
 			}
 			cl_autoreconnect.state = cl_autoreconnect_wait_signon;
-			cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_SIGNON_TIMEOUT;
+			if (!timed)
+				cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_SIGNON_TIMEOUT;
 			return;
 		}
 		CL_Disconnect ();
@@ -526,11 +613,15 @@ void CL_AutoReconnectFrame (void)
 		{
 			Con_Warning ("Could not start reconnect to %s.\n",
 				cl_autoreconnect.endpoint);
-			CL_AutoReconnectFinish (true);
+			if (timed)
+				CL_AutoReconnectRetryTimed ();
+			else
+				CL_AutoReconnectFinish (true);
 			return;
 		}
 		cl_autoreconnect.state = cl_autoreconnect_connecting;
-		cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONNECT_TIMEOUT;
+		if (!timed)
+			cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONNECT_TIMEOUT;
 		return;
 	}
 	if (cl_autoreconnect.state == cl_autoreconnect_connecting)
@@ -539,7 +630,7 @@ void CL_AutoReconnectFrame (void)
 		struct qsocket_s *netcon = NULL;
 		const char *reason = NULL;
 
-		if (realtime >= cl_autoreconnect.deadline)
+		if (!timed && realtime >= cl_autoreconnect.deadline)
 		{
 			Con_Warning ("Reconnect to %s timed out.\n", cl_autoreconnect.endpoint);
 			CL_AutoReconnectFinish (true);
@@ -552,20 +643,28 @@ void CL_AutoReconnectFrame (void)
 		{
 			Con_Warning ("Reconnect to %s failed: %s.\n",
 				cl_autoreconnect.endpoint, reason && *reason ? reason : "no response");
-			CL_AutoReconnectFinish (true);
+			if (timed)
+				CL_AutoReconnectRetryTimed ();
+			else
+				CL_AutoReconnectFinish (true);
 			return;
 		}
 		CL_AttachConnection (cl_autoreconnect.endpoint,
 			cl_autoreconnect.legacy_qsvr, netcon);
 		cl_autoreconnect.state = cl_autoreconnect_wait_signon;
-		cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_SIGNON_TIMEOUT;
+		if (!timed)
+			cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_SIGNON_TIMEOUT;
 		return;
 	}
 	if (cl_autoreconnect.state != cl_autoreconnect_wait_signon)
 		return;
-	if (cls.state == ca_connected && cls.signon == SIGNONS)
+	if (timed)
 	{
-		CL_AutoReconnectFinish (false);
+		if (cls.state == ca_connected)
+			return;
+		Con_Warning ("Reconnect to %s did not complete signon for %s; retrying.\n",
+			cl_autoreconnect.endpoint, cl_autoreconnect.modname);
+		CL_AutoReconnectRetryTimed ();
 		return;
 	}
 	if (cls.state == ca_connected && realtime < cl_autoreconnect.deadline)
@@ -593,6 +692,9 @@ static qboolean CL_StartAutoReconnect (const char *modname,
 	q_strlcpy (cl_autoreconnect.modname, modname, sizeof (cl_autoreconnect.modname));
 	cl_autoreconnect.legacy_qsvr = legacy_qsvr;
 	cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONFIG_TIMEOUT;
+	cl_autoreconnect.next_attempt = 0.0;
+	cl_autoreconnect.retry_interval = 0.0;
+	cl_autoreconnect.switch_pending = false;
 
 	if (!q_strcasecmp (modname, GAMENAME))
 		q_strlcpy (paths, GAMENAME, sizeof (paths));
@@ -605,6 +707,78 @@ static qboolean CL_StartAutoReconnect (const char *modname,
 	SCR_EndLoadingPlaque ();
 	COM_SwitchGame (paths);
 	return true;
+}
+
+static void CL_AutoReconnectGame_f (void)
+{
+	const char *game, *server;
+	double delay, retry_interval, timeout;
+	unsigned int legacy_qsvr = 0;
+	qboolean same_game;
+
+	if (cmd_source != src_command)
+		return;
+	if (Cmd_Argc () < 3)
+	{
+		Con_Printf ("qs_reconnect_game <game> <server> [delay] [retry] [timeout]\n");
+		return;
+	}
+	if (cls.state == ca_dedicated)
+		return;
+
+	game = Cmd_Argv (1);
+	server = Cmd_Argv (2);
+	if (!COM_IsSafeGameDirName (game))
+	{
+		Con_Printf ("Auto reconnect: invalid game directory \"%s\"\n", game);
+		return;
+	}
+	if (!COM_IsSafeServerAddress (server))
+	{
+		Con_Printf ("Auto reconnect: invalid server address \"%s\"\n", server);
+		return;
+	}
+	if (!COM_GameDirExists (game))
+	{
+		Con_Printf ("Auto reconnect: missing game directory \"%s\"\n", game);
+		return;
+	}
+
+	delay = Cmd_Argc () > 3 ? atof (Cmd_Argv (3)) : 8.0;
+	retry_interval = Cmd_Argc () > 4 ? atof (Cmd_Argv (4)) : 2.0;
+	timeout = Cmd_Argc () > 5 ? atof (Cmd_Argv (5)) : 120.0;
+	if (!isfinite (delay) || !isfinite (retry_interval) || !isfinite (timeout))
+	{
+		Con_Printf ("Auto reconnect: timing values must be finite\n");
+		return;
+	}
+	delay = CLAMP (0.0, delay, 60.0);
+	retry_interval = CLAMP (0.5, retry_interval, 15.0);
+	timeout = CLAMP (delay + retry_interval, timeout, 300.0);
+
+	same_game = COM_GameDirMatches (game);
+	if (!same_game && !registered.value)
+	{
+		Con_Printf ("Auto reconnect: registered Quake data is required to change game directories\n");
+		return;
+	}
+	if (cl_last_connect_valid && !q_strcasecmp (server, cl_last_connect_endpoint))
+		legacy_qsvr = cl_last_connect_legacy_qsvr;
+
+	CL_CancelAutoReconnect ();
+	cl_autoreconnect.state = cl_autoreconnect_wait_config;
+	q_strlcpy (cl_autoreconnect.endpoint, server, sizeof (cl_autoreconnect.endpoint));
+	q_strlcpy (cl_autoreconnect.modname, game, sizeof (cl_autoreconnect.modname));
+	cl_autoreconnect.legacy_qsvr = legacy_qsvr;
+	cl_autoreconnect.deadline = realtime + timeout;
+	cl_autoreconnect.next_attempt = realtime + delay;
+	cl_autoreconnect.retry_interval = retry_interval;
+	cl_autoreconnect.switch_pending = !same_game;
+	cls.demonum = -1;
+	CL_Disconnect ();
+	SCR_EndLoadingPlaque ();
+	Con_Printf ("Switching to game %s; reconnecting to %s in %.1f seconds.\n",
+		game, server, delay);
 }
 
 qboolean CL_MaybeSwitchServerGame (const char *modname)
@@ -922,19 +1096,9 @@ void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr)
 	CL_CancelAutoReconnect ();
 	if (legacy_qsvr && legacy_qsvr != QSVR_PROTOCOL_PINNED)
 		Host_Error ("Unsupported legacy Quakespasm VR layout %u", legacy_qsvr);
-	q_strlcpy (cl_last_connect_endpoint, host ? host : "", sizeof (cl_last_connect_endpoint));
-	cl_last_connect_legacy_qsvr = legacy_qsvr;
 	cl_last_connect_valid = false;
 	if (!CL_TryEstablishConnection (host, legacy_qsvr))
 		Host_Error ("CL_Connect: connect failed");
-	/* Keep the numeric control endpoint, including its port. Reverse DNS is
-	 * only a display name, and the accepted game socket may use another port. */
-	if (q_strcasecmp (cl_last_connect_endpoint, "local") &&
-		NET_QSocketGetConnectAddressString (cls.netcon)[0])
-		q_strlcpy (cl_last_connect_endpoint,
-			NET_QSocketGetConnectAddressString (cls.netcon),
-			sizeof (cl_last_connect_endpoint));
-	cl_last_connect_valid = cl_last_connect_endpoint[0] != '\0';
 }
 
 void CL_SendInitialUserinfo (void *ctx, const char *key, const char *val)
@@ -3096,6 +3260,7 @@ void CL_Init (void)
 
 	Cmd_AddCommand ("entities", CL_PrintEntities_f);
 	Cmd_AddCommand ("disconnect", CL_Disconnect_f);
+	Cmd_AddCommand ("qs_reconnect_game", CL_AutoReconnectGame_f);
 	Cmd_AddCommand ("record", CL_Record_f);
 	Cmd_AddCommand ("stop", CL_Stop_f);
 	Cmd_AddCommand ("playdemo", CL_PlayDemo_f);
