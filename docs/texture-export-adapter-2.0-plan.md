@@ -90,6 +90,49 @@ distinguishes execution completion from memory availability/visibility. Existing
 CPU task join alone does not make GPU-written bytes available to a host reader.
 No new feature extension is needed merely for this core Vulkan diagnostic.
 
+## Adopted requested-Astra source disposition
+
+The bounded read-only review returned on2026-09-30. Main inspection confirmed
+warp creation returns before upload, paused warp updates can return immediately,
+the staging token needs BeginCopy/EndCopy pairing, and the TGA writer ignores
+short writes and close failure. Reviewer effective settings are not exposed;
+this records a requested-Astra/max source advisory, not formal skill certification.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Reuse a four-byte staging transaction rather than another command-pool/readback owner | Adopted. Record under its existing mutex, pair BeginCopy/EndCopy, submit through R_SubmitStagingBuffers. |
+| Cold warp initialization before readback | Adopted. Clear all newly created warp mips once through existing staging/barrier owners and establish shader-read layout; never clear or regenerate content during export. Keep framebuffer and ordinary warp updates. |
+| Explicit transfer-write to host-read dependency | Adopted. GPU completion is required before invalidate, read, unmap or free. |
+| Avoid extra per-image format state and heap replacement | Adopted. Infer exactly as native creation does; preserve device-selected color-format lifetime. Existing optimal color-image heap remains, with actual image size/alignment queries. |
+| Accurate writer completion and collision-free filenames | Adopted with a narrow boundary extension. Reuse Image_WriteTGA, check both writes, and expose checked close through the existing Sys file owner while preserving the old void close entry point. Prefix sanitized names with enumeration number and append cube face. No collision registry. |
+
+The [official memory-requirement guarantees](https://docs.vulkan.org/spec/latest/chapters/resources.html)
+give identical color-image memory type masks for the matching tiling, relevant
+flags, external-memory and transient/host-transfer characteristics here. Ordinary
+transfer-source usage and cube compatibility do not require another heap.
+The [mapped-range rules](https://docs.vulkan.org/refpages/latest/refpages/source/VkMappedMemoryRange.html)
+allow WHOLE_SIZE invalidation through the mapping end, whose alignment or
+allocation-end condition still applies. Mapping the complete allocation is the
+chosen sufficient solution, rather than claiming it is the only legal mapping.
+
+Implementation is now authorized within `Quake/gl_texmgr.c`, `Quake/image.c`,
+`Quake/sys_sdl.c` and `Quake/sys.h`; no texture-record, staging-manager or renderer
+rewrite. Target at most250 net production lines; stop and reopen if materially
+exceeded. Call GL_WaitForDeviceIdle before the texture lock, then traverse under
+that lock without pumping frames/callbacks or another CPU-task join. Allocate and
+validate resources before entering each staging transaction. After submission,
+wait through the existing queue mutex, check result, and update native idle
+bookkeeping. Require valid device, main thread and !in_update_screen.
+
+Export only mip0 of managed color images, including six distinctly named cube
+layers, preserving stored orientation. Normalize packed10 RGB in place with
+`(value * 255 + 511) / 1023`. Preserve semantic alpha; compact other images to
+24-bit output. Explicitly count integer surface-index resources as skipped.
+Bound all dimension/arithmetic/output paths and report success, skips and
+failures after releasing locks. One private readback buffer per image/face keeps
+memory proportional to the largest texture. Synchronous command stalls and
+eight-bit TGA precision are accepted diagnostic limitations, not frame policy.
+
 ## Final qualification
 
 No builds/tests/probes now. After all implementation, Linux/ARM checks cover
