@@ -36,3 +36,18 @@ vector-component types, and write origin/bounds/solid through reflection with
 observed spatial membership. Cover parse failure, invalid indexes, independent
 SSQC/CSQC VMs and reload. No builds, tests or compiler/runtime probes until the
 full migration implementation is finished.
+
+## Verified zoned-string lifetime addition before implementation
+
+Main tracing of the retained parser found a concrete alias case:
+`putentityfieldstring(index, ent, ent.stringfield)` may pass the current zoned
+field's bytes to `ED_RezoneString`. That native owner computes the length, frees
+the current zone, and then copies from the supplied pointer. For self-assignment
+the copy reads retired storage; an argument pointing inside that zone has the
+same defect. Primary SSQC's allocation path copies before any such retirement.
+Keep native zone replacement/cleanup policy and the same owner: allocate and
+copy replacement bytes before freeing the prior zone, then register them using
+the existing code. No new cache/reference-counting/string service. Include this
+small `ED_RezoneString` ordering correction in the write set and source review;
+deferred checks must cover self-assignment, interior aliases, empty strings,
+repeated writes and SSQC/CSQC cleanup without changing literal-byte semantics.
