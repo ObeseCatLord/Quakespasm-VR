@@ -242,3 +242,23 @@ and broadcast owners; do not create a separate replicated color service.
 All source checkpoints remain distinct from runtime parity. No builds, tests or
 compiler probes were run during these implementation slices; deferred Linux/ARM
 qualification must cover the complete interfaces and relevant negative paths.
+
+## Inherited cursor/font fallback slice
+
+Primary `Quake/pr_cmds.c` has CSQC-only `setcursormode` 343 as an empty function
+and `loadfont` 357 returning zero. These are ABI fallbacks, not implemented cursor
+grabbing/hardware-cursor or external-font features. Destination has neither entry;
+both slots are absent from its extension registry and beyond the core tables.
+
+Copy these two exact small wrappers into destination `Quake/pr_ext.c` and register
+their primary numbers for CSQC only. Retain the existing input/cursor/font owners
+and bitmap text renderer. Mark both registry descriptions as `stub.` using the
+native convention, so existing lazy stub diagnostics/support checks retain their
+policy. Do not add font/cursor capability advertisements or pretend that these
+fallbacks load any resource. No VM dispatch, platform input or rendering change.
+
+Scope: two wrappers and two entries in `Quake/pr_ext.c`, with source comparison
+and bounded local Astra review. Final deferred software checks must cover explicit
+and named invocation, numeric noncollision, CSQC no-effect cursor calls, zero
+font return and SSQC rejection; ordinary bitmap text must still use the native
+renderer. No builds/tests/probes before implementation is finished.
