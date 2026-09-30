@@ -3467,6 +3467,7 @@ static void PF_fopen (void)
 		{
 			qcfiles_max++;
 			qcfiles = Mem_Realloc (qcfiles, sizeof (*qcfiles) * qcfiles_max);
+			memset (&qcfiles[i], 0, sizeof (qcfiles[i]));
 		}
 		if (!qcfiles[i].file)
 			break;
@@ -3596,7 +3597,7 @@ static void PF_fseek (void)
 	else
 	{
 		if (qcfiles[fileid].mode == 0)
-			G_INT (OFS_RETURN) = (int)qcfiles[fileid].fileoffset; // when we're reading, use the cached read offset
+			G_INT (OFS_RETURN) = (int)(qcfiles[fileid].fileoffset - qcfiles[fileid].cachesize + qcfiles[fileid].cacheoffset); // account for unread cached bytes
 		else
 			G_INT (OFS_RETURN) = (int)Sys_ftell (qcfiles[fileid].file) - qcfiles[fileid].filebase;
 		if (qcvm->argc > 1)
