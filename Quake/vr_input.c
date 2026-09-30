@@ -3900,6 +3900,36 @@ static const vr_default_binding_t vr_default_bindings[] = {
 	{K_VR_RIGHT_STICK_UP, "+vr_weaponmenu"},
 };
 
+static qboolean VR_CurrentGameDefinesLightHook (void)
+{
+	char	 *quake_rc;
+	qboolean defines_hook;
+
+	quake_rc = (char *)COM_LoadFile ("quake.rc", NULL);
+	if (!quake_rc)
+		return false;
+	defines_hook = q_strcasestr (quake_rc, "alias +hook") != NULL &&
+		q_strcasestr (quake_rc, "impulse 24") != NULL &&
+		Cmd_AliasExists ("+hook") && Cmd_AliasExists ("-hook");
+	Mem_Free (quake_rc);
+	return defines_hook;
+}
+
+static void VR_MigrateModBindings_f (void)
+{
+	const char *vr_binding = keybindings[K_VR_ALTFIRE];
+
+	if (!VR_CurrentGameDefinesLightHook ())
+	{
+		if (vr_binding && !strcmp (vr_binding, "+hook"))
+			Key_SetBinding (K_VR_ALTFIRE, "+button3");
+		return;
+	}
+
+	if (!vr_binding || !vr_binding[0] || !strcmp (vr_binding, "+button3"))
+		Key_SetBinding (K_VR_ALTFIRE, "+hook");
+}
+
 static qboolean vr_default_bindings_applied;
 
 static void VR_InputApplyDefaultBindings (void)
@@ -3946,6 +3976,7 @@ void VR_InputInit (void)
 	Cvar_SetCallback (&vr_fbt_enabled, VR_InputFBTEnabledChanged);
 	Cmd_AddCommand ("vr_turn180", VR_InputTurn180_f);
 	Cmd_AddCommand ("vr_defaultbindings", VR_InputDefaultBindings_f);
+	Cmd_AddCommand ("vr_migrate_mod_bindings", VR_MigrateModBindings_f);
 	Cmd_AddCommand ("vr_fbt_list", VR_InputFBTList_f);
 	Cmd_AddCommand ("vr_fbt_assign", VR_InputFBTAssign_f);
 	Cmd_AddCommand ("vr_fbt_unassign", VR_InputFBTUnassign_f);

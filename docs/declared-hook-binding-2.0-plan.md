@@ -55,3 +55,14 @@ game, held-action release, startup/game configs/user overrides, desktop then
 compatible XR attachment and ordinary reconnect. No builds/tests/probes now;
 live controller/gameplay and Windows verification stay user-deferred. This
 adapter alone does not certify broader mod or migration completion.
+
+## Source implementation checkpoint
+
+The delegated implementation adds 34 lines in the planned three files. Main
+review compared the helper with primary51b452c0 vr.c:133–179 and verified
+native Cmd_Exec_f/Cbuf_InsertText insertion, client-only registration/startup,
+and Key_SetBinding's old held-action release. Script and live-alias checks,
+empty/default assignment and exact stale-hook cleanup match the chosen adapter;
+ordinary desktop Mouse2 is untouched. Scoped whitespace review passed. No
+builds, executable tests or controller trials have been run; the final checks
+above remain open.

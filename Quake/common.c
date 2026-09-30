@@ -3539,6 +3539,8 @@ void COM_SwitchGame (const char *paths)
 	LOC_Load ();
 	VID_Lock ();
 	Cbuf_AddText ("exec quake.rc\n");
+	if (!isDedicated)
+		Cbuf_AddText ("vr_migrate_mod_bindings\n");
 	Cbuf_AddText ("vid_unlock\n");
 }
 
