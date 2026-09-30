@@ -3,8 +3,8 @@
 2026-09-30. COOP-006, with COOP-013 as a separately bounded inherited lifecycle
 follow-up. Verified base: 2.0 `7ce3479b`; primary behavior `51b452c0`. This is
 implementation planning before code. Builds/tests remain deferred until the full
-migration implementation pass is finished. The trace-revive patch owns the same
-server files first; do not implement this concurrently with it.
+migration implementation pass is finished. Co-op revival is excluded by the user;
+this policy must reuse native helpers directly, with no revival dependency.
 
 ## Intended behavior and references
 
@@ -41,8 +41,8 @@ Native `sv_phys.c:665–878` already owns typed inventory save/merge/restore and
 last-alive cache. `sv_phys.c:869–912` owns once-per-world-frame death observation
 and shared progression reconciliation. `sv_phys.c:4952–5150` already provides
 floor/hazard checks, nearby search, teledeath cleanup, relocation and manual
-teleport. Reuse these actual components. The pending trace-revive adapter may
-factor relocation/context helpers; inspect its committed result before coding.
+teleport. Reuse these actual components; factor them narrowly only where the
+respawn contract needs explicit death angles or borrowed input restoration.
 
 Three native PostThink paths and the existing world death tracker must remain
 the sole callback/time/movement owners. Private prediction has command-level
@@ -89,7 +89,7 @@ Local Astra must resolve actual private/native callback ordering and input
 suppression; safe/death snapshot lifetime and world-death tracking reuse;
 fresh join/changelevel/saved-player scope; callback disconnect/bot reuse and
 abort/reset; dry/ordinary water placement policy and inherited mod lifecycle
-boundary. Reuse trace-revive helpers where they already solve the same problem.
+boundary. Reuse the native lifecycle, placement and input helpers directly.
 
 Later Linux/ARM software checks use real native QC and local clients: cooldown
 then ordinary respawn, inventory on/off, safe death spot, unsafe spot/teammate
@@ -109,11 +109,11 @@ bypass and join distinctions. Reopen the following contracts before code:
 | Finding | Disposition |
 | --- | --- |
 | Donor BeginPostThink actually precedes PlayerPreThink | Adopt: carry one existing policy scope from before PreThink through any continuation; finish once after native pose/FF/input unwind. Filter all actual QC/button owners during cooldown, including shared-QC rebinding, without changing accepted queue records. |
-| Retention/pointer equality cannot identify client-slot reuse | Adopt: extend existing revive/lifecycle cancellation rather than create another identity registry. Clear transient anchors/timers/wipe state in current slot/map resets and cancel borrowed input restoration before disconnect/free/reuse/abort. |
+| Retention/pointer equality cannot identify client-slot reuse | Adapt to revival exclusion: use native lifecycle hooks and a bounded borrowed respawn-policy scope, without another identity registry. Clear transient anchors/timers/wipe state in current slot/map resets and cancel borrowed input restoration before disconnect/free/reuse/abort. |
 | Typed plunge/void bypass is necessary for generic policy | Adopt stage1 passive ModOwnsLifecycle bypass from actual reference. Defer active recovery/orphan-effect callbacks to stage2. Neither physical-contact melee nor a new mod whitelist is a prerequisite. |
 | Frame-start fallback is not the exact arbitrary QC death position | Adapt: retain a finite body-owner/frame-start fallback; capture inventory before StartFrame can strip it. Update only from surviving restored body owners, not temporary weapon poses or stripped corpses. Preserve existing once-only shared reconciliation. |
 | Fresh joins run before spawned and map-initial joins differ | Adopt: copy the reference initial-spawn distinction into native client/server bookkeeping; use current saved-client identity to preserve living saves and distinguish dead-saved/newcomer placement. Native64-parm changelevel extraction remains. |
-| Null teammate anchor, force_retouch and discontinuity need adaptation | Adopt: share the revive-factored relocation helper with explicit death angles; death candidates stay dry and teammate candidates obey existing water policy. Restore current invocation's retouch only for committed relocation. Native QC fallback retains spawn effects. Publish native discontinuity even for ordinary successful respawn, without retiring queues. |
+| Null teammate anchor, force_retouch and discontinuity need adaptation | Adopt: factor native relocation narrowly for explicit death angles; death candidates stay dry and teammate candidates obey existing water policy. Restore current invocation's retouch only for committed relocation. Native QC fallback retains spawn effects. Publish native discontinuity even for ordinary successful respawn, without retiring queues. |
 | Numeric conversion/timers can invalidate optional policy | Adopt finite/range checks. Nonpositive/nonfinite delay never locks input indefinitely; invalid candidate geometry/ranking leaves native spawning intact. |
 
 The estimate remains600–850 net lines, not a target to fill. Native callbacks,

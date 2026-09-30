@@ -1,5 +1,11 @@
 # Native-trace co-op revive adapter
 
+**Excluded from the project by the user, 2026-09-30.** The uncommitted
+revival-only implementation was removed before integration. No production
+revival code was committed. Everything below is retained source/design research,
+not an implementation plan or completion gate. Ordinary co-op spawning and
+native melee remain independent features.
+
 2026-09-30. COOP-007 source gap, verified before implementation. This is
 expanded co-op through ordinary QuakeC melee traces, independent of the deferred
 physical-contact damage solver. Desktop and VR share server authority; gestures

@@ -112,3 +112,14 @@ is optional research, not a completion gate. Requested performance mechanisms,
 large-map correctness, native graphics, conservative two-eye culling and final
 Linux/ARM software checks remain required. Do not claim measured speedups from
 source inspection or replace a required software check with a counter alone.
+
+## Co-op revival excluded (2026-09-30)
+
+The user explicitly removed co-op revival from the project. COOP-007, its
+ordinary-trace corpse observer, revive controls and completion callbacks are
+excluded from implementation and acceptance. The uncommitted revival-only patch
+was removed before integration; no revival production code was committed.
+The retained [revival research](coop-trace-revive-2.0-plan.md) is historical only.
+Normal native melee, ordinary co-op respawn/cooldown, inventory retention,
+teleport and the rest of the migration remain in scope. Those features reuse
+native owners directly and must not depend on revival helpers.
