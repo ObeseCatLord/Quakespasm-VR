@@ -1992,7 +1992,10 @@ static void PF_getsurfacenumpoints (void)
 	unsigned int modelindex = ed->v.modelindex;
 	qmodel_t	*mod = qcvm->GetModel (modelindex);
 
-	if (mod && mod->type == mod_brush && !mod->needload && surfidx < (unsigned int)mod->nummodelsurfaces)
+	if (mod && mod->type == mod_brush && !mod->needload && mod->nummodelsurfaces > 0 &&
+		mod->firstmodelsurface >= 0 && mod->firstmodelsurface < mod->numsurfaces &&
+		surfidx < (unsigned int)mod->nummodelsurfaces &&
+		surfidx < (unsigned int)(mod->numsurfaces - mod->firstmodelsurface))
 	{
 		surfidx += mod->firstmodelsurface;
 		G_FLOAT (OFS_RETURN) = mod->surfaces[surfidx].numedges;
@@ -2100,10 +2103,16 @@ static void PF_getsurfacetexture (void)
 	unsigned int surfidx = G_FLOAT (OFS_PARM1);
 	qmodel_t	*mod = qcvm->GetModel (ed->v.modelindex);
 
-	if (mod && mod->type == mod_brush && !mod->needload && surfidx < (unsigned int)mod->nummodelsurfaces)
+	if (mod && mod->type == mod_brush && !mod->needload && mod->nummodelsurfaces > 0 &&
+		mod->firstmodelsurface >= 0 && mod->firstmodelsurface < mod->numsurfaces &&
+		surfidx < (unsigned int)mod->nummodelsurfaces &&
+		surfidx < (unsigned int)(mod->numsurfaces - mod->firstmodelsurface))
 	{
 		surfidx += mod->firstmodelsurface;
-		G_INT (OFS_RETURN) = PR_SetEngineString (mod->surfaces[surfidx].texinfo->texture->name);
+		if (mod->surfaces[surfidx].texinfo && mod->surfaces[surfidx].texinfo->texture)
+			G_INT (OFS_RETURN) = PR_SetEngineString (mod->surfaces[surfidx].texinfo->texture->name);
+		else
+			G_INT (OFS_RETURN) = 0;
 	}
 	else
 		G_INT (OFS_RETURN) = 0;
@@ -2329,7 +2338,10 @@ static void PF_getsurfacepointattribute (void)
 
 	qmodel_t *mod = qcvm->GetModel (ed->v.modelindex);
 
-	if (mod && mod->type == mod_brush && !mod->needload && surfidx < (unsigned int)mod->nummodelsurfaces &&
+	if (mod && mod->type == mod_brush && !mod->needload && mod->nummodelsurfaces > 0 &&
+		mod->firstmodelsurface >= 0 && mod->firstmodelsurface < mod->numsurfaces &&
+		surfidx < (unsigned int)mod->nummodelsurfaces &&
+		surfidx < (unsigned int)(mod->numsurfaces - mod->firstmodelsurface) &&
 		point < (unsigned int)mod->surfaces[mod->firstmodelsurface + surfidx].numedges)
 	{
 		msurface_t *fa = &mod->surfaces[surfidx + mod->firstmodelsurface];
@@ -2360,9 +2372,13 @@ static void PF_getsurfacepointattribute (void)
 				VectorInverse (G_VECTOR (OFS_RETURN));
 			break;
 		case SPA_TEXCOORDS0: // st coord
-			G_FLOAT (OFS_RETURN + 0) = (DotProduct (v->position, fa->texinfo->vecs[0]) + fa->texinfo->vecs[0][3]) / fa->texinfo->texture->width;
-			G_FLOAT (OFS_RETURN + 1) = (DotProduct (v->position, fa->texinfo->vecs[1]) + fa->texinfo->vecs[1][3]) / fa->texinfo->texture->height;
+		{
+			float texwidth = fa->texinfo->texture ? fa->texinfo->texture->width : 1;
+			float texheight = fa->texinfo->texture ? fa->texinfo->texture->height : 1;
+			G_FLOAT (OFS_RETURN + 0) = (DotProduct (v->position, fa->texinfo->vecs[0]) + fa->texinfo->vecs[0][3]) / texwidth;
+			G_FLOAT (OFS_RETURN + 1) = (DotProduct (v->position, fa->texinfo->vecs[1]) + fa->texinfo->vecs[1][3]) / texheight;
 			G_FLOAT (OFS_RETURN + 2) = 0;
+		}
 			break;
 		case SPA_LIGHTMAP0_TEXCOORDS: // lmst coord, not actually very useful
 			G_FLOAT (OFS_RETURN + 0) =
