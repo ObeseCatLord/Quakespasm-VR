@@ -152,3 +152,100 @@ recipient flag preserves advertised metadata, but must not be described as a
 complete camera-relative or tracked-hand rendering implementation. Keep actual
 native/VR weapon, avatar and attachment transform owners; a demonstrated gap
 would require its own bounded adapter plan rather than a fork renderer import.
+
+## Mostly-worked verified design brief
+
+Solo operator; additive optional mod fields at existing server writers. The
+previous goal turn made production progress (`39ea8209` stable custom retirement)
+and its bounded advisory correction is now source-accepted. Full migration and
+final software/runtime qualification remain open. All facts below describe
+direct source inspection; source acceptance is not execution evidence.
+
+| Environment / reusable boundary | Evidence |
+| --- | --- |
+| Writable repository / user edits | `quakespasm-2.0`, branch2.0 previously checked; only user-owned `docs/migration-2.0.md` dirty before this brief. Do not edit/stage it. [verified: status] |
+| Read-only references | `quakespasm-openvr` master51b452c0, `QSS-M`03a498aa, native baseline `vkquake`4bc898f2. [verified: pinned earlier source inventory] |
+| Modern native writer | `sv_main.c:2521-2690` builds compact entity states immediately in entity order; owns custom CURRENT and retirement alongside ordinary deltas. Recipient stays native-only. [verified: direct read] |
+| Classic native writer | `sv_main.c:3814-4148` gathers indices, sorts distance bins, then serializes live edicts. Existing arrays are uint16 indices, no entity cache or callback today. [verified: direct read] |
+| Reference callback | Primary2494/QSS-M1344 set self=entity, other=recipient, execute before visibility, false hides, persistent field mutation. QSS-M classic uses an erroneous client_t pointer conversion; do not copy it. [verified: direct read] |
+| Lifetime | Native Retain/Release prevents slot reuse, not ED_Free. Debug entity conversion rejects free edicts. [verified: pr_edict188-202/2370] |
+| Presentation | Native EXTERIORMODEL hides ordinary opaque/transparent geometry; local relink effects occur earlier, co-op overlays have independent eligibility. VIEWMODEL is metadata here, not proven camera-relative transform. [verified: preceding client/renderer reads] |
+| Required owner seed | Selected writer requires recipient native state; native packing includes movement velocity/type, solids and prediction metadata. Dropping that record is not an acceptable hide policy. [verified: state builder and selected writer reads] |
+| Parent / PVS | Native attachment transforms exist; modern server comment does not implement parent walk. Primary bounds depth, QSS-M does not; both expand USEPHS to bypass PVS. [verified: reference loops] |
+| No-model effects | Both reference clients and destination reject model-null before particles. No new rendering path justified. [verified: preceding evidence] |
+
+### Proposed decisions (main lean, awaiting advisory)
+
+1. **Shared callback/recipient check, native owner exception.** Copy optional
+   fields and PVS constants. Use one local callback helper borrowing raw self /
+   other, retaining self while QC executes, restoring both, returning false on
+   rejection/free. Retain recipient across its writer pass; after each callback
+   check recipient liveness before any conversion or later state construction.
+   On an actually freed recipient, stop the client send through the existing
+   recipient failure owner, rather than construct a fake seed. For live owner,
+   execute customization and keep field mutations; ignore boolean/recipient
+   *omission* for its mandatory state. Lean: add EXTERIORMODEL for a requested
+   hide on modern owner, preserving native model/collision data and ordinary
+   effects; classic has no exterior flag so keep its mandatory native record.
+   This is an explicit transport limitation/owner exception, not complete hidden
+   effects parity. Rejected: modelindex0, fake second entity, new wire visibility
+   flag, arbitrary callback rollback or skipping all owner customization.
+   [proposed; exact consumer scope to be challenged]
+2. **Classic mutable callbacks and sorting.** Run callbacks in gather, then
+   retain each admitted candidate until all serialization/overflow paths finish.
+   Retain recipient first; check free before using fields; omit candidates freed
+   by later callbacks, release even after packet overflow. Reuse existing sorted
+   index list for cleanup; no new cache, full entity-state copy or sorting owner.
+   Recipient flags may be read from current fields during serialization, as
+   native classic writer already does; gathered callback/PVS decisions are not
+   rerun. Native distance ordering necessarily differs from QSS-M immediate
+   output, so promise its optional field semantics, not identical callback timing
+   or immutable snapshots. Rejected: wholesale QSS-M writer replacement; callback
+   at serialization after stale model/PVS selection; retaining only the current
+   callback edict while later collected slots can be freed/reused.
+   [proposed; may merge with decision1]
+3. **No-remove only at live custom invisibility.** PVSF_NOREMOVE retains a live
+   eligible SendEntity mapping during invisibility, clearing CURRENT and low
+   dirty bits but preserving PRESENT/REMOVE/WAIT/RETIRENEW. Re-entering visible
+   eligibility from CURRENT-clear forces a full callback update, so cleared
+   hidden dirty changes are not lost. Explicit free/native transition always
+   uses existing retirement helper; no-remove never cancels outstanding removal
+   delivery debt or restores an old lifetime. Classic native lifetime has no
+   custom mapping, so do not invent no-remove persistence there. Rejected:
+   leaving CURRENT enabled outside PVS, removing pending ACK debt, another hidden
+   entity list, or implementing visibility policy a second time in custom writer.
+   [proposed; interactions with stable-boundary state must be verified]
+4. **Parent PVS + flags.** Shared bounded parent lookup validates raw QC entity
+   offset against current allocation/edict size before conversion and rejects
+   free parents/cycles. Bound depth by num_edicts; do not require parent to be
+   network-visible just to consult its leaves. Reuse each writer's existing
+   leaf-count policy, including modern zero-leaf bypass and overflow conservatism.
+   Modern viewmodel recipient match adds VIEWMODEL and bypasses PVS; mismatch
+   hides. Classic cannot handle camera-relative VIEWMODEL, so suppress non-owner
+   viewmodel entities like QSS-M. Modern exterior recipient match adds existing
+   flag; classic suppresses non-owner exterior entities. NORMAL/NOTRACE retain
+   native PVS; USEPHS/IGNORE bypass it as references do. No skyroom/co-op global
+   expansion or new tracing service. [proposed; constants and field matches verified]
+5. **Keep native particle path.** Do not extend client rendering for model-less
+   entities. Native emission metadata eligibility may match reference server
+   admission; preserve native alpha/model limiting and actual effects consumers.
+   Bound/named emission-index consumer is a separate small demonstrated safety
+   repair, not a reason to replace particle rendering. [proposed; source ordering verified]
+
+Suspected overlap: decisions1/2 are one mutable-QC ownership boundary, and
+decision3 must stay in NET-009's existing pending-state owner rather than become
+a second visibility state machine. Merge/delete helpers or proposals if simpler.
+Expected production under250 lines in progs.h/server.h/sv_main.c; the increase
+from earlier200 is explicitly for classic retention and complete cleanup, not a
+new service or renderer. Reopen if full snapshot caches, duplicated callbacks,
+new packet semantics or repeated lifetime-layer repairs are needed.
+
+Request one local Astra Max advisory: verify load-bearing claims, rank the real
+forks, deeply specify the highest-risk ownership decision, identify missing
+safety and deletion opportunities. Return prioritized recommendations and only
+genuinely human decisions (if any), <=1400 words with file/line evidence. No
+edits/builds/tests/compiler checks/probes/nested agents. Do not re-review whole
+renderer, protocol negotiation, prediction physics, foveation or approved NET-009
+state except direct no-remove/callback interaction. Effective settings metadata
+must be exposed to claim a certified senior-skill review; without it, explicitly
+label the result advisory. Main spot-checks and records disposition before code.
