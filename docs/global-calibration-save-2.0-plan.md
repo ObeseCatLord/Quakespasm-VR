@@ -100,7 +100,10 @@ snapshots and metadata exactly through the native parser.
 4. Parse candidate output. Compare original accepted entries in order: identity,
    wheel snapshot, unselected fields and complete_roster stay unchanged. Only the
    counted missing known identities may be appended. Every targeted identity must
-   resolve all three selected values. Reject duplicate/inert identity ambiguity or
+   resolve all three selected values. Legitimate shared viewmodel records remain:
+   rewrite every matching accepted block, preserve original multiplicity and
+   publish once per identity. Reject duplicate live slots or inert-record ambiguity
+   and
    unexpected accepted-record promotion before writing; do not add another parser
    merely to handle an ambiguous file. Ensure newly added records have no wheel
    authority and snapshot unselected values and presence flags agree, including
@@ -109,13 +112,21 @@ snapshots and metadata exactly through the native parser.
    omission is not the same setting. Round-trip snapshot floats without precision
    loss; selected classic values may use the existing native comparison tolerance.
 5. Extract ApplySchema's existing capacity/identity/finite preflight into a private
-   reusable helper. Preflight selected-only, deduplicated publication entries,
+   reusable helper. Fill selected-only, deduplicated publication entries from the
+   validated candidate's parsed values, then preflight those exact entries,
    then use existing write/readback. On success ApplySchema receives only identity
    and the three classic fields. This reuses native allocation/cvars and muzzle
    presence/seed flags without resetting/replaying enhanced, melee, source or
    unrelated unsaved live calibration. Do not call ReloadGame or load models.
 
-Estimate reopened from <=250 to <=500 net added lines in calibration.c. The
+Estimate reopened from <=250 to <=500 net added lines in calibration.c; the
+source-review correction pass now has a550-net completion ceiling while targeting
+500. At556 net, editing stopped and architecture was reopened before further
+changes. The advisory verified the existing-owner architecture and identified
+safe deletions: the redundant active-target pass (already included by the live
+slot scan), snapshot selected-field plumbing, repeated early snapshot validation
+and duplicate unselected comparison logic. Keep full utility rather than remove
+roster/preservation behavior to satisfy the estimate. The
 smaller local-blocks-plus-active design fails real no-file global utility; copying
 a whole inherited file changes native wheel authority; a new overlay loader or
 parallel state owner is unnecessary. Reopen before another production file,
@@ -137,11 +148,18 @@ load-bearing reference filter, parser, calibration and wheel-consumer claims.
 | Active controller adjustment can commit/cancel different values. | Adopt explicit refusal; controller single-save paths remain unchanged. |
 | Useful full action exceeds the original250-line estimate. | Reopen to500 lines before implementation, constrained to current owner. |
 | Focused review verified wheel neutrality and terminal-global order, but found matcher false positives and missing snapshot/EOF guards. | Adopt shared scalar/vector matcher arity, presence-aware snapshot comparisons and leading newline before terminal globals. |
+| Draft exceeded500 net lines without another persistent owner. | Reopen to550 ceiling before correction, with the safe deletions above and no narrowed roster/preservation contract. |
+| Top-level span helper rejects whitespace before a block and mishandles known token values/comments. | Adopt boundary completion when token_start reaches end; tokens starting inside and crossing remain errors. Match native top-level arities: roster/held-scale1, classic/MP global vectors3, unknown tokens0. Remove only the three classic globals; preserve inter-value trivia. |
+| Draft rejects all authored duplicate model records. | Adopt multiplicity-aware candidate validation and deduplicated publication; legitimate shared-model records are not inherently ambiguous. |
+| An unterminated trailing block comment can swallow generated globals while candidate entries still pass. | Adopt a whole-candidate walk through the existing lexer requiring the three generated key tokens, in order, within captured emitter offsets. Native candidate parsing supplies grammar/values; no second parser or new policy state. |
+| Raw float publication may differ from rounded file/reload values. | Adopt projection from already-validated parsed candidate fields, then native preflight and publication of that same array. Native cvar formatting remains. |
 
 The focused requested-Astra source follow-up verified terminal-global semantics
 and actual wheel consumers. Main adopted its two preservation corrections and EOF
 guard above. No parser provenance/new loader was justified. This plan is ready for
-the bounded implementation; executable qualification still remains deferred.
+the bounded implementation. The draft source review's six findings and cap
+disposition above are adopted before the correction pass; executable qualification
+still remains deferred.
 
 ## Final software acceptance (after all implementation)
 
