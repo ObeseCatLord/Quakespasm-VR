@@ -289,3 +289,26 @@ continuous-dirty ACK liveness finding above. Reset-loop corrections
 source reviews. Stable-boundary design is under local Astra advisory review;
 no further production fix precedes that disposition. There is no NET-009/full
 migration completion claim. The user-owned migration document remains untouched.
+
+## Stable-boundary design advisory disposition
+
+Local requested-Astra advisory verified unchanged `c702d64f` and adopted the
+one-bit correction. Main spot-checks the repeated retirement masks and the
+post-callback commit point against its recommendations. Effective settings
+metadata remains unavailable; this is not certified source/runtime acceptance.
+
+| Recommendation | Disposition before code |
+| --- | --- |
+| RETIRENEW distinguishes fresh retirement from replayed REMOVE | Adopt. Shared local retirement-mask helper marks it for PRESENT-bearing free/hidden/native transitions and preserves existing delivery/confirmation flags. |
+| Only RETIRENEW installs a boundary, not WAIT-clear or ordinary retry | Adopt. Remove unconditional sequence/WAIT replacement; replayed removal after confirmation cannot reopen WAIT. |
+| Callback rejection establishes retirement only after actual emission | Adopt. Live post-callback pending marker or an emitted remove-only result with prior PRESENT classifies fresh retirement at the commit point. No new boundary for a candidate that merely did not fit. |
+| Qualifying ACK can be at-or-after stable boundary | Adopt within existing valid-frame/entity-log guards, requiring WAIT and no un-emitted RETIRENEW. Clear only WAIT; preserve REMOVE delivery debt. |
+| Sentinel / native reset / new reliability owner alternatives | Reject: sentinel relocates necessary state, native baseline resets do not express opaque callback lifetimes, and no new channel/history scan is needed. |
+
+One bounded coding worker may change only `sv_main.c` and `server.h` with this
+specified transition contract; main reviews/integrates and requests targeted
+local source recheck. Main works on non-overlapping visibility documentation and
+client/reference reads. Source correctness, final actual scripted effects,
+normal-session loss recovery, Linux/ARM builds remain unqualified until their
+respective gates. Exactly-once lifecycle callbacks or reliable creation are not
+promised by this unchanged unreliable reference wire contract.
