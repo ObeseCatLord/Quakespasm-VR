@@ -183,3 +183,20 @@ above450 rather than omit required semantics. Actual generic2e7536b9 remains
 the behavior base. No further source framework or generic movement rewrite is
 authorized. Effective reviewer settings are unobservable: this disposition
 uses requested-Astra/max source advice, not certified model/runtime acceptance.
+
+## Integration review corrections before commit
+
+The first413-net-line three-file implementation is under main/source review;
+it is not yet source-integrated or runtime-qualified. Main read the full patch
+and actual donor model rejection, and the local requested-Astra source review
+verified these two corrections to the fresh model helper before integration:
+
+| Finding | Adopted narrow correction |
+| --- | --- |
+| Expired model rejection was gated by W_ChangeWeapon availability/finite weapon | First identify exact incoming fist and valid inactive typed state, then passively restore the fresh QC model independently of the optional selector. Primary model rejection is likewise independent of later selector success. |
+| Saved helper could invoke the selector for a corpse or frozen limbo body | Gate only the callback with health>0, DEAD_NO, solid!=SOLID_NOT, finite weapon and matching named signature. Do not require spawned, skip passive rejection or cancel a surviving owner merely because the optional callback is unavailable. |
+
+This stays in the existing private repair helper. No deferred selector state,
+new owner or serialization callback is added. Main also reopened the prediction
+epoch publication timing for source disposition before commit; its earlier
+completion claim remains unverified until that review is reconciled.
