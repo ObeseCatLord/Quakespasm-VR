@@ -152,8 +152,10 @@ Generic bind-relative retargeting alone does not establish inherited endpoint
 parity. Vore's final outward-knee policy also needs the reference mirrored pair
 construction rather than the lateral-only shortcut. The committed
 [tracked endpoint plan](avatar-tracked-endpoints-2.0-plan.md) records the adapters
-added in `a117d427` and `7f27631f`; bounded source acceptance is pending. The older
-fixture/build results below do not qualify these new adapters.
+added in `a117d427` and `7f27631f`. Bounded Astra source review found a missing
+authored-root outward-axis fallback, corrected in `4b6c3e59` and accepted in the
+narrow follow-up. The older fixture/build results below do not qualify these new
+adapters; execution and broad avatar parity remain unverified.
 
 The tracked Dog/Fiend refinement now accepts the floor-corrected presentation
 context already staged by `R_VRIKRenderStageFloor`. The legacy entry point still

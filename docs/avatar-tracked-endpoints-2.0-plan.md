@@ -14,7 +14,7 @@ humanoids retain their existing specialized paths.
 | Fact | Evidence/status |
 |---|---|
 | Generic retargeting transports bind-relative displacement, not absolute endpoints | [verified: destination `R_AvatarRetargetPaletteWithContext`] |
-| Eight profiles have no tracked endpoint refinement | [verified: destination `R_AvatarRefineBuiltinPaletteWithContext`; bounded Astra source audit] |
+| Eight profiles had no tracked endpoint refinement before this adapter | [verified: pre-adapter destination `R_AvatarRefineBuiltinPaletteWithContext`; bounded Astra source audit] |
 | Reference translates tracked Head subtree and solves both wrists | [verified: reference `r_alias.c:4124–4163`] |
 | Analytic arms accept stretch through 1.10, reject farther targets, preserve anatomical wrist basis | [verified: reference `R_VRIKRefineArmPosition`] |
 | Tracked Shambler requires the direct Shoulder→Upper→Lower→Hand chain and bind segment lengths, with no analytic fallback | [verified: same reference dispatch and `R_VRIKRefineActualPathWithLengths`] |
@@ -136,5 +136,28 @@ saved target basis at its solved origin; finite zero confidence is an exact
 no-op. Separate legs capture their seeds before either side changes. There is
 no GPU, shader, descriptor, network-wire or persistent rig-cache addition.
 Production scope stayed within five files and approximately 450 adapted lines.
-`git diff --check` found no whitespace errors. Source acceptance review is pending;
-no build, fixture, runtime, visual or performance qualification was performed.
+`git diff --check` found no whitespace errors. No build, fixture, runtime, visual
+or performance qualification was performed.
+
+## Integrated source review disposition
+
+The same local Astra advisory reviewed `a117d427`/`7f27631f` against the committed
+plan and actual primary source. It found one concrete P2 omission: mirrored feet
+needed the primary's authored-root lateral fallback when current roots coincide.
+Main verified `R_VRIKGetLegLateralAxis` in the primary, adopted the correction in
+`4b6c3e59`, and requested a narrow follow-up. The reviewer accepted that block's
+bounds, current-first/bind-second ordering and independent outward/pair decisions.
+No other introduced defect was established in the five-file review scope.
+
+| Source recommendation | Disposition |
+|---|---|
+| Coincident current roots must use authored separation for mirrored feet | Adopted in `4b6c3e59`; source follow-up accepted. Final inward detector intentionally retains the reference's current-root detection contract. |
+| Preserve earlier successful optional stages and validate before publication | Confirmed: refreshed head/arm/foot snapshots and independent restoration precede attachment/bounds. |
+| Preserve target endpoint basis and independent confidence/presence | Confirmed: explicit renderer side indices; exact finite-zero-confidence no-op; saved foot orientation about solved origin. |
+| Keep existing desktop/animal/Ranger policies and no additional Hip solve | Confirmed within scoped calls; no whole-avatar/runtime parity certification. |
+
+This closes the demonstrated source omissions for this adapter. Effective model
+metadata remains unavailable, so the reviews remain bounded requested-Astra/Max
+advisories rather than certified senior-skill passes. Shipped topology, numerical
+singularities, compilation, appearance and stack/performance cost remain
+unqualified. Final Linux/ARM qualification and the broader migration remain open.
