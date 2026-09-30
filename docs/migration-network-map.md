@@ -143,6 +143,34 @@ This is a design decision for NET-022, not implementation or runtime sign-off.
 | Game switching queues configuration commands. | **Adopt.** Reconnect only after the switch and queued commands settle; a fixed delay alone is insufficient. |
 | Donor `NET_Connect` can block for three 2.5-second datagram waits on failure. | **Adapt after code inspection.** Do not schedule repeated synchronous connection attempts from the render frame. The first installed-mod slice may make one post-switch attempt and report failure; full failed-server retry parity needs a later nonblocking adaptation of the existing transport, not a second socket owner. |
 | Inherited case-insensitive game identity differs from donor exact matching; pak0 presence differs from a valid loose mod. | **Adapt locally.** Resolve actual installed directory spelling for the redirect and compare semantic identity in that operation. Keep donor `COM_GameDirMatches` unchanged and do not use the catalogue pak0 predicate for all installed mods. |
+
+### Server-mod reconnect source checkpoint (2026-09-30)
+
+UI-004/NET-022 are source-integrated; the earlier inventory status is stale.
+Main inspected the complete current reconnect/download path and native install
+commit boundary, with no production changes or runtime checks in this pass.
+`cl_parse.c:2119–2166` bounds the server gamedir and limits automatic switching
+to matching private negotiation; dispatcher3522 returns immediately after a
+redirect. `cl_main.c:461–508` captures the original numeric endpoint and legacy
+choice;537–710 reuses frame-driven config/connect/signon stages, transport
+cancellation and bounded deadlines. It does not create a second socket owner.
+The explicit timed reconnect command also uses that owner.
+
+`cl_main.c:812–1080` uses native Modlist installation identity, current catalogue
+approval matching and operation-specific cancellation before resuming the saved
+connection. Cancellation also closes the existing prompt; unknown entries,
+changed approval and failed installation remain errors. The native
+`addon_catalog.c:431–537` worker limits size, validates PACK content/sequence,
+cleans its temporary file on failure and commits through its existing guarded
+rename boundary. None of these paths was exercised during this source pass.
+
+Main also checked a suspected pointer-lifetime incompatibility and rejected it:
+`Modlist_Init` (`host_cmd.c:780`) appends/updates entries; it does not free them.
+Only `Modlist_Rebuild` clears the list. A Resume call passing an installed-entry
+name through Modlist_Init therefore needs no new copy/identity owner. Existing
+Modlist and reconnect semantics are retained. Final Linux/ARM software acceptance
+still covers cancellation, failed install, changed catalogue details, loose-file
+mods, server timeouts and correct config/game/sign-on ordering.
 | Inherited missing-mod flow refreshes automatically and all current catalogue entries are unverified. | **Adapt.** Keep ordinary catalogue browsing refresh explicit, but allow the inherited automatic catalogue lookup after the user explicitly connects to a server requiring a missing mod. Never install without consent for the exact gamedir and unverified package; re-resolve it on acceptance and cancel only an operation-owned transfer. |
 | Public PEXT2 peer auto-switch policy is a human preference. | **Resolve conservatively.** Retain the donor's warning-only public behavior by default; make public auto-switch an explicit opt-in. Private QSVR switching follows the inherited behavior when enabled. |
 
