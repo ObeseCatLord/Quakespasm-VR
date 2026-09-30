@@ -149,8 +149,8 @@ static int CL_GetDemoMessage (void)
 	}
 
 	net_message.cursize = LittleLong (net_message.cursize);
-	if (net_message.cursize > MAX_MSGLEN)
-		Sys_Error ("Demo message > MAX_MSGLEN");
+	if (net_message.cursize < 0 || net_message.cursize > MAX_MSGLEN)
+		Sys_Error ("Demo message size %d out of range (0..%d)", net_message.cursize, MAX_MSGLEN);
 	r = fread (net_message.data, net_message.cursize, 1, cls.demofile);
 	if (r != 1)
 	{
@@ -191,7 +191,7 @@ void		 CL_Seek_f (void)
 	float offset = 0, offset_seconds;
 	int	  ret;
 	if ((ret = sscanf (Cmd_Argv (1), "%f:%f", &offset, &offset_seconds)) == 2)
-		offset = offset * 60 + (offset > 0 ? offset_seconds : -offset_seconds);
+		offset = offset * 60 + (signbit (offset) ? -offset_seconds : offset_seconds);
 
 	if (!ret)
 	{
@@ -200,7 +200,7 @@ void		 CL_Seek_f (void)
 		return;
 	}
 
-	qboolean relative = offset < 0 || Cmd_Argv (1)[0] == '+';
+	qboolean relative = offset < 0 || Cmd_Argv (1)[0] == '+' || Cmd_Argv (1)[0] == '-';
 	cls.seektime = relative ? cl.time + offset : offset;
 
 	// large positive offsets could benefit from demoseeking, but we'd lose prints etc

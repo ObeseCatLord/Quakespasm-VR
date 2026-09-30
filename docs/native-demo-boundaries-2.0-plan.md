@@ -48,3 +48,24 @@ demo records; record/play/stop/pause; absolute0:30/1:30 and relative+0:30/-0:30,
 native desktop and dedicated startup/shutdown and id1/Hipnotic/Rogue. Source
 checks alone do not qualify these behaviors. Windows and user hardware trials
 remain deferred, and revival remains excluded.
+
+## Source integration disposition
+
+The worker changed four lines in the existing owner (four additions/four
+deletions, zero net). Main reviewed the complete diff and native read/seek
+control flow. Requested local Astra source advice closed both findings with
+no blocker; main retains integration responsibility.
+
+| Recommendation | Main disposition |
+| --- | --- |
+| Reject the signed lower bound before payload reading | Adopted. Both negative and oversized lengths use the existing Sys_Error owner with an accurate range diagnostic; ordinary framing and short-read/zero behavior remain. |
+| Preserve zero-minute sign and explicit relative intent | Adopted. signbit selects mm:ss seconds direction, and explicit leading minus remains relative. At time120, source arithmetic gives0:30→30, +0:30→150 and -0:30→90. No alternate parser or replay owner. |
+| Rewrite native demo/startup machinery | Rejected. Actual retained initialization, dedicated client-subsystem gates, recording/signon/read/stop/pause/replay and shutdown owners remain suitable. |
+| Source advice closes runtime acceptance | Rejected. Effective reviewer metadata is unexposed and no executable checks were run. Full campaign/base/demo Linux/ARM qualification remains pending. |
+
+Scoped whitespace checks pass. The source comparison verifies production
+Meson inclusion, native Host_Init/_Host_Frame/Host_Shutdown, dedicated gating
+before client video/input/OpenXR/sound/voice initialization, explicit desktop
+OpenXR bootstrap fallback, and native demo registrations/read/write/seek owners.
+It does not qualify packet payload semantics, mission-pack gameplay or actual
+runtime-library availability.
