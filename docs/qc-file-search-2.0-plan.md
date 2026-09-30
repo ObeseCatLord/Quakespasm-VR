@@ -69,3 +69,25 @@ visibility and filesystem precedence. Windows builds, hardware and performance
 measurements remain deferred. No tests/builds/compiler or runtime probes until
 all implementation is finished. Personal local Astra source review checks the
 actual adapter and lifecycle before commit; broad MOD completion is not implied.
+
+## Windows wildcard review correction
+
+Personal local Astra found a P2: primary passes loose-file patterns directly to
+Windows enumeration. Post-filtering native results with the Quake matcher would
+drop extensionless files from `*.*`. Microsoft's [FindFirstFileW documentation](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirstfilew)
+and [wildcard compatibility explanation](https://devblogs.microsoft.com/oldnewthing/20071217-00/?p=24143)
+describe the native matching boundary and DOS compatibility rules. The matching
+rules differ beyond one literal pattern, so special-casing only `*.*` would not
+fully preserve this boundary.
+
+Adapt the existing Windows enumerator: expose `Sys_FindFirstPattern(dir, pattern)`
+using its current UTF-8 conversion, find-data storage, iteration and close owners.
+Keep `Sys_FindFirst(dir, ext)` as its existing extension-pattern wrapper. QC uses
+the native pattern entrypoint on Windows and skips the Quake post-filter there;
+Linux/ARM retain native directory enumeration plus the copied primary matcher.
+Pack matching remains unchanged on every platform. This adds one Windows-only
+declaration/entrypoint in `sys.h/sys_sdl_win.c`, without copying the Windows file
+API implementation or changing ordinary enumeration semantics. Reopen the source
+review for this bounded adapter. Windows execution remains deferred; final checks
+should include `*.*`, extensionless names, extension patterns and native short-name
+matching in addition to Linux/ARM cases.
