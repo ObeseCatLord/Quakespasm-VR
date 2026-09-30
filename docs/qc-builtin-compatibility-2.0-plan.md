@@ -69,3 +69,55 @@ The reviewer verified existing documented/dynamic number initialization and
 confirmed that allocation and VM invocation permissions are unchanged. No
 builds, tests or probes were performed. The remaining audit findings above are
 still open; this acceptance covers only the first slice.
+
+## Second slice: cvar and HUD service adapters
+
+Primary `Quake/pr_cmds.c` implements `PF_cvar_setf` by formatting the float with
+`%g` into a 32-byte local buffer and calling `Cvar_Set`. Copy that wrapper into
+destination `Quake/pr_ext.c` and register 176 for both VMs. Neither the donor
+registry nor the core builtin tables occupy 176. Reusing `Cvar_Set` retains
+read-only/locked checks, cvar callbacks and existing unknown-variable behavior.
+Do not replace it with a second cvar service or change CSQC cvar read overlays.
+
+Copy primary's `PF_cl_cprint` wrapper (`SCR_CenterPrint(PF_VarString(0))`) and
+register 338 for CSQC only. Reuse the current centerprint string, wrapping,
+timing and desktop/VR presentation. No second message queue or HUD owner.
+
+Add CSQC `getresolution` 608 using the existing `SCR_GetCSQCDisplay` helper.
+Primary returns console width/height, but destination `Sbar_DrawCSQCHud` passes
+the virtual HUD extent (`display.width / display.scale`, height likewise) to
+`CSQC_DrawHud`. The existing helper also owns relative desktop scaling and the
+VR panel override. Return that same extent with zero Z so the new query agrees
+with the draw callback and clipping/cvar adapters. Copy the primary result
+shape, adapting only the demonstrated coordinate boundary. No server handler.
+
+Add the primary's `draw_getimagesize` 318 and `drawcolorcodedstring` /
+`drawcolorcodedstring2` 326 exact-name aliases to existing CSQC handlers. The
+documented numeric aliases share the same handlers and allocate no dynamic
+numbers. Preserve primary's best-effort QSS/FTE drawstring argument contract;
+do not claim a new DarkPlaces signature implementation. Add the lowercase
+`ex_finalefinished` exact-name alias to the existing SSQC fallback, retaining
+the original donor spelling. This is an inherited fallback, not new finale
+detection. Its ordinary dynamic number is allocated by the existing registry.
+
+Primary `PF_cl_drawstring` uses `mu.colour` and its alpha for each glyph after
+`PR_Markup_Parse`. Destination parses the same markup but passes the original
+RGB/alpha to `DrawQC_CharacterQuad`, losing color and half-alpha changes. Pass
+the parser's existing per-glyph RGBA to that same helper. Plain strings and raw
+strings keep their existing behavior. No shaders, pipelines, render targets or
+new geometry path are needed.
+
+All changes stay in `Quake/pr_ext.c`; occupied-slot compatibility, core-name
+lookup, file/search/buffer lifetimes, events and capability advertisement remain
+separate slices. Estimated production scope: three small wrappers, six registry
+entries and one existing draw call argument correction. Reopen this slice if it
+needs VM dispatch changes or another state owner.
+
+Acceptance: local Astra source review of wrappers, VM registration, alias
+number allocation and coordinate/color boundaries. At end-of-implementation
+software verification, cover numeric and named lookup/invocation in permitted
+VMs; forbidden SSQC HUD calls; ordinary, absent and protected cvars; concatenated
+centerprint timing; desktop absolute/relative scaling and VR panel extents;
+plain strings, color/reset/half-alpha markup and unchanged raw strings. Builds,
+tests and probes remain deferred. Hardware rendering qualification stays with
+the user.
