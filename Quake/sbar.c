@@ -892,6 +892,8 @@ static void Sbar_DrawCSCQ (cb_context_t *cbx)
 		*qcvm->extglobals.clframetime = host_frametime;
 	if (qcvm->extglobals.intermission)
 		*qcvm->extglobals.intermission = cl.intermission;
+	if (qcvm->extglobals.intermission_time)
+		*qcvm->extglobals.intermission_time = cl.completed_time;
 	if (qcvm->extglobals.player_localentnum)
 		*qcvm->extglobals.player_localentnum = cl.viewentity;
 	pr_global_struct->time = cl.time;
