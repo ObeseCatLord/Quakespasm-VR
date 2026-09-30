@@ -128,8 +128,8 @@ Disposition meanings: REUSE/ADAPT keep the source behavior at existing owners; K
 | VR-012 — HUD, console, scoreboard and legacy menu world placement/scaling | MAIN:Quake/vr.c:1950 (vr_hud_scale); MAIN:Quake/vr.c:1951 (vr_menu_scale); MAIN:Quake/vr_menu.c:306 (VR_MenuDraw) | Quake/gl_draw.c;Quake/gl_screen.c;Quake/sbar.c; **ADAPT**, P3 | Loading, console-forced-up and scoreboard states preserve readable, correctly placed stereo UI. Native multiplayer intermission uses the existing panel; CSQC score/death/intermission placement remains an implementation boundary. |
 | VR-013 — Pointer-driven menus, trigger selection and scrolling options | MAIN:Quake/vr.c:325 (VR_UpdateMenuPointer); MAIN:Quake/vr.c:326 (VR_DoMenuTrigger); MAIN:Quake/vr_menu.c:848 (VR_MenuPointerMove) | Quake/gl_screen.c;Quake/menu.c;Quake/vr_input.c; **ADAPT**, P3 | Ray hover matches activation for sliders/lists/actions, with no click-through or repeated input on closing menus. [Current pointer checkpoint](migration-input-review.md) records the prepared surface/native hover/post-draw trigger owner; final software qualification pending. |
 | VR-014 — View kick/roll separation and teleport camera continuity | MAIN:Quake/vr.c:1906 (vr_viewkick); MAIN:Quake/view.c:796 (V_CalcRefdef) | Quake/view.c;Quake/cl_parse.c;Quake/gl_rmain.c; **ADAPT**, P1 | Wrist roll does not trigger QC view corrections; teleport orientation and death camera remain stable while head tracking continues. [Source reconciliation](migration-aim-review.md) preserves authoritative camera owners and one head contribution, with tracked intermission base tilt corrected; broader software qualification pending. |
-| VR-015 — Optional desktop mirror and hidden-area depth mask | MAIN:Quake/vr.c:1933 (vr_mirror); MAIN:Quake/vr.c:741 (VR_DrawHiddenAreaDepthMask) | Quake/vr.c;donor render passes/WSI; **ADAPT**, P4 | Mirror can be disabled without losing XR submission; conservative per-eye mask never hides visible geometry or UI. |
-| VR-016 — VR MSAA and high-precision color targets | MAIN:Quake/vr.c:1932 (vr_msaa); MAIN:Quake/vr.c:1935 (vr_highprecision_targets) | Quake/gl_vidsdl.c;donor render passes; **DONOR-ADAPT**, P4 | Requested sample counts and color formats survive postprocess/resolve to XR; compare dark ramps and alpha edges. |
+| VR-015 — Optional desktop mirror and hidden-area depth mask | MAIN:Quake/vr.c:1933 (vr_mirror); MAIN:Quake/vr.c:741 (VR_DrawHiddenAreaDepthMask) | Quake/vr_openxr.cpp;Quake/gl_vidsdl.c;Quake/gl_rmain.c;native Vulkan passes/WSI; **ADAPT**, P4 | Mirror can be disabled without losing XR submission; conservative per-eye mask never hides visible geometry or UI. Existing source owners are reconciled in the [renderer checkpoint](renderer-source-checkpoint-2.0.md); final software qualification pending. |
+| VR-016 — VR MSAA and high-precision color targets | MAIN:Quake/vr.c:1932 (vr_msaa); MAIN:Quake/vr.c:1935 (vr_highprecision_targets) | Quake/gl_vidsdl.c;Quake/r_passes.c;native target/resolve owners; **DONOR-ADAPT**, P4 | Requested native sample counts and negotiated formats survive postprocess/resolve to XR; compare dark ramps and alpha edges. Existing two-layer targets retain native vid_fsaa/precision policy; [source checkpoint](renderer-source-checkpoint-2.0.md), final software qualification pending. |
 
 VR-001 now has a bounded `vr_enable 0|1` session toggle on a Vulkan device
 selected with `-openxr` at startup. It releases VR input and retires borrowed
@@ -161,13 +161,15 @@ passes; the focused production-ray sanitizer fixture checks both hands,
 handedness and missing-pose fallback. QBJ3/Enyo headset alignment and impact
 matching remain unqualified.
 
-For VR-015, the OpenXR backend exposes per-eye hidden triangles and the Vulkan
-postprocess subpass now covers those regions in black after UI. The
-[hidden-area mask boundary and senior review](migration-hidden-area-mask.md)
-define the remaining scene-fragment rejection, stencil ownership, and effect
-qualification. The optional off/left/right desktop eye mirror now uses the
-existing Vulkan WSI and leaves XR submission owned by the headset path; visual
-and lifecycle qualification remains open.
+For VR-015, the existing per-eye hidden-area path covers hidden regions in black
+after UI and supports world-scoped stencil rejection with AO depth replay,
+native MSAA/OIT and KHR rate variants. Actual coarse FB/META frames deliberately
+bypass world rejection. The [mask design and review](migration-hidden-area-mask.md)
+record this conservative boundary and remaining effect qualification. The
+optional off/left/right mirror snapshots completed eye output through native
+frame slots and WSI after XR end-frame. [Current source reconciliation](renderer-source-checkpoint-2.0.md)
+confirms these implementations; software image and lifecycle qualification
+remain open, with user device/performance checks deferred.
 
 ### Weapon wheel and calibration
 

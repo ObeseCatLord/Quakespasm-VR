@@ -66,3 +66,21 @@ panel preparation and GUI error cleanup own the display override/panel lifetime.
 This is actual source-path evidence only; final Linux/ARM software checks still
 need crop/padding/alpha, resize, clip-reset/error and stereo panel coverage. No
 builds/tests/probes/shader tools or images were run/generated for this checkpoint.
+
+## Existing XR mirror, mask and native target source checkpoint
+
+VR-015 and VR-016 have production owners already; their old source-map status
+does not imply another renderer implementation is needed. Current source reads
+confirmed the following paths without executing them:
+
+| Boundary | Existing implementation and remaining qualification |
+| --- | --- |
+| Optional mirror | `GL_RecordXRMirrorSnapshot` copies the selected completed eye after `R_RecordFrame`, restores its color-attachment layout, and reserves a native frame slot. `GL_EndXRFrame` calls `VRXR_EndFrame` before `GL_PresentXRMirror`; WSI uses zero-timeout acquisition and polls the pending acquisition fence. Optional mirror errors disable the mirror, preserving XR ownership. See [mirror source review](vr-mirror-senior-review.md) for semaphore, snapshot lifetime and allocation dispositions. Final software lifecycle/image checks remain. |
+| Hidden-area coverage | `VRXR_GetHiddenAreaMesh` refreshes bounded per-eye visibility triangles; `GL_PrepareHiddenAreaMesh` packs both asymmetric projections. `GL_OpenXRHiddenAreaWorldEligible` gates the existing stencil writer/masked opaque color and AO depth replay. Native MSAA, OIT and KHR rate variants are implemented; an actual coarse FB/META frame deliberately bypasses world rejection. Final black coverage runs after postprocess/UI independently. See [mask design and review](migration-hidden-area-mask.md); conservative visible-edge/effect qualification remains. |
+| MSAA and precision | `GL_SelectRenderFormats` and `GL_SelectNativeSampleCount` retain native format/sample negotiation. `GL_CreateColorBuffer` creates two-layer stereo color targets with native resolved/MSAA attachments; the pass compiler retains resolve attachment topology and optional foveation sample eligibility. Use native `vid_fsaa` and format negotiation rather than restoring OpenGL-only policy or duplicate legacy settings. Final actual attachment, resolve, postprocess, AO/OIT and dark-ramp/alpha-edge software coverage remains. |
+
+These reads confirm implementations and their deliberate boundaries, not image
+parity, measured savings, or device readiness. Do not remove the coarse-density
+mask gate without a conservative fragment-footprint proof. User headset and
+performance measurements remain later follow-up, outside completion; consolidated
+Linux/ARM software qualification remains required after all implementation.
