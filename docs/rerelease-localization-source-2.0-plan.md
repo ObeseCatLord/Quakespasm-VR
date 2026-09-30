@@ -76,3 +76,26 @@ whole-file lookup. This is not a certified senior-skill pass.
 
 Production file/scope estimate remains unchanged. Software proof is deferred;
 source review establishes the implementation contract only.
+
+## Implementation integration checkpoint
+
+The copied optional reader and discovery adapters are implemented in the one
+planned file: 123 additions/3 deletions. Native 64-bit file sizes, directory
+validation, checked seek/read and matching allocation/free replace the primary
+API assumptions. The filename is not registered as a content root or search
+path. Existing explicit model-only activation remains separate.
+
+Main reviewed the complete diff and corrected an introduced argument-cursor
+interaction before acceptance: the localization selector must use its own
+`rerelease_parm`, preserving the existing `i` used by native `-basegame`
+iteration. Add final software coverage for `-basegame` before and after
+`-rerelease`; this patch must not reorder native game-data selection.
+
+The loader hook is after both native direct-root attempts, before KPF; the
+existing parser and reload/shutdown own its native allocation. Final source
+advisory accepted the current corrected diff with no remaining P1/P2 finding.
+It independently checked flags/discovery, native basegame cursor, Steam API and
+unchanged model mount, PACK validation/cleanup and whole-file precedence/ownership.
+This remains source-only advisory, with unexposed effective model/effort settings.
+Scoped whitespace review passes; no
+builds, compiler checks, engine probes, fixtures, tests or benchmarks ran.

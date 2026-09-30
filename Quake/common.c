@@ -2415,6 +2415,99 @@ char			 com_basedirs[MAX_BASEDIRS][MAX_OSPATH]; // all content roots in mount or
 														 // add-on dir), the main basedir, the userdir (write target) last
 int				 com_numbasedirs;
 THREAD_LOCAL int file_from_pak; // ZOID: global indicating that file came from a pak
+static char		 com_rerelease_localization_pack[MAX_OSPATH];
+
+/* Keep the optional rerelease source outside the normal filesystem: only the
+ * English localization table may be read from this pack, and the pack is never
+ * mounted. */
+static qboolean COM_SetRereleaseLocalizationPack (const char *root)
+{
+	char filename[MAX_OSPATH];
+	int	 written;
+
+	if (!root || !*root)
+		return false;
+	written = q_snprintf (filename, sizeof (filename), "%s/id1/pak0.pak", root);
+	if (written < 0 || (size_t)written >= sizeof (filename) || Sys_FileType (filename) != FS_ENT_FILE)
+		return false;
+
+	q_strlcpy (com_rerelease_localization_pack, filename, sizeof (com_rerelease_localization_pack));
+	return true;
+}
+
+/*
+=================
+COM_LoadRereleaseLocalization
+
+Read only the English localization table from the separately selected
+rerelease pack. Malformed optional input fails closed without mounting it.
+=================
+*/
+static char *COM_LoadRereleaseLocalization (const char *filename)
+{
+	dpackheader_t header;
+	dpackfile_t *directory = NULL;
+	char		*data = NULL;
+	qfilesize_t packsize;
+	int		 handle = -1;
+	int		 dirofs, dirlen, numfiles, i;
+
+	if (!com_rerelease_localization_pack[0] || strcmp (filename, "localization/loc_english.txt"))
+		return NULL;
+
+	packsize = Sys_FileOpenRead (com_rerelease_localization_pack, &handle);
+	if (packsize < (qfilesize_t)sizeof (header) ||
+		Sys_FileRead (handle, &header, sizeof (header)) != sizeof (header) ||
+		memcmp (header.id, "PACK", 4))
+		goto done;
+
+	dirofs = LittleLong (header.dirofs);
+	dirlen = LittleLong (header.dirlen);
+	if (dirofs < (int)sizeof (header) || dirlen <= 0 ||
+		dirlen % (int)sizeof (dpackfile_t) ||
+		dirlen > MAX_FILES_IN_PACK * (int)sizeof (dpackfile_t) ||
+		(qfilesize_t)dirofs > packsize ||
+		(qfilesize_t)dirlen > packsize - (qfilesize_t)dirofs)
+		goto done;
+
+	numfiles = dirlen / (int)sizeof (dpackfile_t);
+	directory = (dpackfile_t *)Mem_AllocNonZero ((size_t)dirlen);
+	if (!directory || Sys_FileSeek (handle, dirofs) != 0 ||
+		Sys_FileRead (handle, directory, dirlen) != dirlen ||
+		!COM_ValidatePackDirectoryEntries (directory, numfiles, packsize))
+		goto done;
+
+	for (i = 0; i < numfiles; i++)
+	{
+		int filepos, filelen;
+
+		if (strcmp (directory[i].name, filename))
+			continue;
+		filepos = LittleLong (directory[i].filepos);
+		filelen = LittleLong (directory[i].filelen);
+		if (filelen <= 0 || filelen > 16 * 1024 * 1024)
+			break;
+
+		data = (char *)Mem_AllocNonZero ((size_t)filelen + 1);
+		if (!data)
+			break;
+		if (Sys_FileSeek (handle, filepos) != 0 || Sys_FileRead (handle, data, filelen) != filelen)
+		{
+			Mem_Free (data);
+			data = NULL;
+			break;
+		}
+		data[filelen] = 0;
+		break;
+	}
+
+done:
+	if (directory)
+		Mem_Free (directory);
+	if (handle != -1)
+		Sys_FileClose (handle);
+	return data;
+}
 
 /*
 =================
@@ -4048,15 +4141,22 @@ Enables Steam achievements and rich presence when the game data
 comes from the Steam install (from Ironwail)
 =================
 */
-static void COM_InitSteamAPI (void)
+static void COM_InitSteamAPI (qboolean localization_fallback)
 {
 	steamgame_t steamquake;
-	char		steampath[MAX_OSPATH];
+	char		steampath[MAX_OSPATH], rerelease[MAX_OSPATH];
+	int		 written;
 
 	if (COM_CheckParm ("-nosteam"))
 		return;
 	if (!Steam_FindGame (&steamquake, QUAKE_STEAM_APPID) || !Steam_ResolvePath (steampath, sizeof (steampath), &steamquake))
 		return;
+	if (localization_fallback)
+	{
+		written = q_snprintf (rerelease, sizeof (rerelease), "%s/rerelease", steampath);
+		if (written >= 0 && (size_t)written < sizeof (rerelease))
+			COM_SetRereleaseLocalizationPack (rerelease);
+	}
 	if (!COM_IsPathPrefix (steampath, com_basedir))
 		return;
 
@@ -4072,6 +4172,8 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 {
 	int			i, j;
 	const char *p;
+	qboolean	steam_localization_fallback = false;
+	char		rerelease[MAX_OSPATH];
 
 	Cvar_RegisterVariable (&registered);
 	Cvar_RegisterVariable (&cmdline);
@@ -4104,9 +4206,23 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 	if (store_install || multiuser)
 		COM_SetUserPrefDir ();
 
+	/* Select the separate English localization source without mounting it.
+	 * A supplied -rerelease operand owns the choice even when unusable; with no
+	 * operand, automatic sibling/Steam selection follows the inherited policy. */
+	com_rerelease_localization_pack[0] = 0;
+	const int rerelease_parm = COM_CheckParm ("-rerelease");
+	if (rerelease_parm && rerelease_parm < com_argc - 1)
+		COM_SetRereleaseLocalizationPack (com_argv[rerelease_parm + 1]);
+	else if (!COM_CheckParm ("-norerelease"))
+	{
+		j = q_snprintf (rerelease, sizeof (rerelease), "%s/rerelease", com_basedir);
+		if (j < 0 || (size_t)j >= sizeof (rerelease) || !COM_SetRereleaseLocalizationPack (rerelease))
+			steam_localization_fallback = true;
+	}
+
 	// achievements/rich presence if the game data comes from the Steam install,
 	// no matter whether it was found by detection, -basedir or the working directory
-	COM_InitSteamAPI ();
+	COM_InitSteamAPI (steam_localization_fallback);
 
 	// register the remaining content roots: the main basedir above the extras
 	// added so far, the userdir on top of everything as the write target
@@ -4734,6 +4850,10 @@ static qboolean LOC_LoadFile (const char *file)
 #endif
 	if (!rw)
 	{
+		localization.text = COM_LoadRereleaseLocalization (file);
+		if (localization.text)
+			goto loaded;
+
 		q_snprintf (path, sizeof (path), "%s/QuakeEX.kpf", com_basedir);
 #ifdef USE_SDL3
 		rw = SDL_IOFromFile (path, "rb");
