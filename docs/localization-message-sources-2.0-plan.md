@@ -27,7 +27,8 @@ selection finishes. Keep its backing allocation inside the existing
 the primary escape and entry insertion helpers using native `Mem_*` and native
 UTF8 value conversion. Factor the existing hash-build loop once and use it for
 both native loading and the combined entries. No second dictionary, cache,
-decoder, search path or message queue.
+search path or message queue. The copied FGD escape helper belongs only to its
+format; do not replace or share the native language-table escape dialect.
 
 Rejected: replacing native loading with the primary English-only loader (loses
 language/SDL3 behavior), eagerly mounting rerelease packs (imports unrelated
@@ -52,13 +53,18 @@ Do not expand filesystem discovery or edit the product branch/runtime assets.
    does. With a successfully loaded non-English table, preserve the pre-FGD
    entries; FGD adds missing keys. Later duplicate FGD definitions retain the
    primary last-definition behavior. One pre-FGD entry-count boundary suffices;
-   do not introduce provenance state on every entry.
+   do not introduce provenance state on every entry. The imported upsert is
+   FGD-only: native language tables retain their existing first-definition
+   semantics and escape handling.
 4. After raw lookup fails, reuse primary MG3 and generic QC fallbacks exactly,
    including missing-key identity for unrelated prefixes, bounded rings and
    explicit strings. Raw native/FGD translations always beat these fallbacks.
 5. Every language reload and game switch clears old FGD entries/storage and
    recomputes the marker. No stale pointers/flags or doubled entries survive.
-   Reuse the native hash build; omit rebuilding when FGD contributes no entry.
+   Reuse the native hash build; rebuild only when the entry count increases.
+   Replacement-only merges change values, not index buckets. Use the inherited
+   linear upsert during parsing, since the old hash cannot find new FGD entries
+   until rebuilding.
 
 ## Review decisions and acceptance
 
@@ -78,3 +84,22 @@ shutdown. Observe rendered/printed text through existing message/HUD consumers,
 not just parser counts. Existing QC formatting and native language behavior
 remain regression references. This stage is source integration until those
 checks run; no compiler/build/engine/fixture/benchmark runs now.
+
+## Requested-Astra design disposition before code
+
+The local requested-Astra Max advisor verified the sources and recommended
+proceeding after two P2 clarifications. Main spot-checked native duplicate-key
+insertion/hash lookup, its distinct escape handling, the primary FGD upsert,
+native loader return conditions and existing `COM_LoadFile` termination.
+Effective reviewer model/effort metadata is unexposed; this is a source/design
+advisory, not a certified senior-skill pass. No human decision is required.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Native KV and inherited FGD have different duplicate/escape semantics. | **Adopted:** FGD-only upsert/decode helpers; leave the native KV parser unchanged. Add native duplicate-key and escape preservation to final checks. |
+| Rebuild only for appended keys, not value-only replacements. | **Adopted:** compare final count with the pre-FGD count. Reuse the linear primary upsert for newly parsed keys and one native hash builder; no dirty flag or second lookup. |
+| A separately owned FGD buffer is smaller than rebasing already parsed text. | **Adopted:** one additional allocation in the existing localization owner, freed/nullified on load and shutdown. No copied primary English-only loader. |
+| Protect translations only after actual successful non-English loading. | **Adopted:** resolved language plus native return value determine the protected prefix; failed non-English selection retains English/FGD precedence. Empty native values still count as existing translations. |
+| Preserve the wider inherited source requirement. | **Adopted:** separate rerelease discovery remains required stage 2. This patch does not claim complete MOD-006 or runtime text parity. |
+
+Production ownership and the 350-added-line bound remain as specified above.
