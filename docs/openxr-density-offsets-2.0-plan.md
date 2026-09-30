@@ -191,3 +191,42 @@ settings remain unexposed; source advisory only. No build, compiler, runtime,
 fixture, benchmark or device check was performed.
 Automatic FB/META preference still requires the explicit remaining contract
 evidence above; this checkpoint does not close that release blocker.
+
+## Final requested-Astra source advisory
+
+After main's one-line correction6a519ade, the same local advisor confirmed the
+P2 closed, with no additional issue in that correction. Its preceding full slice
+review found no other P1/P2. Main spot-checked the corrected candidate selection,
+native sample callback/resource ordering and the load-bearing primary contracts.
+This is source acceptance for the bounded adapter, not executed GPU qualification
+or a certified effective-model/effort senior-skill pass. All agents are closed.
+
+The completed bounded contract investigation found no inspected public primary
+source explicitly closing density-image offset flags, incoming layout/queue
+ownership and producer completion/stability. The [META swapchain-create contract](https://github.com/KhronosGroup/OpenXR-Docs/blob/main/specification/sources/chapters/extensions/meta/meta_vulkan_swapchain_create_info.adoc)
+defines additional flags and unsupported-request rejection, without explicitly
+extending the flags guarantee to the auxiliary density map. The [KHR Vulkan
+layout contract](https://github.com/KhronosGroup/OpenXR-Docs/blob/main/specification/sources/chapters/extensions/khr/khr_vulkan_enable.adoc#L389)
+defines color/depth swapchain handoff, without explicitly defining auxiliary-map
+handoff. Static density consumption may begin during host command recording;
+GPU submission ordering alone does not establish its readiness then.
+
+Pinned Godot's [native texture import](https://github.com/godotengine/godot/blob/cd9c5d57fb9795886f3bfed8e2003062e1378178/drivers/vulkan/rendering_device_driver_vulkan.cpp#L2495)
+creates an image view over an existing image, with view flags zero. Its RG8/layer
+convention, graph transitions and offset integration are supported source
+precedents, not density creation or producer-completion attestations. View flags
+are distinct from the image creation offset flag.
+
+Do not demand private runtime allocation/fence inspection or infer runtime
+nonconformance. A supported application-level contract is sufficient: seek a
+vendor/runtime native example or explicit statement covering
+acquire -> wait -> update/query -> record -> submit -> release, including the
+map's flags, layout/ownership, permitted transitions and stability during
+overlapping updates/host/device consumption. This is the next specific evidence
+boundary; a generic user hardware-test gate or fabricated query is not a fix.
+The temporary development gate therefore remains explicit and unresolved.
+
+Only scoped whitespace/source checks were performed in this implementation
+checkpoint. Linux/ARM builds and software qualification remain deferred until
+the complete implementation pass; live device/gaze/performance tests remain the
+user's separate work. Quad views remain excluded.
