@@ -158,3 +158,26 @@ controller movement/private firing and desktop behavior. No tests/builds/probes
 run for this source plan. Intermission camera composition requires a separate
 renderer-boundary source reconciliation, not a conclusion from this view-only
 review.
+
+### Intermission renderer-boundary reconciliation
+
+Main followed the previously unresolved boundary through
+`gl_rmain.c:R_PrepareStereoFrame`: intermission invalidates the resolved
+gameplay base, so `V_ApplyTrackedView` declines replacement and the existing
+stereo basis composes the runtime head orientation exactly once with the
+native camera angles. Head tracking is present; another orientation update or
+renderer path would double it. Primary `view.c:V_CalcIntermissionRefdef`
+explicitly zeroes camera pitch before adding tracking, and its orientation
+helper replaces camera roll with physical head roll. Current native preparation
+retains the entity's pitch and roll, which instead tilt the base under tracking.
+
+Minimal source repair: in `V_CalcIntermissionRefdef`, after copying entity
+angles and only when `V_UseTrackedView()` is active, clear base pitch and roll.
+Keep native origin/yaw, weapon hiding, idle update, base invalidation and stereo
+composition. Do not write tracked orientation into command angles or add it
+again in view.c. This adds at most four production lines to the same view.c
+scope, within the 60-net-line bound above. Desktop keeps the exact native
+camera branch. Final qualification must cover pitched/rolled intermission
+entities, physical head rotation, native solo/multiplayer results and finale,
+plus return to gameplay. This is a source-based correction, not an executed
+comfort or camera-continuity result.
