@@ -149,7 +149,7 @@ MAIN,cvar,registered,1,Quake/common.c,44,MOD-006;UI-001;UI-005,literal declarati
 MAIN,cvar,cmdline,,Quake/common.c,45,MOD-006;UI-001;UI-005,literal declaration; registration/equivalence not inferred
 MAIN,command,path,COM_Path_f,Quake/common.c,3239,MOD-006;UI-001;UI-005,literal declaration; registration/equivalence not inferred
 MAIN,command,game,COM_Game_f,Quake/common.c,3240,MOD-006;UI-001;UI-005,literal declaration; registration/equivalence not inferred
-MAIN,command,playgame,COM_Game_f,Quake/common.c,3241,MOD-006;UI-001;UI-005,literal declaration; registration/equivalence not inferred
+MAIN,command,playgame,COM_Game_f,Quake/common.c,3241,MOD-006;UI-001;UI-005,source-integrated through native game/config/map inventory owners; main source review; final Linux/ARM qualification pending
 MAIN,cvar,con_notifytime,3,Quake/console.c,52,UI/BASE/VR,literal declaration; registration/equivalence not inferred
 MAIN,cvar,con_logcenterprint,1,Quake/console.c,53,UI/BASE/VR,literal declaration; registration/equivalence not inferred
 MAIN,command,toggleconsole,Con_ToggleConsole_f,Quake/console.c,345,UI/BASE/VR,literal declaration; registration/equivalence not inferred
@@ -331,7 +331,7 @@ MAIN,command,version,Host_Version_f,Quake/host.c,740,BASE-001;COOP-002;COOP-010;
 MAIN,command,host_migrate_network_defaults,Host_MigrateNetworkDefaults_f,Quake/host.c,741,BASE-001;COOP-002;COOP-010;MOD-002;MOD-006,literal declaration; registration/equivalence not inferred
 MAIN,command,netfps_probe,Host_NetfpsProbe_f,Quake/host.c,742,BASE-001;COOP-002;COOP-010;MOD-002;MOD-006,literal declaration; registration/equivalence not inferred
 MAIN,command,maps,Host_Maps_f,Quake/host_cmd.c,3835,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
-MAIN,command,maps_mod,Host_Maps_Mod_f,Quake/host_cmd.c,3836,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
+MAIN,command,maps_mod,Host_Maps_Mod_f,Quake/host_cmd.c,3836,COOP-008;COOP-010;COOP-011,source-integrated through native game/config/map inventory owners; main source review; final Linux/ARM qualification pending
 MAIN,command,mods,Host_Mods_f,Quake/host_cmd.c,3837,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
 MAIN,command,games,Host_Mods_f,Quake/host_cmd.c,3838,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
 MAIN,command,mapname,Host_Mapname_f,Quake/host_cmd.c,3840,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
@@ -796,7 +796,7 @@ XR,cvar,registered,1,Quake/common.c,44,MOD-006;UI-001;UI-005,literal declaration
 XR,cvar,cmdline,,Quake/common.c,45,MOD-006;UI-001;UI-005,literal declaration; registration/equivalence not inferred
 XR,command,path,COM_Path_f,Quake/common.c,3244,MOD-006;UI-001;UI-005,literal declaration; registration/equivalence not inferred
 XR,command,game,COM_Game_f,Quake/common.c,3245,MOD-006;UI-001;UI-005,literal declaration; registration/equivalence not inferred
-XR,command,playgame,COM_Game_f,Quake/common.c,3246,MOD-006;UI-001;UI-005,literal declaration; registration/equivalence not inferred
+XR,command,playgame,COM_Game_f,Quake/common.c,3246,MOD-006;UI-001;UI-005,source-integrated through native game/config/map inventory owners; main source review; final Linux/ARM qualification pending
 XR,cvar,con_notifytime,3,Quake/console.c,52,UI/BASE/VR,literal declaration; registration/equivalence not inferred
 XR,cvar,con_logcenterprint,1,Quake/console.c,53,UI/BASE/VR,literal declaration; registration/equivalence not inferred
 XR,command,toggleconsole,Con_ToggleConsole_f,Quake/console.c,345,UI/BASE/VR,literal declaration; registration/equivalence not inferred
@@ -979,7 +979,7 @@ XR,command,version,Host_Version_f,Quake/host.c,751,BASE-001;COOP-002;COOP-010;MO
 XR,command,host_migrate_network_defaults,Host_MigrateNetworkDefaults_f,Quake/host.c,752,BASE-001;COOP-002;COOP-010;MOD-002;MOD-006,literal declaration; registration/equivalence not inferred
 XR,command,netfps_probe,Host_NetfpsProbe_f,Quake/host.c,753,BASE-001;COOP-002;COOP-010;MOD-002;MOD-006,literal declaration; registration/equivalence not inferred
 XR,command,maps,Host_Maps_f,Quake/host_cmd.c,3835,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
-XR,command,maps_mod,Host_Maps_Mod_f,Quake/host_cmd.c,3836,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
+XR,command,maps_mod,Host_Maps_Mod_f,Quake/host_cmd.c,3836,COOP-008;COOP-010;COOP-011,source-integrated through native game/config/map inventory owners; main source review; final Linux/ARM qualification pending
 XR,command,mods,Host_Mods_f,Quake/host_cmd.c,3837,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
 XR,command,games,Host_Mods_f,Quake/host_cmd.c,3838,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred
 XR,command,mapname,Host_Mapname_f,Quake/host_cmd.c,3840,COOP-008;COOP-010;COOP-011,literal declaration; registration/equivalence not inferred

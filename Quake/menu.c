@@ -4469,6 +4469,17 @@ static qboolean M_Mods_IsInstalledGameDir (const char *gamedir)
 	return false;
 }
 
+static void M_Mods_PlayInstalled (const char *gamedir)
+{
+	IN_Activate ();
+	key_dest = key_game;
+	m_state = m_none;
+	Cbuf_AddText ("playgame \"");
+	Cbuf_AddText (gamedir);
+	Cbuf_AddText ("\"\n");
+	mod_loaded_from_menu = 1;
+}
+
 static void M_Mods_SelectInstalled (const char *gamedir)
 {
 	int i;
@@ -4537,7 +4548,7 @@ static void M_Mods_OpenCatalogueEntry (int match)
 		return;
 	if (item.installed || M_Mods_IsInstalledGameDir (item.gamedir))
 	{
-		M_Mods_SelectInstalled (item.gamedir);
+		M_Mods_PlayInstalled (item.gamedir);
 		return;
 	}
 	if (AddonCatalog_State () == ADDON_CATALOG_INSTALLING ||
@@ -4894,13 +4905,7 @@ static void M_Mods_Key (int key)
 		if (mods_catalogue_view && num_mods > 0 && mods_cursor >= 0 && mods_cursor < num_mods)
 			M_Mods_OpenCatalogueEntry (mods_cursor);
 		else if (!mods_catalogue_view && num_mods > 0 && mods_cursor >= 0 && mods_cursor < num_mods)
-		{
-			Cbuf_AddText ("game \"");
-			Cbuf_AddText (mods_filtered[mods_cursor]->name);
-			Cbuf_AddText ("\"\n");
-			mod_loaded_from_menu = 1;
-			m_state = m_main;
-		}
+			M_Mods_PlayInstalled (mods_filtered[mods_cursor]->name);
 		break;
 	}
 }

@@ -78,3 +78,21 @@ launch during server-game/download reconnect; registered admission and invalid
 names; dedicated no-GUI behavior; selected/all active map listing; native
 mouse/controller/VR-pointer activation. User live headset/performance/Windows
 checks remain deferred. This plan alone does not complete UI-002 or the goal.
+
+## Source implementation checkpoint
+
+The three-file adapter adds39 lines and removes9. playgame uses COM_Game_f;
+the supplying-path start test is copied from the primary. Explicit same-game
+play works through the unchanged native same-game switch return, then queues
+the start map or native menu_maps. New map/menu commands follow the native
+queued config/vid_unlock commands after an actual switch. Normal desktop game
+does not auto-launch; an actually tracked session uses the inherited start
+behavior. Direct reconnect calls never pass through this command-local adapter.
+
+Installed browser/catalogue activation closes the menu/input into gameplay and
+queues playgame through one local helper. maps_mod uses native source-category
+ordering to omit inherited base maps without another scanner; normal maps
+keeps its existing filtering and description output. Main inspected actual
+registration, path-id ownership, category definitions and input routes against
+the primary. Scoped whitespace checks passed. No executable qualification has
+run; the full acceptance matrix and broader UI-002 audit remain open.

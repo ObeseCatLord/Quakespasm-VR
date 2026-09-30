@@ -508,6 +508,7 @@ static void Host_Maps_f (void)
 	int				 i;
 	filelist_item_t *item;
 	const char		*desc;
+	const qboolean	 active_only = !q_strcasecmp (Cmd_Argv (0), "maps_mod");
 	const char		*substr = Cmd_Argc () >= 2 ? Cmd_Argv (1) : NULL;
 	char			 buf[256], buf2[256];
 	char			 padchar = '.' - 0x80; // same bits as ('.' | 0x80) without truncating a constant
@@ -515,7 +516,8 @@ static void Host_Maps_f (void)
 
 	for (item = extralevels, i = 0; item; item = item->next)
 	{
-		if (ExtraMaps_GetType (item) >= MAPTYPE_ID_START)
+		const maptype_t type = ExtraMaps_GetType (item);
+		if (type >= MAPTYPE_ID_START || (active_only && type >= MAPTYPE_CUSTOM_ID_START))
 			continue;
 		desc = ExtraMaps_GetMessage (item);
 		if (!desc)
@@ -5064,6 +5066,7 @@ Host_InitCommands
 void Host_InitCommands (void)
 {
 	Cmd_AddCommand ("maps", Host_Maps_f);		// johnfitz
+	Cmd_AddCommand ("maps_mod", Host_Maps_f);
 	Cmd_AddCommand ("mods", Host_Mods_f);		// johnfitz
 	Cmd_AddCommand ("games", Host_Mods_f);		// as an alias to "mods" -- S.A. / QuakeSpasm
 	Cmd_AddCommand ("mapname", Host_Mapname_f); // johnfitz

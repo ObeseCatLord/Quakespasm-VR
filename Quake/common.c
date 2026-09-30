@@ -3542,8 +3542,20 @@ void COM_SwitchGame (const char *paths)
 	Cbuf_AddText ("vid_unlock\n");
 }
 
+static qboolean COM_CurrentGameHasStartMap (void)
+{
+	unsigned int path_id;
+
+	return com_searchpaths &&
+		COM_FileExists ("maps/start.bsp", &path_id) &&
+		path_id == com_searchpaths->path_id;
+}
+
 static void COM_Game_f (void)
 {
+	const qboolean play_after_change = !q_strcasecmp (Cmd_Argv (0), "playgame");
+	const qboolean tracked_game_change = !play_after_change && V_TrackedSessionActive ();
+
 	if (Cmd_Argc () > 1)
 	{
 		int	 i, pri;
@@ -3590,6 +3602,15 @@ static void COM_Game_f (void)
 
 		CL_CancelAutoReconnect ();
 		COM_SwitchGame (paths);
+		if ((play_after_change || tracked_game_change) && COM_CurrentGameHasStartMap ())
+			Cbuf_AddText ("map start\n");
+		else if (play_after_change)
+		{
+			if (isDedicated)
+				Con_Printf ("No start map supplied by the active game.\n");
+			else
+				Cbuf_AddText ("menu_maps\n");
+		}
 	}
 	else // Diplay the current gamedir
 		Con_Printf ("\"game\" is \"%s\"\n", COM_GetGameNames (true));
@@ -4228,6 +4249,7 @@ void COM_InitFilesystem (void) // johnfitz -- modified based on topaz's tutorial
 	Cvar_RegisterVariable (&cmdline);
 	Cmd_AddCommand ("path", COM_Path_f);
 	Cmd_AddCommand ("game", COM_Game_f); // johnfitz
+	Cmd_AddCommand ("playgame", COM_Game_f);
 
 	i = COM_CheckParm ("-basedir");
 	if (i && i < com_argc - 1)
