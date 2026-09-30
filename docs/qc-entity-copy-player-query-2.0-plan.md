@@ -32,10 +32,24 @@ retain unconditional native no-touch linking for valid copies. No server/client
 world replacement or new isolation layer is necessary.
 
 `copyentity` continues to use native `ED_Alloc` for an omitted destination.
-The free-entity guard remains after destination resolution, matching primary's
-call order; this slice does not invent allocation rollback or redefine invalid
-raw entity references. The primary's out-of-range entity-number policy is
-copied at the existing numeric-to-entity wrapper instead.
+Reject an already-free source before destination resolution, then retain the
+post-resolution free guard as well. This adapts primary's failure result without
+copying its allocation-order defect; it does not invent allocation rollback or
+redefine invalid raw entity references. The primary's out-of-range entity-number
+policy is copied at the existing numeric-to-entity wrapper instead.
+
+### Allocation-order correction after source review
+
+Local Astra source review of `d5cf72e9` confirmed the payload, metadata, query
+bounds and retained current-VM linking. It also identified the preexisting
+omitted-destination ordering hazard. Main verified `ED_Alloc`: the native FIFO
+may return the same freed source slot, clear its QC payload and mark it live
+before the old free guard runs; otherwise the rejected call can consume another
+slot or hit the edict limit. Withdraw the initial plan's accepted ordering.
+Add the same warning/world-return guard before `ED_Alloc` can run, retaining
+the post-resolution guard for destination and allocation-hook state. Valid
+copies keep the same native allocation and return behavior. Expected additional
+scope: one six-line preflight in the existing wrapper, with no new owner.
 
 ## Reuse, scope and implementation
 
@@ -57,7 +71,8 @@ review. No expensive new architecture decision is introduced by these copies.
 No builds/tests/compiler/runtime probes/fixtures until the full implementation
 finishes; `git diff --check` is allowed. End-of-implementation Linux/ARM checks
 must invoke both VMs with explicit/omitted destinations, full trailing QC fields,
-self-copy, free entities, metadata, and observed no-touch linking in each VM's
+self-copy, free entities with explicit/omitted destinations (including a reusable
+source at the free-list head and an edict-limit case), metadata, and observed no-touch linking in each VM's
 own world without cross-VM mutation. Check negative/equal-to-count/beyond-count entity indices and
 last valid slot; scoreboard absent, small server allocation, last valid and
 out-of-allocation slots, negative sorted selection, names/colors and additional
