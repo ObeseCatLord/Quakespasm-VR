@@ -39,3 +39,17 @@ queries for differing world/inline face edge counts, valid/invalid vertices,
 degenerate faces, triangle boundaries, unchanged world-model results and zero
 returns. Builds/tests/compiler/runtime probes remain deferred until the full
 implementation is finished.
+
+## Implementation source checkpoint
+
+The three native wrappers now validate the inline base and remaining table range
+before accessing the requested face. Point and triangle bounds use that same
+face; both triangle queries reject fewer than three edges before subtraction.
+Main source review traced the signed model range fields, shared surface-table
+copy, short-circuit guard order and existing zero-return paths. For valid loaded
+world/inline models, native vertex lookup and fan indices remain unchanged.
+Malformed vertex/edge storage is still the loader's existing responsibility;
+this slice does not establish a full malformed-BSP or surface-interface contract.
+
+No builds, tests or compiler/runtime probes were run. Final local Astra review
+and consolidated Linux/ARM software qualification remain pending.

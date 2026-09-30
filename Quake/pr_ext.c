@@ -2036,8 +2036,11 @@ static void PF_getsurfacepoint (void)
 	unsigned int point = G_FLOAT (OFS_PARM2);
 	qmodel_t	*mod = qcvm->GetModel (ed->v.modelindex);
 
-	if (mod && mod->type == mod_brush && !mod->needload && surfidx < (unsigned int)mod->nummodelsurfaces &&
-		point < (unsigned int)mod->surfaces[surfidx].numedges)
+	if (mod && mod->type == mod_brush && !mod->needload && mod->nummodelsurfaces > 0 &&
+		mod->firstmodelsurface >= 0 && mod->firstmodelsurface < mod->numsurfaces &&
+		surfidx < (unsigned int)mod->nummodelsurfaces &&
+		surfidx < (unsigned int)(mod->numsurfaces - mod->firstmodelsurface) &&
+		point < (unsigned int)mod->surfaces[mod->firstmodelsurface + surfidx].numedges)
 	{
 		mvertex_t *v = PF_getsurfacevertex (mod, &mod->surfaces[surfidx + mod->firstmodelsurface], point);
 		VectorCopy (v->position, G_VECTOR (OFS_RETURN));
@@ -2055,7 +2058,11 @@ static void PF_getsurfacenumtriangles (void)
 	unsigned int surfidx = G_FLOAT (OFS_PARM1);
 	qmodel_t	*mod = qcvm->GetModel (ed->v.modelindex);
 
-	if (mod && mod->type == mod_brush && !mod->needload && surfidx < (unsigned int)mod->nummodelsurfaces)
+	if (mod && mod->type == mod_brush && !mod->needload && mod->nummodelsurfaces > 0 &&
+		mod->firstmodelsurface >= 0 && mod->firstmodelsurface < mod->numsurfaces &&
+		surfidx < (unsigned int)mod->nummodelsurfaces &&
+		surfidx < (unsigned int)(mod->numsurfaces - mod->firstmodelsurface) &&
+		mod->surfaces[mod->firstmodelsurface + surfidx].numedges >= 3)
 		G_FLOAT (OFS_RETURN) = (mod->surfaces[surfidx + mod->firstmodelsurface].numedges - 2); // q1bsp is only triangle fans
 	else
 		G_FLOAT (OFS_RETURN) = 0;
@@ -2067,8 +2074,12 @@ static void PF_getsurfacetriangle (void)
 	unsigned int triangleidx = G_FLOAT (OFS_PARM2);
 	qmodel_t	*mod = qcvm->GetModel (ed->v.modelindex);
 
-	if (mod && mod->type == mod_brush && !mod->needload && surfidx < (unsigned int)mod->nummodelsurfaces &&
-		triangleidx < (unsigned int)mod->surfaces[surfidx].numedges - 2)
+	if (mod && mod->type == mod_brush && !mod->needload && mod->nummodelsurfaces > 0 &&
+		mod->firstmodelsurface >= 0 && mod->firstmodelsurface < mod->numsurfaces &&
+		surfidx < (unsigned int)mod->nummodelsurfaces &&
+		surfidx < (unsigned int)(mod->numsurfaces - mod->firstmodelsurface) &&
+		mod->surfaces[mod->firstmodelsurface + surfidx].numedges >= 3 &&
+		triangleidx < (unsigned int)mod->surfaces[mod->firstmodelsurface + surfidx].numedges - 2)
 	{
 		G_FLOAT (OFS_RETURN + 0) = 0;
 		G_FLOAT (OFS_RETURN + 1) = triangleidx + 1;
