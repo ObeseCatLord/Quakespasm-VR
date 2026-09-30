@@ -386,7 +386,7 @@ MAIN,command,menu_setup,M_Menu_Setup_f,Quake/menu.c,3990,MOD-013;MOD-014;UI-002;
 MAIN,command,menu_options,M_Menu_Options_f,Quake/menu.c,3991,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
 MAIN,command,menu_keys,M_Menu_Keys_f,Quake/menu.c,3992,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
 MAIN,command,menu_weapons,M_Menu_Weapons_f,Quake/menu.c,3993,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
-MAIN,command,menu_voice,M_Menu_Voice_f,Quake/menu.c,3994,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
+MAIN,command,menu_voice,M_Menu_Voice_f,Quake/menu.c,3994,MOD-013;MOD-014;UI-002;UI-005,source-integrated native Voice Chat page/profile/capture adapters; bounded requested-Astra source acceptance; final Linux/ARM qualification pending
 MAIN,command,menu_video,M_Menu_Video_f,Quake/menu.c,3995,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
 MAIN,command,menu_vr,M_Menu_VR_f,Quake/menu.c,3996,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
 MAIN,command,menu_mods,M_Menu_Mods_f,Quake/menu.c,3997,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
@@ -1034,7 +1034,7 @@ XR,command,menu_setup,M_Menu_Setup_f,Quake/menu.c,4011,MOD-013;MOD-014;UI-002;UI
 XR,command,menu_options,M_Menu_Options_f,Quake/menu.c,4012,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
 XR,command,menu_keys,M_Menu_Keys_f,Quake/menu.c,4013,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
 XR,command,menu_weapons,M_Menu_Weapons_f,Quake/menu.c,4014,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
-XR,command,menu_voice,M_Menu_Voice_f,Quake/menu.c,4015,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
+XR,command,menu_voice,M_Menu_Voice_f,Quake/menu.c,4015,MOD-013;MOD-014;UI-002;UI-005,source-integrated native Voice Chat page/profile/capture adapters; bounded requested-Astra source acceptance; final Linux/ARM qualification pending
 XR,command,menu_video,M_Menu_Video_f,Quake/menu.c,4016,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
 XR,command,menu_vr,M_Menu_VR_f,Quake/menu.c,4017,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred
 XR,command,menu_mods,M_Menu_Mods_f,Quake/menu.c,4018,MOD-013;MOD-014;UI-002;UI-005,literal declaration; registration/equivalence not inferred

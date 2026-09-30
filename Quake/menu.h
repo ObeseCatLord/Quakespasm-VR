@@ -38,6 +38,7 @@ enum m_state_e
 	m_controller,
 	m_game,
 	m_sound,
+	m_voice,
 	m_video,
 	m_graphics,
 	m_keys,

@@ -113,6 +113,7 @@ char		   m_return_reason[32];
 #define TCPIPConfig	 (m_net_cursor == 1)
 
 static int			  m_main_cursor;
+static enum m_state_e m_keys_parent = m_options;
 static qboolean		  m_mouse_moved;
 static enum m_state_e m_mouse_hover_state = m_none;
 static int			 *m_mouse_hover_cursor;
@@ -2392,10 +2393,12 @@ enum
 	SOUND_OPT_MUSICVOL,
 	SOUND_OPT_MUSICEXT,
 	SOUND_OPT_WATERFX,
+	SOUND_OPT_VOICE,
 	SOUND_OPTIONS_ITEMS
 };
 
 static int sound_options_cursor = 0;
+static void M_Menu_VoiceOptions_f (void);
 
 static void M_Menu_SoundOptions_f (void)
 {
@@ -2415,7 +2418,8 @@ static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 	if (dir)
 		S_LocalSound ("misc/menu3.wav");
 
-	if (mouse)
+	if (mouse && sound_options_cursor >= SOUND_OPT_SNDVOL &&
+		sound_options_cursor <= SOUND_OPT_MUSICVOL)
 		slider_grab = true;
 
 	switch (sound_options_cursor)
@@ -2433,6 +2437,10 @@ static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 		break;
 	case SOUND_OPT_WATERFX:
 		Cvar_SetValueQuick (&snd_waterfx, (float)(((int)snd_waterfx.value + 2 + dir) % 2));
+		break;
+	case SOUND_OPT_VOICE:
+		if (dir > 0)
+			M_Menu_VoiceOptions_f ();
 		break;
 	}
 }
@@ -2504,9 +2512,262 @@ static void M_SoundOptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_WATERFX, "Underwater FX");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_WATERFX, snd_waterfx.value);
 
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * SOUND_OPT_VOICE, "Voice Chat");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * SOUND_OPT_VOICE, "Open");
+
 	// cursor
 	M_Mouse_UpdateListCursor (&sound_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, SOUND_OPTIONS_ITEMS, 0);
 	Draw_Character (cbx, MENU_CURSOR_X, top + sound_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+}
+
+//=============================================================================
+/* VOICE CHAT OPTIONS MENU */
+
+enum
+{
+	VOICE_OPT_RECEIVE,
+	VOICE_OPT_TRANSMIT,
+	VOICE_OPT_MODE,
+	VOICE_OPT_DEVICE,
+	VOICE_OPT_INPUT_GAIN,
+	VOICE_OPT_VAD,
+	VOICE_OPT_VOLUME,
+	VOICE_OPT_RADIO_VOLUME,
+	VOICE_OPT_DISTANCE,
+	VOICE_OPT_HUD,
+	VOICE_OPT_SELF_REVERB,
+	VOICE_OPT_SELF_LEVEL,
+	VOICE_OPT_CONTROLS,
+	VOICE_OPTIONS_ITEMS
+};
+
+#define VOICE_OPTIONS_LABEL_X 16
+#define VOICE_OPTIONS_VALUE_X 184
+
+static int voice_options_cursor;
+static enum m_state_e voice_options_parent = m_options;
+
+static qboolean M_VoiceOptions_CursorHasSlider (void)
+{
+	return (voice_options_cursor >= VOICE_OPT_INPUT_GAIN &&
+		voice_options_cursor <= VOICE_OPT_DISTANCE) ||
+		voice_options_cursor == VOICE_OPT_SELF_LEVEL;
+}
+
+static void M_Menu_VoiceOptions_f (void)
+{
+	if (m_state == m_sound || m_state == m_vroptions)
+		voice_options_parent = m_state;
+	else if (m_state != m_voice)
+		voice_options_parent = m_options;
+	slider_grab = scrollbar_grab = false;
+	scrollbar_x = scrollbar_y = scrollbar_size = 0;
+	M_MenuChanged ();
+	IN_Deactivate (true);
+	key_dest = key_menu;
+	m_state = m_voice;
+	m_entersound = true;
+}
+
+static void M_VoiceOptions_Back (void)
+{
+	M_MenuChanged ();
+	IN_Deactivate (true);
+	key_dest = key_menu;
+	m_state = voice_options_parent;
+}
+
+static void M_VoiceOptions_Adjust (int dir, qboolean mouse)
+{
+	voice_menu_state_t state;
+	float f;
+	float clamped_mouse = CLAMP (SLIDER_START, (float)m_mouse_x, SLIDER_END);
+
+	Voice_GetMenuState (&state);
+	if (voice_options_cursor == VOICE_OPT_CONTROLS)
+	{
+		if (dir > 0)
+		{
+			M_Menu_Keys_f ();
+			m_keys_parent = m_voice;
+		}
+		return;
+	}
+	if (!state.available)
+		return;
+	if (mouse && fabsf (clamped_mouse - (float)m_mouse_x) > 12.0f)
+		mouse = false;
+	if (dir)
+		S_LocalSound ("misc/menu3.wav");
+	if (mouse && M_VoiceOptions_CursorHasSlider ())
+		slider_grab = true;
+
+	switch (voice_options_cursor)
+	{
+	case VOICE_OPT_RECEIVE:
+		Cvar_SetValue ("voice_receive", !Cvar_VariableValue ("voice_receive"));
+		break;
+	case VOICE_OPT_TRANSMIT:
+		Voice_SetTransmitEnabled (!state.transmit);
+		break;
+	case VOICE_OPT_MODE:
+		Voice_SetMode (!state.mode);
+		break;
+	case VOICE_OPT_DEVICE:
+		Voice_CycleInputDevice (dir);
+		break;
+	case VOICE_OPT_INPUT_GAIN:
+		f = M_GetSliderPos (0, 4, Cvar_VariableValue ("voice_input_gain"),
+			false, mouse, clamped_mouse, dir, 0.25f, 999);
+		Cvar_SetValue ("voice_input_gain", f);
+		break;
+	case VOICE_OPT_VAD:
+		f = M_GetSliderPos (0, 100, Cvar_VariableValue ("voice_vad_sensitivity"),
+			false, mouse, clamped_mouse, dir, 5, 999);
+		Cvar_SetValue ("voice_vad_sensitivity", f);
+		break;
+	case VOICE_OPT_VOLUME:
+		f = M_GetSliderPos (0, 2, Cvar_VariableValue ("voice_volume"),
+			false, mouse, clamped_mouse, dir, 0.1f, 999);
+		Cvar_SetValue ("voice_volume", f);
+		break;
+	case VOICE_OPT_RADIO_VOLUME:
+		f = M_GetSliderPos (0, 2, Cvar_VariableValue ("voice_radio_volume"),
+			false, mouse, clamped_mouse, dir, 0.1f, 999);
+		Cvar_SetValue ("voice_radio_volume", f);
+		break;
+	case VOICE_OPT_DISTANCE:
+		f = M_GetSliderPos (128, 4096, Cvar_VariableValue ("voice_spatial_distance"),
+			false, mouse, clamped_mouse, dir, 128, 99999);
+		Cvar_SetValue ("voice_spatial_distance", f);
+		break;
+	case VOICE_OPT_HUD:
+		Cvar_SetValue ("voice_hud", !Cvar_VariableValue ("voice_hud"));
+		break;
+	case VOICE_OPT_SELF_REVERB:
+		Voice_SetSelfReverb (!state.self_reverb);
+		break;
+	case VOICE_OPT_SELF_LEVEL:
+		f = M_GetSliderPos (0, 2, Cvar_VariableValue ("voice_self_reverb_volume"),
+			false, mouse, clamped_mouse, dir, 0.1f, 999);
+		Cvar_SetValue ("voice_self_reverb_volume", f);
+		break;
+	}
+}
+
+static void M_VoiceOptions_Key (int key)
+{
+	switch (key)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_VoiceOptions_Back ();
+		break;
+	case K_MOUSE1:
+	case K_ENTER:
+	case K_KP_ENTER:
+	case K_ABUTTON:
+		m_entersound = true;
+		M_VoiceOptions_Adjust (1, key == K_MOUSE1);
+		break;
+	case K_UPARROW:
+		S_LocalSound ("misc/menu1.wav");
+		voice_options_cursor = (voice_options_cursor + VOICE_OPTIONS_ITEMS - 1) % VOICE_OPTIONS_ITEMS;
+		break;
+	case K_DOWNARROW:
+		S_LocalSound ("misc/menu1.wav");
+		voice_options_cursor = (voice_options_cursor + 1) % VOICE_OPTIONS_ITEMS;
+		break;
+	case K_LEFTARROW:
+		M_VoiceOptions_Adjust (-1, false);
+		break;
+	case K_RIGHTARROW:
+		M_VoiceOptions_Adjust (1, false);
+		break;
+	}
+}
+
+static void M_VoiceOptions_Draw (cb_context_t *cbx)
+{
+	voice_menu_state_t state;
+	qpic_t *p;
+	const int top = MENU_TOP;
+	float value;
+	const char *device;
+
+	Voice_GetMenuState (&state);
+	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
+	p = Draw_CachePic ("gfx/p_option.lmp");
+	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
+
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_RECEIVE, "Receive voice");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_TRANSMIT, "Transmit microphone");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_MODE, "Transmit mode");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_DEVICE, "Input device");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_INPUT_GAIN, "Microphone gain");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_VAD, "VAD sensitivity");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_VOLUME, "Voice volume");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_RADIO_VOLUME, "Distant voice volume");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_DISTANCE, "Spatial distance");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_HUD, "Voice HUD");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_SELF_REVERB, "Local mic reverb");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_SELF_LEVEL, "Local reverb level");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_CONTROLS, "Push-to-talk key");
+
+	if (state.available)
+	{
+		M_DrawCheckbox (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_RECEIVE,
+			Cvar_VariableValue ("voice_receive"));
+		M_DrawCheckbox (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_TRANSMIT, state.transmit);
+		M_Print (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_MODE,
+			state.mode ? "push-to-talk" : "voice activity");
+		device = state.device[0] ? state.device : "system default";
+		M_PrintElided (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_DEVICE, device, 17);
+
+		value = Cvar_VariableValue ("voice_input_gain");
+		M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * VOICE_OPT_INPUT_GAIN,
+			value / 4.0f, va ("%.2f", value));
+		value = Cvar_VariableValue ("voice_vad_sensitivity");
+		M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * VOICE_OPT_VAD,
+			value / 100.0f, va ("%.0f", value));
+		value = Cvar_VariableValue ("voice_volume");
+		M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * VOICE_OPT_VOLUME,
+			value / 2.0f, va ("%.1f", value));
+		value = Cvar_VariableValue ("voice_radio_volume");
+		M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * VOICE_OPT_RADIO_VOLUME,
+			value / 2.0f, va ("%.1f", value));
+		value = Cvar_VariableValue ("voice_spatial_distance");
+		M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * VOICE_OPT_DISTANCE,
+			(value - 128.0f) / (4096.0f - 128.0f), va ("%.0f", value));
+		M_DrawCheckbox (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_HUD,
+			Cvar_VariableValue ("voice_hud"));
+		M_DrawCheckbox (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_SELF_REVERB, state.self_reverb);
+		value = Cvar_VariableValue ("voice_self_reverb_volume");
+		M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * VOICE_OPT_SELF_LEVEL,
+			value / 2.0f, va ("%.1f", value));
+	}
+	else
+	{
+		for (int row = VOICE_OPT_RECEIVE; row <= VOICE_OPT_SELF_LEVEL; ++row)
+			M_Print (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * row, "N/A");
+	}
+	M_Print (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_CONTROLS, "Open");
+
+	if (!state.available)
+		M_PrintWhite (cbx, VOICE_OPTIONS_LABEL_X, 152, "Voice is unavailable in this build");
+	else if (!state.device_available)
+		M_PrintWhite (cbx, VOICE_OPTIONS_LABEL_X, 152, "Mic missing or ambiguous");
+	else if (state.capture_failed)
+		M_PrintWhite (cbx, VOICE_OPTIONS_LABEL_X, 152, "Mic capture failed");
+	else
+		M_PrintWhite (cbx, VOICE_OPTIONS_LABEL_X, 152,
+			state.vr_profile ? "Using saved VR voice profile" : "Using saved desktop voice profile");
+
+	M_Mouse_UpdateListCursor (&voice_options_cursor, 8, 320, top,
+		CHARACTER_SIZE, VOICE_OPTIONS_ITEMS, 0);
+	Draw_Character (cbx, 8, top + voice_options_cursor * CHARACTER_SIZE,
+		12 + ((int)(realtime * 4) & 1));
 }
 
 //=============================================================================
@@ -2526,6 +2787,7 @@ enum
 	VR_OPT_HIDDEN_AREA,
 	VR_OPT_HAPTICS,
 	VR_OPT_MICROPHONE,
+	VR_OPT_VOICE_CHAT,
 	VR_OPT_GORILLA,
 	VR_OPT_MENU_SCALE,
 	VR_OPT_HUD_SCALE,
@@ -3344,6 +3606,10 @@ static void M_VROptions_Adjust (int dir)
 	case VR_OPT_MICROPHONE:
 		Voice_SetVRTransmitEnabled (!Voice_VRTransmitEnabled ());
 		break;
+	case VR_OPT_VOICE_CHAT:
+		if (dir > 0)
+			M_Menu_VoiceOptions_f ();
+		break;
 	case VR_OPT_GORILLA:
 		Cvar_SetValueQuick (&vr_gorilla, vr_gorilla.value == 0 ? 1 : 0);
 		break;
@@ -3533,6 +3799,9 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 #else
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MICROPHONE, "unavailable");
 #endif
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_VOICE_CHAT, "Voice Chat");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_VOICE_CHAT, "Open");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_GORILLA, "Gorilla Movement");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_GORILLA, vr_gorilla.value != 0);
@@ -3938,6 +4207,9 @@ static const menukeybind_t default_keybinds[] = {
 	{"*", ""}, // insertion point for bindlist.lst entries
 	{"", ""},
 	{"+attack", "Attack"},
+#ifdef USE_VOICECHAT
+	{"+voicerecord", "Push-to-talk voice"},
+#endif
 	{"+vr_weaponmenu", "Weapon Wheel"},
 	{"impulse 10", "Next weapon"},
 	{"impulse 12", "Previous weapon"},
@@ -4083,6 +4355,7 @@ static void M_Keys_Populate (void)
 
 void M_Menu_Keys_f (void)
 {
+	m_keys_parent = m_options;
 	for (int i = 0; i < VEC_SIZE (custom_bindnames); i++)
 	{
 		SAFE_FREE (custom_bindnames[i].command);
@@ -4245,7 +4518,17 @@ void M_Keys_Key (int k)
 	case K_MOUSE2:
 	case K_ESCAPE:
 	case K_BBUTTON:
-		M_Menu_Options_f ();
+		if (m_keys_parent == m_voice)
+		{
+			slider_grab = scrollbar_grab = false;
+			scrollbar_x = scrollbar_y = scrollbar_size = 0;
+			M_MenuChanged ();
+			IN_Deactivate (true);
+			key_dest = key_menu;
+			m_state = m_voice;
+		}
+		else
+			M_Menu_Options_f ();
 		break;
 
 	case K_MOUSE1:
@@ -7193,6 +7476,7 @@ void M_Init (void)
 	Cmd_AddCommand ("menu_setup", M_Menu_Setup_f);
 	Cmd_AddCommand ("menu_options", M_Menu_Options_f);
 	Cmd_AddCommand ("menu_keys", M_Menu_Keys_f);
+	Cmd_AddCommand ("menu_voice", M_Menu_VoiceOptions_f);
 	Cmd_AddCommand ("menu_video", M_Menu_Video_f);
 	Cmd_AddCommand ("help", M_Menu_Help_f);
 	Cmd_AddCommand ("menu_quit", M_Menu_Quit_f);
@@ -7269,6 +7553,8 @@ void M_UpdateMouse (void)
 			M_GraphicsOptions_AdjustSliders (0, true);
 		else if (keydown[K_MOUSE1] && (m_state == m_sound) && (sound_options_cursor >= SOUND_OPT_SNDVOL) && (sound_options_cursor <= SOUND_OPT_MUSICVOL))
 			M_SoundOptions_AdjustSliders (0, true);
+		else if (keydown[K_MOUSE1] && (m_state == m_voice) && M_VoiceOptions_CursorHasSlider ())
+			M_VoiceOptions_Adjust (0, true);
 		else
 			slider_grab = false;
 	}
@@ -7417,6 +7703,10 @@ void M_Draw (cb_context_t *cbx)
 
 	case m_sound:
 		M_SoundOptions_Draw (cbx);
+		break;
+
+	case m_voice:
+		M_VoiceOptions_Draw (cbx);
 		break;
 
 	case m_help:
@@ -7609,6 +7899,10 @@ void M_Keydown (int key, qboolean repeat)
 
 	case m_sound:
 		M_SoundOptions_Key (key);
+		return;
+
+	case m_voice:
+		M_VoiceOptions_Key (key);
 		return;
 
 	case m_help:

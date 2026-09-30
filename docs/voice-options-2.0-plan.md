@@ -125,3 +125,27 @@ device-loss hint within the intended page layout. These are source findings;
 no graphical or executable validation has run. Effective reviewer settings
 are unexposed, so this is a requested-Astra advisory, not a certified
 senior-skill pass. Final software acceptance remains pending.
+
+## Source implementation checkpoint
+
+The four-file adapter adds528 lines and removes9, within the revised bound.
+Sound and VR Options route to one native Voice Chat page; direct menu_voice
+registration, ordinary Back/Controls return, default PTT binding entry, row
+hit testing and native slider dispatch are source-integrated. The page exposes
+the primary controls through native profile/cvar/capture owners, including the
+missing adjustable local wet level. It does not introduce another voice route,
+settings store, codec, mixer or rendering synchronization owner.
+
+The saved system-default microphone and VR default-on/opt-out remain. The
+global VR microphone opt-out disables local monitoring too; the voice page's
+transmission action preserves independently enabled local wet monitoring.
+The UI reads a bounded view and a result derived from existing capture state;
+all profile/device/persistence/capture actions remain on native main input.
+Disabled-build stubs cover the same interface without device operations.
+
+Main inspected the source corrections and bounded geometry against the primary.
+The final requested-Astra recheck confirmed all three P2 findings resolved with
+no new consequential P1/P2 finding in this slice. Scoped whitespace checks
+passed. No builds, tests, probes or rendered UI validation have run; the final
+Linux/ARM software matrix above remains unproven. This source checkpoint does
+not certify the wider audio/UI feature set or complete the migration goal.

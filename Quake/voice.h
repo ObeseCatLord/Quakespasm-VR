@@ -4,6 +4,20 @@
 
 #include "voice_protocol.h"
 
+#define VOICE_MENU_DEVICE_BYTES 512
+
+typedef struct voice_menu_state_s
+{
+	qboolean available;
+	qboolean transmit;
+	qboolean self_reverb;
+	qboolean device_available;
+	qboolean capture_failed;
+	qboolean vr_profile;
+	int mode;
+	char device[VOICE_MENU_DEVICE_BYTES];
+} voice_menu_state_t;
+
 #ifdef USE_VOICECHAT
 
 void Voice_Init(void);
@@ -22,6 +36,11 @@ qboolean Voice_TransmitEnabled(void);
 /* Atomic UI snapshot and local input action for the saved VR preference. */
 qboolean Voice_VRTransmitEnabled(void);
 void Voice_SetVRTransmitEnabled(qboolean enabled);
+void Voice_GetMenuState(voice_menu_state_t *state);
+void Voice_SetTransmitEnabled(qboolean enabled);
+void Voice_SetMode(int mode);
+void Voice_CycleInputDevice(int direction);
+void Voice_SetSelfReverb(qboolean enabled);
 qboolean Voice_CaptureReady(void);
 qboolean Voice_IsTransmitting(void);
 float Voice_InputLevel(void);
@@ -42,6 +61,23 @@ qboolean Voice_HUDEnabled(void);
 #define Voice_TransmitEnabled() 0
 #define Voice_VRTransmitEnabled() 0
 #define Voice_SetVRTransmitEnabled(enabled) ((void)0)
+static inline void Voice_GetMenuState(voice_menu_state_t *state)
+{
+	if (!state)
+		return;
+	state->available = false;
+	state->transmit = false;
+	state->self_reverb = false;
+	state->device_available = false;
+	state->capture_failed = false;
+	state->vr_profile = false;
+	state->mode = 0;
+	state->device[0] = '\0';
+}
+#define Voice_SetTransmitEnabled(enabled) ((void)0)
+#define Voice_SetMode(mode) ((void)0)
+#define Voice_CycleInputDevice(direction) ((void)0)
+#define Voice_SetSelfReverb(enabled) ((void)0)
 #define Voice_CaptureReady() 0
 #define Voice_IsTransmitting() 0
 #define Voice_InputLevel() 0.0f

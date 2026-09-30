@@ -79,6 +79,7 @@ static cvar_t voice_volume = {"voice_volume", "1", CVAR_ARCHIVE};
 static cvar_t voice_radio_volume = {"voice_radio_volume", "0.45", CVAR_ARCHIVE};
 static cvar_t voice_spatial_distance = {"voice_spatial_distance", "768", CVAR_ARCHIVE};
 static cvar_t voice_positional_only = {"voice_positional_only", "0", CVAR_ARCHIVE};
+static cvar_t voice_self_reverb_volume = {"voice_self_reverb_volume", "1", CVAR_ARCHIVE};
 
 static voice_speaker_t voice_speakers[MAX_SCOREBOARD];
 static voice_vad_t voice_vad;
@@ -125,10 +126,27 @@ static char voice_pending_device[VOICE_SETTINGS_DEVICE_BYTES];
 static char voice_settings_path[MAX_OSPATH];
 static vec3_t voice_listener_origin;
 static vec3_t voice_listener_right;
+static voice_menu_state_t voice_menu_state;
 
 static void Voice_PublishSpatialVoiceSource(int slot);
 static void Voice_ResetSpatialStreams(void);
 static void Voice_SyncProfile(void);
+
+static void Voice_PublishMenuState(const voice_settings_profile_t *profile,
+	qboolean device_available)
+{
+	if (!profile)
+		return;
+	voice_menu_state.available = voice_initialized;
+	voice_menu_state.transmit = profile->transmit != 0;
+	voice_menu_state.self_reverb = profile->self_reverb != 0;
+	voice_menu_state.device_available = device_available;
+	voice_menu_state.vr_profile = voice_profile_vr;
+	voice_menu_state.mode = profile->mode ? 1 : 0;
+	q_strlcpy(voice_menu_state.device, profile->device,
+		sizeof(voice_menu_state.device));
+	Voice_AtomicSet(&voice_transmit_enabled, profile->transmit ? 1 : 0);
+}
 
 static voice_settings_profile_t *Voice_Profile(void)
 {
@@ -487,6 +505,7 @@ static void Voice_RefreshCapture(qboolean force)
 		device_available = resolved_device >= 0;
 #endif
 	}
+	Voice_PublishMenuState(profile, device_available);
 	route = Voice_CaptureRoute(device_available, profile->transmit, session);
 	/* Wet-only local monitoring has its own locally confirmed permission and
 	 * does not require a network session or authorize transmission. */
@@ -518,6 +537,166 @@ static qboolean Voice_DeviceIsUnique(const char *name)
 static qboolean Voice_DevicePreferenceAvailable(const char *name)
 {
 	return !name[0] || Voice_DeviceIsUnique(name);
+}
+
+static void Voice_FinalizeMenuAction(void)
+{
+	voice_pending_action = VOICE_PENDING_NONE;
+	Voice_StopTransmit();
+	Voice_CloseCapture();
+	voice_capture_wanted = false;
+	Voice_SaveSettings();
+	Voice_RefreshCapture(true);
+}
+
+void Voice_SetTransmitEnabled(qboolean enabled)
+{
+	voice_settings_profile_t *profile;
+	if (!voice_initialized)
+		return;
+	profile = Voice_Profile();
+	voice_pending_action = VOICE_PENDING_NONE;
+	if (enabled && !Voice_DevicePreferenceAvailable(profile->device))
+	{
+		Con_Printf("Voice: selected recording device is missing or ambiguous.\n");
+		return;
+	}
+	profile->transmit = enabled ? 1 : 0;
+	Voice_FinalizeMenuAction();
+}
+
+void Voice_SetMode(int mode)
+{
+	voice_settings_profile_t *profile;
+	if (!voice_initialized)
+		return;
+	profile = Voice_Profile();
+	profile->mode = mode ? 1 : 0;
+	Voice_FinalizeMenuAction();
+}
+
+void Voice_SetSelfReverb(qboolean enabled)
+{
+	voice_settings_profile_t *profile;
+	if (!voice_initialized)
+		return;
+	profile = Voice_Profile();
+	voice_pending_action = VOICE_PENDING_NONE;
+	if (enabled && !Spatial_Active())
+	{
+		Con_Printf("Voice: local reflections require Steam Audio.\n");
+		return;
+	}
+	if (enabled && !Voice_DevicePreferenceAvailable(profile->device))
+	{
+		Con_Printf("Voice: selected recording device is missing or ambiguous.\n");
+		return;
+	}
+	profile->self_reverb = enabled ? 1 : 0;
+	Voice_FinalizeMenuAction();
+}
+
+void Voice_CycleInputDevice(int direction)
+{
+	voice_settings_profile_t *profile;
+	int count = 0, current = -1, eligible = 0, next, wanted, i, j;
+#ifdef USE_SDL3
+	SDL_AudioDeviceID *devices;
+#endif
+
+	if (!voice_initialized || !direction)
+		return;
+	profile = Voice_Profile();
+#ifdef USE_SDL3
+	devices = SDL_GetAudioRecordingDevices(&count);
+	if (!devices)
+	{
+		Con_Printf("Voice: couldn't enumerate recording devices: %s\n", SDL_GetError());
+		return;
+	}
+#else
+	count = SDL_GetNumAudioDevices(SDL_TRUE);
+	if (count < 0)
+	{
+		Con_Printf("Voice: couldn't enumerate recording devices: %s\n", SDL_GetError());
+		return;
+	}
+#endif
+
+	for (i = 0; i < count; ++i)
+	{
+#ifdef USE_SDL3
+		const char *name = SDL_GetAudioDeviceName(devices[i]);
+#else
+		const char *name = SDL_GetAudioDeviceName(i, SDL_TRUE);
+#endif
+		int matches = 0;
+		if (!name || !name[0] || strlen(name) >= sizeof(profile->device))
+			continue;
+		for (j = 0; j < count; ++j)
+		{
+#ifdef USE_SDL3
+			const char *other = SDL_GetAudioDeviceName(devices[j]);
+#else
+			const char *other = SDL_GetAudioDeviceName(j, SDL_TRUE);
+#endif
+			if (other && !strcmp(name, other))
+				++matches;
+		}
+		if (matches != 1)
+			continue;
+		if (profile->device[0] && !strcmp(profile->device, name))
+			current = eligible + 1;
+		++eligible;
+	}
+	if (!profile->device[0])
+		current = 0;
+
+	if (current < 0)
+		next = direction < 0 ? eligible : (eligible ? 1 : 0);
+	else
+		next = (current + (direction < 0 ? -1 : 1) + eligible + 1) %
+			(eligible + 1);
+
+	if (!next)
+		profile->device[0] = '\0';
+	else
+	{
+		wanted = next - 1;
+		eligible = 0;
+		for (i = 0; i < count; ++i)
+		{
+#ifdef USE_SDL3
+			const char *name = SDL_GetAudioDeviceName(devices[i]);
+#else
+			const char *name = SDL_GetAudioDeviceName(i, SDL_TRUE);
+#endif
+			int matches = 0;
+			if (!name || !name[0] || strlen(name) >= sizeof(profile->device))
+				continue;
+			for (j = 0; j < count; ++j)
+			{
+#ifdef USE_SDL3
+				const char *other = SDL_GetAudioDeviceName(devices[j]);
+#else
+				const char *other = SDL_GetAudioDeviceName(j, SDL_TRUE);
+#endif
+				if (other && !strcmp(name, other))
+					++matches;
+			}
+			if (matches != 1)
+				continue;
+			if (eligible++ == wanted)
+			{
+				q_strlcpy(profile->device, name, sizeof(profile->device));
+				break;
+			}
+		}
+	}
+#ifdef USE_SDL3
+	SDL_free(devices);
+#endif
+	Voice_FinalizeMenuAction();
 }
 
 static void Voice_ListDevices_f(void)
@@ -1038,6 +1217,7 @@ void Voice_Init(void)
 	Cvar_RegisterVariable(&voice_radio_volume);
 	Cvar_RegisterVariable(&voice_spatial_distance);
 	Cvar_RegisterVariable(&voice_positional_only);
+	Cvar_RegisterVariable(&voice_self_reverb_volume);
 	Voice_LoadSettings();
 	Cmd_AddCommand("voice_devices", Voice_ListDevices_f);
 	Cmd_AddCommand("voice_select_device", Voice_SelectDevice_f);
@@ -1119,6 +1299,7 @@ void Voice_Shutdown(void)
 		SNDDMA_LockBuffer();
 	Voice_AtomicSet(&voice_audio_enabled, 0);
 	voice_initialized = false;
+	voice_menu_state.available = false;
 	Voice_AtomicSet(&voice_hud_visible, 0);
 	Voice_AtomicSet(&voice_transmit_enabled, 0);
 	Voice_AtomicSet(&voice_capture_ready, 0);
@@ -1180,7 +1361,8 @@ void Voice_Frame(void)
 	Voice_AtomicSet(&voice_vr_transmit_enabled,
 		voice_settings.vr.transmit ? 1 : 0);
 	Voice_RefreshCapture(false);
-	Spatial_SelfGain(Voice_Profile()->self_reverb && voice_capture_device ? 1.0f : 0.0f);
+	Spatial_SelfGain(Voice_Profile()->self_reverb && voice_capture_device ?
+		CLAMP(0.0f, voice_self_reverb_volume.value, 2.0f) : 0.0f);
 	Voice_ProcessCapture();
 	Voice_AtomicSet(&voice_transmit_enabled, Voice_Profile()->transmit ? 1 : 0);
 	Voice_AtomicSet(&voice_hud_visible, Voice_HUDShouldDisplay() ? 1 : 0);
@@ -1373,15 +1555,21 @@ void Voice_SetVRTransmitEnabled(qboolean enabled)
 	if (!enabled)
 		voice_settings.vr.self_reverb = 0;
 	Voice_AtomicSet(&voice_vr_transmit_enabled, enabled ? 1 : 0);
-	Voice_SaveSettings();
 	if (!voice_profile_vr)
+	{
+		Voice_SaveSettings();
 		return;
+	}
+	Voice_FinalizeMenuAction();
+}
 
-	voice_pending_action = VOICE_PENDING_NONE;
-	Voice_StopTransmit();
-	Voice_CloseCapture();
-	voice_capture_wanted = false;
-	Voice_RefreshCapture(true);
+void Voice_GetMenuState(voice_menu_state_t *state)
+{
+	if (state)
+	{
+		*state = voice_menu_state;
+		state->capture_failed = voice_capture_wanted && !voice_capture_device;
+	}
 }
 
 qboolean Voice_CaptureReady(void)
