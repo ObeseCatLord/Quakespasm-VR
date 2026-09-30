@@ -860,8 +860,6 @@ qboolean SV_PrivateWalkTrialStockProgram (void)
 
 static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 {
-	eval_t *customphysics;
-	int groundentity;
 	const qboolean q30 = SV_PrivateWalkTrialQ30Program ();
 
 	if (!client || !client->active || !client->knowntoqc || !client->edict || client->edict->free)
@@ -882,35 +880,16 @@ static const char *SV_PrivateWalkTrialAdmissionFailure (client_t *client)
 	 * the initial spawn is on static floor. Keep that session native. */
 	if (sv_gameplayfix_elevators.value < 3.f)
 		return "requires robust elevator physics";
-	if (!SV_PrivateWalkTrialStockProgram ())
-	{
-		const char *failure = SV_PrivateWalkTrialBeginStateError (client, &client->cmd);
-		movevars_t vars;
-		if (failure)
-			return failure;
-		/* Even native authority must publish this owner's movement stats. */
-		if (!SV_PrivateWalkTrialBuildMoveVars (client, &vars))
-			return "invalid initial movement settings";
-		return NULL;
-	}
-	if (client->edict->v.movetype != MOVETYPE_WALK ||
-		client->edict->v.solid != SOLID_SLIDEBOX ||
-		client->edict->v.waterlevel != 0)
-		return "requires a stock WALK/SOLID_SLIDEBOX owner, dry at selection";
-	if (client->cmd.vr_gorilla_motion.flags)
-		return "trusted Gorilla motion is outside the raw trial";
-	customphysics = GetEdictFieldValue (client->edict, qcvm->extfields.customphysics);
-	if (customphysics && customphysics->function)
-		return "customphysics is active";
-	groundentity = client->edict->v.groundentity;
-	if (groundentity)
-	{
-		if (groundentity < 0 || qcvm->edict_size <= 0 ||
-			groundentity > (qcvm->num_edicts - 1) * qcvm->edict_size ||
-			groundentity % qcvm->edict_size)
-			return "owner has an invalid groundentity offset";
-	}
-	return SV_PrivateWalkTrialBeginStateError (client, &client->cmd);
+	/* Session selection uses the same observational owner checks for stock
+	 * and mods. Wet WALK and supported native starts may return to prediction. */
+	const char *failure = SV_PrivateWalkTrialBeginStateError (client, &client->cmd);
+	movevars_t vars;
+	if (failure)
+		return failure;
+	/* Even native authority must publish this owner's movement stats. */
+	if (!SV_PrivateWalkTrialBuildMoveVars (client, &vars))
+		return "invalid initial movement settings";
+	return NULL;
 }
 
 void SV_PrivateWalkTrialSelectAtBegin (client_t *client)

@@ -108,6 +108,13 @@ identity remains pending. Prepared renderer resources and a synthetic second
 endpoint retain explicit evidence limits; this does not certify the whole
 save, graphical/OpenXR lifecycle or full migration inventory.
 
+The [stock wet-entry follow-up](predictive-stock-wet-entry-2.0-plan.md) removes
+the leftover dry-only initial selection gate by reusing common begin validation.
+Supported stock native starts retain their existing authority and can return
+to WALK. Restored unowned ledge jumps finish under the existing native owner;
+owned/provisional solver timers remain unchanged. Personal Astra Max accepted
+the two-file source delta; end-of-implementation qualification is pending.
+
 The [stock activation plan](predictive-stock-activation-2.0-plan.md) was committed
 before changing defaults, then reopened before the source-proven intermission
 fix. Its implementation retains existing movement/QC/completion owners.

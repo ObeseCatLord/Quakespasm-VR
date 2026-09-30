@@ -10141,6 +10141,11 @@ static void SV_Physics_Client (edict_t *ent, int num)
 		return; // don't spam prethinks before we called putclientinserver.
 	if (SV_PrivateWalkTrialSelected (client) &&
 		(SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_TERMINAL ||
+		 /* Restored/native QC jumps have no selected solver timer. Let their
+		  * original owner finish before resuming command movement next frame. */
+		 (SV_PrivateWalkTrialStockProgram () &&
+		  ((int)ent->v.flags & FL_WATERJUMP) &&
+		  client->private_pmove_waterjump_secs == 0.0f) ||
 		 (SV_PrivateWalkTrialClassifyState (client) == SV_PRIVATE_MOVE_NATIVE &&
 		  !SV_CooperativeCommandOwner (client))))
 	{

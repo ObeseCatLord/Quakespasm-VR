@@ -1,6 +1,8 @@
 # Stock predictive movement when joining in water
 
-Status: planned before implementation. This completes a startup restriction
+Status: implemented with bounded personal Astra Max source acceptance. Builds
+and runtime qualification remain deferred until full implementation ends.
+The plan preceded implementation. This completes a startup restriction
 left over from the original dry WALK trial; it does not change the movement
 solver, command scheduler, wire format or cooperative QC replay permissions.
 
@@ -80,3 +82,19 @@ stale ground, terminal spawn and disabled/private/public profiles must retain
 their existing refusal or native path. Reuse existing native fixtures and
 collision assets; do not create a parallel harness or copy licensed assets.
 Source review is permitted now; builds and tests remain deferred.
+
+## Source acceptance
+
+Personal local `gpt-6-astra` at `max` reviewed the actual two-file delta and
+direct admission, native jump, staging and publication dependencies. No P1/P2
+finding remained. Main inspected the original and common checks, the existing
+native jump expiry, zero-timer publication refusal and pre-callback dispatch.
+
+| Review recommendation | Disposition |
+| --- | --- |
+| Reuse common begin validation while retaining profile/owner/state protections. | Adopted; removes duplicate stock checks and validates initial stock movevars. |
+| Keep unowned restored jumps with their native clock and flag lifetime. | Adopted at frame entry; no fabricated private timer or additional move. |
+| Keep owned/provisional solver jumps and replay permission separate from admission. | Preserved; positive private timers and jumps first witnessed in PreThink use existing paths. |
+
+This is source acceptance, not a new execution claim. End-of-implementation
+checks listed above remain required.
