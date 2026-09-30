@@ -93,6 +93,15 @@ cvar_t sv_coop_autosave_kill_interval = {"sv_coop_autosave_kill_interval", "10",
 cvar_t sv_coop_classic = {"sv_coop_classic", "0", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_noplayerclip = {"sv_coop_noplayerclip", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_coop_notelefrag = {"sv_coop_notelefrag", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_weapon_targetfix = {"sv_coop_weapon_targetfix", "-1", CVAR_ARCHIVE};
+cvar_t sv_coop_pickup_targetlog = {"sv_coop_pickup_targetlog", "0", CVAR_NONE};
+cvar_t sv_coop_pickup_targetfix = {"sv_coop_pickup_targetfix", "0", CVAR_NONE};
+cvar_t sv_coop_pickup_targetfix_classes = {"sv_coop_pickup_targetfix_classes", "", CVAR_NONE};
+cvar_t sv_coop_ammo_respawn = {"sv_coop_ammo_respawn", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_ammo_respawn_time = {"sv_coop_ammo_respawn_time", "30", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_progression_item_respawn = {"sv_coop_progression_item_respawn", "-1", CVAR_ARCHIVE | CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_progression_item_respawn_time = {"sv_coop_progression_item_respawn_time", "5", CVAR_NOTIFY | CVAR_SERVERINFO};
+cvar_t sv_coop_progression_item_respawn_classes = {"sv_coop_progression_item_respawn_classes", "item_jboots item_jboots_timed item_artifact_envirosuit item_artifact_wetsuit item_artifact_airtank item_artifact_divingsuit", CVAR_NOTIFY | CVAR_SERVERINFO};
 
 /* Co-op compatibility switches use a tri-state value: -1 inherits the
  * profile, while 0 and 1 are explicit per-feature overrides. */
@@ -433,6 +442,20 @@ void Host_InitLocal (void)
 	Cvar_SetCallback (&sv_coop_noplayerclip, Host_Callback_Notify);
 	Cvar_RegisterVariable (&sv_coop_notelefrag);
 	Cvar_SetCallback (&sv_coop_notelefrag, Host_Callback_Notify);
+	Cvar_RegisterVariable (&sv_coop_weapon_targetfix);
+	Cvar_RegisterVariable (&sv_coop_pickup_targetlog);
+	Cvar_RegisterVariable (&sv_coop_pickup_targetfix);
+	Cvar_RegisterVariable (&sv_coop_pickup_targetfix_classes);
+	Cvar_RegisterVariable (&sv_coop_ammo_respawn);
+	Cvar_SetCallback (&sv_coop_ammo_respawn, Host_Callback_Notify);
+	Cvar_RegisterVariable (&sv_coop_ammo_respawn_time);
+	Cvar_SetCallback (&sv_coop_ammo_respawn_time, Host_Callback_Notify);
+	Cvar_RegisterVariable (&sv_coop_progression_item_respawn);
+	Cvar_SetCallback (&sv_coop_progression_item_respawn, Host_Callback_Notify);
+	Cvar_RegisterVariable (&sv_coop_progression_item_respawn_time);
+	Cvar_SetCallback (&sv_coop_progression_item_respawn_time, Host_Callback_Notify);
+	Cvar_RegisterVariable (&sv_coop_progression_item_respawn_classes);
+	Cvar_SetCallback (&sv_coop_progression_item_respawn_classes, Host_Callback_Notify);
 	Cvar_RegisterVariable (&deathmatch);
 
 	Cvar_RegisterVariable (&campaign);

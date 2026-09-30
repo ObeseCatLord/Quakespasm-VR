@@ -681,6 +681,236 @@ static qboolean SV_IsDirectWeaponTouch (func_t touchfunc)
 	return weapon_touch && touchfunc == weapon_touch;
 }
 
+#define SV_COOP_TARGET_FIELD_COUNT 5
+
+static const char *sv_coop_target_fields[SV_COOP_TARGET_FIELD_COUNT] =
+{
+	"target", "killtarget", "target2", "target3", "target4"
+};
+
+typedef struct
+{
+	string_t values[SV_COOP_TARGET_FIELD_COUNT];
+	qboolean has_any;
+} sv_coop_target_state_t;
+
+static string_t SV_CoopTargetStringField (edict_t *ent, const char *name,
+	eval_t **field)
+{
+	ddef_t *def;
+	eval_t *value = NULL;
+
+	if (field)
+		*field = NULL;
+	if (ent && !ent->free && (def = ED_FindField (name)) &&
+		(def->type & ~DEF_SAVEGLOBAL) == ev_string)
+		value = GetEdictFieldValue (ent, def->ofs);
+	if (field)
+		*field = value;
+	if (!value || !value->string || !PR_GetString (value->string)[0])
+		return 0;
+	return value->string;
+}
+
+static void SV_CaptureCoopTargetState (edict_t *ent,
+	sv_coop_target_state_t *state)
+{
+	memset (state, 0, sizeof (*state));
+	for (int i = 0; i < SV_COOP_TARGET_FIELD_COUNT; ++i)
+	{
+		state->values[i] = SV_CoopTargetStringField (ent,
+			sv_coop_target_fields[i], NULL);
+		if (state->values[i])
+			state->has_any = true;
+	}
+}
+
+static qboolean SV_CoopTargetStateUnchanged (edict_t *ent,
+	const sv_coop_target_state_t *state)
+{
+	for (int i = 0; i < SV_COOP_TARGET_FIELD_COUNT; ++i)
+		if (SV_CoopTargetStringField (ent, sv_coop_target_fields[i], NULL) !=
+			state->values[i])
+			return false;
+	return true;
+}
+
+static void SV_ClearMatchingCoopTargets (edict_t *ent,
+	const sv_coop_target_state_t *state)
+{
+	for (int i = 0; ent && !ent->free && i < SV_COOP_TARGET_FIELD_COUNT; ++i)
+	{
+		eval_t *field;
+		if (state->values[i] &&
+			SV_CoopTargetStringField (ent, sv_coop_target_fields[i], &field) ==
+				state->values[i] && field)
+			field->string = 0;
+	}
+}
+
+static qboolean SV_ClassnameMatchesList (const char *classname, const char *list)
+{
+	const char *p;
+	size_t len;
+
+	if (!classname || !classname[0] || !list || !list[0])
+		return false;
+	for (p = list; *p; p += len)
+	{
+		while (*p && ((unsigned char)*p <= ' ' || *p == ',' || *p == ';'))
+			++p;
+		if (!*p)
+			break;
+		for (len = 0; p[len] && (unsigned char)p[len] > ' ' &&
+			p[len] != ',' && p[len] != ';'; ++len)
+			;
+		if (strlen (classname) == len && !q_strncasecmp (classname, p, len))
+			return true;
+	}
+	return false;
+}
+
+static qboolean SV_IsCoopWeaponTargetFixCandidate (edict_t *pickup,
+	edict_t *player)
+{
+	const char *classname;
+	qboolean custom_touch;
+
+	if (!coop.value || !SV_CoopFeatureEnabled (&sv_coop_weapon_targetfix, true) ||
+		!SV_IsCoopInventoryClient (player) || !pickup || pickup->free ||
+		pickup->v.solid != SOLID_TRIGGER || !pickup->v.classname)
+		return false;
+	classname = PR_GetString (pickup->v.classname);
+	if (!classname || q_strncasecmp (classname, "weapon_", 7))
+		return false;
+	custom_touch = isfinite (sv_coop_weapon_targetfix.value) &&
+		sv_coop_weapon_targetfix.value >= 2.0f;
+	return custom_touch || SV_IsDirectWeaponTouch (pickup->v.touch);
+}
+
+static qboolean SV_IsCoopPickupTargetFixCandidate (edict_t *pickup,
+	edict_t *player)
+{
+	const char *classname;
+
+	if (!coop.value || !sv_coop_pickup_targetfix.value ||
+		!SV_IsCoopInventoryClient (player) || !pickup || pickup->free ||
+		pickup->v.solid != SOLID_TRIGGER || !pickup->v.classname)
+		return false;
+	classname = PR_GetString (pickup->v.classname);
+	if (!classname || !q_strncasecmp (classname, "weapon_", 7) ||
+		(q_strncasecmp (classname, "item_", 5) &&
+		 q_strncasecmp (classname, "ammo_", 5)))
+		return false;
+	return SV_ClassnameMatchesList (classname,
+		sv_coop_pickup_targetfix_classes.string);
+}
+
+static void SV_LogCoopPickupTargets (edict_t *pickup, edict_t *player,
+	const char *note)
+{
+	static double last_log_time;
+	const char *classname, *target, *killtarget;
+
+	if (!coop.value || !sv_coop_pickup_targetlog.value || !isfinite (qcvm->time) ||
+		qcvm->time - last_log_time < 1.0 || !pickup || pickup->free ||
+		!pickup->v.classname)
+		return;
+	classname = PR_GetString (pickup->v.classname);
+	target = PR_GetString (SV_CoopTargetStringField (pickup, "target", NULL));
+	killtarget = PR_GetString (SV_CoopTargetStringField (pickup, "killtarget", NULL));
+	Con_Printf ("sv_coop_pickup_targetlog: %s %s after touch by %s target=\"%s\" killtarget=\"%s\"\n",
+		classname ? classname : "pickup", note,
+		player && player->v.netname ? PR_GetString (player->v.netname) : "client",
+		target ? target : "", killtarget ? killtarget : "");
+	last_log_time = qcvm->time;
+}
+
+static qboolean SV_IsAmmoClassname (const char *classname)
+{
+	return !q_strcasecmp (classname, "item_shells") ||
+		!q_strcasecmp (classname, "item_spikes") ||
+		!q_strcasecmp (classname, "item_rockets") ||
+		!q_strcasecmp (classname, "item_cells") ||
+		!q_strcasecmp (classname, "item_lava_spikes") ||
+		!q_strcasecmp (classname, "item_multi_rockets") ||
+		!q_strcasecmp (classname, "item_plasma");
+}
+
+static qboolean SV_IsCoopAmmoRespawnCandidate (edict_t *pickup, edict_t *player)
+{
+	return coop.value && SV_CoopFeatureEnabled (&sv_coop_ammo_respawn, true) &&
+		SV_IsCoopInventoryClient (player) && pickup && !pickup->free &&
+		pickup->v.solid == SOLID_TRIGGER && pickup->v.classname &&
+		SV_IsAmmoClassname (PR_GetString (pickup->v.classname));
+}
+
+static qboolean SV_IsCoopProgressionRespawnCandidate (edict_t *pickup,
+	edict_t *player)
+{
+	const char *classname;
+
+	if (!coop.value ||
+		!SV_CoopFeatureEnabled (&sv_coop_progression_item_respawn, true) ||
+		!SV_IsCoopInventoryClient (player) || !pickup || pickup->free ||
+		pickup->v.solid != SOLID_TRIGGER || !pickup->v.classname)
+		return false;
+	classname = PR_GetString (pickup->v.classname);
+	return SV_ClassnameMatchesList (classname,
+		sv_coop_progression_item_respawn_classes.string) ||
+		q_strcasestr (classname, "suit") || q_strcasestr (classname, "scuba") ||
+		q_strcasestr (classname, "diving") || q_strcasestr (classname, "airtank") ||
+		q_strcasestr (classname, "air_tank");
+}
+
+static qboolean SV_CoopPickupFuncIsNull (func_t func)
+{
+	dfunction_t *def;
+	func_t null_func;
+
+	if (!func)
+		return true;
+	def = ED_FindFunction ("SUB_Null");
+	null_func = def ? (func_t)(def - qcvm->functions) : 0;
+	return null_func && func == null_func;
+}
+
+static qboolean SV_CoopPickupHasPendingThink (edict_t *pickup)
+{
+	return pickup && pickup->v.nextthink > 0 &&
+		!SV_CoopPickupFuncIsNull (pickup->v.think);
+}
+
+static void SV_ScheduleCoopPickupRespawn (edict_t *pickup, float respawn_time,
+	const char *reason, func_t restore_touch, func_t restore_use)
+{
+	dfunction_t *regen;
+	double delay, deadline;
+	float nextthink;
+
+	if (!pickup || pickup->free || pickup->v.solid == SOLID_TRIGGER ||
+		!isfinite (respawn_time) || !isfinite (qcvm->time) || !qcvm->progs ||
+		!(regen = ED_FindFunction ("SUB_regen")) || regen->numparms != 0 ||
+		regen->first_statement <= 0 ||
+		regen->first_statement >= qcvm->progs->numstatements)
+		return;
+	delay = respawn_time < 1.0f ? 1.0 : (double)respawn_time;
+	deadline = (double)qcvm->time + delay;
+	if (!isfinite (deadline) || deadline < -(double)FLT_MAX ||
+		deadline > (double)FLT_MAX || !isfinite (nextthink = (float)deadline) ||
+		SV_CoopPickupHasPendingThink (pickup))
+		return;
+	if (restore_touch && SV_CoopPickupFuncIsNull (pickup->v.touch))
+		pickup->v.touch = restore_touch;
+	if (restore_use && SV_CoopPickupFuncIsNull (pickup->v.use))
+		pickup->v.use = restore_use;
+	pickup->v.model = 0;
+	pickup->v.think = (func_t)(regen - qcvm->functions);
+	pickup->v.nextthink = nextthink;
+	Con_DPrintf ("%s: scheduled %s in %.1f seconds\n", reason,
+		pickup->v.classname ? PR_GetString (pickup->v.classname) : "pickup", delay);
+}
+
 #define SV_COOP_SHARED_ALL_BITS (-1)
 #define SV_COOP_SHARED_DWELL_WEAPON_BITS (4 | 8 | 32)
 
@@ -2484,9 +2714,14 @@ static void SV_TouchLinks (edict_t *ent)
 	for (int i = 0; i < retainedcount; i++)
 	{
 		edict_t *touch = EDICT_NUM (list[i]);
-		qboolean shared_pickup, shared_touch_sync, direct_weapon_touch;
+		qboolean coop_inventory_client, shared_pickup, shared_touch_sync;
+		qboolean direct_weapon_touch, weapon_targetfix, pickup_targetfix;
+		qboolean targetlog, ammo_respawn, progression_respawn;
+		qboolean capture_inventory, target_accepted, target_called;
 		int declared_weapon_bits;
 		sv_coop_shared_inventory_t shared_before, shared_after, shared_declared;
+		sv_coop_target_state_t targets_before;
+		func_t pickup_touch, pickup_use;
 
 		// Touch only live triggers that still overlap the entity.
 		if (touch->free || touch == ent)
@@ -2501,18 +2736,36 @@ static void SV_TouchLinks (edict_t *ent)
 		if (SV_ShouldSuppressCoopTelefrag (touch, ent))
 			continue;
 
+		coop_inventory_client = coop.value && SV_IsCoopInventoryClient (ent);
 		shared_pickup = SV_IsCoopSharedPickupCandidate (touch, ent);
-		shared_touch_sync = SV_CoopSharedBeginClientTouch (ent);
+		weapon_targetfix = SV_IsCoopWeaponTargetFixCandidate (touch, ent);
+		pickup_targetfix = SV_IsCoopPickupTargetFixCandidate (touch, ent);
+		targetlog = coop_inventory_client && sv_coop_pickup_targetlog.value &&
+			touch->v.classname;
+		if (weapon_targetfix || pickup_targetfix || targetlog)
+			SV_CaptureCoopTargetState (touch, &targets_before);
+		else
+			memset (&targets_before, 0, sizeof (targets_before));
+		weapon_targetfix = weapon_targetfix && targets_before.has_any;
+		pickup_targetfix = pickup_targetfix && targets_before.has_any;
+		targetlog = targetlog && targets_before.has_any;
+		ammo_respawn = SV_IsCoopAmmoRespawnCandidate (touch, ent);
+		progression_respawn = SV_IsCoopProgressionRespawnCandidate (touch, ent);
+		pickup_touch = touch->v.touch;
+		pickup_use = touch->v.use;
+		capture_inventory = shared_pickup || weapon_targetfix || pickup_targetfix;
 		direct_weapon_touch = shared_pickup &&
 			SV_IsDirectWeaponTouch (touch->v.touch);
 		declared_weapon_bits = 0;
+		if (capture_inventory)
+			SV_CaptureCoopSharedInventory (ent, &shared_before);
 		if (shared_pickup)
 		{
-			SV_CaptureCoopSharedInventory (ent, &shared_before);
 			SV_CaptureCoopSharedInventory (touch, &shared_declared);
 			declared_weapon_bits = (int)touch->v.weapon &
 				(SV_CoopSharedItemMask() & ~SV_CoopSharedStockKeyMask());
 		}
+		shared_touch_sync = SV_CoopSharedBeginClientTouch (ent);
 
 		pr_global_struct->self = EDICT_TO_PROG (touch);
 		pr_global_struct->other = EDICT_TO_PROG (ent);
@@ -2520,19 +2773,50 @@ static void SV_TouchLinks (edict_t *ent)
 		vec3_t origin_before;
 		const qboolean executed_teleport = SV_IsTeleportTrigger (touch);
 		VectorCopy (ent->v.origin, origin_before);
-		PR_ExecuteProgram (touch->v.touch);
+		if (coop_inventory_client)
+		{
+			if (!SV_CoopPickupTouch (touch, ent))
+				break;
+		}
+		else
+			PR_ExecuteProgram (touch->v.touch);
 		SV_RecordRecentTeleportTrigger (touch, ent, origin_before,
 			executed_teleport);
 
+		if (capture_inventory)
+			SV_CaptureCoopSharedInventory (ent, &shared_after);
+		target_accepted = (weapon_targetfix || pickup_targetfix) &&
+			SV_CoopSharedInventoryHasAcceptedGain (&shared_before, &shared_after,
+				SV_CoopUsesCountedKeys());
 		if (shared_pickup)
 		{
-			SV_CaptureCoopSharedInventory (ent, &shared_after);
 			SV_ShareCoopPickupInventory (touch, ent, &shared_before,
 				&shared_after, &shared_declared, declared_weapon_bits,
 				direct_weapon_touch);
 		}
 		if (shared_touch_sync)
 			SV_CoopSharedEndClientTouch (ent);
+
+		if ((weapon_targetfix || pickup_targetfix) && target_accepted &&
+			!touch->free && touch->v.solid == SOLID_TRIGGER &&
+			SV_CoopTargetStateUnchanged (touch, &targets_before))
+		{
+			target_called = false;
+			if (!SV_CoopPickupUseTargets (touch, ent, &target_called))
+				break;
+			if (target_called && !touch->free)
+				SV_ClearMatchingCoopTargets (touch, &targets_before);
+		}
+		if (targetlog && !touch->free && touch->v.solid == SOLID_TRIGGER &&
+			SV_CoopTargetStateUnchanged (touch, &targets_before))
+			SV_LogCoopPickupTargets (touch, ent, "still has unchanged targets");
+		if (ammo_respawn)
+			SV_ScheduleCoopPickupRespawn (touch, sv_coop_ammo_respawn_time.value,
+				"sv_coop_ammo_respawn", pickup_touch, pickup_use);
+		if (progression_respawn)
+			SV_ScheduleCoopPickupRespawn (touch,
+				sv_coop_progression_item_respawn_time.value,
+				"sv_coop_progression_item_respawn", pickup_touch, pickup_use);
 
 		// Stop after the moving entity is removed.
 		if (ent->free)

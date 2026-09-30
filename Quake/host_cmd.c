@@ -3801,51 +3801,32 @@ static edict_t *Host_CoopFindSpawnClass (const char *classname)
 
 /* Preserve the mod's spawn choice. The fallback is used only when QuakeC
  * supplies no usable spawn, as in the inherited wheel command. */
-static edict_t *Host_CoopSelectSpawnPoint (void)
+static qboolean Host_CoopSelectSpawnPoint (edict_t *player, edict_t **result)
 {
-	dfunction_t *func = ED_FindFunction ("SelectSpawnPoint");
 	edict_t *spawn = NULL;
-	int saved_self, saved_other, saved_return[3], spawnprog, saved_argc;
-	float saved_time;
+	int spawnprog = 0;
 
-	if (func && func->numparms == 0)
+	if (!result || !SV_CoopSelectSpawnPoint (player, &spawnprog))
+		return false;
+	if (spawnprog > svs.maxclients * qcvm->edict_size &&
+		spawnprog < qcvm->num_edicts * qcvm->edict_size &&
+		spawnprog % qcvm->edict_size == 0)
 	{
-		saved_self = pr_global_struct->self;
-		saved_other = pr_global_struct->other;
-		saved_time = pr_global_struct->time;
-		saved_argc = qcvm->argc;
-		memcpy (saved_return, &qcvm->globals[OFS_RETURN], sizeof (saved_return));
-		pr_global_struct->self = EDICT_TO_PROG (sv_player);
-		pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
-		pr_global_struct->time = qcvm->time;
-		qcvm->argc = 0;
-		G_INT (OFS_RETURN) = 0;
-		PR_ExecuteProgram (func - qcvm->functions);
-		spawnprog = G_INT (OFS_RETURN);
-		pr_global_struct->self = saved_self;
-		pr_global_struct->other = saved_other;
-		pr_global_struct->time = saved_time;
-		qcvm->argc = saved_argc;
-		memcpy (&qcvm->globals[OFS_RETURN], saved_return, sizeof (saved_return));
-		if (spawnprog > svs.maxclients * qcvm->edict_size &&
-			spawnprog < qcvm->num_edicts * qcvm->edict_size &&
-			spawnprog % qcvm->edict_size == 0)
-		{
-			spawn = PROG_TO_EDICT (spawnprog);
-			if (spawn->free)
-				spawn = NULL;
-		}
+		spawn = PROG_TO_EDICT (spawnprog);
+		if (spawn->free)
+			spawn = NULL;
 	}
 	if (!spawn)
 		spawn = Host_CoopFindSpawnClass ("info_player_coop");
 	if (!spawn)
 		spawn = Host_CoopFindSpawnClass ("info_player_start");
-	return spawn;
+	*result = spawn;
+	return true;
 }
 
 static void Host_CoopTeleportSpawn_f (void)
 {
-	edict_t *spawn;
+	edict_t *player, *spawn;
 
 	if (cmd_source != src_client)
 	{
@@ -3857,13 +3838,15 @@ static void Host_CoopTeleportSpawn_f (void)
 		sv_player->v.health <= 0 || sv_player->v.deadflag != DEAD_NO ||
 		sv_player->v.solid == SOLID_NOT)
 		return;
-	spawn = Host_CoopSelectSpawnPoint ();
+	player = sv_player;
+	if (!Host_CoopSelectSpawnPoint (player, &spawn))
+		return;
 	if (!spawn)
 	{
 		SV_ClientPrintf ("No player spawn point is available\n");
 		return;
 	}
-	if (!SV_CoopRespawnTeleportToSpawn (sv_player, spawn))
+	if (!SV_CoopRespawnTeleportToSpawn (player, spawn))
 		SV_ClientPrintf ("No safe player spawn position is available\n");
 }
 

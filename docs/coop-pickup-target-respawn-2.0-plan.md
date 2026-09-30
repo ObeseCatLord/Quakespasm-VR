@@ -102,3 +102,33 @@ scope token crosses files and no new persistent lifecycle state is added.
 The native touch path preserves authored QC scratch, while **supplemental**
 target/selector calls use existing isolation. One worker owns all five precise
 regions; main reviews both reference policy and complete integrated patch.
+
+## Integrated implementation and final bounded source disposition
+
+The worker completed the five-file slice at 393 net production lines
+(440 added,47 removed), within the adopted estimate. Main inspected the complete
+diff, the original touch and cleanup owner, sticky bind/live/unbind predicates,
+all four existing isolated-invocation callers, actual drop/spawn cancellation
+hooks and the inherited scheduler/target gates. All nine controls and five
+notify callbacks are present at native registration owners. Original touch
+executes directly; supplemental targets and selector reuse private isolation.
+No revival cvars, handlers or policy were added. Scoped whitespace checks pass;
+no builds, tests, compiler checks, probes, fixtures or benchmarks were run.
+
+Requested local Astra source advice reported no P1/P2 blocker in the complete
+five-file patch, nearest-scope follow-up and selector return-cell spotcheck.
+Main checked the load-bearing predicates, all nearest-scope consumers, explicit
+input-policy argument and native return instructions before integration.
+Effective reviewer settings remain unobservable; this is source advice, not
+formal senior-review or runtime certification.
+
+| Final recommendation / question | Main disposition |
+| --- | --- |
+| Retain direct original touch and narrow isolated supplemental callbacks | Adopt. Original callback authoring semantics remain; existing sticky cancellation covers force-retouch and explicit QC trigger linking. No extra lifecycle registry or general callback API. |
+| Does a zeroed nested lifetime scope shadow outer behavior flags? | No source defect found. Both nearest-scope consumers inspect cancellation only; cancellation marks all matching scopes. Borrowed-input filtering uses the explicit original policy. Reject copying outer flags or adding another policy owner without a demonstrated path. |
+| Restore the old selector pre-execution return reset? | No verified stale-result path. Native OP_RETURN and OP_DONE write all three cells before normal exit; output is captured before scratch restoration. Missing/rejected selectors leave zero. Keep normal-QC invariants explicit; admission is not validation of arbitrary bytecode. No additional reset adopted. |
+| Further structural factoring or callback rewrite | Reject. Reused private isolation removed duplicate selector scratch; the existing three narrow wrappers fit the demonstrated incompatibilities and estimate. |
+| Exact-once custom targets, nested callback replacement and regeneration | Retain final acceptance requirements. Unchanged target handles alone cannot prove a custom touch did not already fire them. Source admission and whitespace checks do not prove gameplay. |
+
+The full Linux/ARM and exact-once native/custom target acceptance requirements
+above remain pending. No build or executable validation was performed.

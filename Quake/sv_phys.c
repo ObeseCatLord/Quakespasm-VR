@@ -512,7 +512,7 @@ static qboolean SV_CoopRespawnBindPolicy (edict_t *ent, int num,
 static qboolean SV_CoopRespawnUnbindPolicy (coop_respawn_postthink_state_t *state);
 static qboolean SV_CoopRespawnInvokeQC (edict_t *ent,
 	coop_respawn_postthink_state_t *state, dfunction_t *func, int argc,
-	const float *parms);
+	const float *parms, edict_t *qc_self, edict_t *qc_other, int *raw_return);
 
 void SV_CoopRespawnInventoryResetClientSlot (int slot)
 {
@@ -729,7 +729,8 @@ static qboolean SV_CoopRespawnClearQBJ3InactiveBerserk (edict_t *ent,
 	prog = EDICT_TO_PROG (ent);
 	memcpy (&parms[0], &prog, sizeof (prog));
 	parms[3] = QBJ3_BERSERK_CSHIFT_PRIORITY;
-	return SV_CoopRespawnInvokeQC (ent, state, func, 2, parms);
+	return SV_CoopRespawnInvokeQC (ent, state, func, 2, parms,
+		ent, qcvm->edicts, NULL);
 }
 
 static qboolean SV_CoopRespawnRepairQBJ3WeaponModel (edict_t *ent,
@@ -755,7 +756,8 @@ static qboolean SV_CoopRespawnRepairQBJ3WeaponModel (edict_t *ent,
 		return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
 	parms[0] = ent->v.weapon;
 	parms[3] = 1.0f;
-	return SV_CoopRespawnInvokeQC (ent, state, func, 2, parms);
+	return SV_CoopRespawnInvokeQC (ent, state, func, 2, parms,
+		ent, qcvm->edicts, NULL);
 }
 
 static qboolean SV_CoopRespawnRecoverQBJ3Limbo (edict_t *ent, int num,
@@ -798,7 +800,8 @@ static qboolean SV_CoopRespawnRecoverQBJ3Limbo (edict_t *ent, int num,
 	}
 	ED_Retain (goal);
 	dest->vector[2] = 1.0f;
-	survived = SV_CoopRespawnInvokeQC (ent, state, think, 0, NULL);
+	survived = SV_CoopRespawnInvokeQC (ent, state, think, 0, NULL,
+		ent, qcvm->edicts, NULL);
 	if (qcvm == state->vm && state->vm == &sv.qcvm)
 		ED_Release (goal);
 	if (!survived)
@@ -840,7 +843,8 @@ static qboolean SV_CoopRespawnFinishQBJ3Lifecycle (edict_t *ent, int num,
 		return SV_CoopRespawnPolicyOwnerLive (state, state->client, ent);
 	prog = EDICT_TO_PROG (ent);
 	memcpy (&parms[0], &prog, sizeof (prog));
-	if (!SV_CoopRespawnInvokeQC (ent, state, clear, 1, parms))
+	if (!SV_CoopRespawnInvokeQC (ent, state, clear, 1, parms,
+		ent, qcvm->edicts, NULL))
 		return false;
 	if (!SV_CoopRespawnVoidLayerMatches (ent, "") &&
 		!SV_CoopRespawnVoidLayerMatches (ent, "_prev"))
@@ -9248,7 +9252,7 @@ static void SV_RestoreQCInputs (const sv_qc_input_scope_t *scope)
 
 static qboolean SV_CoopRespawnInvokeQC (edict_t *ent,
 	coop_respawn_postthink_state_t *state, dfunction_t *func, int argc,
-	const float *parms)
+	const float *parms, edict_t *qc_self, edict_t *qc_other, int *raw_return)
 {
 	struct
 	{
@@ -9268,6 +9272,7 @@ static qboolean SV_CoopRespawnInvokeQC (edict_t *ent,
 
 	if (!state || !(client = state->client) ||
 		!SV_CoopRespawnPolicyOwnerLive (state, client, ent) || !func ||
+		!qc_self || qc_self->free || !qc_other || qc_other->free ||
 		argc < 0 || argc > MAX_PARMS || !qcvm->functions || !qcvm->progs ||
 		func < qcvm->functions || func >= qcvm->functions + qcvm->progs->numfunctions)
 		return false;
@@ -9296,8 +9301,8 @@ static qboolean SV_CoopRespawnInvokeQC (edict_t *ent,
 	ED_Retain (ent);
 	host_client = client;
 	sv_player = ent;
-	pr_global_struct->self = EDICT_TO_PROG (ent);
-	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+	pr_global_struct->self = EDICT_TO_PROG (qc_self);
+	pr_global_struct->other = EDICT_TO_PROG (qc_other);
 	pr_global_struct->time = qcvm->time;
 	qcvm->argc = argc;
 	memset (&qcvm->globals[OFS_PARM0], 0, MAX_PARMS * 3 * sizeof (float));
@@ -9305,6 +9310,8 @@ static qboolean SV_CoopRespawnInvokeQC (edict_t *ent,
 		memcpy (&qcvm->globals[OFS_PARM0], parms, argc * 3 * sizeof (float));
 	PR_ExecuteProgram (func - qcvm->functions);
 	assert (qcvm == &sv.qcvm);
+	if (raw_return)
+		*raw_return = G_INT (OFS_RETURN);
 	SV_RestoreQCInputs (&input_scope);
 	host_client = saved_host_client;
 	sv_player = saved_sv_player;
@@ -9329,6 +9336,90 @@ static qboolean SV_CoopRespawnInvokeQC (edict_t *ent,
 	VectorCopy (saved_context.trace_plane_normal, pr_global_struct->trace_plane_normal);
 	owner_live = SV_CoopRespawnPolicyOwnerLive (state, client, ent);
 	ED_Release (ent);
+	return owner_live;
+}
+
+static dfunction_t *SV_CoopFindZeroArgBody (const char *name)
+{
+	dfunction_t *func;
+	if (qcvm != &sv.qcvm || !qcvm->progs || !(func = ED_FindFunction (name)) ||
+		func->numparms != 0 || func->first_statement <= 0 ||
+		func->first_statement >= qcvm->progs->numstatements)
+		return NULL;
+	return func;
+}
+
+qboolean SV_CoopPickupTouch (edict_t *pickup, edict_t *player)
+{
+	coop_respawn_postthink_state_t state = {0};
+	qboolean owner_live;
+	int num;
+
+	if (!pickup || pickup->free || !pickup->v.touch || !player || player->free)
+		return false;
+	num = NUM_FOR_EDICT (player);
+	if (!SV_CoopRespawnBindPolicy (player, num, &state))
+		return false;
+	PR_ExecuteProgram (pickup->v.touch);
+	owner_live = SV_CoopRespawnPolicyOwnerLive (&state, state.client, player);
+	if (!SV_CoopRespawnUnbindPolicy (&state))
+		owner_live = false;
+	return owner_live;
+}
+
+qboolean SV_CoopPickupUseTargets (edict_t *pickup, edict_t *player,
+	qboolean *called)
+{
+	coop_respawn_postthink_state_t state = {0};
+	dfunction_t *func;
+	ddef_t *activator;
+	qboolean owner_live;
+	int num, old_activator;
+
+	if (called)
+		*called = false;
+	if (!pickup || pickup->free || !player || player->free)
+		return false;
+	func = SV_CoopFindZeroArgBody ("SUB_UseTargets");
+	activator = ED_FindGlobal ("activator");
+	if (!func || !activator ||
+		(activator->type & ~DEF_SAVEGLOBAL) != ev_entity)
+		return true;
+	num = NUM_FOR_EDICT (player);
+	if (!SV_CoopRespawnBindPolicy (player, num, &state))
+		return false;
+	old_activator = G_INT (activator->ofs);
+	G_INT (activator->ofs) = EDICT_TO_PROG (player);
+	if (called)
+		*called = true;
+	owner_live = SV_CoopRespawnInvokeQC (player, &state, func, 0, NULL,
+		pickup, player, NULL);
+	G_INT (activator->ofs) = old_activator;
+	if (!SV_CoopRespawnUnbindPolicy (&state))
+		owner_live = false;
+	return owner_live;
+}
+
+qboolean SV_CoopSelectSpawnPoint (edict_t *player, int *spawnprog)
+{
+	coop_respawn_postthink_state_t state = {0};
+	dfunction_t *func;
+	qboolean owner_live;
+	int num;
+
+	if (!spawnprog || !player || player->free)
+		return false;
+	*spawnprog = 0;
+	func = SV_CoopFindZeroArgBody ("SelectSpawnPoint");
+	if (!func)
+		return true;
+	num = NUM_FOR_EDICT (player);
+	if (!SV_CoopRespawnBindPolicy (player, num, &state))
+		return false;
+	owner_live = SV_CoopRespawnInvokeQC (player, &state, func, 0, NULL,
+		player, qcvm->edicts, spawnprog);
+	if (!SV_CoopRespawnUnbindPolicy (&state))
+		owner_live = false;
 	return owner_live;
 }
 
