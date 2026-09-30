@@ -1,5 +1,9 @@
 # Major-feature implementation plans
 
+The [consolidated Linux/ARM qualification plan](final-linux-arm-qualification-2.0-plan.md)
+records the full-scope end-of-implementation pass; it is not authorization to
+run checks early or a claim of completion.
+
 Current [user scope decisions](migration-scope-decisions.md) supersede historical
 requirements: Gorilla locomotion and instant stop are excluded from the goal.
 Ordinary VR movement, swimming, ladders and predictive mod support remain required.
