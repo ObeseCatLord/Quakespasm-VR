@@ -93,3 +93,19 @@ reviews is superseded by this accepted interoperability decision. Actual
 GPU/runtime validation remains the user's deferred qualification, rather than
 an unfinished code requirement or a promise of universal runtime conformance.
 Production estimate remains under50 changed lines in `Quake/gl_vidsdl.c`.
+
+## Source integration checkpoint
+
+Implemented in the existing device-selection owner: settings readiness now
+replaces the development-switch requirement. All GPU/runtime/sample/offset
+predicates, explicit fixed-mode condition, exclusive Vulkan features, desktop
+KHR preference and full-rate recovery remain. No view configuration, resource
+lifetime or frame-order change was made. Quad views remain excluded.
+
+The bounded requested-Astra final source advisory found no P1/P2 findings in
+the selection diff; main reviewed the full diff and shortened diagnostics.
+The advisory did not independently reverify downstream unchanged bodies or
+gaze defaults. Scoped whitespace checking is the only command-based check;
+no builds, executable tests, probes or benchmarks were performed. Consolidated
+Linux/ARM software qualification remains at the end of implementation, with
+live device/gaze/performance checks reserved for the user.

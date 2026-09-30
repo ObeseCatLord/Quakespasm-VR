@@ -1,9 +1,19 @@
 # Vulkan/OpenXR foveation on the 2.0 branch
 
-**Updated backend priority on 2026-09-29:** the user wants Valve's FB/META
-route where it can work, with KHR shading rate retained when it cannot. See
-[the current selection plan](openxr-foveation-selection-2.0-plan.md). The
-KHR-first sections below record earlier design and checks, not current priority.
+**Current source status, 2026-09-30:** see the [accepted FB/META defaults
+decision](openxr-foveation-defaults-2.0-plan.md) and [selection plan](openxr-foveation-selection-2.0-plan.md).
+Complete candidates can now select FB/META without the development switch;
+KHR remains a device-creation alternative. Eye mode honors the user toggle;
+fixed is explicit only and never a fallback. Exactly two PRIMARY_STEREO views
+are retained. Quad views are excluded.
+
+The dated sections below preserve earlier design and checks. Their KHR-first
+priority, development-switch requirements, default-MSAA exclusion and
+borrowed-image release-blocker designation are superseded by later source
+integration and the accepted interoperability decision. Runtime metadata,
+layout and synchronization assumptions are documented honestly; this is not
+live compatibility or performance certification. Final Linux/ARM software
+checks remain deferred until all implementation is finished.
 
 The vkQuake renderer remains the graphics owner. Its existing multiview scene,
 compiled pass order, secondary command buffers, and internal color/depth targets
@@ -11,7 +21,7 @@ remain in place. Eye-tracked foveation is an optional reduction in **opaque
 world fragment shading**; it does not cull geometry or change PVS, frustum,
 weapon, HUD, water, cutout, or transparent rendering.
 
-## Backend priority (September 2026)
+## Historical backend priority (September 2026)
 
 Use the existing `VK_KHR_fragment_shading_rate` eye-map path as the production
 baseline while qualifying hardware. Evaluate the runtime-managed `XR_FB_foveation` +

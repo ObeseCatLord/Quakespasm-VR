@@ -2103,7 +2103,7 @@ static void GL_InitDevice (void)
 			{
 				fragment_density_map_candidate = true;
 				vulkan_globals.openxr_fragment_density_map_max_texel_size = fragment_density_map_properties.maxFragmentDensityTexelSize;
-				Con_Printf ("Vulkan FDM candidate: feature, RG8 array format and non-subsampled scene images available; XR eye profile %s. Borrowed-map contract still unverified.\n",
+				Con_Printf ("Vulkan FDM candidate: feature, RG8 array format and non-subsampled scene images available; XR eye profile %s.\n",
 					!openxr_vulkan_binding ? "not discovered" : (VRXR_VulkanFoveationEyeSupported () ? "available" : "unavailable"));
 #if defined(VK_QCOM_fragment_density_map_offset)
 				fragment_density_offset_candidate = fragment_density_offset_extension && VRXR_VulkanFoveationEyeSupported () &&
@@ -2146,13 +2146,12 @@ static void GL_InitDevice (void)
 
 #if defined(VK_EXT_fragment_density_map)
 	const qboolean khr_shading_rate_candidate = fragment_shading_rate_feature_enabled;
-	/* The FB borrowed-image format, layers and producer synchronization are
-	 * not established by the published XR interface. Keep this path explicit
-	 * until the target runtime contract is qualified. Ordinary startup keeps
-	 * KHR eye foveation where available, otherwise full-rate rendering. */
+	/* FB/META selection accepts the paired-map interoperability convention.
+	 * RG8/layers, auxiliary offset state and incoming layout/producer readiness
+	 * remain runtime integration assumptions; capability probes do not certify them. */
 	const qboolean density_settings_ready = !(vid_fsaa.value >= 2 && vid_fsaamode.value >= 1) &&
 		!(r_width.value > 0 && r_height.value > 0);
-	const qboolean allow_runtime_foveation = COM_CheckParm ("-vk-runtime-foveation") && density_settings_ready;
+	const qboolean allow_runtime_foveation = density_settings_ready;
 	qboolean prefer_fb_eye = false;
 #if defined(VK_QCOM_fragment_density_map_offset)
 	prefer_fb_eye = allow_runtime_foveation && openxr_vulkan_binding && fragment_density_offset_candidate;
@@ -2169,7 +2168,7 @@ static void GL_InitDevice (void)
 #endif
 		fragment_density_map_feature_enabled = true;
 		fragment_shading_rate_feature_enabled = false;
-		Con_Printf ("OpenXR FB/META density-map device prepared; runtime image contract still requires validation.\n");
+		Con_Printf ("OpenXR FB/META density-map device prepared.\n");
 	}
 	if (prepare_foveation)
 		Con_Printf ("Vulkan VR foveation device: KHR attachment %s, FB density map %s, selected %s.\n",

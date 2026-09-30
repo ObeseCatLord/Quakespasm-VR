@@ -1,36 +1,31 @@
 # Prefer FB/META foveation with KHR capability fallback
 
-The [two-eye density-offset reopening](openxr-density-offsets-2.0-plan.md)
-adds primary Meta/Qualcomm and pinned Godot evidence on application tile offsets
-and all-attachment/MSAA flags. Its adopted requested-Astra advisory uses the
-existing capability-qualified application-offset route and preserves native
-MSAA; the historical assumption that META always translates the map is
-superseded. Default/borrowed-image qualification remains unresolved.
+**Current status, 2026-09-30:** the [accepted defaults decision and source
+checkpoint](openxr-foveation-defaults-2.0-plan.md) supersedes the earlier
+borrowed-image release blocker and development-switch policy below. Automatic
+FB/META preference is source-integrated for complete candidates. The existing
+[application density-offset route](openxr-density-offsets-2.0-plan.md) and native
+MSAA remain; no new renderer or resource owner was introduced. Runtime metadata,
+layout and producer readiness remain explicit interoperability assumptions,
+rather than universally certified guarantees. Final Linux/ARM software checks
+remain deferred until implementation ends; the user performs live qualification.
 
-Status: implementation plan amended after the user's clarification on
-2026-09-29: favor Valve's FB/META route where it can work, while retaining KHR
-shading rate where FB/META cannot. Quad views are excluded from 2.0 after the
-[Frame/large-map assessment](openxr-quad-views-2.0-assessment.md). The complete
-vkQuake migration goal remains active. No further builds or tests until
-implementation is complete, per the latest user instruction. **FB/META's
-borrowed-image contract remains unqualified**; device selection and render-pass
-construction are implementation progress, not release readiness.
+Quad views are excluded. Exactly two PRIMARY_STEREO views and conservative
+peripheral geometry remain. The complete vkQuake migration goal is still active.
 
-## Intended behavior and evidence
+## Current behavior and evidence
 
-OpenXR VR uses the KHR attachment shading-rate path on a capable device by
-default. The runtime-owned `XR_FB_foveation` /
-`XR_META_foveation_eye_tracked` path is currently available only with the
-explicit `-vk-runtime-foveation` development switch and compatible settings.
-After the borrowed-image contract is qualified for a target runtime, prefer
-FB/META there when its device and render settings can use it; retain KHR where
-FB/META cannot be selected.
-`vr_eye_tracking` is the user toggle for eye-tracked mode;
-`vr_foveation 1` is the only way to request fixed mode. An absent extension,
-unavailable/invalid gaze, unsupported graphics configuration, or runtime
-failure keeps full-rate stereo if the selected device backend is unusable,
-without selecting fixed foveation. Desktop
-graphics and cvars stay with vkQuake. No headset-name allowlist.
+At VkDevice creation, discovered OpenXR eye support and complete GPU/runtime,
+attachment/sample and offset support allow FB/META to take priority without a
+development switch. Explicit fixed mode can use its existing FB path. Ordinary
+desktop creation retains KHR preference where available; otherwise it can
+prepare FDM for later runtime discovery. KHR is an alternative at device
+creation, not a live fallback on an FDM device. Failure after FDM selection
+recovers to full-rate stereo on that device.
+
+`vr_eye_tracking` remains the user toggle. `vr_foveation 1` explicitly requests
+fixed mode; missing or invalid gaze never selects it. Graphics and cvars stay
+with vkQuake. No headset-name allowlist or new metadata query was added.
 
 Valve's [Steam Frame custom-engine guide](https://partner.steamgames.com/doc/steamhardware/steamframe/engines/custom)
 recommends these six extensions: `XR_FB_foveation`,
@@ -49,17 +44,26 @@ alone do not prove a usable device/image/profile contract.
 Existing code already owns FB/META discovery, runtime profiles, borrowed
 image enumeration, multiview density-scene pass, full-rate protected pass and
 depth replay (`vr_openxr.cpp`, `gl_vidsdl.c`, `r_passes.c`, `gl_rmain.c`).
-The current FB priority incompatibilities are concrete: the published FB
-Vulkan interface does not establish the borrowed image's RG8 format, layer
-count, layout or producer readiness; those assumptions have not been qualified
-against intended runtimes. The implementation now adapts the density pass for
-the donor's default `vid_fsaa 4`, but the runtime path remains experimental.
+The published FB Vulkan interface does not explicitly establish the borrowed
+image's RG8 format, layer count, layout or producer readiness. The defaults
+decision accepts the concrete public application convention with these limits;
+capability probes and successful view creation do not attest to runtime
+metadata. The density pass supports native default MSAA without lowering
+quality. Actual performance and target-runtime compatibility remain unmeasured.
 The local NVIDIA
 RTX4090 and RADV iGPU do not advertise Vulkan FDM, so this host cannot prove
 FDM execution; both do advertise the KHR candidate, so an OpenXR runtime with
 a working `XR_EXT_eye_gaze_interaction` action can still support eye foveation.
 Beyond 2e/Monado and PC-streamed Frame may therefore use KHR rather than
 FB/META. A runtime's extension list never substitutes for actual GPU support.
+
+## Historical implementation and review record
+
+The following sections preserve earlier design and source-review history.
+Development-switch requirements and release-blocker dispositions are superseded
+by the defaults decision linked above; retained ownership, capability, sample,
+optional-mode and error-recovery constraints still apply. No historical test
+record below represents a check of the current source checkpoint.
 
 ## Architecture decision
 
