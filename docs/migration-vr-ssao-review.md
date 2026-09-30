@@ -1,8 +1,9 @@
 # VR SSAO design review
 
 The user wants vkQuake graphics effects to work in VR, with performance as a
-priority and desktop SSAO unchanged. Branch `2.0` currently suppresses SSAO in
-OpenXR stereo. Astra xhigh reviewed the existing vkQuake entity-occluder,
+priority and desktop SSAO unchanged. At the initial review, branch `2.0`
+suppressed SSAO in OpenXR stereo; the implementation checkpoints below supersede
+that historical limitation. Astra xhigh reviewed the existing vkQuake entity-occluder,
 world-receiver GTAO pipeline against two-view Vulkan multiview and the
 [XeGTAO authors' performance guidance](https://github.com/GameTechDev/XeGTAO/blob/master/README.md).
 
