@@ -847,7 +847,10 @@ void R_PrepareStereoFrame (void)
 	 * it after tracked center placement, before culling or uniform publication.
 	 * The later native contents/blend query uses this same center. */
 	memcpy (scene_clip, vulkan_globals.stereo_clip_from_center, sizeof (scene_clip));
-	if (!con_forcedup && cl.worldmodel && r_waterwarp.value && r_waterwarp.value != 1 && isfinite (cl.time))
+	/* Interactive wheel models share scene depth, culling and ordinary hit
+	 * coordinates. Keep that entire frame undistorted, including playspace. */
+	if (!con_forcedup && cl.worldmodel && r_waterwarp.value && r_waterwarp.value != 1 &&
+		!VR_WeaponMenu_IsOpenVR () && isfinite (cl.time))
 	{
 		const int contents = Mod_PointInLeaf (r_refdef.vieworg, cl.worldmodel)->contents;
 		if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA)

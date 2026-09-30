@@ -24,3 +24,13 @@ Vulkan multiview maps each view to an attachment layer and exposes its index to 
 [Khronos's render-pass chapter](https://docs.vulkan.org/spec/latest/chapters/renderpass.html)
 and [ViewIndex reference](https://docs.vulkan.org/refpages/latest/refpages/source/ViewIndex.html).
 This audit records known gates; it does not certify every visual effect yet.
+
+The alternate underwater mode deliberately pauses deformation while the VR
+weapon wheel is open. Its 3D models share scene depth and culling, so the
+whole-frame identity projection preserves their existing panel/controller
+selection alignment in both foreground and playspace modes. It resumes the
+current oscillation phase when closed; desktop and modes 0/1 are unchanged.
+The local Astra advisory review found the coordinate/ordering contract sound
+in the reviewed owners after this bounded interaction disposition. No new
+targets, passes, quad views or foveation policy are introduced; software and
+live appearance qualification remain deferred.
