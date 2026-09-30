@@ -46,3 +46,23 @@ missing images with default/block flags, native WAD/external precedence and
 SSQC rejection. The existing `getstatf` bit-extraction path and malformed
 numeric argument conversion are unchanged by this slice and are not certified
 by it; whole-registry/interface acceptance remains required.
+
+## Implementation and source disposition
+
+`b2024418` implements the planned repair through one web GPT coding agent;
+main inspected the actual diff against primary before committing it. A local
+requested-Astra/Max read-only review found no actionable introduced defect.
+Main spotchecked the three arrays' shared `MAX_CL_STATS`, reference guards,
+actual enum bit, optional argument, native synchronous fallback and unchanged
+mutex release/VM resolver.
+
+| Review contract | Disposition |
+| --- | --- |
+| Equal-to-count must not reach numeric/string storage | Accepted: all three guards now use the reference exclusive bound; successful result paths remain native. |
+| Omitted flags and blocking failure must follow primary | Accepted: zero default and copied failure predicate; cache owner unchanged. |
+| CSQC-only numbers and native ownership must remain | Confirmed: 317/330/331/332 and SSQC refusal unchanged; no second cache or VM. |
+
+`git diff --check` passed. Effective reviewer model metadata was not exposed,
+so this is a bounded advisory source review, not a certified senior-skill pass.
+No builds/tests/compiler/runtime probes/fixtures were run. The final acceptance
+cases and broader interface requirements above remain open.
