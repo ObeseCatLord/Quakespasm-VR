@@ -131,3 +131,18 @@ count, texture name and all attributes; invalid bases/indices; differing edge
 counts; absent texture; zero return after nonzero result; both VMs; unchanged
 native lightmap coordinates and nearest-surface cache behavior. This source slice
 does not itself close the complete MOD-001/005 runtime acceptance.
+
+Remaining-query implementation source disposition: a bounded web coding worker
+implemented22 additions/6 deletions in the three planned wrappers. Main reviewed
+the actual diff against primary and the accepted subtraction-form guards. Local
+requested-Astra/Max source advisory found no actionable P1/P2: short-circuit range
+ordering bounds addition and precedes the offset edge-count read; refusal returns
+retain zero/empty/zero XYZ; missing name/dimension fallbacks match primary;
+successful normalized coordinates and native lightmap calculations remain;
+434/437/486 retain both VM registrations and native ownership.
+
+Effective reviewer settings were not exposed; this is bounded source acceptance,
+not settings certification or executed geometry/runtime proof. No builds, tests,
+compiler/runtime probes, fixtures or benchmarks ran. Malformed texinfo/edge/vertex
+storage remains outside this slice; the missing-texture coordinate fallback does
+not add missing-texinfo support. Final consolidated Linux/ARM acceptance remains.
