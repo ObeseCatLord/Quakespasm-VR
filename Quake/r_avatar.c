@@ -1066,41 +1066,50 @@ static qboolean R_AvatarRebuildDesktopAnimalArms(const r_avatar_rig_t *rig,
 	return true;
 }
 
-/* Vore's paired outer legs can inherit an inward knee despite unchanged foot
- * contacts. Reuse the existing bounded limb solve only for direct chains. */
+/* The inherited final Vore repair runs after supplied feet, or without any
+ * trackers. Gather offending sides before the shared mirrored batch mutates. */
 static qboolean R_AvatarRepairInwardOuterLegs(const r_avatar_rig_t *rig,float *palette)
 {
-	float lateral[3],roots[2][3],pole[3],toward[3],bend[3],endpoint[12];
-	int side,r;
-	for(side=0;side<2;++side) {
-		int upper=rig->joint[side?MD5_VRIK_UPPERLEG_R:MD5_VRIK_UPPERLEG_L];
-		for(r=0;r<3;++r)roots[side][r]=palette[upper*12+r*4+3];
+	vec3_t lateral, roots[2], toward, bend, goals[2] = {{0}};
+	const float confidence[2] = {1.0f, 1.0f};
+	int joints[2][3];
+	unsigned char usable = 0;
+	const int count = R_AvatarJointCount (rig->live);
+	for (int side = 0; side < 2; ++side)
+	{
+		const int semantic = side ? MD5_VRIK_UPPERLEG_R : MD5_VRIK_UPPERLEG_L;
+		for (int part = 0; part < 3; ++part)
+			joints[side][part] = rig->joint[semantic + part];
+		if (joints[side][0] < 0 || joints[side][0] >= count)
+			return true;
+		for (int axis = 0; axis < 3; ++axis)
+			roots[side][axis] = palette[joints[side][0] * 12 + axis * 4 + 3];
 	}
-	for(r=0;r<3;++r)lateral[r]=roots[1][r]-roots[0][r];
-	if(!R_AvatarNormalize3(lateral))return true;
-	for(side=0;side<2;++side) {
-		int semantic=side?MD5_VRIK_UPPERLEG_R:MD5_VRIK_UPPERLEG_L;
-		int upper=rig->joint[semantic],lower=rig->joint[semantic+1],foot=rig->joint[semantic+2];
-		float outward,residual,scale;
-		if(rig->live->joints[lower].parent!=upper||
-			rig->live->joints[foot].parent!=lower)continue;
-		for(r=0;r<3;++r) {
-			toward[r]=palette[foot*12+r*4+3]-roots[side][r];
-			bend[r]=palette[lower*12+r*4+3]-roots[side][r];
+	VectorSubtract (roots[1], roots[0], lateral);
+	if (!R_AvatarNormalize3 (lateral))
+		return true;
+	for (int side = 0; side < 2; ++side)
+	{
+		const int lower = joints[side][1], foot = joints[side][2];
+		float outward;
+		if (lower < 0 || lower >= count || foot < 0 || foot >= count)
+			continue;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			goals[side][axis] = palette[foot * 12 + axis * 4 + 3];
+			toward[axis] = goals[side][axis] - roots[side][axis];
+			bend[axis] = palette[lower * 12 + axis * 4 + 3] - roots[side][axis];
 		}
-		if(!R_AvatarNormalize3(toward))continue;
-		scale=DotProduct(bend,toward);
-		for(r=0;r<3;++r)bend[r]-=scale*toward[r];
-		outward=DotProduct(bend,lateral)*(side?1.0f:-1.0f);
-		if(!isfinite(outward))return false;
-		if(outward>=-0.0001f)continue;
-		scale=R_AvatarJointDistance(palette+upper*12,palette+lower*12);
-		for(r=0;r<3;++r)pole[r]=roots[side][r]+(side?1.0f:-1.0f)*lateral[r]*scale;
-		memcpy(endpoint,palette+foot*12,sizeof(endpoint));
-		residual=R_AvatarSolveHumanoidLimb(rig,palette,semantic,endpoint,pole);
-		if(!isfinite(residual)||residual<0||residual>0.01f)return false;
+		if (!R_AvatarNormalize3 (toward))
+			continue;
+		VectorMA (bend, -DotProduct (bend, toward), toward, bend);
+		outward = DotProduct (bend, lateral) * (side ? 1.0f : -1.0f);
+		if (isfinite (outward) && outward < -0.0001f)
+			usable |= 1u << side;
 	}
-	return true;
+	return !usable || R_VRIKRefineModelFeet (rig->live, rig->joint[MD5_VRIK_HIP],
+		(const int (*)[3])joints, usable, (const vec3_t *)goals, confidence, true,
+		(float (*)[12])palette, rig->live->joint_count) == usable;
 }
 
 static void R_AvatarOrigin(const float matrix[12],float out[3])
@@ -1810,7 +1819,8 @@ static qboolean R_AvatarRefineTrackedAnimalPalette(const r_avatar_rig_t *source,
  * Each optional stage restores only its own failure, retaining prior successes. */
 static qboolean R_AvatarRefineTrackedEndpoints (const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target, const float *sourcepalette,
-	const r_avatar_presentation_context_t *context, float *palette)
+	const r_avatar_presentation_context_t *context, unsigned char lower_mask,
+	const float foot_confidence[2], float *palette)
 {
 	const int semantics[3] = {MD5_VRIK_HEAD, MD5_VRIK_HAND_L, MD5_VRIK_HAND_R};
 	float saved[R_AVATAR_MAX_JOINTS * 12];
@@ -1863,15 +1873,50 @@ static qboolean R_AvatarRefineTrackedEndpoints (const r_avatar_rig_t *source,
 			complete = false;
 		}
 	}
+	if (lower_mask & (R_AVATAR_TRACKED_FOOT_L | R_AVATAR_TRACKED_FOOT_R))
+	{
+		vec3_t goals[2] = {{0}};
+		float confidence[2] = {1.0f, 1.0f};
+		int joints[2][3];
+		unsigned char usable = 0;
+		for (int side = 0; side < 2; ++side)
+		{
+			const int semantic = side ? MD5_VRIK_UPPERLEG_R : MD5_VRIK_UPPERLEG_L;
+			const int sourcefoot = source->joint[semantic + 2];
+			for (int part = 0; part < 3; ++part)
+				joints[side][part] = target->joint[semantic + part];
+			if (!(lower_mask & (1u << side)))
+				continue;
+			if (sourcefoot < 0 || sourcefoot >= R_AvatarJointCount (source->live))
+			{
+				complete = false;
+				continue;
+			}
+			R_AvatarOrigin (sourcepalette + sourcefoot * 12, goals[side]);
+			R_AvatarPresentationInversePoint (context, goals[side], goals[side]);
+			if (foot_confidence)
+				confidence[side] = foot_confidence[side];
+			usable |= 1u << side;
+		}
+		if (R_VRIKRefineModelFeet (target->live, target->joint[MD5_VRIK_HIP],
+			(const int (*)[3])joints, usable, (const vec3_t *)goals, confidence,
+			target->profile->mirror_outer_leg_poles, (float (*)[12])palette,
+			target->live->joint_count) != usable)
+			complete = false;
+	}
+	if (target->profile->mirror_outer_leg_poles &&
+		!R_AvatarRepairInwardOuterLegs (target, palette))
+		complete = false;
 	return complete;
 }
 
-qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
+qboolean R_AvatarRefineBuiltinPaletteForFrame(const r_avatar_rig_t *source,
 	const r_avatar_rig_t *target,qboolean tracked,
 	const float (*source_palette)[12],float floor_correction_z,
 	unsigned char tracked_lower_mask,
 	float (*target_palette)[12],size_t target_capacity,
-	const r_avatar_presentation_context_t *prepared_context)
+	const r_avatar_presentation_context_t *prepared_context,
+	const float tracked_foot_confidence[2])
 {
 	r_avatar_presentation_context_t context;
 	float saved[R_AVATAR_MAX_JOINTS*12];
@@ -1900,7 +1945,8 @@ qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
 			R_AvatarPresentationAddCanonicalZ (&context, floor_correction_z);
 		}
 		return R_AvatarRefineTrackedEndpoints (source, target,
-			(const float *)source_palette, &context, (float *)target_palette);
+			(const float *)source_palette, &context, tracked_lower_mask,
+			tracked_foot_confidence, (float *)target_palette);
 	}
 	if(!tracked && (profile->id!=PLAYER_AVATAR_DOG &&
 		profile->id!=PLAYER_AVATAR_FIEND && !profile->mirror_outer_leg_poles &&
@@ -1912,15 +1958,15 @@ qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
 		(!R_AvatarBuildPresentationContext(source,target,&context)||
 		 !R_AvatarStabilizeDesktopUpperBody(target,(float *)target_palette)||
 		 !R_AvatarApplyDesktopUprightPosture(target,&context,(float *)target_palette)||
-		 !R_AvatarRebuildDesktopAnimalArms(target,saved,(float *)target_palette)))||
-		(!tracked && profile->mirror_outer_leg_poles &&
-		 !R_AvatarRepairInwardOuterLegs(target,(float *)target_palette)))
+		 !R_AvatarRebuildDesktopAnimalArms(target,saved,(float *)target_palette))))
 		goto rollback;
 	for(joint=0;joint<R_AvatarJointCount(target->live);++joint)
 		if(!R_AvatarOrthonormal(target_palette[joint]))goto rollback;
 	if (!tracked)
 	{
 		/* Optional repairs are independent of the posture/leg rollback above. */
+		if (profile->mirror_outer_leg_poles)
+			R_AvatarRepairInwardOuterLegs (target, (float *)target_palette);
 		if (profile->id == PLAYER_AVATAR_SHAMBLER)
 			R_AvatarRepairShamblerDesktopArms (target, (float *)target_palette);
 		if (profile->desktop_support_hand && source_palette &&
@@ -1940,6 +1986,18 @@ qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
 rollback:
 	memcpy(target_palette,saved,bytes);
 	return false;
+}
+
+qboolean R_AvatarRefineBuiltinPaletteWithContext(const r_avatar_rig_t *source,
+	const r_avatar_rig_t *target,qboolean tracked,
+	const float (*source_palette)[12],float floor_correction_z,
+	unsigned char tracked_lower_mask,
+	float (*target_palette)[12],size_t target_capacity,
+	const r_avatar_presentation_context_t *prepared_context)
+{
+	return R_AvatarRefineBuiltinPaletteForFrame (source, target, tracked,
+		source_palette, floor_correction_z, tracked_lower_mask, target_palette,
+		target_capacity, prepared_context, NULL);
 }
 
 qboolean R_AvatarRefineBuiltinPalette(const r_avatar_rig_t *source,

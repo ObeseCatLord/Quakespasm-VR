@@ -83,6 +83,16 @@ qboolean R_VRIKProjectCalibrationReference (qmodel_t *model,
 	r_vrik_calibration_projection_t *out);
 qboolean R_VRIKCalibrationReferenceAvailable (qmodel_t *model);
 
+/* Stateless builtin-avatar foot overlay using already-resolved semantic
+ * Upper/Lower/Foot indices [left,right]. Goals are model-space, not wire-local
+ * angles. Side bits are 1<<0 left and 1<<1 right; committed bits mean a valid
+ * bounded solve (or finite zero-confidence no-op), not exact unbounded reach.
+ * Each side rolls back independently and retains its incoming foot basis. */
+unsigned char R_VRIKRefineModelFeet (const md5_skeleton_view_t *skeleton,
+	int hip, const int joints[2][3], unsigned char usable_mask,
+	const vec3_t goals[2], const float confidence[2], qboolean mirrored_poles,
+	float (*palette)[12], size_t capacity);
+
 /* Interpolate the two absolute animation poses using lerpdata, then apply the
  * donor Ranger head/arm and held-prop solve from pose.  Optional v3 hip/foot
  * roles are mapped through the same animated body basis and solved in this
