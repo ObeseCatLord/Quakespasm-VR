@@ -43,3 +43,14 @@ bindings remain native; user live headset/multiplayer tests remain separate.
 
 This plan does not certify broader VR options parity. Preset/source-compensation
 contracts are assessed separately against the actual inherited weapon owners.
+
+## Source integration checkpoint
+
+Four actions are source-integrated through the native queue, with a Gameplay
+Setup entry and one matching four-row draw/pointer list. Main complete-diff
+review verified fixed newline commands, reset/key/draw/back ordering and the
+expanded gameplay enum/cvar bounds. Main requested keypad Enter consistency
+with the existing native pages; the worker added it before integration. The
+bounded patch is95 added/two removed lines (93 net), within120. No fake remote
+state or server/QuakeC edits. Scoped whitespace checks pass; no builds/tests or
+executable qualification. Final Linux/ARM/native command behavior remains open.
