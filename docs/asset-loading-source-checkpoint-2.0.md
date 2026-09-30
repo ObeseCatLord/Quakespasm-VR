@@ -58,3 +58,27 @@ Quake/gl_rmisc.c. Estimate20..40 changed lines, largely native consumer reuse;
 reopen above60 or another texture/cache owner. Final checks add resized indexed
 MDX sources, mixed dimensions and enhanced-model fallback for later skin IDs.
 No builds/tests/compiler/probes/fixtures or performance measurements run.
+
+
+### Upload-cache identity amendment before integration
+
+Final local Astra source assessment found a P2: native TexMgr_LoadImage returns
+an existing named texture on CRC equality before updating dimensions/source.
+Two indexed skins with identical bytes but64x64 versus128x32 dimensions, or
+identical bytes from different sources, can retain the previous skin's reload
+provenance. Main verified this exact early return at gl_texmgr.c:1502 and the
+later metadata writes. This blocks the planned multi-skin/reload result.
+
+Adapt the recommended caller-specific retirement to the smaller native owner:
+extend the existing CRC fast-path admission with source dimensions, source
+format, filename and offset equality. This preserves existing object/resource
+lifetime and the ordinary cache hit, without duplicating cache identity policy
+or manually retiring a texture at the recolor caller. Replacing the cache,
+adding identity state, or invalidating every recolor is rejected. Source metadata
+already exists and later native writes remain the only metadata owner.
+
+The write set adds only that admission expression in Quake/gl_texmgr.c. Total
+expected production changes remain under60 lines; reopen a broader texture-manager
+rewrite. Final checks include same bytes/different dimensions and same bytes/
+different skin sources. Main integration/source recheck precedes acceptance;
+no builds/tests/probes/fixtures or performance claims accompany this amendment.
