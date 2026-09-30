@@ -80,3 +80,43 @@ preserved MD5/source/melee/custom/wheel fields, cancellation, invalid selector,
 capacity refusal without partial mutation and shared solo/MP consumers. Native
 graphics/model preference remains unchanged. User live alignment/performance
 and Windows builds are outside this pass. No runtime parity claim from tables.
+
+## Adopted requested-Astra source disposition before implementation
+
+Main spot-checked actual startup queues and application/seed/preflight owners.
+The bounded advisory changed two load-bearing contracts; no certified effective
+model/effort or senior-skill pass is claimed.
+
+| Finding/recommendation | Main disposition |
+| --- | --- |
+| Unconditional startup authored-file precedence is false | Adopt precise primary sequence: each ReloadGame installs selected contextual defaults then authored file. A later changed selector, even from config, applies classic presets without reloading that file; unchanged string does not invoke native callback. Native SV_Init reloads before queued quake.rc; host_initialized cannot distinguish those config edits. No new config completion owner. This supersedes the unconditional startup language above. |
+| Generic data cannot indiscriminately replace specialized game calibration | Adopt bounded context composition below; retain existing native contextual baseline and aliases. No new game-family registry, asset detector or wheel dependency. |
+| Explicit seeded muzzle loses provenance | Adopt private preset mode in existing schema-application implementation. Public ApplySchema preserves existing behavior. After whole-batch preflight, preset mode resets targeted derived-muzzle X/Y/authored status and lets existing held-derived branch set Z/seed provenance. QBJ3 explicit muzzles, including zero, bypass reseeding. |
+| Sequential table mutation is not atomic | Assemble all contextual overriding rows in one bounded batch and preflight before any calibration or adjustment change. On success cancel adjustment then apply through the same owner. On capacity refusal preserve calibration/session and restore prior accepted selector. No per-table apply loop or rollback store. |
+| Callback registration/invalid values/recursion | Register selector once at end of Init after slot registration/initialized flag, then attach callback. Validate finite integral0..4 before indexing; invalid becomes Vanilla. Temporarily detach callback for normalization/refusal restoration; one accepted-selector integer is enough. No second calibration store. |
+| Preserve independent fields/roster | Live writes target classic held/scale/muzzle only. Keep enhanced, source, melee, identity, custom untargeted values and wheel state. No Reset/ReloadGame in live callback, no MP state. |
+
+Concrete required contextual batch:
+
+- Generic Vanilla: existing16 stock rows; Enhanced: stock plus six changed OSJC
+  rows. `enhanced` gamedir forces OSJC before other generic selections.
+- Generic Authentic/Plague: stock plus literal changed rows producing complete
+  corresponding16-row results, including mission-pack differences. Generic
+  BlockQuake: eight rows only; live untargeted mission-pack/custom slots remain.
+- AD: existing15 rows, Plague overrides seven ordinary guns plus plasma; other
+  selectors retain AD defaults. Additional native AD-root games keep contextual
+  Vanilla baseline, while other named generic choices target their root paths.
+  Keep AD171 aliases outside the live batch. Do not reinterpret them as Plague.
+- Alkaline: three fixed rows plus nine ordinary rows; Plague replaces those nine
+  with inherited filenames, preserving fixed plasma. Retain LimJam's existing
+  axe fallback without creating a new broader Alkaline classification.
+- Enyo: existing ten fixed rows, independent of selector.
+- QBJ3: copy26 fixed base held/scale and explicit muzzles from primary; no MP
+  overlays. Dwell/dwellv2p2: copy13 unique fixed rows; duplicate v_axeb source
+  initialization does not require another native slot. These missing tables
+  also serve reload defaults before authored files, not just a no-op callback.
+
+Write ownership stays calibration.c/.h and one Weapon Setup menu row; at most
+350 net production lines including data/API glue. Plans/index/source checkpoint
+must retain final software and broader inventory limits. Run no tests/builds
+until all implementation is finished. Reopen before exceeding this boundary.
