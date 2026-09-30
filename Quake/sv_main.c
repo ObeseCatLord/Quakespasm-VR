@@ -2177,7 +2177,8 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			msg->maxsize = origmaxsize;
 			return false;
 		}
-		worldreset = (client->pendingentities_bits[0] & UF_REMOVE) != 0;
+		// Replayed reset debt waits for the next snapshot, as in the ordinary cursor.
+		worldreset = !continuation && (client->pendingentities_bits[0] & UF_REMOVE) != 0;
 		if (worldreset)
 			MSG_WriteShort (msg, 0x8000); // world removal precedes owner reset
 		if (ownernum >= 0x4000)
