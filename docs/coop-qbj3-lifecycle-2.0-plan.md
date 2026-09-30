@@ -200,3 +200,38 @@ This stays in the existing private repair helper. No deferred selector state,
 new owner or serialization callback is added. Main also reopened the prediction
 epoch publication timing for source disposition before commit; its earlier
 completion claim remains unverified until that review is reconciled.
+
+## Joint epoch and retry disposition before correction
+
+The consolidated requested-Astra review verified two additional source-contract
+gaps in the first patch: ordinary mod-owned dead-to-alive completion can take
+the bypass without an epoch, and limbo recovery can publish before generic
+completion captures its separate epoch. Main independently inspected End,
+PF_setorigin and contact invalidation: setorigin does not itself publish the
+private movement epoch. The native world wrapper covers identified teleport
+touches, not direct scheduled Think/PostThink completion.
+
+Adopt one captured existing client epoch in the existing borrowed policy at
+Begin, before QC. Recovery and successful generic/mod-owned completion share
+that value. For policy relocation, preserve contact invalidation and let End
+publish once; standalone/admin relocation retains its direct publication.
+Mod-owned completion before the bypass also invalidates old contacts and
+publishes only if that captured epoch is still unchanged. Preserve authored
+deadlines via SV_PrivatePlayerTeleported(ent,true), with no queue retirement,
+new protocol state, registry or generation.
+
+Also preserve the actual donor timer when a forced retry remains in limbo; do
+not introduce another six-second delay. Failed/invalid destination admission
+and clock reversal still reset through existing timer logic. The source review
+found no additional sticky-chain/unwind/caller-survival blocker.
+
+Adapt its deletion recommendation: remove the added saved VM/progs/edict/global
+address captures and changed-storage early return. No returning VM destruction
+route was established; native teardown is nonlocal. A simple native server-VM
+assertion after the callback documents that established contract before normal
+context/input/retention unwind. This is simplification, not certified general
+VM recovery. No other native command/spawn/physics ownership is reopened.
+
+The first model-helper correction is main-reviewed at418 net lines. These
+remaining corrections stay in sv_phys.c and within the existing450-net target;
+main reviews the exact patch before integration. Software checks remain deferred.
