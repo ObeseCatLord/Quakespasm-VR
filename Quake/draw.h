@@ -37,6 +37,7 @@ typedef enum
 	PICFLAG_WAD          = (1u << 0),   // name matches that of a wad lump
 	PICFLAG_WRAP         = (1u << 2),   // make sure npot stuff doesn't break wrapping.
 	PICFLAG_MIPMAP       = (1u << 3),   // disable use of scrap...
+	PICFLAG_BLOCK        = (1u << 9),   // report failure when a picture cannot be loaded.
 	PICFLAG_NOLOAD       = (1u << 31)   // To request the cached status only (internal use only, cannot be marshalled from a QuakeC float anyway)
 } picflags_t;
 // clang-format on
