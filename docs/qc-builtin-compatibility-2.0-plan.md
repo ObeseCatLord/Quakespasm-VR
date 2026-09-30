@@ -220,7 +220,9 @@ The following slices now have bounded local Astra source acceptance:
 The [line-drawing adapter](qc-drawline-2.0-plan.md) also has local Astra source
 acceptance. [Core builtin-name discovery](qc-core-discovery-2.0-plan.md) also has
 bounded local Astra source acceptance, using copied metadata and native dispatch.
-SSQC setcolors remains open. The paired
+[SSQC player colors](qc-player-colors-2.0-plan.md) and
+[named calls](qc-named-calls-2.0-plan.md) also have local Astra source acceptance.
+The paired
 [client/server event adapter](qc-events-2.0-plan.md) has local Astra design and
 source acceptance; the inherited cursor/font fallbacks also have bounded local
 Astra source acceptance. Remaining VM
@@ -240,8 +242,12 @@ legacy broadcast alone would leave modern userinfo clients inconsistent. Both
 QSS-M and destination `SV_DecodeUserInfo` clamp palette nibbles 14/15 to 13 and
 decode names when any info key changes; primary's direct call preserves the raw
 byte and does not touch names. The color slice must explicitly resolve these
-boundary differences before claiming primary parity. Reuse the existing userinfo
-and broadcast owners; do not create a separate replicated color service.
+boundary differences before claiming primary parity. The adopted adapter now
+uses the existing userinfo/broadcast owners with canonical native 0-13 colors,
+missing-name seeding, insertion preflight and unconditional accepted-call team
+restoration. It also copies QSS-M's local publication-prefix buffer and advertises
+DP_SV_SETCOLOR. These deliberate boundary choices are documented in the player
+color plan; raw primary palette 14/15 parity is not claimed.
 
 All source checkpoints remain distinct from runtime parity. No builds, tests or
 compiler probes were run during these implementation slices; deferred Linux/ARM
@@ -272,3 +278,9 @@ wrapper, zero font return, unique registry slots and null SSQC handlers. Main
 source inspection also confirmed the native core tables end below slots 343/357.
 No cursor/font resources, capability advertisements or renderer changes were
 added. This accepts the source adapter only; deferred invocation checks remain.
+
+Fresh resource comparison found another concrete remaining boundary: primary
+`PF_GetQCFile`/`PF_GetStrBuf` reject another VM's handle, whereas several native
+legacy file/buffer calls only check that an owner exists. New load/write/search
+adapters already check the current VM. Complete this at the existing native
+handle checks and lifetime owners; do not replace the resource tables.

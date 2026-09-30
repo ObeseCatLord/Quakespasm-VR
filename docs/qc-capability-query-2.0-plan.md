@@ -30,7 +30,11 @@ Presence of a handler does not justify every missing advertisement:
   `PR_ExecuteProgram`, whose entry assumes a QC body and cannot safely enter
   a negative builtin statement. Do not copy this unsafe dispatch or advertise
   `FTE_CALLFUNCTION` merely from the function's presence; verify the requested
-  contract in a separate bounded slice.
+  contract in a separate bounded slice. That subsequent
+  [named-call slice](qc-named-calls-2.0-plan.md) is now source-reviewed: it shares
+  the existing native binder and supports builtin targets without executor
+  replacement. The historical warning above explains why a direct primary
+  executor call was not copied.
 - CSQC rain/snow handlers, setcolors, fog and cvar-description support are not
   established by this slice. The initial registry audit is a checklist, not
   evidence that these capabilities are complete.

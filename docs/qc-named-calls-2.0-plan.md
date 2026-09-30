@@ -69,3 +69,13 @@ core/extension declarations, including lazy first calls and rejected VM
 permissions; verify scalar/vector/string returns, zero/seven forwarded
 arguments, nesting, absent/zero targets and query disable/override behavior.
 This is source adaptation, not runtime parity evidence.
+
+## Source acceptance
+
+Local Astra accepted the actual adapter with no actionable findings, including
+the successful `PF_Fixme` return, shared target-aware native binding, cached
+handlers, guarded unsigned number conversion, current-VM rejection, stub/query
+policy, zero-through-seven forwarding, normal-return argument-count restoration
+and native return slots. Main reviewed the extracted body against the prior
+implementation and confirmed no additional dispatch state or executor change.
+No builds/tests/compiler/runtime probes were run. The deferred matrix remains.

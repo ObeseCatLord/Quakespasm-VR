@@ -2742,6 +2742,7 @@ static void SV_DecodeUserInfo (client_t *client)
 void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 {
 	char oldvalue[1024];
+	char prestr[64];
 
 	char	   *info;
 	size_t		infosize;
@@ -2766,7 +2767,8 @@ void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 		infoplayer = &svs.clients[edict];
 		info = infoplayer->userinfo;
 		infosize = sizeof (infoplayer->userinfo);
-		pre = va ("//ui %i", edict);
+		q_snprintf (prestr, sizeof (prestr), "//ui %i", edict);
+		pre = prestr;
 	}
 	else
 		return;

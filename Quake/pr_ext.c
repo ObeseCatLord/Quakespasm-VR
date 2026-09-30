@@ -2496,6 +2496,71 @@ static void PF_cvar_setf (void)
 	Cvar_Set (var, val);
 }
 
+static void PF_setcolors (void)
+{
+	int reference, number, colors, top, bottom, first;
+	double packed;
+	client_t *client;
+	char topvalue[3], bottomvalue[3];
+	char info[sizeof (svs.clients[0].userinfo)], stored[sizeof (info)];
+	const char *keys[] = {"name", "topcolor", "bottomcolor"};
+	const char *values[3];
+
+	if (qcvm->argc < 2 || qcvm->edict_size <= 0)
+		return;
+	reference = G_INT (OFS_PARM0);
+	if (reference <= 0 || reference % qcvm->edict_size)
+		return;
+	number = reference / qcvm->edict_size;
+	if (number > svs.maxclients || number >= qcvm->num_edicts || !svs.clients[number - 1].active)
+	{
+		Con_DPrintf ("tried to setcolor a non-client\n");
+		return;
+	}
+	packed = G_FLOAT (OFS_PARM1);
+	if (!isfinite (packed))
+		return;
+	packed = fmod (trunc (packed), 256.0);
+	if (packed < 0)
+		packed += 256.0;
+	colors = (int)packed;
+	top = (colors >> 4) & 15;
+	bottom = colors & 15;
+	if (top > 13)
+		top = 13;
+	if (bottom > 13)
+		bottom = 13;
+	q_snprintf (topvalue, sizeof (topvalue), "%i", top);
+	q_snprintf (bottomvalue, sizeof (bottomvalue), "%i", bottom);
+	client = &svs.clients[number - 1];
+	values[0] = client->name;
+	values[1] = topvalue;
+	values[2] = bottomvalue;
+	Info_GetKey (client->userinfo, keys[0], stored, sizeof (stored));
+	first = *stored ? 1 : 0;
+	if (!first && !*values[0])
+		return;
+
+	// Mirror native insertion/equality behavior before publishing any field.
+	q_strlcpy (info, client->userinfo, sizeof (info));
+	for (unsigned int i = first; i < countof (keys); ++i)
+	{
+		Info_GetKey (info, keys[i], stored, sizeof (stored));
+		if (strcmp (stored, values[i]))
+		{
+			Info_SetKey (info, sizeof (info), keys[i], values[i]);
+			Info_GetKey (info, keys[i], stored, sizeof (stored));
+			if (strcmp (stored, values[i]))
+				return;
+		}
+	}
+	// QSS-M adapter: the existing owner sends modern and legacy updates.
+	for (unsigned int i = first; i < countof (keys); ++i)
+		SV_UpdateInfo (number, keys[i], values[i]);
+	client->colors = (top << 4) | bottom;
+	PROG_TO_EDICT (reference)->v.team = bottom + 1;
+}
+
 static void PF_print (void)
 {
 	int i;
@@ -4278,18 +4343,25 @@ static void PF_parseentitydata (void)
 	}
 }
 
+static void PR_InvokeBuiltin (dfunction_t *fnc);
+
 static void PF_callfunction (void)
 {
 	dfunction_t *fnc;
 	const char	*fname;
-	if (!qcvm->argc)
+	int saved_argc = qcvm->argc;
+	if (saved_argc < 1 || saved_argc > MAX_PARMS)
 		return;
-	qcvm->argc--;
-	fname = G_STRING (OFS_PARM0 + qcvm->argc * 3);
+	fname = G_STRING (OFS_PARM0 + (saved_argc - 1) * 3);
 	fnc = ED_FindFunction (fname);
-	if (fnc && fnc->first_statement > 0)
+	if (fnc && fnc->first_statement)
 	{
-		PR_ExecuteProgram (fnc - qcvm->functions);
+		qcvm->argc = saved_argc - 1;
+		if (fnc->first_statement < 0)
+			PR_InvokeBuiltin (fnc);
+		else
+			PR_ExecuteProgram (fnc - qcvm->functions);
+		qcvm->argc = saved_argc;
 	}
 }
 static void PF_isfunction (void)
@@ -6196,6 +6268,7 @@ static struct
 	{"readuint64",					PF_NoSSQC,						PF_cl_readuint64,				0,		D("__uint64()", "Reads a 64bit unsigned int. Paired with WriteUInt64.")},
 	{"readentitynum",				PF_NoSSQC,						PF_cl_readentitynum,			368,	"float()"},// (EXT_CSQC)
 	{"copyentity",					PF_copyentity,					PF_copyentity,					400,	D("entity(entity from, optional entity to)", "Copies all fields from one entity to another.")},// (DP_QC_COPYENTITY)
+	{"setcolors", PF_setcolors, PF_NoCSQC, 401, "void(entity ent, float colors)", "Sets active player colors through native userinfo, using the native 0-13 palette range."},
 	{"findchain",					PF_findchain,					PF_findchain,					402,	"entity(.string field, string match, optional .entity chainfield)"},// (DP_QC_FINDCHAIN)
 	{"findchainfloat",				PF_findchainfloat,				PF_findchainfloat,				403,	"entity(.float fld, float match, optional .entity chainfield)"},// (DP_QC_FINDCHAINFLOAT)
 	{"te_blood",					PF_sv_te_blooddp,				NULL,							405,	"void(vector org, vector dir, float count)"},// #405 te_blood
@@ -6235,7 +6308,7 @@ static struct
 	{"findflags",					PF_findflags,					PF_findflags,					449,	"entity(entity start, .float fld, float match)"},//DP_QC_FINDFLAGS
 	{"findchainflags",				PF_findchainflags,				PF_findchainflags,				450,	"entity(.float fld, float match, optional .entity chainfield)"},//DP_QC_FINDCHAINFLAGS
 	{"dropclient",					PF_dropclient,					PF_NoCSQC,						453,	"void(entity player)"},//DP_SV_BOTCLIENT
-	{"spawnclient",					PF_spawnclient,					PF_NoCSQC,						454,	"entity()", "Spawns a dummy player entity.\nNote that such dummy players will be carried from one map to the next.\nWarning: DP_SV_CLIENTCOLORS DP_SV_CLIENTNAME are not implemented in quakespasm, so use KRIMZON_SV_PARSECLIENTCOMMAND's clientcommand builtin to change the bot's name/colours/skin/team/etc, in the same way that clients would ask."},//DP_SV_BOTCLIENT
+	{"spawnclient",					PF_spawnclient,					PF_NoCSQC,						454,	"entity()", "Spawns a dummy player entity.\nNote that such dummy players will be carried from one map to the next.\nUse setcolors to change palette colors. DP_SV_CLIENTCOLORS and DP_SV_CLIENTNAME are not implemented; use clientcommand for the bot's name and other ordinary client commands."},//DP_SV_BOTCLIENT
 	{"clienttype",					PF_clienttype,					PF_NoCSQC,						455,	"float(entity client)"},//botclient
 	{"WriteUnterminatedString",		PF_WriteString2,				PF_NoCSQC,						456,	"void(float target, string str)"},	//writestring but without the null terminator. makes things a little nicer.
 	{"edict_num",					PF_edict_for_num,				PF_edict_for_num,				459,	"entity(float entnum)"},//DP_QC_EDICT_NUM
@@ -6382,6 +6455,7 @@ static struct
 	qboolean (*checkextsupported) (unsigned int prot, unsigned int pext1, unsigned int pext2);
 
 } qcextensions[] = {
+	{"FTE_CALLFUNCTION"},
 	{"DP_CON_SET"},
 	{"DP_CON_SETA"},
 	{"DP_CSQC_QUERYRENDERENTITY"},
@@ -6438,6 +6512,7 @@ static struct
 	{"DP_SV_NODRAWTOCLIENT"},
 	{"DP_SV_POINTSOUND"},
 	{"DP_SV_PRINT"},
+	{"DP_SV_SETCOLOR"},
 	{"DP_SV_SPAWNFUNC_PREFIX"},
 	{"DP_SV_WRITEUNTERMINATEDSTRING"},
 	{"DP_TE_PARTICLERAIN", PR_Can_Particles},
@@ -6684,6 +6759,47 @@ static void PF_checkbuiltin (void)
 	}
 }
 
+static void PR_InvokeBuiltin (dfunction_t *fnc)
+{
+	unsigned int binum = 0u - (unsigned int)fnc->first_statement;
+	const char *funcname = PR_GetString (fnc->s_name);
+
+	if (fnc->first_statement > 0)
+		PR_RunError ("PF_Fixme: not a builtin...");
+	if (binum < (unsigned int)qcvm->numbuiltins)
+	{
+		if (qcvm->builtins[binum] != PF_Fixme)
+		{
+			qcvm->builtins[binum]();
+			return;
+		}
+		// Reuse native lazy binding, with the actual target supplied explicitly.
+		for (unsigned int i = 0; i < countof (extensionbuiltins); ++i)
+		{
+			if ((unsigned int)extensionbuiltins[i].number == binum)
+			{
+				builtin_t bi = NULL;
+				if (qcvm == &sv.qcvm)
+					bi = extensionbuiltins[i].ssqcfunc;
+				else if (qcvm == &cl.qcvm)
+					bi = extensionbuiltins[i].csqcfunc;
+				if (!bi)
+					continue;
+
+				int num = extensionbuiltins[i].documentednumber;
+				if (!pr_checkextension.value || (extensionbuiltins[i].desc && !strncmp (extensionbuiltins[i].desc, "stub.", 5)))
+					Con_Warning ("Mod is using builtin #%u - %s\n", num, extensionbuiltins[i].name);
+				else
+					Con_DPrintf2 ("Mod uses builtin #%u - %s\n", num, extensionbuiltins[i].name);
+				qcvm->builtins[binum] = bi;
+				qcvm->builtins[binum]();
+				return;
+			}
+		}
+	}
+	PR_RunError ("unimplemented builtin #%u - %s", binum, funcname);
+}
+
 void PF_Fixme (void)
 {
 	// interrogate the vm to try to figure out exactly which builtin they just tried to execute.
@@ -6692,38 +6808,8 @@ void PF_Fixme (void)
 	if ((unsigned int)glob->function < (unsigned int)qcvm->progs->numfunctions)
 	{
 		dfunction_t *fnc = &qcvm->functions[(unsigned int)glob->function];
-		const char	*funcname = PR_GetString (fnc->s_name);
-		int			 binum = -fnc->first_statement;
-		unsigned int i;
-		if (binum >= 0)
-		{
-			// find an extension with the matching number
-			for (i = 0; i < countof (extensionbuiltins); i++)
-			{
-				int num = extensionbuiltins[i].number;
-				if (num == binum)
-				{ // set it up so we're faster next time
-					builtin_t bi = NULL;
-					if (qcvm == &sv.qcvm)
-						bi = extensionbuiltins[i].ssqcfunc;
-					else if (qcvm == &cl.qcvm)
-						bi = extensionbuiltins[i].csqcfunc;
-					if (!bi)
-						continue;
-
-					num = extensionbuiltins[i].documentednumber;
-					if (!pr_checkextension.value || (extensionbuiltins[i].desc && !strncmp (extensionbuiltins[i].desc, "stub.", 5)))
-						Con_Warning ("Mod is using builtin #%u - %s\n", num, extensionbuiltins[i].name);
-					else
-						Con_DPrintf2 ("Mod uses builtin #%u - %s\n", num, extensionbuiltins[i].name);
-					qcvm->builtins[binum] = bi;
-					qcvm->builtins[binum]();
-					return;
-				}
-			}
-
-			PR_RunError ("unimplemented builtin #%i - %s", binum, funcname);
-		}
+		PR_InvokeBuiltin (fnc);
+		return;
 	}
 	PR_RunError ("PF_Fixme: not a builtin...");
 }

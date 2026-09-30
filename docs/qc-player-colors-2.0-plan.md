@@ -97,3 +97,12 @@ Deferred acceptance additionally includes eight-plus PREDINFO recipients,
 repeated identical colors after QC changes `.team`, and failed/unchanged-value
 preflight cases. The review was read-only, with no builds, tests, compiler or
 runtime probes. This disposition is design acceptance, not source/runtime proof.
+
+## Source acceptance
+
+Local Astra accepted the actual wrapper and native prefix correction against
+the adopted disposition, with no actionable findings. Main inspected argument
+validation before array/entity access, bounded conversion, sequential scratch
+preflight, unchanged-value skips, native publication and unconditional cached
+color/team restoration. The stack prefix is the copied QSS-M correction.
+No builds/tests/compiler/runtime probes were run; the full matrix remains.
