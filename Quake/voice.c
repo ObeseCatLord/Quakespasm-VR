@@ -719,6 +719,17 @@ static void Voice_ListDevices_f(void)
 	Con_Printf("Select a device by its exact name: voice_select_device \"name\"\n");
 }
 
+static void Voice_Restart_f(void)
+{
+	if (!voice_initialized)
+		return;
+	(void)Voice_Profile();
+	Voice_StopTransmit();
+	Voice_CloseCapture();
+	voice_capture_wanted = false;
+	Voice_RefreshCapture(true);
+}
+
 static void Voice_Status_f(void)
 {
 	voice_settings_profile_t *profile = Voice_Profile();
@@ -1226,6 +1237,7 @@ void Voice_Init(void)
 	Cmd_AddCommand("voice_self_reverb", Voice_SelfReverb_f);
 	Cmd_AddCommand("voice_mode", Voice_Mode_f);
 	Cmd_AddCommand("voice_status", Voice_Status_f);
+	Cmd_AddCommand("voice_restart", Voice_Restart_f);
 	Cmd_AddCommand("voice_mute", Voice_Mute_f);
 	Cmd_AddCommand("voice_player_volume", Voice_PlayerVolume_f);
 	Cmd_AddCommand("+voicerecord", Voice_PTTCommand_f);

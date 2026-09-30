@@ -131,3 +131,10 @@ failure, ready capture/backlog retirement, default/exact/missing device,
 transmit opt-out, wet-only monitoring, pending confirmations and desktop/VR
 profile transition. No builds/tests/probes now and no permission changes as a
 side effect of retry.
+
+The 12-line source adapter is now integrated at the native voice command owner.
+Main verified stopped transmit/PTT/preroll/encoder cleanup, profile transition
+selection, saved-preference preservation and force-refresh routing. A same-profile
+retry leaves pending confirmations intact; an actual desktop/VR transition uses
+the existing transition cleanup. Scoped whitespace review passed. No executable
+checks or microphone capture trials have been run.
