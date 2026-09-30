@@ -175,3 +175,15 @@ existing content append, pack reads/data precedence/rejected paths, read-only
 output, sparse buffers, negative/fractional/huge/nonfinite ranges, write failures
 and reload cleanup. Builds/tests/probes remain deferred until all implementation
 is finished; no deployed assets or configs change.
+
+## Buffer-file source disposition
+
+Both entrypoints are implemented on native owners. Personal local Astra Max
+verified parsing, heap-text release, current-VM ownership, donor path policy,
+read/write modes, sparse output, range math and both VM registrations. It found
+one P2: at an extreme file-table size, float subtraction could round a validated
+handle into an out-of-range index. The wrapper now checks the converted file
+index before any table dereference. Astra accepted that correction with no
+remaining P1/P2 in this slice. No builds/tests/compiler runs or probes were
+performed. Existing unrelated native QC API issues were outside the review;
+full filesystem and VM lifecycle acceptance remains at final software checks.

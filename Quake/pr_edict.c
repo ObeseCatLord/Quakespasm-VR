@@ -1965,11 +1965,20 @@ static void PR_FindEntityFields (void)
 }
 
 /* for 2021 re-release */
+typedef enum
+{
+	EXBUILTIN_LEGACY,
+	EXBUILTIN_SSQC,
+	EXBUILTIN_CSQC
+} exbuiltin_vm_t;
+
 typedef struct
 {
 	const char *name;
 	int			first_statement;
 	int			patch_statement;
+	exbuiltin_vm_t vm;
+	const char *extension_name;
 } exbuiltin_t;
 
 /*
@@ -1982,10 +1991,16 @@ for 2021 re-release
 static const exbuiltin_t exbuiltins[] = {
 	/* Update-1 adds the following builtins with new ids. Patch them to use old indices.
 	 * (https://steamcommunity.com/games/2310/announcements/detail/2943653788150871156) */
-	{"centerprint", -90, -73},
-	{"bprint", -91, -23},
-	{"sprint", -92, -24},
-	{NULL, 0, 0} /* end-of-list. */
+	{"centerprint", -90, -73, EXBUILTIN_LEGACY, NULL},
+	{"bprint", -91, -23, EXBUILTIN_LEGACY, NULL},
+	{"sprint", -92, -24, EXBUILTIN_LEGACY, NULL},
+	// Preserve donor numeric slots; adapt only identified inherited declarations.
+	{"localsound", -80, 0, EXBUILTIN_SSQC, "ex_localsound"},
+	{"ex_CheckPlayerEXFlags", -90, 0, EXBUILTIN_SSQC, "ex_CheckPlayerEXFlags"},
+	{"ex_CheckPlayerEXFlags", -430, 0, EXBUILTIN_SSQC, "ex_CheckPlayerEXFlags"},
+	{"ex_walkpathtogoal", -91, 0, EXBUILTIN_SSQC, "ex_walkpathtogoal"},
+	{"dprint", -277, -25, EXBUILTIN_CSQC, NULL},
+	{NULL, 0, 0, EXBUILTIN_LEGACY, NULL} /* end-of-list. */
 };
 
 static void PR_PatchRereleaseBuiltins (void)
@@ -1995,9 +2010,37 @@ static void PR_PatchRereleaseBuiltins (void)
 
 	for (; ex->name != NULL; ++ex)
 	{
-		f = ED_FindFunction (ex->name);
-		if (f && f->first_statement == ex->first_statement)
-			f->first_statement = ex->patch_statement;
+		int patch_statement = ex->patch_statement;
+		int i;
+
+		if (ex->vm == EXBUILTIN_LEGACY)
+		{
+			f = ED_FindFunction (ex->name);
+			if (f && f->first_statement == ex->first_statement)
+				f->first_statement = patch_statement;
+			continue;
+		}
+		if (ex->vm == EXBUILTIN_SSQC && (qcvm != &sv.qcvm || !pr_checkextension.value))
+			continue;
+		if (ex->vm == EXBUILTIN_CSQC && qcvm != &cl.qcvm)
+			continue;
+		if (ex->extension_name)
+		{
+			int number = PR_ExtensionBuiltinNumber (ex->extension_name);
+			if (!number)
+				continue;
+			patch_statement = -number;
+		}
+		else if (-patch_statement <= 0 || -patch_statement >= qcvm->numbuiltins || qcvm->builtins[-patch_statement] == PF_Fixme)
+			continue;
+
+		// The function hash retains only the first name; inspect duplicate declarations too.
+		for (i = 0; i < qcvm->progs->numfunctions; i++)
+		{
+			f = &qcvm->functions[i];
+			if (f->first_statement == ex->first_statement && f->s_name && !strcmp (PR_GetString (f->s_name), ex->name))
+				f->first_statement = patch_statement;
+		}
 	}
 }
 

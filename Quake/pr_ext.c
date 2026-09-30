@@ -3722,6 +3722,77 @@ static void PF_buf_cvarlist (void)
 	qsort (strbuflist[bufno].strings, strbuflist[bufno].used, sizeof (char *), PF_buf_sort_ascending);
 }
 
+static void PF_buf_loadfile (void)
+{
+	const char *name = G_STRING (OFS_PARM0);
+	const char *fallback;
+	float		handle = G_FLOAT (OFS_PARM1);
+	size_t		bufno;
+	char	   *data, *line;
+
+	G_FLOAT (OFS_RETURN) = 0;
+	if (!isfinite (handle) || handle < BUFSTRBASE || handle >= NUMSTRINGBUFS + BUFSTRBASE)
+		return;
+	bufno = (size_t)(handle - BUFSTRBASE);
+	if (strbuflist[bufno].owningvm != qcvm || !QC_FixFileName (name, &name, &fallback))
+		return;
+
+	data = (char *)COM_LoadFile (name, NULL);
+	if (!data && fallback)
+		data = (char *)COM_LoadFile (fallback, NULL);
+	if (!data)
+		return;
+	line = data;
+	while (line && *line)
+	{
+		char *nl = strchr (line, '\n');
+		if (nl)
+			*nl++ = 0;
+		if (*line && line[strlen (line) - 1] == '\r')
+			line[strlen (line) - 1] = 0;
+		PF_bufstr_add_internal (bufno, line, true);
+		line = nl;
+	}
+	Mem_Free (data);
+	G_FLOAT (OFS_RETURN) = 1;
+}
+
+static void PF_buf_writefile (void)
+{
+	float		 filehandle = G_FLOAT (OFS_PARM0);
+	float		 bufhandle = G_FLOAT (OFS_PARM1);
+	float		 first = qcvm->argc > 2 ? G_FLOAT (OFS_PARM2) : 0;
+	float		 count = qcvm->argc > 3 ? G_FLOAT (OFS_PARM3) : 0;
+	size_t		 fileid, bufno;
+	unsigned int start, end, i;
+	struct strbuf *buf;
+
+	G_FLOAT (OFS_RETURN) = 0;
+	if (!isfinite (filehandle) || filehandle < QC_FILE_BASE || (double)filehandle >= (double)qcfiles_max + QC_FILE_BASE ||
+		!isfinite (bufhandle) || bufhandle < BUFSTRBASE || bufhandle >= NUMSTRINGBUFS + BUFSTRBASE ||
+		!isfinite (first) || !isfinite (count))
+		return;
+	fileid = (size_t)(filehandle - QC_FILE_BASE);
+	if (fileid >= qcfiles_max)
+		return;
+	bufno = (size_t)(bufhandle - BUFSTRBASE);
+	buf = &strbuflist[bufno];
+	if (qcfiles[fileid].owningvm != qcvm || !qcfiles[fileid].file || qcfiles[fileid].mode == 0 || buf->owningvm != qcvm)
+		return;
+
+	start = first <= 0 ? 0 : (double)first >= buf->used ? buf->used : (unsigned int)first;
+	end = buf->used;
+	if (qcvm->argc > 3)
+	{
+		unsigned int remaining = end - start;
+		end = count <= 0 ? start : (double)count >= remaining ? end : start + (unsigned int)count;
+	}
+	for (i = start; i < end; i++)
+		if (buf->strings[i] && fprintf (qcfiles[fileid].file, "%s\n", buf->strings[i]) < 0)
+			return;
+	G_FLOAT (OFS_RETURN) = 1;
+}
+
 // entity stuff
 static void PF_WasFreed (void)
 {
@@ -5815,6 +5886,8 @@ static struct
 	{"tokenize_console",			PF_tokenize_console,			PF_tokenize_console,			514,	D("float(string str)", "Tokenize a string exactly as the console's tokenizer would do so. The regular tokenize builtin became bastardized for convienient string parsing, which resulted in a large disparity that can be exploited to bypass checks implemented in a naive SV_ParseClientCommand function, therefore you can use this builtin to make sure it exactly matches.")},
 	{"argv_start_index",			PF_argv_start_index,			PF_argv_start_index,			515,	D("float(float idx)", "Returns the character index that the tokenized arg started at.")},
 	{"argv_end_index",				PF_argv_end_index,				PF_argv_end_index,				516,	D("float(float idx)", "Returns the character index that the tokenized arg stopped at.")},
+	{"buf_loadfile", PF_buf_loadfile, PF_buf_loadfile, 535, "float(string filename, strbuf bufhandle)"},
+	{"buf_writefile", PF_buf_writefile, PF_buf_writefile, 536, "float(filestream filehandle, strbuf bufhandle, optional float startpos, optional float numstrings)"},
 	{"buf_cvarlist",				PF_buf_cvarlist,				PF_buf_cvarlist,				517,	D("void(strbuf strbuf, string pattern, string antipattern)", "Populates the strbuf with a list of known cvar names.")},
 	{"cvar_description",			PF_cvar_description,			PF_cvar_description,			518,	D("string(string cvarname)", "Retrieves the description of a cvar, which might be useful for tooltips or help files. This may still not be useful.")},
 	{"gettime",						PF_gettime,						PF_gettime,						519,	"float(optional float timetype)"},
@@ -5851,6 +5924,25 @@ static struct
 	{"ex_bot_followentity",			PF_NotImplemented,				PF_NoCSQC,						0,		"float(entity bot, entity goal)"},
 };
 // clang-format on
+
+int PR_ExtensionBuiltinNumber (const char *name)
+{
+	unsigned int i;
+
+	if (!name || (qcvm != &sv.qcvm && qcvm != &cl.qcvm))
+		return 0;
+	for (i = 0; i < countof (extensionbuiltins); i++)
+	{
+		if (!strcmp (extensionbuiltins[i].name, name))
+		{
+			builtin_t handler = qcvm == &sv.qcvm ? extensionbuiltins[i].ssqcfunc : extensionbuiltins[i].csqcfunc;
+			int number = extensionbuiltins[i].number;
+			if (handler && number > 0 && number < qcvm->numbuiltins)
+				return number;
+		}
+	}
+	return 0;
+}
 
 qboolean PR_Can_Particles (unsigned int prot, unsigned int pext1, unsigned int pext2)
 {
@@ -6041,6 +6133,13 @@ static void PF_checkextension (void)
 	G_FLOAT (OFS_RETURN) = false;
 }
 
+static const char *PR_NormalizeBuiltinName (const char *name, qboolean exact)
+{
+	if (qcvm == &sv.qcvm && !(exact ? strcmp (name, "localsound") : q_strcasecmp (name, "localsound")))
+		return "ex_localsound";
+	return name;
+}
+
 static void PF_builtinsupported (void)
 {
 	const char	*biname = G_STRING (OFS_PARM0);
@@ -6049,6 +6148,7 @@ static void PF_builtinsupported (void)
 	G_FLOAT (OFS_RETURN) = 0;
 	if (!biname || !*biname)
 		return;
+	biname = PR_NormalizeBuiltinName (biname, false);
 
 	for (i = 0; i < countof (extensionbuiltins); i++)
 	{
@@ -6298,7 +6398,7 @@ void PR_EnableExtensions (ddef_t *pr_globaldefs)
 	{
 		if (qcvm->functions[i].first_statement == 0 && qcvm->functions[i].s_name && !qcvm->functions[i].parm_start && !qcvm->functions[i].locals)
 		{
-			const char *name = PR_GetString (qcvm->functions[i].s_name);
+			const char *name = PR_NormalizeBuiltinName (PR_GetString (qcvm->functions[i].s_name), true);
 			for (j = 0; j < countof (extensionbuiltins); j++)
 			{
 				if (!strcmp (extensionbuiltins[j].name, name))

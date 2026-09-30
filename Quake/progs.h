@@ -222,6 +222,7 @@ char	  *PF_VarString (int first);
 #define STRINGTEMP_BUFFERS 1024
 #define STRINGTEMP_LENGTH  1024
 void PF_Fixme (void); // the 'unimplemented' builtin. woot.
+int PR_ExtensionBuiltinNumber (const char *name);
 
 // clang-format off
 struct pr_extfuncs_s

@@ -144,3 +144,16 @@ Expected production scope remains the existing three files and one table owner.
 The review adds the duplicate-declaration guard and resolves alias timing without
 original-slot state or another binder. Final source review follows implementation;
 runtime/software verification remains at the end of the full implementation.
+
+## Implementation source acceptance
+
+The adapter is implemented in the existing three-file boundary. Personal local
+Astra Max accepted the actual source with no introduced P1/P2. It verified all
+new tuples and duplicate scans, preserved legacy lookup/load order, positive
+assigned target validation and current-VM handler checks, shared alias timing,
+unchanged `#0` eligibility, unchanged donor slots, explicit 177/ordinary-body
+exclusions, and the precise SSQC disable/discovery distinction. Fixed CSQC 25
+is checked against the native handler table. No general core discovery or new
+EX functionality is claimed. Builds/tests/compiler runs and probes were not
+performed; mixed declarations and independent VM reloads remain at final
+implementation-wide software verification.
