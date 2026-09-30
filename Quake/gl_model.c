@@ -6604,7 +6604,7 @@ static void Mod_LoadMDXSkinTask (int i, load_skin_MDX_task_args_t *args)
 
 	const char *basic_texname = skins[skin_index].framegroups[f].c_str;
 
-	if (!basic_texname)
+	if (!basic_texname[0])
 		return;
 
 #define TRY_LOAD_FULLBRIGHTS(tex_name)                                                         \
@@ -6654,13 +6654,6 @@ static void Mod_LoadMDXSkinTask (int i, load_skin_MDX_task_args_t *args)
 
 		if (fmt == SRC_INDEXED)
 		{
-			if (f == 0)
-			{
-				size_t size = fwidth * fheight;
-				byte  *texels = (byte *)Mem_Alloc (size);
-				surf->texels[surf->numskins] = texels;
-				memcpy (texels, data, size);
-			}
 			// 8bit base texture. use it for fullbrights.
 			for (size_t j = 0; j < fwidth * fheight; j++)
 			{

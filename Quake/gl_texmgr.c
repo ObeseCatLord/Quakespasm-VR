@@ -1501,7 +1501,9 @@ gltexture_t *TexMgr_LoadImage (
 		}
 	if ((flags & TEXPREF_OVERWRITE) && (glt = TexMgr_FindTexture (owner, name)))
 	{
-		if (glt->source_crc == crc)
+		if (glt->source_crc == crc && glt->source_width == width &&
+			glt->source_height == height && glt->source_format == format &&
+			!strcmp (glt->source_file, source_file) && glt->source_offset == source_offset)
 			return glt;
 	}
 	else

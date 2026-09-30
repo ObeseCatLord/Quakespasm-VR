@@ -5316,9 +5316,10 @@ added bug fix from bengt jardup
 void R_TranslateNewPlayerSkin (int playernum)
 {
 	char		name[64];
-	byte	   *pixels;
+	byte	   *pixels, *decoded = NULL;
 	aliashdr_t *paliashdr;
-	int			skinnum;
+	gltexture_t *skin;
+	int			skinnum, width, height;
 
 	// get correct texture pixels
 	entity_t *currententity = &cl.entities[1 + playernum];
@@ -5326,8 +5327,8 @@ void R_TranslateNewPlayerSkin (int playernum)
 	if (!currententity->model || currententity->model->type != mod_alias)
 		return;
 
-	paliashdr = (aliashdr_t *)Mod_Extradata (currententity->model);
 	skinnum = currententity->skinnum;
+	paliashdr = (aliashdr_t *)Mod_Extradata_CheckSkin (currententity->model, skinnum);
 
 	// TODO: move these tests to the place where skinnum gets received from the server
 	if (skinnum < 0 || skinnum >= paliashdr->numskins)
@@ -5336,8 +5337,20 @@ void R_TranslateNewPlayerSkin (int playernum)
 		skinnum = 0;
 	}
 
-	pixels = (byte *)paliashdr->texels[skinnum];
-	if (!pixels)
+	skin = paliashdr->gltextures[skinnum][0];
+	width = paliashdr->skinwidth;
+	height = paliashdr->skinheight;
+	pixels = paliashdr->texels[skinnum];
+	if (paliashdr->poseverttype != PV_QUAKE1)
+	{
+		// Raw pixels and dimensions must agree, including after texture reloads.
+		enum srcformat format = SRC_RGBA;
+		pixels = decoded = skin && skin->source_format == SRC_INDEXED ?
+			Image_LoadImage (skin->source_file, &width, &height, &format, skin->path_id) : NULL;
+		if (format != SRC_INDEXED)
+			pixels = NULL;
+	}
+	if (!pixels || !skin)
 	{
 		static qboolean warned = false;
 		if (!warned)
@@ -5346,14 +5359,16 @@ void R_TranslateNewPlayerSkin (int playernum)
 			Con_Warning ("can't recolor non-indexed player skin\n");
 		}
 		playertextures[playernum] = NULL;
+		Mem_Free (decoded);
 		return;
 	}
 
 	// upload new image
 	q_snprintf (name, sizeof (name), "player_%i", playernum);
 	playertextures[playernum] = TexMgr_LoadImage (
-		currententity->model, name, paliashdr->skinwidth, paliashdr->skinheight, SRC_INDEXED, pixels, paliashdr->gltextures[skinnum][0]->source_file,
-		paliashdr->gltextures[skinnum][0]->source_offset, TEXPREF_PAD | TEXPREF_OVERWRITE);
+		currententity->model, name, width, height, SRC_INDEXED, pixels, skin->source_file,
+		skin->source_offset, TEXPREF_PAD | TEXPREF_OVERWRITE);
+	Mem_Free (decoded);
 
 	// now recolor it
 	R_TranslatePlayerSkin (playernum);

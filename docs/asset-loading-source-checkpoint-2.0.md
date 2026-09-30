@@ -82,3 +82,20 @@ expected production changes remain under60 lines; reopen a broader texture-manag
 rewrite. Final checks include same bytes/different dimensions and same bytes/
 different skin sources. Main integration/source recheck precedes acceptance;
 no builds/tests/probes/fixtures or performance claims accompany this amendment.
+
+
+## Integrated repair source checkpoint
+
+The final production patch is42 changed lines /10 net across gl_model.c,
+gl_rmisc.c and gl_texmgr.c. Main reviewed the full patch and native call sites;
+local Astra's final bounded source assessment found no remaining P1/P2 blocker.
+Empty MDX frame jobs stop before file lookup; redundant indexed MDX copies are
+removed while native MDL copies/fullbright scans remain. Recolor selects the
+actual skin's native format and pairs freshly decoded indexed MDX bytes with
+matching dimensions, freeing temporary pixels on both paths. Truecolor avoids
+that decode. Existing texture reuse now requires matching dimensions/format/
+source as well as CRC; a miss uses the native overwrite/object/upload lifetime.
+
+Scoped git diff --check passes. No builds/tests/compiler/probes/fixtures or
+measurements ran. Final multi-skin/fullbright/decoder/search-path/reload/recolor
+and Linux/ARM qualification remains open; this is source integration only.
