@@ -91,3 +91,9 @@ API implementation or changing ordinary enumeration semantics. Reopen the source
 review for this bounded adapter. Windows execution remains deferred; final checks
 should include `*.*`, extensionless names, extension patterns and native short-name
 matching in addition to Linux/ARM cases.
+
+Main's reference spot-check also confirms that primary's readable-regular-file
+check is POSIX-only. Windows uses native find attributes without opening each
+result. Keep that platform boundary in the adapter: POSIX retains its type/open
+checks; Windows retains native enumeration and directory filtering. The earlier
+generic readability description must not impose a new Windows filter.
