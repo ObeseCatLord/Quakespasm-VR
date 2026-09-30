@@ -212,3 +212,30 @@ channel. Every actual world-reset emission still reflags all current custom
 entities, and every selected continuation still includes full native owner and
 movement stats. Old update bits behind scan cursors likewise wait for next
 snapshot, using existing behavior. Expected production correction: one condition.
+
+### Reopen outstanding removal lifetime and prespawn capacity
+
+The follow-up advisory on the implementation closes the ring/reset restart but
+finds two introduced defects, verified by main's source trace before fixes.
+
+* Remove-only emission currently clears PRESENT/REMOVE. If lost, a slot reused
+  before ACK-gap recovery sends full update without remove, and the retained old
+  client mapping receives isnew=false. Atomic encoding alone does not retain the
+  outstanding lifetime barrier. Keep one internal REMOVEWAIT flag across emission
+  and snapshot/free transitions; record the last emitted removal's existing
+  packet sequence per slot. Every update while this boundary remains unconfirmed
+  carries remove/full-create together. ACK of that exact emitted sequence clears
+  only REMOVEWAIT; it never erases REMOVE delivery debt from a later free/drop.
+* Loader currently tries enable before the frame appends prespawn. With12-21 bytes
+  left enable fits but prespawn then overflows. Loader should only arm readiness;
+  the existing CL_SendCmd bounded retry runs after prespawn. No Init rerun/queue.
+
+Removal-sequence storage shares the existing pending-array capacity, growth and
+teardown owner. It caches the existing ACK boundary, not a second generation or
+protocol. Compared alternatives: scanning64 frame logs for every candidate update
+or ACK adds repeated entity-history searches; forgetting the boundary reproduces
+the demonstrated bug; a new wire generation is unnecessary. The smallest
+adapter is one extra sequence integer per allocated custom slot and one internal
+flag. No changes to ordinary native entities, renderer or client wire format.
+Expected correction under60 lines. Request bounded local advisory recheck of
+actual ACK/free/drop/visibility/update and sign-on paths after integration.
