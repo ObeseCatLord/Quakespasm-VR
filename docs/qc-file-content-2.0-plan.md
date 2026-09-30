@@ -73,3 +73,11 @@ primary2163 and the native embedded/physical handle branches. Together with
 the two-wrapper correction, the repair is nine net production lines across
 existing owners. Scoped whitespace checks pass. No executable checks ran;
 final software and broader MOD-005 qualification remain open.
+
+## Final bounded source recheck
+
+The requested local Astra recheck inspected only the three repaired blocks and
+found no additional P1/P2 source blocker. Main had independently reviewed the
+diffs, actual primary failure sequence and native cache/VFS ownership. This
+remains source advice with unobservable effective settings; no runtime, broader
+file-service or full migration certification is claimed.
