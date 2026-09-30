@@ -154,3 +154,12 @@ Do not recreate store discovery, export unused content-root APIs, add a second
 localization dictionary or copy the primary filesystem wholesale. No stage-2
 production code or asset copy is selected by this source checkpoint alone;
 the migration task already authorizes finishing its planned implementation.
+
+Stage 2 is now source-integrated in `9b71bea2`, following the separate
+[verified plan and advisory disposition](rerelease-localization-source-2.0-plan.md).
+The copied reader uses native PACK validation, allocator and 64-bit IO. Existing
+Steam discovery supplies the optional source; no game-data mount is added.
+Requested-Astra review corrected the planned direct-root precedence; main
+corrected an introduced native basegame argument-cursor interaction before final
+source acceptance. Full MOD-006 software/visible-text qualification remains
+pending. No builds/tests/probes ran during either implementation stage.
