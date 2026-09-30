@@ -60,6 +60,36 @@ per-extension overrides and unchanged protocol/particle rejection. Verify that
 querying a capability does not eagerly bind or invoke a builtin. Direct call
 policy is not changed or claimed to be disabled by this query guard.
 
+Reenabling `pr_checkextension` restores capability-query answers. If SSQC loaded
+while extensions were disabled, reload the program with extensions enabled to
+perform skipped load-time setup, including `#0` binding. Disabling and reenabling
+queries in an already initialized VM does not undo its mappings. Final checks
+must distinguish these two startup/runtime cases; automatic recovery of skipped
+setup is not added by this query adapter.
+
 This slice closes these query differences only. Core builtin-name discovery,
 other inherited calls/VM permissions and final software qualification remain
 open; no whole-registry or runtime parity claim follows from source acceptance.
+
+## Local Astra source disposition
+
+Personal Astra Max reviewed the actual helper and three aliases. It accepted the
+case/global guard, canonical overrides, preserved protocol predicates and both-VM
+handler availability. Its initial P2 concern about startup-disabled SSQC was
+reassessed after the main thread verified the loader's early return, sole caller
+and absence of a cvar callback. The reviewer withdrew that introduced-defect
+classification: capability availability and a particular program's skipped
+load-time mappings are separate contracts.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Document the disabled-load versus initialized-VM reenabling distinction. | Adopted above and in deferred acceptance. |
+| Gate the alias by scanning unresolved `checkbuiltin` declarations. | Rejected with the reviewer: this would suppress an available numeric handler because of incidental program contents and invent a special rule for a general native loading policy. |
+| Add automatic rebinding/reload or another VM state flag. | Rejected as unnecessary for this query slice; preserve the existing loader and lazy binding. |
+
+Final bounded source assessment found no introduced P1/P2 after this disposition.
+No builds, tests, compiler probes or runtime trials were performed. The official
+[FTE-generated interface](https://github.com/fte-team/fteqw/blob/master/quakec/menusys/fteextensions.qc)
+documents `checkbuiltin` as a function-reference check for mapped/supported
+builtins, especially named `#0` declarations; it does not establish automatic
+reenabling of skipped destination load-time setup.

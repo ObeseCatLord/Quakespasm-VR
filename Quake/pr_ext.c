@@ -2998,6 +2998,26 @@ static void PF_sv_te_particlesnow (void)
 
 	SV_Multicast (MULTICAST_ALL_U, NULL, 0, PEXT2_REPLACEMENTDELTAS);
 }
+static void PF_cl_te_particleweather (qboolean snow)
+{
+	float count = G_FLOAT (OFS_PARM3);
+	float colour = G_FLOAT (OFS_PARM4);
+
+	if (!isfinite (count) || !isfinite (colour) || count < 1)
+		return;
+	count = q_min (count, 65535);
+	colour = CLAMP (0, colour, 255);
+	PScript_RunParticleWeather (
+		G_VECTOR (OFS_PARM0), G_VECTOR (OFS_PARM1), G_VECTOR (OFS_PARM2), (int)count, (int)colour, snow ? "snow" : "rain");
+}
+static void PF_cl_te_particlerain (void)
+{
+	PF_cl_te_particleweather (false);
+}
+static void PF_cl_te_particlesnow (void)
+{
+	PF_cl_te_particleweather (true);
+}
 #define PF_sv_te_bloodshower	PF_void_stub
 #define PF_sv_te_explosionrgb	PF_void_stub
 #define PF_sv_te_particlecube	PF_void_stub
@@ -6015,8 +6035,8 @@ static struct
 	{"findchain",					PF_findchain,					PF_findchain,					402,	"entity(.string field, string match, optional .entity chainfield)"},// (DP_QC_FINDCHAIN)
 	{"findchainfloat",				PF_findchainfloat,				PF_findchainfloat,				403,	"entity(.float fld, float match, optional .entity chainfield)"},// (DP_QC_FINDCHAINFLOAT)
 	{"te_blood",					PF_sv_te_blooddp,				NULL,							405,	"void(vector org, vector dir, float count)"},// #405 te_blood
-	{"te_particlerain",				PF_sv_te_particlerain,			NULL,							409,	"void(vector mincorner, vector maxcorner, vector vel, float howmany, float color)"},// (DP_TE_PARTICLERAIN)
-	{"te_particlesnow",				PF_sv_te_particlesnow,			NULL,							410,	"void(vector mincorner, vector maxcorner, vector vel, float howmany, float color)"},// (DP_TE_PARTICLESNOW)
+	{"te_particlerain",				PF_sv_te_particlerain,			PF_cl_te_particlerain,			409,	"void(vector mincorner, vector maxcorner, vector vel, float howmany, float color)"},// (DP_TE_PARTICLERAIN)
+	{"te_particlesnow",				PF_sv_te_particlesnow,			PF_cl_te_particlesnow,			410,	"void(vector mincorner, vector maxcorner, vector vel, float howmany, float color)"},// (DP_TE_PARTICLESNOW)
 	{"te_gunshot",					PF_sv_te_gunshot,				PF_cl_te_gunshot,				418,	"void(vector org, optional float count)"},// #418 te_gunshot
 	{"te_spike",					PF_sv_te_spike,					PF_cl_te_spike,					419,	"void(vector org)"},// #419 te_spike
 	{"te_superspike",				PF_sv_te_superspike,			PF_cl_te_superspike,			420,	"void(vector org)"},// #420 te_superspike
@@ -6227,6 +6247,7 @@ static struct
 	{"DP_QC_GETSURFACEPOINTATTRIBUTE"},
 	{"DP_QC_MINMAXBOUND"},
 	{"DP_QC_MULTIPLETEMPSTRINGS"},
+	{"DP_QC_NUM_FOR_EDICT"},
 	{"DP_QC_RANDOMVEC"},
 	{"DP_QC_SINCOSSQRTPOW"},
 	{"DP_QC_SPRINTF"},
@@ -6237,6 +6258,7 @@ static struct
 	{"DP_QC_STRINGCOLORFUNCTIONS"},
 	{"DP_QC_STRREPLACE"},
 	{"DP_QC_TOKENIZEBYSEPARATOR"},
+	{"DP_QC_TOKENIZE_CONSOLE"},
 	{"DP_QC_TRACEBOX"},
 	{"DP_QC_TRACETOSS"},
 	{"DP_QC_TRACE_MOVETYPES"},
@@ -6265,6 +6287,7 @@ static struct
 	{"FTE_PART_NAMESPACES"},
 	{"FTE_PART_NAMESPACE_EFFECTINFO"},
 	{"FTE_QC_CHECKCOMMAND"},
+	{"FTE_QC_CHECKBUILTIN"},
 	{"FTE_QC_CROSSPRODUCT"},
 	{"FTE_QC_INFOKEY"},
 	{"FTE_FORCEINFOKEY"},
@@ -6282,9 +6305,14 @@ static void PF_checkextension (void)
 	unsigned int i;
 	cvar_t		*v;
 	char		*cvn;
+
+	G_FLOAT (OFS_RETURN) = false;
+	if (!pr_checkextension.value || !extname || !*extname)
+		return;
+
 	for (i = 0; i < countof (qcextensions); i++)
 	{
-		if (!strcmp (extname, qcextensions[i].name))
+		if (!q_strcasecmp (extname, qcextensions[i].name))
 		{
 			if (qcextensions[i].checkextsupported)
 			{
@@ -6316,12 +6344,7 @@ static void PF_checkextension (void)
 					pext2 = 0;
 				}
 				if (!qcextensions[i].checkextsupported (prot, pext1, pext2))
-				{
-					if (!pr_checkextension.value)
-						Con_Printf ("Mod queried extension %s, but not enabled\n", extname);
-					G_FLOAT (OFS_RETURN) = false;
 					return;
-				}
 			}
 
 			cvn = va ("pr_ext_%s", qcextensions[i].name);
@@ -6330,21 +6353,11 @@ static void PF_checkextension (void)
 					cvn[i] = 'a' + (cvn[i] - 'A');
 			v = Cvar_Create (cvn, "1");
 			if (v && !v->value)
-			{
-				if (!pr_checkextension.value)
-					Con_Printf ("Mod queried extension %s, but blocked by cvar\n", extname);
-				G_FLOAT (OFS_RETURN) = false;
 				return;
-			}
-			if (!pr_checkextension.value)
-				Con_Printf ("Mod found extension %s\n", extname);
 			G_FLOAT (OFS_RETURN) = true;
 			return;
 		}
 	}
-	if (!pr_checkextension.value)
-		Con_DPrintf ("Mod tried extension %s\n", extname);
-	G_FLOAT (OFS_RETURN) = false;
 }
 
 static const char *PR_NormalizeBuiltinName (const char *name, qboolean exact)

@@ -58,3 +58,15 @@ message. User-owned headset visual checks remain separate.
 
 Source acceptance of these adapters is not full QuakeC, graphics or mod parity;
 other missing interfaces and final qualification remain required.
+
+## Local Astra source disposition
+
+Personal local Astra Max found no introduced P1/P2 in the actual wrappers or
+registrations. It verified argument order, rain/snow names, ordinary truncation,
+finite bounded conversion, VM-selected lazy dispatch and unchanged SSQC/network
+paths. The calls reuse the native received-weather backend and write no server
+message. This is source acceptance only; no builds, tests or probes were run.
+
+Volume and velocity pass through like primary. Native effect definitions can
+multiply the count; the adapter's input clamp is not a total-particle or
+performance guarantee. Backend limits and simulation/rendering remain native.
