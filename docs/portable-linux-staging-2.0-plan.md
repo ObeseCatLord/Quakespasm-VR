@@ -82,11 +82,32 @@ not a signing scheme or proof of in-process driver/runtime ABI isolation.
 
 ## Bound and final qualification
 
-Target350–450 lines for the shared Python implementation, host policy additional
-declarative data; stop before550/new resolver or framework. Combined C19 reopening
-bound1200 remains. Report exact interface/gaps rather than execute verification
-or claim packaging works. The later Docker/Foundry wrapper copies these files
-into the same image; slice1 remains a source-build owner, not a second packager.
+The paused763-line Python/41-line policy draft exceeded the original550-line
+boundary. The [senior reopening disposition](portable-linux-staging-reopen-2.0-review.md)
+supersedes that estimate before refinement: target600–625 total lines for both
+files, stop before650/new resolver/state/ownership model. Other C19 files453 give
+max1103, retaining combined1200. No minification or omitted guarantees.
+
+Use explicit columns for the builder's headerless inventory/owner/link tables,
+including empty links; consistent builder-output-relative hashes and one
+JSON-stable file/link inventory. Each canonical ELF record separates measured
+facts from provenance, with every original hash captured before mutation; no
+duplicate top-level hash maps or legacy schema normalization. Required executable
+and executable-side OpenXR alias are independent gates. Seed every installed
+ELF. One shared stage/verify closure check resolves actual NEEDED paths inside
+each permitted local RUNPATH rather than trusting manifest edge declarations.
+
+One internal-link-aware copy owner, bounded magic reads, fresh post-patchelf
+facts and once-indexed exact deb/dsc/contributor sources replace duplicate work.
+Parse named Debian control fields/absent-Source fallback; tolerate blank checksum
+continuation lines without weakening record validation. Package-relative source
+paths only. Verify required pinned/distro source-notice relationships and product
+receipt identity. Correct host spelling/uniqueness without ordering policy and
+preserve exact version requirements. No new engine/build/resource owner.
+
+Report exact interface/gaps rather than execute verification or claim packaging
+works. Docker/Foundry wrapper copies these files into the same image; slice1
+remains a source-build owner, not a second packager.
 
 Final qualification includes architecture/ABI/RUNPATH/aliases/missing dependency/
 notice/source mismatch cases, required enabled build features, relocation in the
