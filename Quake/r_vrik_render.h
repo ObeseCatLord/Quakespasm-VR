@@ -18,6 +18,15 @@ typedef struct r_vrik_prepared_muzzle_s
 	qboolean valid;
 } r_vrik_prepared_muzzle_t;
 
+#define R_VRIK_RENDER_MAX_ATTACHMENTS 2
+typedef struct r_vrik_attachment_s
+{
+	const aliashdr_t *geometry;
+	float to_canonical[12];
+	double local_bound;
+	qboolean valid;
+} r_vrik_attachment_t;
+
 typedef struct r_vrik_prepared_palette_s
 {
 	const entity_t *entity;
@@ -28,11 +37,9 @@ typedef struct r_vrik_prepared_palette_s
 	 * bind-floor correction; valid for alternates. */
 	float target_to_canonical[12];
 	qboolean alternate_avatar;
-	/* Rigid source-equipment view and its bone-local to canonical transform.
-	 * Published only with a complete alternate body/prop selection. */
-	const aliashdr_t *attached_prop_geometry;
-	float attached_prop_to_canonical[12];
-	qboolean attached_prop_valid;
+	/* Root-local static views: Ranger publishes one, QBJ publishes zero or two. */
+	r_vrik_attachment_t attachments[R_VRIK_RENDER_MAX_ATTACHMENTS];
+	uint32_t attachment_count;
 	VkDescriptorSet descriptor_set;
 	/* Joint index relative to descriptor_set's aggregate palette slice. */
 	uint32_t joint_offset;

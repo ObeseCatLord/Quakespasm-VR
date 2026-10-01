@@ -38,12 +38,22 @@ typedef struct r_vrik_candidate_s
 	qboolean tracked_cull_valid;
 	float target_to_canonical[12];
 	qboolean alternate_avatar;
-	const aliashdr_t *attached_prop_geometry;
-	float attached_prop_to_canonical[12];
-	double attached_prop_local_bound;
-	qboolean attached_prop_valid;
+	r_vrik_attachment_t attachments[R_VRIK_RENDER_MAX_ATTACHMENTS];
+	uint32_t attachment_count;
 	r_vrik_prepared_muzzle_t muzzle;
 } r_vrik_candidate_t;
+
+typedef struct r_vrik_staged_equipment_s
+{
+	const qmodel_t *model;
+	const aliashdr_t *geometry, *views[R_VRIK_RENDER_MAX_ATTACHMENTS];
+	const md5_skeleton_data_t *skeleton_data;
+	md5_skeleton_view_t skeleton;
+	r_avatar_presentation_context_t presentation;
+	float root_bind[R_VRIK_RENDER_MAX_ATTACHMENTS][12];
+	float anchor_bind[R_VRIK_RENDER_MAX_ATTACHMENTS][12];
+	int id, root[R_VRIK_RENDER_MAX_ATTACHMENTS], anchor[R_VRIK_RENDER_MAX_ATTACHMENTS];
+} r_vrik_staged_equipment_t;
 
 typedef struct r_vrik_staged_avatar_s
 {
@@ -63,6 +73,7 @@ typedef struct r_vrik_staged_avatar_s
 	r_avatar_profile_t normalized_profile;
 	r_avatar_humanoid_t humanoid_map;
 	r_avatar_presentation_context_t presentation;
+	r_vrik_staged_equipment_t equipment;
 	const r_avatar_retarget_binds_t *retarget_binds;
 	int id;
 	float floor_correction_z;
@@ -601,6 +612,64 @@ static void R_VRIKRenderRebindSelection (r_vrik_staged_avatar_t *selection)
 		selection->target_rig.profile = &selection->normalized_profile;
 }
 
+static const custom_avatar_t *R_VRIKRenderQBJ3EquipmentDescriptor (int id)
+{
+	const custom_avatar_t *custom = CustomAvatar_Get (id);
+	return R_VRIKRenderQBJ3Game () && id == CustomAvatar_IdForKey ("qbj3") &&
+		custom && !CustomAvatar_HasFailed (id) && !strcmp (custom->key, "qbj3") &&
+		!strcmp (custom->digest,
+			"ef98e3b1df7cf03715dbd54963329c84f91abf490a19f9faafd7e694c693dc42") ?
+		custom : NULL;
+}
+
+static void R_VRIKRenderStageEquipment (r_vrik_staged_avatar_t *selection)
+{
+	static const char *const roots[R_VRIK_RENDER_MAX_ATTACHMENTS] = {
+		"QBJ3_Shotgun", "QBJ3_BackWrench"};
+	static const int anchors[R_VRIK_RENDER_MAX_ATTACHMENTS] = {MD5_VRIK_HAND_R, MD5_VRIK_SPINE2};
+	r_vrik_staged_equipment_t equipment = {0};
+	r_avatar_rig_t rig;
+	const custom_avatar_t *custom;
+	qmodel_t *model;
+	if (!selection || !selection->target_rig.profile ||
+		selection->target_rig.profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND ||
+		!R_VRIKRenderQBJ3Game ())
+		return;
+	equipment.id = CustomAvatar_IdForKey ("qbj3");
+	if (!(custom = R_VRIKRenderQBJ3EquipmentDescriptor (equipment.id)) ||
+		!(model = R_VRIKRenderCustomModel (equipment.id)) ||
+		!Mod_IsAdmittedAvatarModel (model) || model->avatar_custom_id != equipment.id ||
+		!Mod_GetMD5Skeleton (model, &equipment.skeleton) ||
+		!R_AvatarResolveRig (&custom->profile, &equipment.skeleton, &rig) ||
+		!R_AvatarBuildPresentationContext (&selection->source_rig, &rig, &equipment.presentation))
+		return;
+	equipment.geometry = (const aliashdr_t *)model->extradata[PV_MD5];
+	if (!equipment.geometry || equipment.geometry->numjoints != (int)equipment.skeleton.joint_count)
+		return;
+	for (int prop = 0; prop < R_VRIK_RENDER_MAX_ATTACHMENTS; ++prop)
+	{
+		equipment.root[prop] = -1;
+		equipment.anchor[prop] = rig.joint[anchors[prop]];
+		for (size_t joint = 0; joint < equipment.skeleton.joint_count; ++joint)
+			if (!strcmp (equipment.skeleton.joints[joint].name, roots[prop]))
+				equipment.root[prop] = (int)joint;
+		if (equipment.root[prop] < 0 || equipment.anchor[prop] < 0 ||
+			equipment.root[prop] >= (int)equipment.skeleton.joint_count ||
+			equipment.anchor[prop] >= (int)equipment.skeleton.joint_count ||
+			equipment.skeleton.joints[equipment.root[prop]].parent != equipment.anchor[prop] ||
+			!model->avatar_props[prop].surfaces || !model->avatar_prop_gpu[prop])
+			return;
+		memcpy (equipment.root_bind[prop], equipment.skeleton.joints[equipment.root[prop]].bind,
+			sizeof (equipment.root_bind[prop]));
+		memcpy (equipment.anchor_bind[prop], equipment.skeleton.joints[equipment.anchor[prop]].bind,
+			sizeof (equipment.anchor_bind[prop]));
+		equipment.views[prop] = model->avatar_prop_gpu[prop];
+	}
+	equipment.model = model;
+	equipment.skeleton_data = model->md5_skeleton;
+	selection->equipment = equipment;
+}
+
 static qboolean R_VRIKRenderStageSelection (r_vrik_frame_entry_t *entry, int id)
 {
 	r_vrik_staged_avatar_t selection = {0};
@@ -695,6 +764,7 @@ static qboolean R_VRIKRenderStageSelection (r_vrik_frame_entry_t *entry, int id)
 	selection.target_model = target;
 	selection.source_skeleton_data = source->md5_skeleton;
 	selection.target_skeleton_data = target->md5_skeleton;
+	R_VRIKRenderStageEquipment (&selection);
 	selection.valid = true;
 	entry->selection = selection;
 	/* ResolveRigs borrowed the local selection. Rebind after copying into the
@@ -859,8 +929,8 @@ static void R_VRIKRenderCullCandidate (const entity_t *entity, const aliashdr_t 
 	candidate->tracked_cull_valid = tracked_cull_valid;
 }
 
-/* The source owns both private meshes. A partial upload, unusable material or
- * stale view rejects the entire alternate, including its body selection. */
+/* Validate the private mesh and published views. Ranger callers treat a miss
+ * as alternate-admission failure; QBJ callers refuse only the optional pair. */
 static qboolean R_VRIKRenderValidatePropView (const qmodel_t *source, int prop,
 	int skinnum, double *qmax_out)
 {
@@ -946,30 +1016,188 @@ static void R_VRIKRenderMuzzleCandidate (const entity_t *entity, const aliashdr_
 	candidate->muzzle.valid = true;
 }
 
-static qboolean R_VRIKRenderAttachProp (
+static void R_VRIKRenderClearAttachments (r_vrik_candidate_t *candidate)
+{
+	memset (candidate->attachments, 0, sizeof (candidate->attachments));
+	candidate->attachment_count = 0;
+}
+
+static qboolean R_VRIKRenderMultiplyAffine (const float a[12], const float b[12], float out[12])
+{
+	float left[3][4], right[3][4], result[3][4];
+	if (!a || !b || !out)
+		return false;
+	memcpy (left, a, sizeof (left));
+	memcpy (right, b, sizeof (right));
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 4; ++column)
+			if (!isfinite (left[row][column]) || !isfinite (right[row][column]))
+				return false;
+	R_ConcatTransforms (left, right, result);
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 4; ++column)
+			if (!isfinite (result[row][column]))
+				return false;
+	memcpy (out, result, sizeof (result));
+	return true;
+}
+
+static qboolean R_VRIKRenderMakeAttachment (const aliashdr_t *geometry,
+	const float affine[12], double qmax, r_vrik_attachment_t *attachment)
+{
+	double rotation_squared = 0.0, translation_squared = 0.0;
+	if (!geometry || !affine || !attachment || !isfinite (qmax) || qmax < 0.0)
+		return false;
+	for (int row = 0; row < 3; ++row)
+	{
+		for (int column = 0; column < 3; ++column)
+		{
+			const double value = affine[row * 4 + column];
+			if (!isfinite (value))
+				return false;
+			rotation_squared += value * value;
+		}
+		const double value = affine[row * 4 + 3];
+		if (!isfinite (value))
+			return false;
+		translation_squared += value * value;
+	}
+	const double bound = sqrt (translation_squared) + sqrt (rotation_squared) * qmax;
+	if (!isfinite (bound) || bound < 0.0)
+		return false;
+	memset (attachment, 0, sizeof (*attachment));
+	attachment->geometry = geometry;
+	memcpy (attachment->to_canonical, affine, sizeof (attachment->to_canonical));
+	attachment->local_bound = bound;
+	attachment->valid = true;
+	return true;
+}
+
+static qboolean R_VRIKRenderBuildSourceAnchor (
+	const r_avatar_presentation_context_t *context, const float bind[12], float out[12])
+{
+	float origin[3], mapped[3];
+	for (int row = 0; row < 3; ++row)
+	{
+		for (int column = 0; column < 3; ++column)
+		{
+			double value = 0.0;
+			for (int k = 0; k < 3; ++k)
+				value += (double)context->rotation[row * 4 + k] * bind[k * 4 + column];
+			if (!isfinite (value) || fabs (value) > FLT_MAX)
+				return false;
+			out[row * 4 + column] = (float)value;
+		}
+		origin[row] = bind[row * 4 + 3];
+	}
+	R_AvatarPresentationPoint (context, origin, mapped);
+	for (int row = 0; row < 3; ++row)
+	{
+		if (!isfinite (mapped[row]))
+			return false;
+		out[row * 4 + 3] = mapped[row];
+	}
+	return true;
+}
+
+static qboolean R_VRIKRenderQBJ3EquipmentCurrent (
+	const r_vrik_staged_equipment_t *equipment, int skinnum, double qmax[2])
+{
+	static const char *const roots[R_VRIK_RENDER_MAX_ATTACHMENTS] = {
+		"QBJ3_Shotgun", "QBJ3_BackWrench"};
+	md5_skeleton_view_t current;
+	const custom_avatar_t *custom;
+	const qmodel_t *model;
+	const qboolean need_blas = vulkan_globals.ray_query &&
+		bmodel_tlas != VK_NULL_HANDLE && r_gpulightmapupdate.value && r_rtshadows.value > 0;
+	if (!equipment || !qmax || !equipment->model ||
+		equipment->id != CustomAvatar_IdForKey ("qbj3") ||
+		equipment->id < PLAYER_AVATAR_COUNT || equipment->id >= R_VRIK_RENDER_MAX_AVATARS)
+		return false;
+	const int cache_index = equipment->id - PLAYER_AVATAR_COUNT;
+	if (cache_index < 0 || cache_index >= CUSTOM_AVATAR_MAX_PACKAGES ||
+		!custom_attempted[cache_index] || custom_models[cache_index] != equipment->model)
+		return false;
+	custom = R_VRIKRenderQBJ3EquipmentDescriptor (equipment->id);
+	model = equipment->model;
+	if (!custom || !model || model->needload || !Mod_IsAdmittedAvatarModel (model) ||
+		model->avatar_custom_id != equipment->id || model->md5_skeleton != equipment->skeleton_data ||
+		model->extradata[PV_MD5] != (const byte *)equipment->geometry ||
+		!Mod_GetMD5Skeleton (model, &current) ||
+		current.joints != equipment->skeleton.joints ||
+		current.absolute_poses != equipment->skeleton.absolute_poses ||
+		current.joint_count != equipment->skeleton.joint_count ||
+		current.pose_count != equipment->skeleton.pose_count ||
+		current.from_rerelease != equipment->skeleton.from_rerelease ||
+		!equipment->geometry || equipment->geometry->numjoints != (int)current.joint_count)
+		return false;
+	for (int prop = 0; prop < R_VRIK_RENDER_MAX_ATTACHMENTS; ++prop)
+	{
+		if (equipment->root[prop] < 0 || equipment->anchor[prop] < 0 ||
+			equipment->root[prop] >= (int)current.joint_count ||
+			equipment->anchor[prop] >= (int)current.joint_count ||
+			strcmp (current.joints[equipment->root[prop]].name, roots[prop]) ||
+			current.joints[equipment->root[prop]].parent != equipment->anchor[prop] ||
+			model->avatar_prop_gpu[prop] != equipment->views[prop] ||
+			!R_VRIKRenderValidatePropView (model, prop, skinnum, &qmax[prop]) ||
+			(need_blas && !GLMesh_AvatarPropBLASReady (equipment->views[prop])))
+			return false;
+	}
+	return true;
+}
+
+static qboolean R_VRIKRenderAttachQBJ3Pair (
+	const r_vrik_staged_avatar_t *selection, const r_avatar_rig_t *target_rig,
+	const vrik_pose_t *pose, qboolean tracked, const float (*target_palette)[12],
+	r_vrik_candidate_t *candidate)
+{
+	static const int semantics[R_VRIK_RENDER_MAX_ATTACHMENTS] = {
+		MD5_VRIK_HAND_R, MD5_VRIK_SPINE2};
+	static const float identity[12] = {
+		1,0,0,0, 0,1,0,0, 0,0,1,0};
+	r_vrik_attachment_t attachments[R_VRIK_RENDER_MAX_ATTACHMENTS] = {{0}};
+	double qmax[R_VRIK_RENDER_MAX_ATTACHMENTS];
+	const r_vrik_staged_equipment_t *equipment = &selection->equipment;
+	if (!R_VRIKRenderQBJ3EquipmentCurrent (equipment, selection->entity->skinnum, qmax))
+		return false;
+	for (int prop = 0; prop < R_VRIK_RENDER_MAX_ATTACHMENTS; ++prop)
+	{
+		const int semantic = prop == 0 && tracked && pose &&
+			(pose->flags & VRIK_FLAG_DOMINANT_LEFT) ? MD5_VRIK_HAND_L : semantics[prop];
+		const int target_anchor = target_rig->joint[semantic];
+		float source_anchor[12], socket[12], root_to_canonical[12], affine[12];
+		if (target_anchor < 0 || target_anchor >= (int)target_rig->live->joint_count ||
+			!R_VRIKRenderBuildSourceAnchor (&equipment->presentation,
+				equipment->anchor_bind[prop], source_anchor) ||
+			!R_AvatarBuildAttachedPropTransform (&selection->presentation,
+				source_anchor, source_anchor, target_palette[target_anchor],
+				selection->humanoid ? selection->humanoid_map.reference[semantic] :
+					target_rig->live->joints[target_anchor].bind,
+				identity, socket) ||
+			!R_VRIKRenderMultiplyAffine (equipment->presentation.forward,
+				equipment->root_bind[prop], root_to_canonical) ||
+			!R_VRIKRenderMultiplyAffine (socket, root_to_canonical, affine) ||
+			!R_VRIKRenderMakeAttachment (equipment->views[prop], affine,
+				qmax[prop], &attachments[prop]))
+			return false;
+	}
+	memcpy (candidate->attachments, attachments, sizeof (attachments));
+	candidate->attachment_count = R_VRIK_RENDER_MAX_ATTACHMENTS;
+	return true;
+}
+
+static qboolean R_VRIKRenderAttachRangerProp (
 	const r_vrik_staged_avatar_t *selection,
 	const r_avatar_rig_t *source_rig, const r_avatar_rig_t *target_rig,
 	const vrik_pose_t *pose, qboolean tracked, qboolean muzzle_valid,
 	const float (*source_palette)[12], const float (*target_palette)[12],
 	r_vrik_candidate_t *candidate)
 {
-	const r_avatar_profile_t *profile = target_rig->profile;
 	const r_avatar_presentation_context_t *context = &selection->presentation;
 	int hand_semantic, source_hand, target_hand;
 	int selected_prop = -1, selected_joint = -1;
 	double closest = DBL_MAX, qmax;
-	double rotation_squared = 0.0, translation_squared = 0.0;
-
-	candidate->attached_prop_geometry = NULL;
-	candidate->attached_prop_valid = false;
-	candidate->attached_prop_local_bound = 0.0;
-	memset(candidate->attached_prop_to_canonical, 0,
-		sizeof(candidate->attached_prop_to_canonical));
-	/* Native custom packages keep their skinned props. The default Ranger
-	 * policy attaches this prop; package authors must omit embedded gear,
-	 * since the custom manifest has no native-equipment joint names to filter. */
-	if (profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND)
-		return profile->equipment_policy == R_AVATAR_EQUIPMENT_RANGER;
+	float affine[12];
 	if (!pose)
 		return false;
 	hand_semantic = tracked && (pose->flags & VRIK_FLAG_DOMINANT_LEFT) ?
@@ -1003,54 +1231,59 @@ static qboolean R_VRIKRenderAttachProp (
 		}
 	}
 	if (selected_prop < 0 || closest > 64.0 * 64.0 ||
-		!R_VRIKRenderValidatePropView(selection->source_model,
-			selected_prop, selection->entity->skinnum, &qmax) ||
+		!R_VRIKRenderValidatePropView (selection->source_model, selected_prop,
+			selection->entity->skinnum, &qmax) ||
 		/* The AS task builds the shared prop BLAS after palette preparation.
 		 * Until a prior submitted frame has built it, keep the complete Ranger
 		 * presentation rather than publishing a body without its ray caster. */
 		(vulkan_globals.ray_query && bmodel_tlas != VK_NULL_HANDLE &&
-		 r_gpulightmapupdate.value &&
-		 r_rtshadows.value > 0 &&
+		 r_gpulightmapupdate.value && r_rtshadows.value > 0 &&
 		 !GLMesh_AvatarPropBLASReady (
 			selection->source_model->avatar_prop_gpu[selected_prop])) ||
-		!R_AvatarBuildAttachedPropTransform(context,
-			source_palette[source_hand],
-			source_rig->live->joints[source_hand].bind,
-			target_palette[target_hand],
+		!R_AvatarBuildAttachedPropTransform (context, source_palette[source_hand],
+			source_rig->live->joints[source_hand].bind, target_palette[target_hand],
 			selection->humanoid ? selection->humanoid_map.reference[hand_semantic] :
-				target_rig->live->joints[target_hand].bind,
-			source_palette[selected_joint],
-			candidate->attached_prop_to_canonical))
+				target_rig->live->joints[target_hand].bind, source_palette[selected_joint], affine) ||
+		!R_VRIKRenderMakeAttachment (
+			selection->source_model->avatar_prop_gpu[selected_prop], affine, qmax,
+			&candidate->attachments[0]))
 		return false;
-	for (int row = 0; row < 3; ++row)
-	{
-		for (int column = 0; column < 3; ++column)
-		{
-			const double value = candidate->attached_prop_to_canonical[row * 4 + column];
-			rotation_squared += value * value;
-		}
-		const double value = candidate->attached_prop_to_canonical[row * 4 + 3];
-		translation_squared += value * value;
-	}
-	candidate->attached_prop_local_bound =
-		sqrt(translation_squared) + sqrt(rotation_squared) * qmax;
-	if (!isfinite(candidate->attached_prop_local_bound) ||
-		candidate->attached_prop_local_bound < 0.0)
-		return false;
-	candidate->attached_prop_geometry =
-		selection->source_model->avatar_prop_gpu[selected_prop];
-	candidate->attached_prop_valid = true;
+	candidate->attachment_count = 1;
 	if (tracked && muzzle_valid && selected_prop == MD5_AVATAR_PROP_GUN)
 	{
 		vec3_t tip;
 		/* Measured bone-local +Y tip, through the actual prop attachment.
 		 * Target-body display scale/floor affine does not apply to this prop. */
 		for (int axis = 0; axis < 3; ++axis)
-			tip[axis] = candidate->attached_prop_to_canonical[axis * 4 + 1] * 20.0f +
-				candidate->attached_prop_to_canonical[axis * 4 + 3];
-		R_VRIKRenderMuzzleCandidate (selection->entity, candidate->attached_prop_geometry, tip, candidate);
+			tip[axis] = affine[axis * 4 + 1] * 20.0f + affine[axis * 4 + 3];
+		R_VRIKRenderMuzzleCandidate (selection->entity,
+			candidate->attachments[0].geometry, tip, candidate);
 	}
 	return true;
+}
+
+static qboolean R_VRIKRenderAttachEquipment (
+	const r_vrik_staged_avatar_t *selection,
+	const r_avatar_rig_t *source_rig, const r_avatar_rig_t *target_rig,
+	const vrik_pose_t *pose, qboolean tracked, qboolean muzzle_valid,
+	const float (*source_palette)[12], const float (*target_palette)[12],
+	r_vrik_candidate_t *candidate)
+{
+	R_VRIKRenderClearAttachments (candidate);
+	/* Native custom packages keep their skinned props. The default Ranger
+	 * policy attaches this prop; package authors must omit embedded gear,
+	 * since the custom manifest has no native-equipment joint names to filter. */
+	if (target_rig->profile->equipment_policy != R_AVATAR_EQUIPMENT_ATTACH_HAND)
+		return true;
+	if (R_VRIKRenderQBJ3Game ())
+	{
+		/* Pair construction publishes only after both optional props succeed. */
+		R_VRIKRenderAttachQBJ3Pair (selection, target_rig, pose,
+			tracked, target_palette, candidate);
+		return true;
+	}
+	return R_VRIKRenderAttachRangerProp (selection, source_rig, target_rig,
+		pose, tracked, muzzle_valid, source_palette, target_palette, candidate);
 }
 
 static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_t *candidate, float (*palette)[12])
@@ -1064,6 +1297,7 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 	if (!entity || !candidate || !palette)
 		return false;
 	memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
+	R_VRIKRenderClearAttachments (candidate);
 	candidate->tracked_root_yaw = 0.0f;
 	candidate->tracked_root_valid = false;
 	qbj3_game = R_VRIKRenderQBJ3Game ();
@@ -1105,11 +1339,6 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 	candidate->geometry = header;
 	candidate->joint_count = (uint32_t)output.joint_count;
 	candidate->alternate_avatar = false;
-	candidate->attached_prop_geometry = NULL;
-	candidate->attached_prop_valid = false;
-	candidate->attached_prop_local_bound = 0.0;
-	memset(candidate->attached_prop_to_canonical, 0,
-		sizeof(candidate->attached_prop_to_canonical));
 	R_VRIKRenderCullCandidate (entity, header, candidate->joint_count, (const float (*)[12])palette, candidate);
 	return candidate->joint_count != 0;
 }
@@ -1441,24 +1670,14 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 				MD5_VRIK_UPPERARM_L, endpoint, pole);
 		}
 	}
-	if (!R_VRIKRenderAttachProp(selection, source_rig, target_rig,
+	if (!R_VRIKRenderAttachEquipment(selection, source_rig, target_rig,
 		&pose, tracked, tracked && ranger.muzzle_valid, (const float (*)[12])source_palette,
-		(const float (*)[12])palette, candidate))
-	{
-		if (!qbj3_death)
-			return false;
-		/* Optional gear must not suppress a complete death body. */
-		candidate->attached_prop_geometry = NULL;
-		candidate->attached_prop_valid = false;
-		candidate->attached_prop_local_bound = 0.0;
-		memset (candidate->attached_prop_to_canonical, 0,
-			sizeof (candidate->attached_prop_to_canonical));
-	}
+		(const float (*)[12])palette, candidate) && !qbj3_death)
+		return false;
 	if (qbj3_death)
 	{
 		candidate->tracked_root_yaw = 0.0f;
 		candidate->tracked_root_valid = false;
-		memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
 	}
 
 	candidate->entity = entity;
@@ -1492,9 +1711,17 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		else
 			candidate->tracked_cull_valid = false;
 	}
-	if (candidate->tracked_cull_valid && candidate->attached_prop_valid &&
-		candidate->tracked_cull_local_bound < candidate->attached_prop_local_bound)
-		candidate->tracked_cull_local_bound = candidate->attached_prop_local_bound;
+	if (candidate->attachment_count > R_VRIK_RENDER_MAX_ATTACHMENTS)
+		candidate->tracked_cull_valid = false;
+	for (uint32_t i = 0; candidate->tracked_cull_valid && i < candidate->attachment_count; ++i)
+	{
+		const r_vrik_attachment_t *attachment = &candidate->attachments[i];
+		if (!attachment->valid || !attachment->geometry ||
+			!isfinite (attachment->local_bound) || attachment->local_bound < 0.0)
+			candidate->tracked_cull_valid = false;
+		else if (candidate->tracked_cull_local_bound < attachment->local_bound)
+			candidate->tracked_cull_local_bound = attachment->local_bound;
+	}
 	return candidate->joint_count != 0;
 }
 
@@ -1678,11 +1905,9 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		record->model = candidate->model;
 		record->geometry = candidate->geometry;
 		record->alternate_avatar = candidate->alternate_avatar;
-		record->attached_prop_geometry = candidate->attached_prop_geometry;
-		record->attached_prop_valid = candidate->attached_prop_valid;
-		memcpy(record->attached_prop_to_canonical,
-			candidate->attached_prop_to_canonical,
-			sizeof(record->attached_prop_to_canonical));
+		record->attachment_count = candidate->attachment_count;
+		memcpy (record->attachments, candidate->attachments,
+			sizeof (record->attachments));
 		if (candidate->alternate_avatar)
 			memcpy (record->target_to_canonical, candidate->target_to_canonical,
 				sizeof (record->target_to_canonical));
