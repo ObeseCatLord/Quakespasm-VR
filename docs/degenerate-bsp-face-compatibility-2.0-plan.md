@@ -7,7 +7,7 @@ face179825 has plane39763, firstedge860731, numedges2, texinfo41032. GDB locates
 the product rejection at gl_model.c:2535–2540, not a texture or missing-asset error.
 
 Native vkQuake gl_model.c Mod_LoadFaces accepts these faces; its triangulation
-and current r_world.c R_NumSurfaceIndices return3*(numedges-2), zero for two edges.
+and current r_world.c R_NumTriangleIndicesForSurf return3*(numedges-2), zero for two edges.
 Keep native loading/mesh ownership and stable BSP surface identities. The strict
 migrated lower-bound guard rejects native-compatible content. No new mod-specific
 case, surface compaction/remapping or replacement model loader is justified.
@@ -26,3 +26,20 @@ load/render/leave without heapsize. Run relevant malformed range/low-edge cases
 in final qualification; do not weaken unrelated loader validation. Complete
 artifact revisions must include this change before final acceptance. User
 performance timing remains excluded.
+
+## Second native consumer exposed by the load retry
+
+The92bc7775 retry passed model face admission, then stopped at the existing
+GL_BrushRegenerationSourceValid lower bound in r_brush.c:1657. Main read that
+helper and vertex fill/allocation: the same two edges have valid native sources;
+bounded polygon_header + numedges*stride allocation and the per-edge fill loop
+support two vertices. The native Vulkan index count remains zero. Ironwail only
+warns for fewer than three edges and continues native loading, likewise showing
+this is generic compatible content rather than a mod-specific exception.
+
+Extend this same repair to that one lower-bound expression in Quake/r_brush.c,
+3 to2, keeping every pointer/edge/vertex/range and allocation guard. The separate
+convex polygon culling guard at681 remains unchanged: fewer than three vertices
+need not generate a visible polygon. Main owns the exact second substitution;
+combined source repair4 changed lines, within the original reopen-before10 bound.
+Commit before the next affected load/render retry; no broader brush rewrite.
