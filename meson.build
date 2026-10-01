@@ -406,12 +406,14 @@ steam_audio_opt = get_option('use_steam_audio')
 steam_audio_include_dir = get_option('steam_audio_include_dir')
 steam_audio_library_dir = get_option('steam_audio_library_dir')
 steam_audio_paths_set = steam_audio_include_dir != '' and steam_audio_library_dir != ''
+steam_audio_enabled = false
 if steam_audio_opt.enabled() or (steam_audio_opt.auto() and steam_audio_paths_set)
     if not steam_audio_paths_set
         error('Steam Audio requires both -Dsteam_audio_include_dir and -Dsteam_audio_library_dir')
     endif
     phonon_dep = cc.find_library('phonon', dirs : [steam_audio_library_dir], required : true)
     deps += phonon_dep
+    steam_audio_enabled = true
     srcs += [
         'Quake/snd_steamaudio.c',
         'Quake/snd_room.c',
@@ -567,3 +569,19 @@ executable(
     c_pch : 'Quake/quakedef.h',
     install : true,
     win_subsystem : 'windows')
+
+# Retain the inherited combined-build grant and component notices at the native
+# installation boundary. Portable packaging copies this same installed tree.
+license_dir = get_option('datadir') / 'licenses' / 'vkquake-vr'
+install_data('LICENSE.txt', 'LICENSE-GPL-3.0.txt', 'LICENSE-COMPONENTS.txt',
+    install_dir : license_dir)
+install_data('Quake/thirdparty/openxr/LICENSE',
+    rename : 'OpenXR-LICENSE.txt', install_dir : license_dir)
+install_data('Quake/mimalloc/LICENSE',
+    rename : 'mimalloc-LICENSE.txt', install_dir : license_dir)
+if steam_audio_enabled
+    install_data('LICENSES/steam-audio/LICENSE.md',
+        rename : 'steamaudio-LICENSE.txt', install_dir : license_dir)
+    install_data('LICENSES/steam-audio/THIRDPARTY.md',
+        rename : 'steamaudio-THIRDPARTY.txt', install_dir : license_dir)
+endif

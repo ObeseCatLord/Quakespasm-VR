@@ -1,0 +1,30 @@
+vkQuake VR 2.0 component notices
+
+The engine retains its existing GPL version 2 or later source grants and
+copyright notices (LICENSE.txt). As in the inherited Quakespasm VR project,
+Steam Audio enabled combined builds are distributed under GPL version 3 or
+later; include LICENSE-GPL-3.0.txt. This does not change the separate licenses
+of the components below or remove their source notices.
+
+Vendored OpenXR headers:
+  Source: Quake/thirdparty/openxr
+  License: OpenXR-LICENSE.txt in the installed notice directory.
+
+Vendored mimalloc:
+  Source: Quake/mimalloc
+  License: mimalloc-LICENSE.txt in the installed notice directory.
+
+Optional Steam Audio SDK, supported version 4.8.1:
+  Official license: LICENSES/steam-audio/LICENSE.md
+  https://raw.githubusercontent.com/ValveSoftware/steam-audio/v4.8.1/LICENSE.md
+  Official third-party notices: LICENSES/steam-audio/THIRDPARTY.md
+  https://raw.githubusercontent.com/ValveSoftware/steam-audio/v4.8.1/core/THIRDPARTY.md
+  Installed names: steamaudio-LICENSE.txt and steamaudio-THIRDPARTY.txt.
+  These unmodified comprehensive SDK notices include optional SDK components;
+  their inclusion does not mean all such components are linked in a particular
+  CPU-only build. The Nix SDK derivation retains notices from its fetched tag.
+  Distributing with a different SDK requires that version's matching notices.
+
+Other libraries obtained from the system retain their own licenses. Portable
+distributions must additionally include notices for the dependencies actually
+bundled, rather than treating these engine notices as a substitute.

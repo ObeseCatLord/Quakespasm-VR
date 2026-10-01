@@ -19,6 +19,14 @@ retains the selected system runtime and desktop operation. Host Vulkan drivers
 and that runtime must be qualified at the end. A Nix store output is not a
 portable AppImage/tarball.
 
+Meson installs the inherited engine/combined-build and component notices under
+`share/licenses/vkquake-vr`; Steam Audio enabled installs include the unmodified
+official 4.8.1 license and third-party notices. The Nix source closure includes
+these files, and the native SDK package retains the notices from its own fetched
+tag. See `LICENSE-COMPONENTS.txt` for provenance. Portable distribution still
+needs matching notices for every additionally bundled dependency; source notice
+installation alone is not portable artifact qualification.
+
 For development, reuse the native SDK with ordinary Meson:
 
 ```sh

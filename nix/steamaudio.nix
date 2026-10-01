@@ -37,7 +37,8 @@ stdenv.mkDerivation rec {
     mkdir -p $out/lib/pkgconfig $out/include $out/share/licenses/steamaudio
     cp src/core/libphonon.so $out/lib/
     cp ../src/core/phonon.h src/core/phonon_version.h $out/include/
-    cp ../../LICENSE.md $out/share/licenses/steamaudio/
+    install -m644 "$src/LICENSE.md" $out/share/licenses/steamaudio/LICENSE.md
+    install -m644 "$src/core/THIRDPARTY.md" $out/share/licenses/steamaudio/THIRDPARTY.md
     cat > $out/lib/pkgconfig/steamaudio.pc <<EOF
     prefix=$out
     libdir=\''${prefix}/lib

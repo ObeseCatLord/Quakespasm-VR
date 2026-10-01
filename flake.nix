@@ -23,6 +23,7 @@
                 (lib.fileset.fileFilter (file:
                   !(lib.hasSuffix ".o" file.name || lib.hasSuffix ".d" file.name)) ./Quake)
                 ./Shaders ./Misc ./meson.build ./meson_options.txt ./LICENSE.txt
+                ./LICENSE-GPL-3.0.txt ./LICENSE-COMPONENTS.txt ./LICENSES
               ];
             };
             nativeBuildInputs = with pkgs; [ meson ninja pkg-config glslang spirv-tools ];
@@ -46,11 +47,10 @@
               ln -s ${pkgs.openxr-loader}/lib/libopenxr_loader.so.1 $out/bin/libopenxr_loader.so.1
               install -Dm644 "$src/Misc/vkquake.desktop" $out/share/applications/vkquake.desktop
               install -Dm644 "$src/Misc/vkQuake_256.png" $out/share/icons/hicolor/256x256/apps/vkquake.png
-              install -Dm644 "$src/LICENSE.txt" $out/share/licenses/vkquake-vr/LICENSE.txt
             '';
             meta = {
               description = "vkQuake with OpenXR VR and native spatial audio";
-              license = lib.licenses.gpl2Plus;
+              license = lib.licenses.gpl3Plus;
               platforms = supportedSystems;
               mainProgram = "vkquake";
             };
