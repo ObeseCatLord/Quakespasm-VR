@@ -146,6 +146,15 @@ opt-out/default-device settings remain intact and negotiated voice can resume.
 Exercise repeated clear/disconnect and the no-Opus/native-audio fallback as
 additional coverage; do not substitute a direct helper call for serverinfo.
 
+The [saved-entity reference repair](save-entity-reference-2.0-plan.md) adds
+actual numbered native save restoration: empty backward-reference targets,
+forward global/edict references, nonempty targets, sparse high slots, reserved
+clients and fastload. Serialized blocks must determine liveness; allocation
+after restore must observe unique FIFO membership and native reuse delays.
+Negative/out-of-range reference refusal and ordinary initial-map/QC/console
+assignment remain required. A direct parser fixture alone is supporting evidence;
+no new save format or parser state machine is implied.
+
 Read game assets only from the existing quakespasm_straight installation. Native
 runners may link/copy needed data into disposable writable profiles; saves,
 configs and generated QC programs belong there. The map/mod matrix includes
