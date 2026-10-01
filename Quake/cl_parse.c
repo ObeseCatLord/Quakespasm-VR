@@ -1905,7 +1905,6 @@ void CL_ParseLocalSound (void)
 	S_LocalSound (cl.sound_precache[sound_num]->name);
 }
 
-#if 0
 /*
 ==================
 CL_KeepaliveMessage
@@ -1914,61 +1913,28 @@ When the client is taking a long time to load stuff, send keepalive messages
 so the server doesn't disconnect.
 ==================
 */
-static byte	net_olddata[NET_MAXMESSAGE];
 static void CL_KeepaliveMessage (void)
 {
-	float	time;
-	static float lastmsg;
-	int		ret;
-	sizebuf_t	old;
-	byte	*olddata;
+	static double lastmsg;
+	double time;
+	byte localdata[1];
+	sizebuf_t localbuffer = {0};
 
-	if (sv.active)
-		return;		// no need if server is local
-	if (cls.demoplayback)
+	if (cls.state != ca_connected || !cls.netcon || sv.active || cls.demoplayback)
 		return;
 
-// read messages from server, should just be nops
-	olddata = net_olddata;
-	old = net_message;
-	memcpy (olddata, net_message.data, net_message.cursize);
-
-	do
-	{
-		ret = CL_GetMessage ();
-		switch (ret)
-		{
-		default:
-			Host_Error ("CL_KeepaliveMessage: CL_GetMessage failed");
-		case 0:
-			break;	// nothing waiting
-		case 1:
-			Host_Error ("CL_KeepaliveMessage: received a message");
-			break;
-		case 2:
-			if (MSG_ReadByte() != svc_nop)
-				Host_Error ("CL_KeepaliveMessage: datagram wasn't a nop");
-			break;
-		}
-	} while (ret);
-
-	net_message = old;
-	memcpy (net_message.data, olddata, net_message.cursize);
-
-// check time
 	time = Sys_DoubleTime ();
-	if (time - lastmsg < 5)
+	if (time - lastmsg < 5.0)
 		return;
+
+	localbuffer.data = localdata;
+	localbuffer.maxsize = sizeof (localdata);
+	MSG_WriteByte (&localbuffer, clc_nop);
+	if (NET_SendUnreliableMessage (cls.netcon, &localbuffer) == -1)
+		Host_Error ("CL_KeepaliveMessage: lost server connection");
+
 	lastmsg = time;
-
-// write out a nop
-	Con_Printf ("--> client to server keepalive\n");
-
-	MSG_WriteByte (&cls.message, clc_nop);
-	NET_SendMessage (cls.netcon, &cls.message);
-	SZ_Clear (&cls.message);
 }
-#endif
 
 /*
 ==================
@@ -2283,13 +2249,21 @@ static qboolean CL_ParseServerInfo (void)
 		cl.model_precache[i] = Mod_ForName (model_precache[i], false);
 		if (cl.model_precache[i] == NULL)
 		{
-			Host_Error ("Model %s not found", model_precache[i]);
+			Con_Warning ("Cannot join server: model %s was not found in game %s.\n",
+				model_precache[i], COM_GetGameNames (false));
+			CL_CancelAutoReconnect ();
+			CL_Disconnect ();
+			SCR_EndLoadingPlaque ();
+			M_Menu_Main_f ();
+			return true;
 		}
+		CL_KeepaliveMessage ();
 	}
 	S_BeginPrecaching ();
 	for (i = 1; i < numsounds; i++)
 	{
 		cl.sound_precache[i] = S_PrecacheSound (sound_precache[i]);
+		CL_KeepaliveMessage ();
 	}
 	S_EndPrecaching ();
 
