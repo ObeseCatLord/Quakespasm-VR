@@ -7,6 +7,10 @@ No tests/builds/compiler/lint/syntax probes/fixtures/scripts/SSH/game runs until
 all required implementation is finished. Source reads, wc and scoped diff check
 only. Keep all changes unstaged for main source review.
 
+Implementation paused with zero edits under step11. Resolve the
+[live reverse admission reopening](metadata-live-admission-2.0-brief.md) before
+resuming the coupled worker. The rest of the adopted native design is retained.
+
 ## Behavioral reference and architecture
 
 Use pinned primary51b452c0 and QSS-M03a498aa metadata syntax/native signon,
@@ -73,7 +77,7 @@ Do not minify, move work outside the count, or weaken guards to meet the bound.
 9. Allocate cls.message NET_MAXMESSAGE once in CL_Init, immediately logical1024.
    Native disconnect/new connection/map cleanup resets logical1024 and pending
    reply; normal post-send clear retains selected size. After accepted header,
-   CL_SignonReply1 selects NQ8192/Fitz32000/RMQ or accepted FTE264000, bounded by
+   CL_SignonReply1 selects NQ8192/Fitz32000/RMQ or accepted FTE2 (64000), bounded by
    allocated capacity. Do not reallocate or infer reverse capacity from QSMI.
 10. Preflight native name/control commands and whole initial color+userinfo+spawn
     with conservative reverse token1023/text2046 limits, complete formatting and

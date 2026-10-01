@@ -58,8 +58,11 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   large-field parity is not claimed. The [coupled Astra disposition](metadata-publication-integration-2.0-review.md)
   and [resolved before-code plan](metadata-publication-integration-2.0-plan.md),
   `c89e7eb7`, specify whole compatible bundles, ordered native overlay checks,
-  dirty obligations and the native spawn-drain phase. Luna implementation is
-  active in the seven-file region; no sender source receipt yet.
+  dirty obligations and the native spawn-drain phase. Luna stopped with zero
+  edits under step11 after confirming live reverse publication lacks a retry
+  owner. The [narrow reopening](metadata-live-admission-2.0-brief.md), `0b02269e`,
+  resolves that native admission seam before restarting coding; local Astra
+  review is active. No sender source receipt yet.
 - [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
   slots before signon3 using current stores and native reliable-buffer retry.
 - [ ] Preserve publication across mid-signon changes, map changes and spawn/
@@ -161,7 +164,8 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
 
 C02's reader-selection and complete sender design are now reviewed technical
 decisions; the optional stock-peer question is not a prerequisite. C02 publication
-and C19 staging are the two active, disjoint Luna implementation slices.
+and C19 staging are the two remaining disjoint implementation slices. C02 coding
+is paused for its live-admission disposition; C19 Luna refinement remains active.
 The detailed plans and review evidence below define their native integration seams.
 
 ## Original audit findings and source integrations
