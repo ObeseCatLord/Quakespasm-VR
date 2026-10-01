@@ -3,6 +3,8 @@ FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffb
 COPY sources.json /usr/local/bin/sources.json
 COPY build-native.sh /usr/local/bin/build-native.sh
 COPY Dockerfile /usr/local/bin/Dockerfile
+COPY package.py host-policy.json /usr/local/bin/
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN set -eu; \
     sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources; \
