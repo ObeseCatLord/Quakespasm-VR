@@ -6,7 +6,10 @@ Portable artifact bundling remains the separate C19 slice.
 
 [C12 QBJ3 live-avatar admission](qbj3-live-avatar-2.0-plan.md) reuses the inherited
 strict frame/selection contract at the native staged palette, raster and BLAS
-boundaries. C13 corpse and C14 optional equipment remain separate planned slices.
+boundaries; source-integrated in33d6b90a. The local Astra-assessed
+[C13 independent death/corpse plan](qbj3-corpse-avatar-2.0-plan.md) extends those
+owners with one bounded frame list and native per-entity animation. C14 optional
+equipment remains separate.
 [C21 native GPU diagnostic availability](gpu-diagnostic-validity-2.0-plan.md)
 retains existing queries and adds truthful validity and sampled stereo labels.
 
