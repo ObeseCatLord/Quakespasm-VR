@@ -1,4 +1,14 @@
 /*
+Copyright (C) 1996-2001 Id Software, Inc.
+Copyright (C) 2026 Hiina
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+*/
+
+/*
  * Optional Opus voice wire format shared by the client and server.
  * Audio encoding and playback are supplied by a separate worker.
  */
