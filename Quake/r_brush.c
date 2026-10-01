@@ -2703,7 +2703,7 @@ static qboolean GL_ValidateBModelVertexSources (uint32_t *vertex_count)
 		for (int i = 0; i < m->numsurfaces; ++i)
 		{
 			const int count = m->surfaces[i].numedges;
-			if (count < 3 || (size_t)count > UINT_MAX / (VERTEXSIZE * sizeof (float)) - total)
+			if (count < 2 || (size_t)count > UINT_MAX / (VERTEXSIZE * sizeof (float)) - total)
 				return false;
 			total += count;
 		}
