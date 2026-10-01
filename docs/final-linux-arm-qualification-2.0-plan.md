@@ -72,6 +72,14 @@ retains the low nine items2 bits; STAT_VR_ITEMS2 retains the normalized full mas
 Keep ordinary core field values valid: this is a bounded optional-field repair,
 not a complete native numeric-conversion audit.
 
+The [voice map-reset repair](voice-map-reset-2.0-plan.md) adds a real serverinfo
+case to audio qualification: buffered/jittered speech, generation, talking,
+per-player controls and transmit/capture continuity must reset on a connected
+map change before client teardown, even if no new speech arrives. Saved VR
+opt-out/default-device settings remain intact and negotiated voice can resume.
+Exercise repeated clear/disconnect and the no-Opus/native-audio fallback as
+additional coverage; do not substitute a direct helper call for serverinfo.
+
 Read game assets only from the existing quakespasm_straight installation. Native
 runners may link/copy needed data into disposable writable profiles; saves,
 configs and generated QC programs belong there. The map/mod matrix includes

@@ -40,3 +40,36 @@ and clear (`snd_spatial.c:920–957`) detach under brief callback exclusion and
 join afterward, as the adopted architecture requires. This is bounded source
 evidence for AUDIO-008/009 ownership and reuse, not audible or concurrency
 execution qualification. Those final Linux/ARM checks remain deferred.
+
+## Receive jitter and voice-session source checkpoint (2026-09-30)
+
+The bounded local source comparison found `voice_jitter.[ch]` unchanged from
+primary `51b452c018273647dcf94f4628a370267ff8fa91`: a 16-packet bound, adaptive
+60–140 ms playout target, 20 ms deadlines, wrap-aware ordering, duplicate/late
+rejection, PLC and 400 ms stale reset. These are copied mechanisms, not a claim
+of measured latency or audible quality.
+
+Current `sv_main.c:SV_VoiceReceive` admits validated negotiated packets through
+existing rate/sequence budgets; relay includes slot/generation.
+`cl_parse.c:CL_ParseVoicePacket` consumes the full bounded payload, gates
+capability/source/generation/packet validity and calls the registered receive
+callback. `voice.c:Voice_ReceivePacket` feeds the inherited jitter queue, resets
+PCM/Opus/talking/spatial state on a new generation and rejects retired generation
+packets. Deadline-driven `Voice_Frame` decoding and existing native/spatial
+playback consume that state. Commands resolve name/slot, retain clamped gain
+and mute, and the audio consumers apply them through their existing owners.
+Gain/mute are inherited slot controls; generation replacement alone does not
+reset them. This checkpoint does not claim a new person-identity mute policy.
+
+Main confirmed one omitted lifecycle call: serverinfo used `CL_ClearState`
+without the primary `Voice_ResetConnection`, while disconnect already used it.
+The [before-code map-reset plan](voice-map-reset-2.0-plan.md) led to the one-line
+repair `c5482976`; it clears old capture/transmit, speaker/PCM/jitter and spatial
+continuity through the existing helper before client teardown. Map/session
+reset restores inherited per-player defaults and preserves saved microphone
+profiles. The full diff and call/helper boundaries were source reviewed.
+
+Final Linux/ARM qualification still needs actual transport-to-jitter-to-playback
+coverage, loss/reorder/wrap and END/stale handling, mute/gain changes, slot and
+generation replacement, real serverinfo map clearing and capture resumption.
+No tests, builds, compiler checks or runtime probes were performed in this pass.

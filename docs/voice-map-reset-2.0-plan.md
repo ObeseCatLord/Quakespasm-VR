@@ -3,7 +3,8 @@
 2026-09-30. Before-code plan for the demonstrated AUDIO-004 map/serverinfo
 omission. Baseline `93b02dbe`; primary reference
 `51b452c018273647dcf94f4628a370267ff8fa91`. Implementation and final Linux/ARM
-qualification are pending. No execution checks accompany this plan.
+qualification were pending at planning. Source integration is recorded below;
+final qualification remains pending. No execution checks accompany this plan.
 
 ## Behavior and verified evidence
 
@@ -64,3 +65,18 @@ VR opt-out/default microphone preferences, repeated clear/disconnect and no
 initialized audio backend. Check existing spatial-stream and callback exclusion
 at their real owners. A helper-only reset fixture does not prove the caller.
 Live audible/device trials remain user-deferred.
+
+## Source integration
+
+Implemented in `c5482976` after plan commit `18869ed9`: one added line in
+`cl_main.c`, invoking the existing helper after spatial-world clear and before
+view/client memory clearing. Main reviewed the complete diff, pinned primary
+caller, current serverinfo/disconnect paths, capture stop/close implementations,
+decoder/ring reset and spatial-world detach/join boundary. Existing locks are
+not nested by the caller. The no-Opus macro remains a no-op through the same
+header already used by disconnect. Scoped `git diff --check` passes.
+
+No second reset owner or new microphone policy was introduced. Saved default-on
+VR/opt-out and desktop profiles remain owned by the existing settings/capture
+code. This closes the demonstrated source omission, not executable or audible
+qualification of map changes.
