@@ -50,6 +50,25 @@ existing model/free/error owner remains responsible for its lifetime.
 Estimate110–160 changed lines; pause/reopen before material growth (>210).
 Return exact resulting capture interface/slot contract to main before phase2.
 
+### Phase1 estimate reopening and final-checklist correction
+
+The paused patch is216 changed lines. Main read its whole diff: existing capture
+and upload helpers are parameterized, finite root inverse/descendant ownership
+are added, and optional-pair cleanup reuses native free owners. Renaming local
+Ranger-only variables accounts for part of the growth; no second model/cache/
+mesh owner was added. Keep this incremental design and reopen phase1 to a240-line
+maximum before refinement; combined650-line reopening bound remains unchanged.
+
+The [final Astra disposition](final-checklist-refresh-2.0-review.md) identifies
+source/target policy conflation. Primary r_alias.c:5262 gates ATTACH_HAND on the
+selected target, resolving exact QBJ source by key/digest. Existing implicit
+source admission accepts RANGER policy. Model-owned extraction must recognize
+the verified source geometry independent of a future selected target's policy;
+apply ATTACH_HAND at frame attachment preparation, not source extraction. Remove
+that misplaced source-policy condition. Finish the paused stale helper rename,
+then return source-only refinement and exact phase2 interfaces for main review.
+Tests/builds remain deferred; this reopening does not accept the patch.
+
 ## Phase2: staged immutable attachments and independent bounds
 
 After phase1 main source review, writes r_vrik_render.c/h only. Keep canonical

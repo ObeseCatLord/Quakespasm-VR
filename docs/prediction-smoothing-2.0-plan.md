@@ -1,4 +1,4 @@
-# C07: native ACK smoothing with coherent VR draw presentation
+# C07: native ACK smoothing with coherent local draw presentation
 
 2026-10-01. Before-code plan after the local Astra xhigh review of the
 [verified brief](prediction-smoothing-2.0-brief.md) and its focused draw-boundary
@@ -75,7 +75,7 @@ already applied offset. Do not mutate cl.viewent or shared tracked-pose helpers.
 Frame/relink validity must not leave a correction active on an interpolated
 camera after prediction stops.
 
-## Phase2: renderer-only coherent VR consumers
+## Phase2: renderer-only coherent local consumers
 
 After phase1 source review, write set expands to Quake/r_alias.c, glquake.h,
 gl_rmain.c and the non-controller HUD target in gl_screen.c. This stage must
@@ -85,16 +85,19 @@ does not close C07.
 Introduce R_AliasDrawModelMatrix only at the render boundary. Dispatch held
 melee through R_HeldMeleeMatrix and other entities through R_AliasModelMatrix;
 after native success, translate local matrix[12..14] using the immutable applied
-offset only for existing VR viewmodel identities (dominant, akimbo halves,
-held-melee; includes head-aimed VR). Preserve winding/finiteness. Route ordinary
+offset for the local desktop viewmodel and existing VR viewmodel identities
+(dominant, akimbo halves, held-melee; includes head-aimed VR). Preserve
+winding/finiteness. Route ordinary
 draw/show-tris and any eligible local overlay/skeleton/foreground/bounds
 consumer consistently, retaining their actual native dispatch. Wheel previews,
 avatar props/muzzles, world/avatar TLAS and all view.c/input matrices stay native.
 Do not rely on a guessed foveation-bounds caller: inspect the actual consumer.
 
-Controller HUD/rays already inherit corrected r_refdef; do not add again. Add
-the captured offset to the non-controller HUD target only. Mode2 beam rendering
-uses a corrected local near start while retaining authoritative trace/impact;
+Controller HUD already inherits corrected r_refdef; do not add again. Controller
+weapon rays instead use native player/hand/weapon origins and need draw-local
+correction after tracing, including paired rays. Add the captured offset to the
+non-controller HUD target only. Mode2 beam rendering uses a corrected local near
+start in each aim mode while retaining authoritative trace/impact;
 world-hit reticles remain fixed. Preparation helpers used by input/physics must
 not receive a translated draw origin.
 
@@ -135,6 +138,20 @@ work to approximately520. Before further coding/integration:
 Phase1 alone still does not close C07. Main must review refinements before
 phase2; that renderer write set waits for C20 to release gl_screen.c. Reopen
 again on material growth or any duplicated authority/solver/render owner.
+
+## Final-checklist review refinements before phase2 resumes
+
+Local Astra xhigh's [final enumeration disposition](final-checklist-refresh-2.0-review.md)
+found the paused phase2 patch's controller-beam exclusion and confirmed main's
+desktop weapon mismatch. Main independently traced the different ray producers.
+Update only the existing draw wrapper identity gate to include ordinary local
+desktop cl.viewent, and the post-trace near-endpoint adapter to include controller
+and paired rays. Controller HUD remains camera-derived and unmodified. Preserve
+the original entity, shared matrices and native gameplay traces. The paused
+68-line phase2 patch remains within the revised combined520-line estimate;
+allow phase2 up to160 changed lines, stopping before material growth/new owners.
+No source acceptance until main reviews this refinement; executable acceptance
+remains part of the final consolidated phase.
 
 ## Final acceptance after all implementation
 
