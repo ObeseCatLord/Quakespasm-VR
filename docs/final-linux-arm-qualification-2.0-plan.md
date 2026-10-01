@@ -35,6 +35,32 @@ runtime, packet counter or helper test must keep its proof limitations explicit.
 
 ## Full surviving scope matrix
 
+The [generic liquid adapter](predictive-generic-liquid-2.0-plan.md) requires
+actual nonstock loaded QC through the existing shared command owner: ordinary
+swimming with QC-authored velocity followed by shared PMove, positive pending
+forecast and authoritative correction, and dry/wet roomscale crossings without
+a new QC lifecycle or lost suffix. Cover accepted batching versus world QC
+clock, swim press/hold/release, damage/sounds/timers, authored waterjump and
+solver-created ledge handoff. Native handoff must receive the completed solver's
+horizontal movedir before callbacks; callback cancellation/changed velocity/
+movedir/deadline must survive, private timers must retire, and the current head
+must close exactly once while the next unstarted head remains queued. Stock,
+q30, hold/ladder/customphysics/cooperative, pause/load/relocation and native
+return keep their established contracts. Arbitrary server QC corrections are
+explicit; exact generic swimming forecast is not inferred from shared PMove.
+
+The [current foveation checkpoint](openxr-foveation-source-checkpoint-2.0.md)
+requires selection and actual rendering across KHR layered/shared rate maps,
+FB/META paired maps and ordinary stereo: changed versus unchanged KHR uploads,
+static versus eye profile setters, validity/stability/opt-out/focus transitions,
+two-eye offset granularity, density restoration failure and ordinary-pass
+recovery, protected materials/full-rate fine depth and native MSAA/AO/OIT.
+Explicit fixed remains usable independently of the eye toggle; opting out of
+eye tracking in eye mode must select full rate, never fixed. Preserve native
+desktop selection and complete either-eye visibility. Borrowed-image metadata
+and incoming-readiness assumptions remain those of the accepted interoperability
+decision; software path coverage must not be presented as live runtime proof.
+
 The [reusable AD preset](ad-weapon-preset-2.0-plan.md) requires actual native
 menu/console callback selection0–5 and reload in a generic/unknown AD context,
 known AD/additional-root contexts and existing fixed/enhanced contexts. Cover

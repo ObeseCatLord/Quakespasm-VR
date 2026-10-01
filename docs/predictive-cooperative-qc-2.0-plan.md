@@ -217,3 +217,18 @@ Arbitrary server-only QC cannot acquire plain client replay simply by calling
 standard physics. Earlier dry/multislot/load limitations are historical;
 current general initial-state and local/load adapters supersede them. Gorilla
 and instant stop remain excluded by the user's scope decisions.
+
+## Current replay-contract clarification
+
+2026-09-30 bounded current-source advice initially listed correction-only
+cooperative execution as a production gap. Its subsequent verified design pass
+demoted that claim: arbitrary replacement hooks are intentionally authoritative,
+and no universally recognizable plain-replay subset follows from calling347.
+Hooks may transform inputs, omit movement or invoke it repeatedly. Do not
+enable ordinary client replay by hook presence or add another policy/CSQC owner
+without a real producer/consumer contract. Compatible replay remains a contract
+question rather than a demonstrated missing hook, builtin or admission path.
+The [ordinary generic swimming adapter](predictive-generic-liquid-2.0-plan.md)
+closes the independently established shared-unaware-QC depth gap; it does not
+change cooperative callback or prediction policy. Broader authored behavior and
+end-of-implementation Linux/ARM software qualification remain pending.

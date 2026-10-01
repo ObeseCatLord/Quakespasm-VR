@@ -284,13 +284,15 @@ native numerical comparison and exact prepared/captured proof limits. Broader
 wet/cooperative/local/load compatibility remains in the full goal. No new
 production boots code was needed for the actual AD/q30 lifecycle proof.
 
-The [generic liquid extension brief](predictive-generic-liquid-2.0-plan.md)
-reopens only ordinary nonstock swimming at those existing shared owners. The
-classifier, callback-free lookahead and timer/publication consumers must be
-considered together; a depth-gate removal alone is not a reviewed contract.
-Design advice and disposition precede coding, with all executable checks
-deferred until implementation ends. Cooperative replay is a separate unresolved
-QC/solver-compatibility question, not a missing hook or builtin implementation.
+The [generic liquid adapter and source checkpoint](predictive-generic-liquid-2.0-plan.md)
+extend ordinary nonstock swimming at those existing shared owners in486a5a49.
+The before-code disposition covers classification/lookahead plus native movedir
+handoff and sticky timer retirement; Luna implemented the one-file adapter and
+main/final requested-Astra source advice accepted the actual patch. QC-authored
+velocity followed by shared motion may require ordinary forecast corrections.
+All executable checks remain deferred until implementation ends. Arbitrary
+cooperative replay is a separate unresolved QC/solver-compatibility question,
+not a missing hook or builtin or a universally safe plain-replay gate change.
 
 The [current foveation source checkpoint](openxr-foveation-source-checkpoint-2.0.md)
 reconciles stale XR-005/007 labels against native selection, rate-map upload,

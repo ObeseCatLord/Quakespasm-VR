@@ -106,3 +106,30 @@ boundary. Stock/q30 reference semantics, QC cadence, existing continuations,
 native timer/deadline lifetime, callback order and completion/credit/suffix
 owners stay intact. Main reviews the actual diff and requests bounded Astra
 source advice before accepting the patch. No tests, builds or fixtures now.
+
+## Source integration checkpoint
+
+Implemented by Luna xhigh in `486a5a49`:13 additions and10 deletions in the
+existing `sv_phys.c` owner. Ordinary generic swimming no longer diverts solely
+for liquid depth or the q30-only lookahead. Actual QC velocity, jump/swim writes
+and one world lifecycle remain; existing command duration, snapshot permission
+and client forecast owners are reused. Stock/q30 reference classification is
+unchanged. Generic solver ledges seed existing native movedir XY before
+callbacks and latch the completed-head native boundary. Later callback edits
+survive while private timers retire and untouched suffixes remain queued.
+
+The bounded requested-Astra final source advisory inspected the full actual
+diff and producer/consumer chain, reporting no scoped P1/P2. Main independently
+checked native movedir consumption, sticky boundary/tail order, private timer
+clearing, completed-cursor retirement and native-frame publication exclusion.
+Accept the patch under the recorded source limits; no additional implementation
+owner or policy was required. Scoped whitespace checks pass.
+
+No executable check, build, compiler probe, fixture, game run or benchmark ran.
+Generic swimming remains QC-authored velocity followed by shared solver motion,
+with authoritative correction, not exact numerical replay or proven mod/native
+trajectory parity. Actual gameplay, Linux/ARM owner round trips and all final
+qualification cases remain pending. This closes the bounded ordinary-swimming
+implementation gap, not the full movement/migration inventory. Arbitrary
+cooperative hooks remain intentionally authoritative without an established
+client replay contract; hook/builtin presence alone does not prove one.
