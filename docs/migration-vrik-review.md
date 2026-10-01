@@ -1,5 +1,33 @@
 # VRIK transport and Vulkan avatar adapter: senior review brief
 
+## Current transport source reconciliation, 2026-09-30
+
+Main followed the actual sender/server/recipient/palette chain while resolving
+AV-001. This is source evidence, not mixed-peer or rendered qualification:
+
+| Existing owner | Inspected behavior |
+| --- | --- |
+| `vrik_codec.[ch]` | The header is byte-identical to pinned primary51b452c; the implementation differs only by accepting negotiated version4 in the existing latch. V4 retains the V3 framed pose body; reliable generation admission is the existing transport adapter, not a rewritten codec. `player_avatar.[ch]` remain byte-identical primary reuse. |
+| `vr_input.c:VR_InputBuildVRIKPose` | Requires focused renderable XR, live signed-on client, usable tracked head and shared presentation/view base; excludes dead/intermission/playback. Uses resolved presentation yaw, head/hand offsets, physical hand identity, root-local coordinates and independent optional FBT targets. Disabling VRIK yields an inactive sample, not fabricated tracking. |
+| `cl_input.c:CL_AppendVRIKPose` | Independent negotiated optional capability; encode and reserve complete framed body before sender-state advance. Runs after private movement and ACKs or ordinary public movement. Failure to fit preserves timer/sequence state; inactive publication follows prior active tracking. Existing send interval is50ms. |
+| `sv_user.c` capability/pose dispatch | Latches supported version once. An early unknown optional pose discards the datagram remainder rather than disconnecting the peer. Framed extra/throttled bodies are consumed; at most one pose per datagram is accepted through existing validation. |
+| `sv_main.c` receive/expiry/relay | Validates root-local limits and sequence, assigns nonzero source generation, keeps normalized pose plus raw V2 bytes when needed. Sends only to capable spawned recipients, skips self, tracks each source per recipient. V4 admission is capacity-checked on native reliable stream; optional pose bodies retain existing datagram owner. Stale active input becomes one inactive pose. |
+| `cl_parse.c` admission/pose/removal | Entire bounded body is consumed even for invalid payload. Requires usable named slot/baseline; V4 additionally requires reliably admitted generation. Rejects retired/old generations and old sequences. Inactive/stale boundaries clear interpolation; departure and entity removal clear samples through existing owners. Exact optional command tokens are consumed before console fallback. |
+| Native lifecycle and render boundary | Disconnect already calls VRIK reset; map serverinfo and server-map resets renegotiate. Received per-entity samples feed the existing once-prepared palette; unsupported/stale input uses ordinary presentation. Separate original entity and cosmetic model identity remain owned by existing frame/model owners. |
+
+The source audit found consumed offers were lost when the client reliable buffer
+was full. The [bounded VRIK/voice reply plan](optional-capability-retry-2.0-plan.md)
+records the repair and source-review disposition; pending offer intent must not
+activate pose/voice sending or receive admission. Complete enqueue remains the
+existing meaning of cap-sent, not delivery/ACK. Generic predictive movement,
+packet clocks, server generation policy and native reliable machinery are reused.
+
+Final isolated Linux/ARM qualification still needs actual negotiated native
+round trips, packet capacity/reorder/loss, source retirement/slot reuse, map and
+tracking discontinuities, independent poses and ordinary unsupported peers.
+The user's live crossplay/headset trials and VR demos are outside this goal's
+completion checks. No new build, test, compiler, probe or game was run here.
+
 Status: the v2/v3 pose codec, optional v2/v3/v4 server/client transport, OpenXR head/hand
 sender, and transport review fixes are committed in `f8ed9a69`, `e182a773`,
 `bb8ca4c5`, and `275b94c2`. The first Vulkan Ranger draw adapter is
