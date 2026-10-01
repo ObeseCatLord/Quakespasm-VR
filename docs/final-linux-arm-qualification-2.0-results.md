@@ -162,3 +162,32 @@ not establish behavior. The [final exhaustive senior reconciliation](final-check
 records source closure, these defects and all remaining groups without narrowing
 scope. No additional missing source feature was established; software/delivery
 acceptance and final integration review remain open.
+
+## Latest portable retry and synchronization review
+
+The committed [portable compiler plan](portable-compiler-qualification-fix-2.0-plan.md)
+governed the initialization-only gl_rmain.c/gl_vidsdl.c repair in `b5e7af20`.
+Main reviewed Luna's complete four-insertion/one-deletion patch, preserving the
+existing stereo helper/scaling and cached format-query owners. Full preliminary
+host rebuild passed. Earlier render results are not new-tree GPU acceptance.
+
+Both complete portable retries used immutable production revision
+`b5e7af202c84e8e7b4ef70c6359b5d0367dbfa61`. Dependencies including Steam Audio
+built, and the earlier stereo/format warnings did not recur. Both builders then
+failed GCC13 -O3 warnings-as-errors in sv_phys.c: saved_globals/saved_angles in
+SV_VRDwellBerserkPhysicalOutcome, saved_angles in SV_VRDirectMeleeOutcome, and
+movement_v_angle/movement_angles around PlayerPostThink in SV_Physics_Client.
+These are confirmed build failures; restoration guards and actual initialization
+must be reviewed before a bounded repair. No warning suppression, contact-melee
+feature reopening or runtime failure claim is justified. Neither architecture's
+build, staging or relocation is accepted. Private evidence:
+`/tmp/qsvr-final-qualification-thchgzi8/logs/linux-native-retry3.log` and
+`/tmp/qsvr-final-qualification-thchgzi8/logs/arm-build-retry3.log`.
+
+Actual live render-pass creation confirms that the early desktop MSAA/OIT pass
+declares unused attachments with layout transitions. Local Astra/xhigh reviewed
+the mechanism and small barrier/attachment-compaction candidates. Main independently
+verified effective routing and spot-checked supporting source. The
+[disposition](unused-attachment-sync-2.0-review.md) retains exact-image attribution,
+correct rendered output and clean validation as unresolved. No renderer repair
+was made or accepted. Ordinary desktop shutdown remains independently unresolved.

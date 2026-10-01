@@ -25,9 +25,12 @@ a fresh line-by-line audit or executable certification of every row.
 
 **Current concrete repair obligations:** desktop Vulkan synchronization hazards,
 ordinary desktop shutdown allocator abort (both reproduced in untouched vkQuake),
-and required GCC13 portable compilation failures in stereo-view initialization
-(amd64/ARM) and cached foveation-format result (amd64). Runtime reachability of
-the compiler warnings remains unproved. Broad controller-input fixture linkage
+and required GCC13 portable compilation failures in server-physics saved-state
+locals (amd64/ARM). The earlier stereo-view and cached foveation-format warnings
+were repaired in `b5e7af20`; the complete portable retry reached sv_phys.c and
+failed on saved globals/angles in two existing melee helpers and saved angles
+around PlayerPostThink. Neither architecture has an accepted final artifact.
+Runtime reachability of the compiler warnings remains unproved. Broad controller-input fixture linkage
 is unfinished verification; equivalent native-input evidence may replace it.
 The complete remaining scope is the eight groups below, with exact cases in
 the qualification plan and partial results in the ledger.
@@ -35,7 +38,11 @@ the qualification plan and partial results in the ledger.
 Already established bounded results: full preliminary host compilation,18 of19
 standalone fixtures, and actual simulated-OpenXR24-probe rendering with clean
 validation/normal exit. Host Steam Audio was disabled; no complete portable
-package is accepted. No additional features are added by this checklist.
+package is accepted. The host rebuild after `b5e7af20` also passed; the GPU result
+predates that initialization-only repair. No additional features are added by
+this checklist. The [focused unused-attachment review](unused-attachment-sync-2.0-review.md)
+records diagnostic evidence and bounded repair candidates, without declaring a
+renderer fix accepted or adding a performance-measurement gate.
 
 The [current local Astra xhigh review](final-checklist-current-2.0-review.md)
 reconciles all185 IDs and found C02 as the only established unfinished
