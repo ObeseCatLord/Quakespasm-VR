@@ -267,9 +267,10 @@ static void Q30PolicySnapshots (client_t *client, byte *bytes, size_t capacity)
 		net_message.data = bytes;
 		net_message.maxsize = capacity;
 		SZ_Clear (&net_message);
-		SVFTE_WriteStats (client, &net_message);
+		struct deltaframe_s *packet_frame = SVFTE_BeginFrame (client);
+		SVFTE_WriteStats (client, &net_message, packet_frame);
 		assert (SVFTE_WritePrivateMoveStats (client, &net_message));
-		assert (SVFTE_WriteEntitiesToClient (client, &net_message, capacity, false));
+		assert (SVFTE_WriteEntitiesToClient (client, &net_message, capacity, false, packet_frame));
 		CL_ParseServerMessage ();
 		assert (msg_readcount == net_message.cursize && cl.move_snapshot_valid);
 		assert (cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_QC_COMMAND &&
@@ -346,7 +347,8 @@ static void DemoEntityPackets (qboolean selected)
 		VectorCopy (client->edict->v.origin, client->vr_gorilla_state.origin);
 		SV_PresendClientDatagram (client);
 		SZ_Clear (&net_message);
-		assert (SVFTE_WriteEntitiesToClient (client, &net_message, sizeof (bytes), false));
+		struct deltaframe_s *packet_frame = SVFTE_BeginFrame (client);
+		assert (SVFTE_WriteEntitiesToClient (client, &net_message, sizeof (bytes), false, packet_frame));
 		/* Verify this current writer really emitted the optional body. */
 		MSG_BeginReading ();
 		assert (MSG_ReadByte () == svcfte_updateentities);

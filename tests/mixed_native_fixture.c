@@ -76,10 +76,11 @@ static void ReadPeerSnapshot (client_t *peer, byte *bytes, size_t capacity)
 		assert (msg_readcount == net_message.cursize);
 		return;
 	}
-	SVFTE_WriteStats (peer, &net_message);
+	struct deltaframe_s *packet_frame = SVFTE_BeginFrame (peer);
+	SVFTE_WriteStats (peer, &net_message, packet_frame);
 	if (SV_PrivateWalkTrialSelected (peer))
 		assert (SVFTE_WritePrivateMoveStats (peer, &net_message));
-	assert (SVFTE_WriteEntitiesToClient (peer, &net_message, capacity, false));
+	assert (SVFTE_WriteEntitiesToClient (peer, &net_message, capacity, false, packet_frame));
 	CL_ParseServerMessage (); // commits stats/ACK/owner at the real message end
 	assert (msg_readcount == net_message.cursize);
 }
@@ -395,7 +396,13 @@ static void RunArrivalGapChecks (client_t *peer, client_state_t *state)
 	PR_ExecuteProgram (damage - qcvm->functions);
 	assert (SV_PrivateWalkTrialTerminalState (peer));
 	epoch = peer->private_move_discontinuity_epoch;
-	for (int frame = 0; frame < 180; ++frame)
+	/* Respect the native co-op respawn deadline rather than assuming the older
+	 * 4.5-second stock-QC settling period is sufficient for every policy. */
+	const float settle_seconds = fmaxf (4.5f, sv_coop_respawn_delay.value + .05f);
+	assert (isfinite (sv_coop_respawn_delay.value) && isfinite (settle_seconds) &&
+		settle_seconds <= 60 && isfinite (host_frametime) && host_frametime > 0);
+	const int settle_frames = (int)ceil (settle_seconds / host_frametime);
+	for (int frame = 0; frame < settle_frames; ++frame)
 	{
 		realtime += host_frametime;
 		GapWorldFrame ();
@@ -416,6 +423,15 @@ static void RunArrivalGapChecks (client_t *peer, client_state_t *state)
 	assert (peer->active && peer->private_input_phase == PRIVATE_INPUT_AWAIT_MARKER &&
 		peer->private_completed_move == completed);
 	GapSnapshot (peer, state);
+	/* Select through native QC input and settle respawn inventory/world pickups;
+	 * co-op ammunition is not necessarily the stock starting constant25. */
+	realtime += host_frametime;
+	GapSend (peer, state, 0, 2, 0);
+	GapDeliver (peer, captured, captured_length);
+	GapWorldFrame ();
+	GapSnapshot (peer, state);
+	assert (peer->edict->v.weapon == IT_SHOTGUN && peer->edict->v.ammo_shells > 0);
+	const float respawn_shells = peer->edict->v.ammo_shells;
 	for (int frame = 0; frame < 20; ++frame)
 	{
 		realtime += host_frametime;
@@ -425,7 +441,7 @@ static void RunArrivalGapChecks (client_t *peer, client_state_t *state)
 		GapSnapshot (peer, state);
 	}
 	assert (peer->private_input_phase == PRIVATE_INPUT_RUNNING &&
-		peer->edict->v.health > 0 && peer->edict->v.ammo_shells < 25);
+		peer->edict->v.health > 0 && peer->edict->v.ammo_shells < respawn_shells);
 	puts ("MIXED_ARRIVAL_GAP_PASSED real admission/receipt/QC/physics/snapshots/replay; delayed input, lost commands/replies, native modes, half/full wrap, teleport orderings, death/respawn; captured delivery");
 }
 
@@ -857,14 +873,6 @@ int MIXED_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 			*states[slot] = cl;
 		}
 	}
-	if (selected && COM_CheckParm ("-arrivalgap"))
-	{
-		RunArrivalGapChecks (peers[0], states[0]);
-		GapSnapshot (peers[1], states[1]);
-		assert (!states[1]->move_ack_selected_owner && !states[1]->move_ack_prediction_allowed);
-	}
-	if (selected && COM_CheckParm ("-velocityseeds"))
-		VelocitySnapshotChecks (peers[0], states[0]);
 	for (int slot = 0; slot < 2; slot++)
 	{
 		vec3_t displacement;
@@ -885,6 +893,19 @@ int MIXED_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 			slot, peers[slot]->protocol_qsvr, VectorLength (displacement),
 			initial_shells[slot], peers[slot]->edict->v.ammo_shells,
 			states[slot]->ackedmovemessages);
+	}
+	/* The optional death/respawn and injected velocity cases change this world;
+	 * validate ordinary-run baselines first and retain snapshots until both finish. */
+	if (selected && COM_CheckParm ("-arrivalgap"))
+	{
+		RunArrivalGapChecks (peers[0], states[0]);
+		GapSnapshot (peers[1], states[1]);
+		assert (!states[1]->move_ack_selected_owner && !states[1]->move_ack_prediction_allowed);
+	}
+	if (selected && COM_CheckParm ("-velocityseeds"))
+		VelocitySnapshotChecks (peers[0], states[0]);
+	for (int slot = 0; slot < 2; slot++)
+	{
 		Mem_Free (states[slot]->entities);
 		Mem_Free (states[slot]->scores);
 		Mem_Free (states[slot]);
