@@ -144,8 +144,11 @@ tools/features and ISA qualification remain required.
    for later staging; no fake success placeholder or host-code fallback.
 2. Packaging/Linux/package.py and host-policy.json only: shared static ELF reader,
    closure/staging/aliases/RUNPATH, notices/source manifests and verification
-   subcommand. Target350–450 lines, pause before550/new resolver/framework. Read
-   native metadata, never execute a copied library as dependency analysis.
+   subcommand. The original350–450 target/550 reopening boundary was exceeded;
+   the committed [staging senior disposition](portable-linux-staging-reopen-2.0-review.md)
+   and [refined plan](portable-linux-staging-2.0-plan.md) supersede it with a
+   target600–625 combined lines, stopping before650/new resolver/framework.
+   Read native metadata, never execute a copied library as dependency analysis.
 3. Packaging/Linux/build-foundry.sh plus concise README only: immutable archive
    transport into a unique native ARM directory, invoke same builder and retrieve
    artifacts/checksums. Target80–120 lines, pause before160/new deployment logic.
