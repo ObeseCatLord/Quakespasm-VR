@@ -407,6 +407,7 @@ void CL_ResetVoiceTransportState (void)
 	cl.voice_protocol_offered = false;
 	cl.voice_cap_sent = false;
 	cl.voice_protocol_version = 0;
+	cl.voice_cap_pending = false;
 	memset (cl.voice_outgoing, 0, sizeof (cl.voice_outgoing));
 	cl.voice_outgoing_head = 0;
 	cl.voice_outgoing_count = 0;
@@ -2708,6 +2709,8 @@ void CL_SendCmd (void)
 	CL_TrySendAvatarCapability ();
 	CL_TrySendCustomAvatarCapability ();
 	CL_TrySendAvatarSelection ();
+	CL_TrySendVRIKCapability ();
+	CL_TrySendVoiceCapability ();
 
 	// get basic movement from keyboard
 	CL_BaseMove (&cmd);

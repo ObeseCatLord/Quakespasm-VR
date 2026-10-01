@@ -159,15 +159,73 @@ void CL_ResetVRIKState (void)
 	cl.vrik_protocol_offered = false;
 	cl.vrik_cap_sent = false;
 	cl.vrik_protocol_version = 0;
+	cl.vrik_cap_pending_version = 0;
 	CL_ResetVRIKPoseCaches ();
+}
+
+void CL_TrySendVRIKCapability (void)
+{
+	int latched_version;
+	uint8_t version_byte;
+
+	if (!cl.vrik_cap_pending_version || cl.vrik_cap_sent)
+		return;
+	/* Playback retains the old latch without touching the live buffer. */
+	if (!cls.demoplayback &&
+		(cls.state != ca_connected || !cls.message.data ||
+		 cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		 cls.message.cursize > cls.message.maxsize || cls.message.overflowed ||
+		 (size_t)(cls.message.maxsize - cls.message.cursize) <
+		 1 + sizeof ("vrik_cap 3")))
+		return;
+	latched_version = cl.vrik_cap_sent;
+	version_byte = cl.vrik_protocol_version;
+	if (vrik_latch_protocol_version (cl.vrik_cap_pending_version,
+		&latched_version, &version_byte) != VRIK_CODEC_OK)
+		return;
+	if (!cls.demoplayback)
+	{
+		MSG_WriteByte (&cls.message, clc_stringcmd);
+		MSG_WriteString (&cls.message, version_byte == VRIK_ADMISSION_PROTOCOL_VERSION ?
+			"vrik_cap 4" : (version_byte == VRIK_PROTOCOL_VERSION ?
+			"vrik_cap 3" : "vrik_cap 2"));
+	}
+	cl.vrik_cap_sent = latched_version;
+	cl.vrik_protocol_version = version_byte;
+	cl.vrik_protocol_offered = true;
+	cl.vrik_cap_pending_version = 0;
+	Con_DPrintf ("VRIK: negotiated protocol %d with server\n", version_byte);
+}
+
+void CL_TrySendVoiceCapability (void)
+{
+	if (!cl.voice_cap_pending || cl.voice_cap_sent)
+		return;
+	if (!cls.demoplayback &&
+		(cls.state != ca_connected || !cls.message.data ||
+		 cls.message.cursize < 0 || cls.message.maxsize < 0 ||
+		 cls.message.cursize > cls.message.maxsize || cls.message.overflowed ||
+		 (size_t)(cls.message.maxsize - cls.message.cursize) <
+		 1 + sizeof ("voice_cap 1")))
+		return;
+	if (!cls.demoplayback)
+	{
+		MSG_WriteByte (&cls.message, clc_stringcmd);
+		MSG_WriteString (&cls.message, "voice_cap 1");
+	}
+	cl.voice_protocol_offered = true;
+	cl.voice_protocol_version = VOICE_PROTOCOL_VERSION;
+	cl.voice_cap_sent = true;
+	cl.voice_cap_pending = false;
+	Con_DPrintf ("Voice: negotiated protocol %d with server\n",
+		VOICE_PROTOCOL_VERSION);
 }
 
 static qboolean CL_OfferVRIKProtocol (const char *command)
 {
 	static const char command_name[] = "vrik_protocol";
 	const char *version;
-	int offered_version, latched_version;
-	uint8_t version_byte;
+	int offered_version;
 
 	if (strncmp (command, command_name, sizeof (command_name) - 1) ||
 		(command[sizeof (command_name) - 1] &&
@@ -195,28 +253,10 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 	if (*version || cl.vrik_cap_sent)
 		return true;
 
-	/* Include the opcode and terminating NUL in the reliable-buffer check. */
-	if (!cls.demoplayback &&
-		(cls.message.cursize < 0 || cls.message.maxsize < 0 ||
-		 (size_t)cls.message.cursize + 1 + sizeof ("vrik_cap 3") >
-		 (size_t)cls.message.maxsize))
-		return true;
-	latched_version = cl.vrik_cap_sent;
-	version_byte = cl.vrik_protocol_version;
-	if (vrik_latch_protocol_version ((uint8_t)offered_version,
-		&latched_version, &version_byte) != VRIK_CODEC_OK)
-		return true;
-	cl.vrik_cap_sent = latched_version;
-	cl.vrik_protocol_version = version_byte;
-	cl.vrik_protocol_offered = true;
-	if (!cls.demoplayback)
-	{
-		MSG_WriteByte (&cls.message, clc_stringcmd);
-		MSG_WriteString (&cls.message, version_byte == VRIK_ADMISSION_PROTOCOL_VERSION ?
-			"vrik_cap 4" : (version_byte == VRIK_PROTOCOL_VERSION ?
-			"vrik_cap 3" : "vrik_cap 2"));
-	}
-	Con_DPrintf ("VRIK: negotiated protocol %d with server\n", version_byte);
+	/* Freeze the first supported choice, including against later upgrades. */
+	if (!cl.vrik_cap_pending_version)
+		cl.vrik_cap_pending_version = (unsigned char)offered_version;
+	CL_TrySendVRIKCapability ();
 	return true;
 }
 
@@ -242,22 +282,9 @@ static qboolean CL_OfferVoiceProtocol (const char *command)
 		version++;
 	if (*version || cl.voice_cap_sent)
 		return true;
-	if (!cls.demoplayback &&
-		(cls.message.cursize < 0 || cls.message.maxsize < 0 ||
-		 (size_t)cls.message.cursize + 1 + sizeof ("voice_cap 1") >
-		 (size_t)cls.message.maxsize))
-		return true;
 
-	cl.voice_protocol_offered = true;
-	cl.voice_protocol_version = VOICE_PROTOCOL_VERSION;
-	cl.voice_cap_sent = true;
-	if (!cls.demoplayback)
-	{
-		MSG_WriteByte (&cls.message, clc_stringcmd);
-		MSG_WriteString (&cls.message, "voice_cap 1");
-	}
-	Con_DPrintf ("Voice: negotiated protocol %d with server\n",
-		VOICE_PROTOCOL_VERSION);
+	cl.voice_cap_pending = true;
+	CL_TrySendVoiceCapability ();
 	return true;
 }
 

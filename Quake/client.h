@@ -326,6 +326,7 @@ typedef struct
 	qboolean vrik_protocol_offered;
 	qboolean vrik_cap_sent;
 	unsigned char vrik_protocol_version;
+	unsigned char vrik_cap_pending_version; /* First supported offer; not active yet. */
 	/* Optional inherited cosmetic identity protocol; zero is Ranger. */
 	qboolean avatar_protocol_offered;
 	qboolean avatar_cap_sent;
@@ -341,6 +342,7 @@ typedef struct
 	qboolean voice_protocol_offered;
 	qboolean voice_cap_sent;
 	unsigned char voice_protocol_version;
+	qboolean voice_cap_pending;
 	voice_packet_t voice_outgoing[VOICE_CLIENT_QUEUE_CAPACITY];
 	unsigned int voice_outgoing_head;
 	unsigned int voice_outgoing_count;
@@ -550,6 +552,8 @@ void CL_Resume_Record (qboolean recordsignons);
 // cl_parse.c
 //
 void CL_ParseServerMessage (void);
+void CL_TrySendVRIKCapability (void);
+void CL_TrySendVoiceCapability (void);
 /* Notify on native world reset; release without callbacks before VM teardown. */
 void CL_ClearCSQCEntities (qboolean notify);
 
