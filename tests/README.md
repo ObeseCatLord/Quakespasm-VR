@@ -3544,3 +3544,14 @@ seam, not a reliable transport promise. Byte-rate/send failure, receiver/map
 reset and live delivery remain distinct. See the
 [recovery plan](../docs/voice-recovery-final-2.0-plan.md) and
 [exact results](../docs/voice-recovery-current-2.0-results.md).
+
+In a **fresh** isolated profile, add `-routing` to check stored VR-on/desktop-off
+defaults, saved VR opt-out, actual desktop menu opt-in/PTT, uniquely named dummy
+device/default cycling, a saved missing explicit preference with no fallback,
+recovery and native revoke. Require `VOICE_ROUTING_NATIVE_PASSED`, the PCM
+marker and exit0; combining `-routing -recovery` requires all three markers.
+The first routing assertion requires no existing private settings file.
+It does not execute active XR profile switching, hardware selection, duplicate
+names or failed default-device opens. See the
+[routing plan](../docs/voice-routing-final-2.0-plan.md) and
+[exact native results/limits](../docs/voice-routing-current-2.0-results.md).

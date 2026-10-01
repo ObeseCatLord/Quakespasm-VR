@@ -83,8 +83,11 @@ receipts. These overlap intentionally; test shared boundaries once.
   packet-rate limit/next-window admission, relay expiry, gain, loss/reordering
   with nonzero concealed middle PCM and replaced-source generation/old-replay
   rejection also pass; [recovery results/limits](voice-recovery-current-2.0-results.md).
+  Fresh stored VR-on/desktop-off and saved VR opt-out, native desktop dummy
+  default/unique-device/missing-explicit/no-fallback/recovery/revoke pass in a
+  combined PCM/recovery run; [routing results/limits](voice-routing-current-2.0-results.md).
   Distinct live delivery, byte-rate/send failure, receiver/map reset,
-  routing/profile/spatial/music boundaries remain open.
+  active XR profile/other device/VAD/discontinuity/spatial/music boundaries remain open.
 - F03: actual loaded SSQC/CSQC core numeric/name binding, permission discovery,
   simultaneous VM preservation and toggle/reload subset passes;
   [exact results and limits](qc-binding-current-qualification-2.0.md).

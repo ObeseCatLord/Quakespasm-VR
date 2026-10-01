@@ -343,6 +343,7 @@ static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
 }
 
 #include "voice_queue_recovery_native_fixture.h"
+#include "voice_routing_native_fixture.h"
 
 int main (int argc, char **argv)
 {
@@ -381,6 +382,8 @@ int main (int argc, char **argv)
 	shm = &controlled_dma;
 	Voice_Init ();
 	assert (voice_initialized && !voice_settings.desktop.transmit);
+	if (COM_CheckParm ("-routing"))
+		Voice_RoutingChecks ();
 	voice_settings.desktop.transmit = 1; /* Prepared fixture preference only. */
 	voice_settings.desktop.mode = 1;
 	Voice_RefreshCapture (true);
@@ -476,6 +479,8 @@ int main (int argc, char **argv)
 	}
 	if (COM_CheckParm ("-recovery"))
 		puts ("VOICE_RECOVERY_NATIVE_PASSED generated stream/queue/gain/loss/reorder/generation; captured transport");
+	if (COM_CheckParm ("-routing"))
+		puts ("VOICE_ROUTING_NATIVE_PASSED stored VR defaults/opt-out; desktop dummy routes");
 	puts ("VOICE_PCM_NATIVE_PASSED native negotiated codec/relay/PCM/mute/reset; captured transport/dummy capture");
 	return 0;
 }
