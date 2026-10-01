@@ -54,6 +54,21 @@ qualify a newer tree until that tree is built too.
 
 ## Active native portable builds
 
+Second native portable attempt at25fbfd47 progressed through dependencies. ARM
+built native Steam Audio4.8.1 but Meson setup rejected --debug=true (and --strip
+is also a switch). Use Meson's native -Ddebug=true/-Dstrip=false options, retaining
+release optimization and symbols; no feature fallback.
+
+On amd64, Valve's Linux AVX branch injects legacy -fabi-version=6, which breaks
+GCC13 libstdc++ future/unique_ptr construction. A minimal <future> source in the
+same pinned container fails with that flag and passes with the native ABI.
+Retain AVX/performance: remove only that legacy compile option in the selected
+Linux SDK source before CMake. All SDK C++ objects are built together, private
+implementation stays hidden, engine consumes the stable phonon C API. Preserve
+original source archives and record the exact in-recipe adjustment in options
+receipts/source-access artifacts. Do not weaken standard-library errors or
+disable spatial audio. Final native SDK/client linking remains required.
+
 Local amd64 and Foundry native arm64 container routes launched from the same
 immutable entry archive and committed production packaging recipes. Both use
 pinned Ubuntu24.04/dependency recipes; builds, staging, relocation and negative

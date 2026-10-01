@@ -209,6 +209,10 @@ cmake_native "$WORK/src/pffft/pffft" "$WORK/build/pffft" \
 
 STEAM="$WORK/src/steam-audio/steam-audio"
 patch -p2 -d "$STEAM/core" < "$PRODUCT_ROOT/nix/steamaudio-unaligned-accumulate.patch"
+# GCC 13's libstdc++ cannot instantiate <future> with Valve's legacy ABI6.
+# Build the complete private SDK implementation with the native compiler ABI;
+# keep AVX and the public phonon C interface unchanged.
+sed -i '/add_compile_options(-fabi-version=6)/d' "$STEAM/core/CMakeLists.txt"
 sed -i '/^set(ZLIB_ROOT /d; /^set(ZLIB_INCLUDE_DIR /d' "$STEAM/core/build/FindMySOFA.cmake"
 MY_HEADER=$(dpkg-query -L libmysofa-dev | awk '!found && /\/mysofa\.h$/ {print; found=1}')
 MY_LIBRARY=$(dpkg-query -L libmysofa-dev | awk '!found && /\/libmysofa\.so$/ {print; found=1}')
@@ -234,7 +238,7 @@ pkg-config --exists libcurl || fail 'libcurl pkg-config dependency is required'
 curl_version=$(pkg-config --modversion libcurl)
 ENGINE="$WORK/build/engine"
 MESON_OPTIONS=(--prefix=/ --libdir=lib --buildtype=release --auto-features=enabled \
-    --wrap-mode=nodownload --debug=true --strip=false -Duse_sdl3=enabled \
+    --wrap-mode=nodownload -Ddebug=true -Dstrip=false -Duse_sdl3=enabled \
     -Duse_steam_audio=enabled -Dsteam_audio_include_dir="$DEPS/include" \
     -Dsteam_audio_library_dir="$DEPS/lib" -Duse_codec_wave=enabled \
     -Duse_codec_mp3=enabled -Dmp3_lib=mpg123 -Duse_codec_flac=enabled \
@@ -257,6 +261,7 @@ Ubuntu image index: $(python3 -c 'import json,sys; print(json.load(open(sys.argv
 Native architecture: $MACHINE ($ARCH)
 C/C++ baseline flags: $BASE_FLAGS; inherited compiler/linker flags cleared
 Steam Audio patch: nix/steamaudio-unaligned-accumulate.patch; MySOFA finder adjusted for distro zlib
+Steam Audio Linux private C++ implementation uses native compiler ABI; legacy -fabi-version=6 removed; phonon C API and AVX selection retained
 Steam Audio x86-64 AVX option: ON; aarch64 uses the native SDK architecture path
 libcurl pkg-config version: $curl_version (required precondition)
 Meson DESTDIR: install/
