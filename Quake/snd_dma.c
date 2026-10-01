@@ -90,6 +90,12 @@ cvar_t snd_waterfx = {"snd_waterfx", "1", CVAR_ARCHIVE_GAME};
 
 cvar_t snd_pauselooping = {"snd_pauselooping", "1", CVAR_ARCHIVE_GAME};
 
+qboolean S_ShouldPauseLoopingSounds (void)
+{
+	return snd_pauselooping.value &&
+		(cl.paused || (sv.active && svs.maxclients == 1 && key_dest != key_game));
+}
+
 #if defined(_WIN32)
 #define SND_FILTERQUALITY_DEFAULT "5"
 #else

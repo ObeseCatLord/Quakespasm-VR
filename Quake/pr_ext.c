@@ -4475,7 +4475,11 @@ static void PF_infokey_internal (qboolean returnfloat)
 			r = buf;
 		}
 		else
-			r = NULL;
+		{
+			r = Info_GetKey (svs.serverinfo, key, buf, sizeof (buf));
+			if (!*r)
+				r = NULL;
+		}
 	}
 	else if (ent <= (unsigned int)svs.maxclients && svs.clients[ent - 1].active)
 	{
@@ -4525,7 +4529,11 @@ static void PF_infokey_internal (qboolean returnfloat)
 		else if (!strcmp (key, "csqcactive"))
 			r = client->csqcactive ? "1" : "0";
 		else
-			r = NULL;
+		{
+			r = Info_GetKey (client->userinfo, key, buf, sizeof (buf));
+			if (!*r)
+				r = NULL;
+		}
 	}
 	else
 		r = NULL;

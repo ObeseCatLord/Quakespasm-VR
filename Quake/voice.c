@@ -80,7 +80,7 @@ static cvar_t voice_volume = {"voice_volume", "1", CVAR_ARCHIVE};
 static cvar_t voice_radio_volume = {"voice_radio_volume", "0.45", CVAR_ARCHIVE};
 static cvar_t voice_spatial_distance = {"voice_spatial_distance", "768", CVAR_ARCHIVE};
 static cvar_t voice_positional_only = {"voice_positional_only", "0", CVAR_ARCHIVE};
-static cvar_t voice_self_reverb_volume = {"voice_self_reverb_volume", "1", CVAR_ARCHIVE};
+static cvar_t voice_self_reverb_volume = {"voice_self_reverb_volume", "0.6", CVAR_ARCHIVE};
 
 static voice_speaker_t voice_speakers[MAX_SCOREBOARD];
 static voice_vad_t voice_vad;

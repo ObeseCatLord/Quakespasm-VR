@@ -433,15 +433,13 @@ CHANNEL MIXING
 static void SND_PaintChannelFrom8 (channel_t *ch, sfxcache_t *sc, int endtime, int paintbufferstart);
 static void SND_PaintChannelFrom16 (channel_t *ch, sfxcache_t *sc, int endtime, int paintbufferstart);
 
-extern cvar_t snd_pauselooping;
-
 void S_PaintChannels (int endtime)
 {
 	int			i;
 	int			end, ltime, count;
 	channel_t  *ch;
 	sfxcache_t *sc;
-	qboolean	pause_loops = snd_pauselooping.value && (cl.paused || (sv.active && svs.maxclients == 1 && key_dest != key_game));
+	qboolean	pause_loops = S_ShouldPauseLoopingSounds ();
 
 	snd_vol = sfxvolume.value * 256;
 

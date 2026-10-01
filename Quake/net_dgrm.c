@@ -2669,7 +2669,7 @@ net_connect_result_t NET_DatagramConnectFrame (qsocket_t **outsock, const char *
 					if (!strncmp (s, "challenge ", 10))
 					{
 						char buf[1024];
-						q_snprintf (buf, sizeof (buf), "%c%c%c%cconnect\\protocol\\darkplaces 3\\protocols\\RMQ FITZ DP7 NEHAHRABJP3 QUAKE\\challenge\\%s",
+						q_snprintf (buf, sizeof (buf), "%c%c%c%cconnect\\protocol\\darkplaces 3\\protocols\\RMQ FITZ QUAKE\\challenge\\%s",
 							255, 255, 255, 255, s + 10);
 						dfunc.Write (datagram_connect_ctx.newsock, (byte *)buf, strlen (buf), &datagram_connect_ctx.serveraddr);
 						return NET_CONNECT_PENDING;

@@ -635,8 +635,10 @@ void Spatial_Listener(const float *origin, const float *forward,
 void Spatial_Update(void)
 {
 	int i, count;
+	qboolean pause_loops;
 	if (!spatial_renderer)
 		return;
+	pause_loops = S_ShouldPauseLoopingSounds();
 	Spatial_PumpMusic();
 	Spatial_Listener(listener_origin, listener_forward, listener_right, listener_up);
 	Spatial_ApplyCvars();
@@ -671,12 +673,14 @@ void Spatial_Update(void)
 			source->sample = &entry->sample;
 			source->position_valid = 0;
 		}
-		source->active = 1;
+		source->active = !(entry->sample.loop >= 0 && pause_loops);
 		source->kind = (i < NUM_AMBIENTS || channel->entchannel == -1 ||
 			channel->entnum == cl.viewentity) ? SA_DRY : SA_POSITIONAL;
 		source->gain = channel->master_vol * (sfxvolume.value / 510.0f);
 		source->attenuation = channel->dist_mult;
 		source->room_send = i >= NUM_AMBIENTS && channel->entchannel != -1 ? 1.0f : 0.0f;
+		if (entry->sample.loop >= 0)
+			source->room_send *= 0.35f;
 		if (snd_spatial_weapons.value && channel->entnum == cl.viewentity &&
 			channel->entchannel != -1 &&
 			(channel->entchannel == 1 || !strncmp(channel->sfx->name, "weapons/", 8))) {
