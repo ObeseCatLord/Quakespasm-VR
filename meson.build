@@ -577,6 +577,10 @@ install_data('LICENSE.txt', 'LICENSE-GPL-3.0.txt', 'LICENSE-COMPONENTS.txt',
     install_dir : license_dir)
 install_data('Quake/thirdparty/openxr/LICENSE',
     rename : 'OpenXR-LICENSE.txt', install_dir : license_dir)
+install_data('Quake/thirdparty/openxr/MONADO-BSL-1.0.txt',
+    rename : 'Monado-BSL-1.0.txt', install_dir : license_dir)
+install_data('Quake/thirdparty/openxr/PROVENANCE.md',
+    rename : 'OpenXR-header-provenance.txt', install_dir : license_dir)
 install_data('Quake/mimalloc/LICENSE',
     rename : 'mimalloc-LICENSE.txt', install_dir : license_dir)
 if steam_audio_enabled

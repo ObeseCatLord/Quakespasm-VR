@@ -9,6 +9,9 @@ of the components below or remove their source notices.
 Vendored OpenXR headers:
   Source: Quake/thirdparty/openxr
   License: OpenXR-LICENSE.txt in the installed notice directory.
+  The vendored Monado experimental extension and helper retain their BSL-1.0
+  notice in Monado-BSL-1.0.txt. Exact revision/ABI provenance is installed as
+  OpenXR-header-provenance.txt from Quake/thirdparty/openxr/PROVENANCE.md.
 
 Vendored mimalloc:
   Source: Quake/mimalloc
