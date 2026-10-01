@@ -37,6 +37,7 @@ typedef struct r_vrik_candidate_s
 	float attached_prop_to_canonical[12];
 	double attached_prop_local_bound;
 	qboolean attached_prop_valid;
+	r_vrik_prepared_muzzle_t muzzle;
 } r_vrik_candidate_t;
 
 typedef struct r_vrik_staged_avatar_s
@@ -110,8 +111,14 @@ static VkDescriptorSet palette_descriptor_sets[DOUBLE_BUFFERED];
 static uint32_t active_frame_slot;
 static qboolean active_frame_valid;
 
+void R_VRIKRenderInvalidatePublication (void)
+{
+	active_frame_valid = false;
+}
+
 void R_VRIKRenderResetAdmission (void)
 {
+	R_VRIKRenderInvalidatePublication ();
 	memset (staged, 0, sizeof (staged));
 	memset (builtin_models, 0, sizeof (builtin_models));
 	memset (builtin_attempted, 0, sizeof (builtin_attempted));
@@ -676,10 +683,37 @@ static qboolean R_VRIKRenderValidatePropView (const qmodel_t *source, int prop,
 	return true;
 }
 
+static void R_VRIKRenderMuzzleCandidate (const entity_t *entity, const aliashdr_t *geometry,
+	const vec3_t point, r_vrik_candidate_t *candidate)
+{
+	entity_t render_entity = *entity;
+	lerpdata_t lerpdata = {0};
+	float matrix[16];
+	const double pose_age = realtime - entity->vrik_pose_times[0];
+	if (entity->vrik_slot_retired || !isfinite (pose_age) ||
+		pose_age < 0.0 || pose_age > VRIK_POSE_STALE_TIME)
+		return;
+	/* Match the first ordinary color pass without mutating the original entity
+	 * or multiplying an already interpolated pitch. */
+	if (entity == &cl.entities[cl.viewentity])
+		render_entity.angles[0] *= 0.3;
+	R_GetEntityLerpedTransform (&render_entity, lerpdata.origin, lerpdata.angles);
+	if (R_AliasModelMatrix (&render_entity, geometry, &lerpdata, matrix) < 0)
+		return;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		candidate->muzzle.origin[axis] = matrix[axis] * point[0] +
+			matrix[4 + axis] * point[1] + matrix[8 + axis] * point[2] + matrix[12 + axis];
+		if (!isfinite (candidate->muzzle.origin[axis]))
+			return;
+	}
+	candidate->muzzle.valid = true;
+}
+
 static qboolean R_VRIKRenderAttachProp (
 	const r_vrik_staged_avatar_t *selection,
 	const r_avatar_rig_t *source_rig, const r_avatar_rig_t *target_rig,
-	const vrik_pose_t *pose, qboolean tracked,
+	const vrik_pose_t *pose, qboolean tracked, qboolean muzzle_valid,
 	const float (*source_palette)[12], const float (*target_palette)[12],
 	r_vrik_candidate_t *candidate)
 {
@@ -770,6 +804,16 @@ static qboolean R_VRIKRenderAttachProp (
 	candidate->attached_prop_geometry =
 		selection->source_model->avatar_prop_gpu[selected_prop];
 	candidate->attached_prop_valid = true;
+	if (tracked && muzzle_valid && selected_prop == MD5_AVATAR_PROP_GUN)
+	{
+		vec3_t tip;
+		/* Measured bone-local +Y tip, through the actual prop attachment.
+		 * Target-body display scale/floor affine does not apply to this prop. */
+		for (int axis = 0; axis < 3; ++axis)
+			tip[axis] = candidate->attached_prop_to_canonical[axis * 4 + 1] * 20.0f +
+				candidate->attached_prop_to_canonical[axis * 4 + 3];
+		R_VRIKRenderMuzzleCandidate (selection->entity, candidate->attached_prop_geometry, tip, candidate);
+	}
 	return true;
 }
 
@@ -782,6 +826,7 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 
 	if (!entity || !candidate || !palette)
 		return false;
+	memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
 	if (!R_VRIKSampleEntityPose (entity, &candidate->pose))
 		return false;
 	if (!entity->model || entity->model->needload || entity->model->type != mod_alias)
@@ -806,6 +851,8 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 			lower_input, candidate->muzzleflash, &output) != R_VRIK_PALETTE_OK ||
 		output.joint_count > UINT32_MAX)
 		return false;
+	if (output.muzzle_valid)
+		R_VRIKRenderMuzzleCandidate (entity, header, output.muzzle_origin, candidate);
 
 	candidate->entity = entity;
 	candidate->model = entity->model;
@@ -984,6 +1031,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	r_vrik_palette_result_t result;
 	qboolean tracked;
 
+	memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
 	if (!selection)
 		return false;
 	source_skeleton = &selection->source_skeleton;
@@ -1138,7 +1186,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		}
 	}
 	if (!R_VRIKRenderAttachProp(selection, source_rig, target_rig,
-		&pose, tracked, (const float (*)[12])source_palette,
+		&pose, tracked, tracked && ranger.muzzle_valid, (const float (*)[12])source_palette,
 		(const float (*)[12])palette, candidate))
 		return false;
 
@@ -1217,6 +1265,11 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		const VkDeviceSize used_bytes = (VkDeviceSize)total_joints * sizeof (float[12]);
 		if (palette_bytes > max_range - used_bytes)
 			continue;
+		candidate.muzzle.original_model = cl.entities[player].model;
+		candidate.muzzle.avatar_id = cl.avatar_ids[player - 1];
+		candidate.muzzle.generation = cl.entities[player].vrik_generation;
+		candidate.muzzle.tracking_flags = cl.entities[player].vrik_poses[0].flags & VRIK_FLAG_KNOWN;
+		candidate.muzzle.time = realtime;
 		candidates[candidate_count] = candidate;
 		candidate_count++;
 		total_joints += candidate.joint_count;
@@ -1293,6 +1346,7 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		record->tracked_cull_local_bound = candidate->tracked_cull_local_bound;
 		VectorCopy (candidate->tracked_cull_origin, record->tracked_cull_origin);
 		record->tracked_cull_valid = candidate->tracked_cull_valid;
+		record->muzzle = candidate->muzzle;
 		joint_cursor += candidate->joint_count;
 	}
 
@@ -1327,6 +1381,52 @@ const r_vrik_prepared_palette_t *R_VRIKRenderLookup (const entity_t *entity)
 		if (prepared[active_frame_slot][i].entity == entity)
 			return &prepared[active_frame_slot][i];
 	return NULL;
+}
+
+void R_VRIKRenderInvalidateMuzzle (const entity_t *entity)
+{
+	if (!active_frame_valid || !entity || active_frame_slot >= DOUBLE_BUFFERED)
+		return;
+	for (size_t i = 0; i < prepared_count[active_frame_slot]; ++i)
+		if (prepared[active_frame_slot][i].entity == entity)
+		{
+			prepared[active_frame_slot][i].muzzle.valid = false;
+			return;
+		}
+}
+
+qboolean R_VRIKRenderGetMuzzleOrigin (const entity_t *entity, qboolean discontinuity, vec3_t origin)
+{
+	if (!active_frame_valid || !entity || !origin || !cl.entities || active_frame_slot >= DOUBLE_BUFFERED)
+		return false;
+	for (size_t i = 0; i < prepared_count[active_frame_slot]; ++i)
+	{
+		if (prepared[active_frame_slot][i].entity != entity)
+			continue;
+		r_vrik_prepared_muzzle_t *muzzle = &prepared[active_frame_slot][i].muzzle;
+		if (!muzzle->valid)
+			return false;
+		int player;
+		for (player = 1; player <= cl.maxclients && player < cl.num_entities && player <= MAX_SCOREBOARD; ++player)
+			if (entity == &cl.entities[player])
+				break;
+		const double age = realtime - muzzle->time;
+		const double pose_age = realtime - entity->vrik_pose_times[0];
+		if (discontinuity || player > cl.maxclients || player >= cl.num_entities || player > MAX_SCOREBOARD ||
+			!entity->model || entity->model->needload || entity->model != muzzle->original_model ||
+			cl.avatar_ids[player - 1] != muzzle->avatar_id || entity->vrik_generation != muzzle->generation ||
+			entity->vrik_slot_retired || entity->vrik_pose_count < 1 ||
+			(entity->vrik_poses[0].flags & VRIK_FLAG_KNOWN) != muzzle->tracking_flags ||
+			!isfinite (age) || age < 0.0 || age >= 0.25 ||
+			!isfinite (pose_age) || pose_age < 0.0 || pose_age > VRIK_POSE_STALE_TIME)
+		{
+			muzzle->valid = false;
+			return false;
+		}
+		VectorCopy (muzzle->origin, origin);
+		return true;
+	}
+	return false;
 }
 
 void R_VRIKRenderShutdown (void)

@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_input.h"
 #include "vr_weapon_menu.h"
 #include "custom_avatar.h"
+#include "r_vrik_render.h"
 
 #ifdef QSVR_SHADOW_TRACE
 #include <stdio.h>
@@ -238,6 +239,7 @@ void CL_ClearTrailStates (void)
 void CL_FreeState (void)
 {
 	int i;
+	R_VRIKRenderInvalidatePublication ();
 	for (i = 0; i < MAX_CL_STATS; i++)
 		Mem_Free (cl.statss[i]);
 	PR_ClearProgs (&cl.qcvm);
@@ -2307,6 +2309,10 @@ void CL_RelinkEntities (void)
 	ent = (cl.entities != NULL) ? (cl.entities + 1) : NULL;
 	for (i = 1; i < cl.num_entities; i++, ent++)
 	{
+		if (i <= cl.maxclients && i <= MAX_SCOREBOARD &&
+			(ent->forcelink || cl.time < cl.oldtime))
+			R_VRIKRenderInvalidateMuzzle (ent);
+
 		if (!ent->model)
 		{ // empty slot, ish.
 
@@ -2337,6 +2343,9 @@ void CL_RelinkEntities (void)
 		}
 		else
 			teleported = CL_LerpEntity (ent, ent->origin, ent->angles, frac);
+
+		if (teleported && i <= cl.maxclients && i <= MAX_SCOREBOARD)
+			R_VRIKRenderInvalidateMuzzle (ent);
 
 		if (cl.time < cl.oldtime)
 		{
@@ -2374,11 +2383,13 @@ void CL_RelinkEntities (void)
 			vec3_t fv, rv, uv;
 
 			dl = CL_AllocDlight (i);
-			VectorCopy (ent->origin, dl->origin);
-			dl->origin[2] += 16;
-			AngleVectors (ent->angles, fv, rv, uv);
-
-			VectorMA (dl->origin, 18, fv, dl->origin);
+			if (!R_VRIKRenderGetMuzzleOrigin (ent, ent->forcelink || teleported || cl.time < cl.oldtime, dl->origin))
+			{
+				VectorCopy (ent->origin, dl->origin);
+				dl->origin[2] += 16;
+				AngleVectors (ent->angles, fv, rv, uv);
+				VectorMA (dl->origin, 18, fv, dl->origin);
+			}
 			dl->radius = 200 + (COM_Rand () & 31);
 			dl->minlight = 32;
 			dl->die = cl.time + 0.1;
