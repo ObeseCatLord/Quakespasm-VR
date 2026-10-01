@@ -120,3 +120,18 @@ explicit XR attach/disable/recovery and shutdown. No draw-time creation or new
 camera descriptor churn. An isolated header fixture is supporting evidence only.
 Quantitative timing and live headset trials are user-deferred; Windows builds
 remain later work. No builds/tests/probes/benchmarks before implementation ends.
+
+## Source integration receipt
+
+Production commit `07616cd1` translates the retained bounded cache helpers into
+native gl_rmisc.c and adds the explicit joined shutdown declaration/hook in
+glquake.h/gl_vidsdl.c. All three native graphics/alternative/compute creation
+sites receive the private driver cache. Native eager warmup, stereo camera
+allocation, pipeline inputs and ordinary pipeline destruction remain intact.
+The exact three-file patch is244 additions and3 replaced lines, within scope.
+
+Main reviewed the full diff and requested-Astra final source advice found no
+P1/P2 issues in lifetime, nullable failure handling, payload validation, atomic
+replacement, Windows Unicode/capacity handling or SDL2/3 endian conventions.
+Scoped git diff --check passed. No build, compiler, runtime or performance
+qualification ran. This is source integration, not final-goal signoff.
