@@ -3362,3 +3362,57 @@ passes the actual donor descriptor/pipeline layout owner in both readiness
 configurations (`objects=31` each). The older SwiftShader skip remains a valid
 four-set driver result, not the current host's only graphics evidence. This
 layout test still does not draw a loaded scene or XR image.
+
+
+## Final FB/META setter and loaded-QC binding subsets
+
+`openxr_foveation_fixture.cpp` reuses the original Vulkan boundary fixture and
+calls production `VRXR_UpdateVulkanFoveation` with prepared sessions/images and
+controlled external dispatch. It checks off/unavailable versus explicit fixed,
+three-sample eye stability, fresh centers, opt-out/focus/invalid flags and second
+center rejection, partial setter recovery, failed off-restoration, array/two-chain
+ownership and active-policy retirement on unusable/copied frames. This submits
+no GPU work or real gaze/provider requests.
+
+```sh
+c++ -std=c++14 -DUSE_SDL3 -Wall -Wextra -Werror \
+  -Wno-missing-field-initializers tests/openxr_foveation_fixture.cpp \
+  $(pkg-config --cflags --libs sdl3) -o /tmp/qsvr-openxr-foveation
+/tmp/qsvr-openxr-foveation
+```
+
+Require exit 0 and its explicit prepared-dispatch success marker.
+[Plan](../docs/foveation-backend-final-2.0-plan.md) and
+[current evidence](../docs/foveation-current-qualification-2.0.md) distinguish
+this from the separate real-GPU KHR transition check and user-deferred devices.
+
+`qc_binding_program.py` reuses stock extraction and appends declarations and
+actual QC interpreter consumers without changing original program sections.
+`qc_binding_native_fixture.c` reuses the offline native engine bootstrap, loads
+SSQC/CSQC with their native tables and invokes the appended QC. It checks core
+case-insensitive discovery, exact #0 binding, native numeric/name dispatch with
+identically seeded COM_Rand, ordinary same-name bodies, duplicate dprint277
+CSQC remapping, permission discovery, simultaneous VM preservation and reload,
+and the disabled-SSQC/live-toggle/reload distinction. It is not a full QC handler
+or renderer/network suite. The augmented QC must be a separate mod: native stock
+pak precedence otherwise hides a loose id1/progs.dat.
+
+```sh
+QC_BINDING_ROOT=$(mktemp -d /tmp/qsvr-qc-binding.XXXXXX)
+mkdir -p "$QC_BINDING_ROOT/game/id1"
+ln -s /path/to/licensed/id1/pak0.pak "$QC_BINDING_ROOT/game/id1/pak0.pak"
+PYTHONDONTWRITEBYTECODE=1 python3 tests/qc_binding_program.py \
+  --source-pack /path/to/licensed/id1/pak0.pak \
+  --output "$QC_BINDING_ROOT/game/binding/progs.dat" \
+  --csqc-output "$QC_BINDING_ROOT/game/binding/fixture-csqc.dat"
+make -C Quake -f ../tests/negotiation_native.make USE_SDL3=1 DEBUG=1 -j4 \
+  NEGOTIATION_SOURCE=../tests/qc_binding_native_fixture.c \
+  NEGOTIATION_FIXTURE="$QC_BINDING_ROOT/fixture" negotiation-native-fixture
+(cd "$QC_BINDING_ROOT/game" && timeout --signal=TERM 30s ../fixture \
+  -dedicated 2 -noudp -nosound -basedir . -userdir . -game binding)
+```
+
+Require exit 0 and `QC_BINDING_CORE_NATIVE_PASSED`.
+[Plan](../docs/qc-binding-final-2.0-plan.md) and
+[current evidence](../docs/qc-binding-current-qualification-2.0.md).
+The run writes only the disposable profile; keep licensed data outside git.

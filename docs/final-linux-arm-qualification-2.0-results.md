@@ -7,7 +7,13 @@ simultaneous private desktop/VR gameplay plus all six metadata regressions pass
 after production482cd9f5. Two unchanged public desktop/private XR repeats also
 pass; the first mixed movement-distance failure remains documented/open under
 F01. [Connected evidence](connected-crossplay-current-2.0-results.md).
-Existing ff83e66a Linux/ARM packages predate that one-file repair; final affected
+Loaded SSQC/CSQC core binding/reload and prepared META setter/centers now pass
+their bounded fixtures; actual KHR fixed/menu/unavailable-eye/off rendering
+passes with native4xMSAA and SSAO1 after depth-state repair4ef67790. See
+[QC results](qc-binding-current-qualification-2.0.md) and
+[foveation results](foveation-current-qualification-2.0.md). Other frozen owners
+remain open; these subsets do not close F03/F06.
+Existing ff83e66a Linux/ARM packages predate both production repairs; final affected
 artifact refresh belongs to F10. Older production-equivalence text below is
 historical to its accepted snapshot.
 

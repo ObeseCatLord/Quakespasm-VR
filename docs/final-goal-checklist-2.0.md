@@ -69,9 +69,20 @@ receipts. These overlap intentionally; test shared boundaries once.
   Two successive unchanged public vkQuake desktop/private XR runs also pass.
   The first mixed run's inconsistent movement distance remains a bounded F01
   follow-up; map/slot/transport/metadata lifecycles stay open.
-- F10: production482cd9f5 changes cl_main.c; existing ff83e66a packages remain
-  accepted only for their earlier input. Refresh affected final artifacts once
-  required source fixes settle; do not claim current package acceptance yet.
+- F03: actual loaded SSQC/CSQC core numeric/name binding, permission discovery,
+  simultaneous VM preservation and toggle/reload subset passes;
+  [exact results and limits](qc-binding-current-qualification-2.0.md).
+  Remaining resource, callback and authored-consumer families stay open.
+- F06: prepared META setter/center transitions and actual KHR fixed/menu/
+  unavailable-eye/off GPU phases pass, preserving native4xMSAA and SSAO1.
+  Actual submission found and repaired static depth-replay shading-rate state;
+  [exact results and limits](foveation-current-qualification-2.0.md).
+  Capability selection and renderer recovery distinctions remain open; actual
+  eye/provider/device testing stays user-deferred.
+- F10: production482cd9f5 changes cl_main.c and4ef67790 changes gl_rmisc.c;
+  existing ff83e66a packages remain accepted only for their earlier input.
+  Refresh affected final artifacts once required source fixes settle; do not
+  claim current package acceptance yet.
 - F03–F08 and F10 remain open at their finite boundaries above.
 
 ## Senior dispositions and independent main checks

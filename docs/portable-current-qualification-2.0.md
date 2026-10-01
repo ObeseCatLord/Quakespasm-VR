@@ -1,8 +1,8 @@
 # Current Linux and ARM candidate qualification
 
-**Subsequent freshness update:** production482cd9f5 changes cl_main.c. The
-ff83e66a packages below remain qualified for that exact earlier input, not the
-new readiness repair. Final affected artifact refresh belongs to F10 after
+**Subsequent freshness update:** production482cd9f5 changes cl_main.c and
+4ef67790 changes gl_rmisc.c. The ff83e66a packages below remain qualified for
+that exact earlier input, not the readiness/depth-state repairs. Final affected artifact refresh belongs to F10 after
 source fixes settle. The308-file equality below was verified at its original
 qualification snapshot and no longer describes the latest production tree.
 
