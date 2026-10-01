@@ -69,3 +69,11 @@ reload, co-op destinations/centerprint, all other search contracts and final
 Linux/ARM software qualification are pending. The independent inherited Shub
 result/cleanup suppression omission still needs its own narrow implementation
 plan; do not mark the whole QC inventory or goal accepted from this patch.
+
+Subsequent [round-query plan and source acceptance](qc-inherited-round-search-2.0-plan.md)
+close that independent source omission in `38cdd7a4` through the inherited one-file predicate/
+helper closure. Both established omissions from the bounded core-search audit
+are now source-integrated with main/requested-Astra actual-patch acceptance.
+The five native extension handlers and native CSQC/error contracts are retained;
+loaded-QC/gameplay/lifecycle and broader interfaces still need final Linux/ARM
+qualification after all surviving implementation ends.

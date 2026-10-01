@@ -40,9 +40,12 @@ server QC find/nextent with all four program fingerprint functions and with one
 missing: disconnected non-free player holes, later active players, ordinary
 entities, exhaustion, program changes and real co-op centerprint/teleport use.
 Check native CSQC/disconnected-body enumeration and all five extension search
-handlers remain unchanged. The separately established Shub suppression omission
-must close before entry to this qualification pass; this narrow patch is not a
-whole-VM or malformed-field proof.
+handlers remain unchanged. The inherited [round-query adapter](qc-inherited-round-search-2.0-plan.md)
+also needs actual win/loss query ordering, no-result latch assignment, rounds
+reset, opposite monster clearer and precise cleanup-enemy predicates across
+supported targetname fields. Check other maps/non-target fields/CSQC, same-map
+restart, spawning loads and fastloads with the retained reference static latch.
+These source patches are not a whole-VM or malformed-field proof.
 
 The [wheel tracking-anchor adapter](migration-wheel-tracking-anchor-2.0-plan.md)
 needs actual shared draw/hit/release behavior through opening, body translation,

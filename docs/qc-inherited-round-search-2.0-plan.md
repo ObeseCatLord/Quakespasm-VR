@@ -92,3 +92,19 @@ Final production ownership is **pr_cmds.c only**, copying the minimal helper/
 predicate closure and two early world-return checks in PF_Find. Native error,
 registry, CSQC, extension searches and existing inactive-client filter remain.
 No server member, additional lifecycle owner, asset change or debug subsystem.
+
+## Actual patch source acceptance
+
+Production commit `38cdd7a4`: Luna xhigh copied the accepted minimal helper/predicate closure and two SSQC
+early-return checks into pr_cmds.c:195 added lines, no other production files.
+Main reviewed the full actual diff and scoped whitespace; requested local Astra
+xhigh then independently compared the actual patch with pinned primary and
+found no introduced P1/P2 within this scope. Verified field composition/first
+alias match, checked self/enemy, exact cleanup context, static lifetime/query
+effects, predicate ordering, native traversal and existing inactive-client calls.
+
+The established inherited round-search source omission is closed. The static
+latch deliberately retains reference lifetime; source acceptance is not loaded
+QC/gameplay/restart/load qualification. All executable checks remain deferred
+until implementation ends. No whole QC inventory or final-goal acceptance is
+inferred from this one-file adapter.

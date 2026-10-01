@@ -305,8 +305,10 @@ actual core and five extension handlers against primary/QSS-M/vkQuake. Inherited
 four-function inactive-client filtering is source-integrated in4e35dd69 at both
 find/nextent, with SSQC guards and main/final requested-Astra source acceptance.
 Native extension/CSQC/error policy is retained. The separate inherited Shub
-suppression omission remains open; full QC and final Linux/ARM qualification
-are not closed by this bounded source patch.
+[round-query adapter](qc-inherited-round-search-2.0-plan.md) is now also source-
+integrated with main/requested-Astra actual-patch acceptance, retaining the
+reference static latch and exact context without another reset owner. Full QC
+and final Linux/ARM qualification are not closed by these bounded source patches.
 
 The [wheel tracking-anchor plan](migration-wheel-tracking-anchor-2.0-plan.md)
 records actual opening tracking-space/view-follow discrepancies and requested
