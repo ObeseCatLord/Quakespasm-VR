@@ -1,6 +1,6 @@
 # Local Astra xhigh source review returns
 
-Review inputs at production2b420380. Current effective Astra/xhigh routing verified by main; older unavailable-routing statements below are superseded. Only source-review terminal results are reproduced, no operational telemetry. Intermediate coverage counts are historical.
+Review inputs at production2b420380. Effective Astra/xhigh routing verified by main; older unavailable-routing statements below are superseded. Only reviewer source-review results and explicit bounded disposition tables are reproduced, no operational telemetry. Intermediate coverage counts are historical. Main corrected the final crosswalk's r_light.c:41 receipt to the actual Quake/gl_rlight.c:41; source-return wording below is retained. Final reconciliation:153 S /18 M /2 Q /11 X /1 R =185 unique IDs.
 
 This is a **partial review return: 66 IDs dispositioned, 119 unreviewed**. A bounded continuation is required before publishing the full185 checklist. MOD-011’s two defects are confirmed; its remaining physics contracts are not yet fully reviewed.
 
@@ -126,141 +126,6 @@ Supplemental desktop disposition: primary’s later-opposing-key `cl_iDrive` beh
 
 ---
 
-**Interim checkpoint: 65 IDs have completed disposition reviews; MOD011 has two confirmed missing subfeatures but an unfinished remainder; 119 IDs remain unclosed. Full185 coverage is not complete.** No edits or execution checks were performed. Completed evidence and the partially reviewed network tranche remain available for continuation.
-
-“S” means current source integration was traced through relevant owners/callers/gates; it does **not** mean executable qualification is complete.
-
-| Disposition | Exact IDs |
-|---|---|
-| **S — source integrated/native; qualification pending (49)** | VR001–VR003, VR015–VR016; WPN010; MOD003; XR001–XR002, XR004–XR007, XR010, XR012; NET017; PERF001–PERF020, PERF022–PERF023; PERF-F002–PERF-F003; ASSET001–ASSET009 |
-| **Q — exact unresolved source contract (4)** | MOD014; XR011; PERF021; PERF-F001 |
-| **R — reference experiment (1)** | AV009 |
-| **X — excluded (11)** | COOP007; MOVE002, MOVE004–MOVE007, MOVE009–MOVE010, MOVE012; MOD007; NET025 |
-| **M — confirmed missing, row remainder still open (1)** | MOD011 |
-
-The **119 IDs without a completed row-level review** are exactly:
-
-| Family | Unclosed IDs |
-|---|---|
-| BASE | BASE001–BASE003 |
-| VR | VR004–VR014 |
-| WPN | WPN001–WPN009, WPN011–WPN012 |
-| COOP | COOP001–COOP006, COOP008–COOP013 |
-| MOVE | MOVE001, MOVE003, MOVE008, MOVE011 |
-| AV | AV001–AV008 |
-| FBT | FBT001–FBT005 |
-| MOD | MOD001–MOD002, MOD004–MOD006, MOD008–MOD010, MOD012–MOD013 |
-| UI | UI001–UI006 |
-| AUDIO | AUDIO001–AUDIO011 |
-| XR | XR003, XR008–XR009 |
-| PLAT | PLAT001–PLAT008 |
-| NET | NET001–NET016, NET018–NET024, NET026–NET029 |
-
-Additionally, **MOD011’s remaining physics obligations are unreviewed**, despite its established M classification. Reading portions of a row has not promoted it into completed coverage.
-
-Two missing features are confirmed, both **MOD011 / P2**:
-
-| Finding | Current evidence and pinned reference | Smallest seam |
-|---|---|---|
-| **Post-Think toss ground validity** | Current [sv_phys.c:11745](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/sv_phys.c:11745) returns on `FL_ONGROUND` after Think without the reference’s support-validity check. Primary `51b452c0`, `Quake/sv_phys.c:6767–6804`, validates world/nonworld ground references and clears invalid grounded state. Existing robust-pusher bookkeeping is not this post-Think check. | Reuse the primary validity check immediately before the grounded return; preserve native toss ownership. |
-| **Legacy elevator successful nudge lacks relink** | Current [sv_phys.c:3279](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/sv_phys.c:3279), in the non-robust elevator mode 1/2 path, adjusts final Z and continues after a clear position check without relinking. Primary `51b452c0`, `sv_phys.c:4414`, and QSS-M `03a498`, `sv_phys.c:922–930`, relink before continuing. The robust path already relinks. | Add the reference’s non-triggering relink at that successful legacy-path exit. |
-
-**No additional M finding is established by this checkpoint.** These are source findings; no fixes or runtime reproductions were attempted.
-
-The four Q dispositions remain narrowly defined:
-
-| IDs | Evidence and unresolved contract |
-|---|---|
-| **XR011, PERF021** | Current `gl_rmain.c:2345` sorts alpha entities from one center origin; `:2463` uses the center view leaf for water categorization. `gl_rmisc.c:114` gates sorting against native OIT. Primary `51b452c0`, `gl_rmain.c:1169`, also deliberately uses a shared stereo sort origin. Resolve the promised per-eye transparency/water-boundary behavior against the native OIT baseline. Shared sorting alone does **not** establish a missing feature or justify a new sorter. Opaque multiview integration is supported. |
-| **MOD014** | Native diagnostic collection/gating exists at `gl_rmain.c:1884`; display exists at `gl_screen.c:1136,2447`. `DrawInfoPanel` uses the default canvas, while `Shaders/basic.vert:36` applies stereo placement through the panel flag. Resolve whether a physically placed VR developer panel is a surviving requirement. No missing diagnostic collector is established. |
-| **PERF-F001** | Native frame/AO timestamps exist at `gl_vidsdl.c:4456,4509,4523`, with reporting at `gl_rmain.c:2784`. The inherited named-eye/stage reporting contract has not been reconciled precisely with shared multiview work and invalid/unavailable timing presentation. Do not invent separate eye timings for shared passes. |
-
-I read **`docs/final-scope-interface-history-2.0.md` completely** and integrated these dispositions:
-
-- **Opposing keys:** retain native vkQuake subtraction. Primary `51b452c0`, `cl_input.c:418–431`, implements later-key arbitration through `CL_KeyStatePair` with `cl_iDrive`. Pinned vkQuake `4bc898` uses independent subtraction, as current `cl_input.c:540,568–569` does. The explicit native desktop baseline supersedes primary arbitration; no alias or adapter is required. This resolves the sub-obligation, **not all of BASE003**.
-- **NET017:** retain native established-client timeout. Current `net_dgrm.c:111–195` provides validated, unambiguous same-host port remapping and old-endpoint guards. `docs/migration-nat-demux-review.md:23` explicitly rejects primary three-second same-IP established-slot pruning because it can evict legitimate quiet players. Reconcile stale inventory acceptance wording; **do not add same-IP eviction**.
-- **AV009:** preserved OpenGL CPU sample remains R. It establishes neither a production general VRM importer obligation nor permission to impose mandatory CPU retargeting irrespective of the user’s conditional performance preference.
-- Correct ledger counts are **906 preservation rows**, **540 history rows (497 MAIN / 43 XR)**, **1303 interface rows**, and **512 QC rows**. These are documentation/accounting corrections, not production defects. Reading the supplemental reconciliation is not an independent semantic audit of every ledger row.
-- Absent aliases, declaration-only `cl_mwheelpitch`, native menu hover, existing movement defaults/info/stats, and unsupported conditional blood-stain code do not independently establish missing product behavior. Historical deletions and WIP research remain evidence requiring dispositions, not automatic restoration requirements.
-
-The next tightly bounded tranche should remain the **15 already in progress**:
-
-**NET001–NET009, NET016, NET018–NET022.**
-
-Current and pinned protocol negotiation, replacement snapshots, CSQC entity transport, recipient visibility, and split-packet ownership have substantial retained source evidence. Before closing these rows, finish their exact acceptance mapping and remaining consumers—especially private movement dispatch, complete owner/stat receipt handling, CSQC enable/remove ordering, native network-driver equivalence, discovery, and reconnect/install lifecycle. **None of these 15 has been counted as completed yet.**
-
-Estimated scope is **one bounded continuation for those 15 dispositions**, returning unresolved contracts explicitly if necessary. If all close, coverage becomes **80 completed disposition reviews + MOD011 partial + 104 unclosed IDs**. Subsequent tranches are still required for the final185 checklist.
-
-All S rows retain their applicable software qualification and delivery gates. Source presence, packet plumbing, and counters are not user-observable completion; Windows target builds and user headset/gaze/multiplayer/performance qualification remain separately deferred under the existing policy.
-
-This is the same continuing reviewer’s requested Astra xhigh source advice; effective routing metadata is unavailable, so this is not a certified model sign-off.
-
----
-
-**Coverage remains 65 completed disposition reviews, MOD011 partially reviewed with two confirmed missing features, and 119 unclosed IDs. No full185 completion claim. No edits or execution checks performed.**
-
-For this review, **main’s local route verification establishes `gpt-6-astra`, effort `xhigh` provenance**. This supersedes the earlier routing caveat; it does not establish full-scope completion or qualification.
-
-| Classification | Exact reviewed IDs |
-|---|---|
-| **S — source integrated/native; qualification pending (49)** | VR001–VR003, VR015–VR016; WPN010; MOD003; XR001–XR002, XR004–XR007, XR010, XR012; NET017; PERF001–PERF020, PERF022–PERF023; PERF-F002–PERF-F003; ASSET001–ASSET009 |
-| **Q — unresolved source contract (4)** | MOD014; XR011; PERF021; PERF-F001 |
-| **R — reference experiment (1)** | AV009 |
-| **X — excluded (11)** | COOP007; MOVE002, MOVE004–MOVE007, MOVE009–MOVE010, MOVE012; MOD007; NET025 |
-| **M — confirmed missing; remainder of row unreviewed (1)** | MOD011 |
-
-Exact **119 unclosed IDs**:
-
-| Family | IDs |
-|---|---|
-| BASE | BASE001–BASE003 |
-| VR | VR004–VR014 |
-| WPN | WPN001–WPN009, WPN011–WPN012 |
-| COOP | COOP001–COOP006, COOP008–COOP013 |
-| MOVE | MOVE001, MOVE003, MOVE008, MOVE011 |
-| AV | AV001–AV008 |
-| FBT | FBT001–FBT005 |
-| MOD | MOD001–MOD002, MOD004–MOD006, MOD008–MOD010, MOD012–MOD013 |
-| UI | UI001–UI006 |
-| AUDIO | AUDIO001–AUDIO011 |
-| XR | XR003, XR008–XR009 |
-| PLAT | PLAT001–PLAT008 |
-| NET | NET001–NET016, NET018–NET024, NET026–NET029 |
-
-**MOD011’s remaining physics obligations also remain open.** Partial source reads have not been counted as completed row reviews.
-
-Confirmed missing features remain these two **MOD011 / P2** items:
-
-| Finding | Evidence | Smallest seam |
-|---|---|---|
-| Post-Think toss ground validity | Current [sv_phys.c:11745](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/sv_phys.c:11745) returns on grounded state after Think without validating continued support. Primary `51b452c0`, `sv_phys.c:6767–6804`, validates ground references and clears invalid support. Robust-pusher bookkeeping is not equivalent. | Reuse the primary support-validity check immediately before the grounded return. |
-| Legacy elevator successful nudge lacks relink | Current [sv_phys.c:3279](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/sv_phys.c:3279) continues after a successful legacy elevator Z adjustment without relinking. Primary `51b452c0`, `sv_phys.c:4414`, and QSS-M `03a498`, `sv_phys.c:922–930`, relink there. | Restore the non-triggering relink at that exit; retain existing pusher architecture. |
-
-No additional M finding is established.
-
-The unresolved source contracts remain:
-
-| IDs | Evidence and required resolution |
-|---|---|
-| XR011, PERF021 | Current `gl_rmain.c:2345,2463` uses center-origin alpha sorting and center-leaf water categorization; `gl_rmisc.c:114` gates sorting against OIT. Primary `51b452c0`, `gl_rmain.c:1169`, also intentionally shares a stereo sort origin. Resolve the promised per-eye transparency/water-boundary behavior against native OIT. Shared sorting alone does not justify a new sorter. |
-| MOD014 | Collection and gates exist at `gl_rmain.c:1884`; presentation at `gl_screen.c:1136,2447`. Default-canvas drawing versus panel-flag stereo placement in `Shaders/basic.vert:36` leaves the physical VR developer-panel obligation unresolved. No missing collector is established. |
-| PERF-F001 | Frame/AO timestamps exist at `gl_vidsdl.c:4456,4509,4523`, reporting at `gl_rmain.c:2784`. Reconcile inherited eye/stage reporting with shared multiview work and unavailable-timing presentation. Do not invent separate eye timings for shared passes. |
-
-The supplemental interface/history document was read completely. Its consequential dispositions are retained:
-
-- **Opposing keys:** native vkQuake subtraction governs. Primary `51b452c0`, `cl_input.c:418–431`, has later-key arbitration; pinned vkQuake `4bc898` and current `cl_input.c:540,568–569` use independent subtraction. Primary arbitration is superseded by the explicit native desktop baseline. No alias or adapter is required; BASE003 otherwise remains open.
-- **NET017:** native timeout remains intentional. Current `net_dgrm.c:111–195` provides guarded port remapping. `migration-nat-demux-review.md:23` explicitly rejects three-second established same-IP pruning. Stale inventory wording needs reconciliation, not new eviction code.
-- **AV009:** reference CPU sample; no general production VRM importer obligation established.
-- Counts are **906 preservation**, **540 history = 497 MAIN + 43 XR**, **1303 interface**, and **512 QC** rows. Accounting corrections and absent literals are not production defects. Supplemental-ledger reading is not independent behavioral verification of every row.
-
-**Next bounded continuation: NET001–NET009, NET016, NET018–NET022 — exactly 15 IDs.** Existing protocol, snapshot, CSQC transport, visibility, and split-packet evidence is retained. Remaining checks concern acceptance mapping and consumers, including movement dispatch, owner/stat receipt handling, CSQC lifecycle ordering, driver equivalence, discovery, and reconnect/install lifecycle.
-
-Estimate: **one bounded continuation for this tranche**, with Q dispositions returned wherever exact contracts remain unresolved. Closing all 15 would produce **80 completed disposition reviews + MOD011 partial + 104 unclosed IDs**. Further tranches remain necessary.
-
-All S classifications retain applicable qualification/delivery gates. No tests, builds, runtime outcomes, or user headset/gaze/multiplayer/performance results are implied by this checkpoint.
-
----
-
 **This exact 15-ID tranche is reviewed: 12 S, 3 M, no new Q.** Cumulative coverage is **80 completed disposition reviews + MOD011 partially reviewed + 104 unclosed IDs**. Prior dispositions and evidence remain retained. No edits, builds, tests, runtime checks, or agents were used.
 
 References below are current `Quake/` files. Pins: **F** primary `51b452c0`; **Q** QSS-M `03a498`; **V** vkQuake `4bc898`. **S means source integrated, with qualification pending.**
@@ -304,3 +169,399 @@ Qualification remains separate: mixed public/private peers, loss/reordering/spli
 The prior four Q rows remain open. Your timing-availability evidence is retained for PERF-F001’s final contract disposition; no fabricated per-eye split is proposed.
 
 The next non-overlapping network tranche is **NET-010–015, NET-023–024, NET-026, NET-028–029: 11 IDs**. NET-027 remains with the audio sidecar. Full185 completion is still outstanding.
+
+---
+
+**This tranche is source-reviewed: 9 S, 2 M, 1 Q. MOD-011’s remainder is closed at source-review level. NET-022 changes from S to M.** Prior evidence and dispositions otherwise remain retained.
+
+Pins: **F** `51b452c0`, **QSS** `03a498`, **V** `4bc898`. Current references below are under `Quake/` at the supplied production snapshot `2b420380`. **S means source-integrated, with qualification pending.**
+
+| ID | Class | Actual owner, caller/consumer evidence and disposition |
+|---|---|---|
+| NET-010 | S | `cl_input.c:1100,1152` records commands, suppresses the first two, sends current plus two predecessors. `sv_user.c:1440` expands sequence wrap and rejects duplicates after decoding; `:1199,1232,1572` owns queue/retirement. Current capacity is **32 records/250 ms**, `server.h:179`, versus F’s 24; preserve the bounded current queue, not the historical number. |
+| NET-011 | S | `cl_input.c:843` samples monotonic elapsed time with fractional carry and clamps before integer conversion; `sv_user.c:657,1202` validates 1–125 ms. `sv_phys.c:9899,10755` consumes/debits explicit command duration. Matches F `cl_input.c:718`’s duration contract; timestamps do not donate a lost interval. |
+| NET-012 | S | Native scheduler `host.c:156,187,1200,1235` plus `cl_main.c:2664,2705`: accumulated input, retained server catch-up, one private send per rendered frame. **F’s negative `host_maxfps` spelling is superseded** by native `host_phys_max_ticrate`; this is explicitly reconciled in `migration-command-source-checkpoint.md:28`. |
+| NET-013 | S | `cl_main.c:1750,1838,1870,1907,1981,2143` consumes coherent authoritative state, collision hulls/movevars, command history and disposable pending input through shared PMove. `sv_phys.c:10389,10546,10618,10746` preserves generic QC velocity and performs sticky native ledge handoff. Ordinary swimming is present; arbitrary QC forces/trajectory parity are not established by these reads. |
+| NET-014 | **M** | ACK authority, permission and epochs are integrated at `sv_main.c:2123`, `cl_parse.c:3146,3334`, `cl_main.c:1787`. **Inherited opt-in reconciliation smoothing lacks its producer and view consumer**; current `cl_main.c:275` only resets fields, and `:2059` directly publishes replay output. Primary quarantine/retry ownership is explicitly superseded; smoothing is a separate omission. |
+| NET-015 | S | `cl_input.c:657,732` → `sv_user.c:794,1080` carries private QC inputs and button3–8. `pr_cmds.c:53` is called by CSQC input filtering at `cl_main.c:2737` and cooperative server input at `sv_phys.c:11112`. Builtin359 `pr_ext.c:5815,6341` writes bounded typed events; `sv_user.c:1940,2022,2147` resolves and invokes `CSEv_*`. F’s private extbits layout survives; QSS’s long-button layout is not required here. |
+| NET-023 | S | `vr_input.c:5129,5146` → `cl_input.c:703` → `sv_user.c:733,1486`: relative muzzle/aim, finite checks and per-sample roomscale outlier rejection. `sv_phys.c:3763,4367` owns collision/body application and temporary weapon pose. Reuses F’s payload/validation contract without moving physics into receipt handling. |
+| NET-024 | S | Surviving pose transport: `vr_input.c:4487,5159`, `cl_input.c:716`, `sv_user.c:760`, `sv_phys.c:4310,4401`. Contact framing/profile negotiation also exists at `sv_user.c:821`, `sv_main.c:5061,5274`, `cl_main.c:3193`. **Physical-contact damage/parry adapters remain excluded**; their wire fields do not restore that scope. Weapon-specific presentation remains in main’s separate review. |
+| NET-026 | S | `cl_parse.c:166,224` capability retry is called by `cl_main.c:2714`; `cl_input.c:881` frames poses; `sv_user.c:1715,1877,2125` negotiates/decodes. `sv_main.c:540,590,625,4856` owns sequence, generation, expiry and relay; `cl_parse.c:474,588` admits/cache-publishes; `r_alias.c:640` consumes stale-checked poses. Avatar identity uses `cl_main.c:106,140,2711`, `sv_user.c:1636`, `sv_main.c:36,70,5365`, `cl_parse.c:313`. Codec/identity files directly reuse F; codec’s sole inspected difference admits v4. |
+| NET-028 | **Q** | Lifecycle is integrated: `sv_phys.c:8763,9677,11219,11582`; builtin347 at `pr_ext.c:4673` calls `sv_phys.c:9456`; legacy taps latch at `sv_user.c:1523`. **Exact unresolved contract:** F `sv_pmove_policy.h:62` explicitly excludes single-player, while current admission `sv_main.c:863` lacks that guard. Ordinary local startup uses native profile (`host_cmd.c:3224`); explicit `qsvr1` selection is exposed at `:1656`. Decide whether exclusion must also cover explicit private-profile single-player. If retained literally, the smallest seam is the existing admission predicate—not another movement owner. |
+| NET-029 | S | Tracking is consumed before the `MOVETYPE_NONE` return at `sv_phys.c:3770`, matching F `:6232`. Collision/pickup remain world-owned (`world.c:631,2734,2778,3642`); respawn completion precedes ACK publication at `sv_phys.c:11403–11422`. Teleport cleanup remains at `pr_edict.c:169`, `world.c:565`, `sv_phys.c:11562`. This closes network/physics ownership, not the separately queued co-op feature qualification. |
+| MOD-011 | **M** | Native pusher dispatcher `sv_phys.c:2980,3344,12009`, support release/adoption `:2745,2797,11998`, rollback `:3312`; customphysics `:1802,11196,12004`; QC velocity retention `:10277,10334,10389`; ladder consumer `pmove.c:1465,2146` and native authority gate `sv_phys.c:8827`. These are integrated. **Two previously confirmed gaps remain:** post-Think toss support validity and successful legacy elevator-nudge relinking. |
+
+Confirmed missing work and smallest seams:
+
+- **NET-022/UI-004 failure path — confirmed amendment, P2.** [cl_parse.c:2286](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/cl_parse.c:2286) invokes `Host_Error`; `host.c:310` calls `CL_Disconnect`, which leaves autoreconnect armed. `cl_main.c:665–673` consequently retries timed signon after disconnection. F `cl_parse.c:850–862` explicitly cancels this failure. Reuse `CL_CancelAutoReconnect`, disconnect, loading-plaque cleanup and native menu return at the precache failure boundary. **Current parser polarity requires aborting via `true`**, consumed at `cl_parse.c:3551`; do not copy F’s `false` literally. UI-004 receives this evidence amendment, not a full-row review yet.
+- **MOD-011 — P2, two small fixes.** At [sv_phys.c:11749](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/sv_phys.c:11749), validate ground *after* Think before returning grounded; reuse F `:6767–6804`, retaining world support and releasing invalid/freed/nonsolid support. At `:3284`, successful legacy elevator nudging needs `SV_LinkEdict(check,false)` before continuing, as F `:4414` and QSS `:922–930` already do.
+- **NET-014 — inherited optional smoothing, P3.** F `cl_main.c:1595,1618,1683,1949` produces/decays reconciliation error, and F `view.c:836` actually consumes it. Current source has only reset/storage/diagnostic remnants. Reuse the current command/ACK identities and view preparation boundary for bounded presentation correction; retain discontinuity resets. No new quarantine, protocol or movement authority is needed. Primary default is off; that limits default impact, not source-feature absence.
+- **Earlier M findings remain:** NET-007’s late-model tag (`pr_cmds.c:1540`, reuse existing correct helper `:1497`) and loading keepalives (`cl_parse.c:1908,2281`, F `:641,864`); NET-020’s unsupported protocol advertisements (`net_dgrm.c:2672`, trim to actual parser support); NET-021’s initial/retired metadata and SSQC `infokey` fallbacks (`sv_main.c:3578`, `host_cmd.c:2423`, `host.c:646`, `pr_ext.c:4478,4528`; reuse QSS’s existing stores/message boundaries).
+
+No tests, edits, runtime work, branch checks or agents were used. Executable Linux/ARM qualification, malformed/lost/reordered traffic, lifecycle transitions and movement/mod behavior remain delivery gates. User-deferred device, live multiplayer and performance measurements remain separate.
+
+**Lead ledger: 92/185 source-reviewed IDs — 69 S, 6 M, 5 Q, 1 R, 11 X.** The remaining 93 await lead review/integration, including sidecar packets; this is not full185 completion. Accepted audio/GPL3 findings remain carried separately.
+
+Next bounded continuation: **BASE-001..003, PLAT-001..008, and the existing Qs MOD-014, XR-011, PERF-021, PERF-F001**—15 IDs, using main’s briefs and latest dispositions. Input/UI39, AV integration, QC10 and NET-028’s precise contract remain queued.
+
+---
+
+The **40 input/UI IDs are reviewed: 39 S, 1 M**. The M is UI-004’s already identified NET-022 load-failure/reconnect defect; this tranche adds no separate missing-code item. “Support grips” remains covered by inherited model/support-hand geometry, not an invented gripping subsystem.
+
+Paths below are relative to `Quake/`; **P** is primary `51b452c0`. S retains final software qualification.
+
+| ID | Class | Actual owner/evidence |
+|---|---|---|
+| VR-004 | S | `vr_input.c:4926–4947,5104–5165` accumulates/finalizes roomscale; `view.c:1642–1651` owns units/floor. Reset/reference callers retained. |
+| VR-005 | S | `view.c:156–194,308–359` connects mode transitions, authoritative histories and `VR_AimResolve`; `vr_input.c:5074–5096` publishes mapped hand command aim. |
+| VR-006 | S | `vr_input.c:422–435,3632–3655,4058–4127` maps physical hands, preserves shared-key ownership and releases/rearms on context/focus changes. |
+| VR-007 | S | `vr_input.c:4982–5038` implements once-consumed 180°, signed snap and timed smooth turn through `V_TurnTrackedYaw`. |
+| VR-008 | S | `vr_input.c:5040–5072` connects filtered axes, movement basis and finite speed contribution. Instant-stop excluded. |
+| VR-009 | S | `vr_input.c:3770–3830,3894–3908,4058` connects profile-specific click/squeeze/axis dispatch and missing-only native bindings. |
+| VR-010 | S | `cl_parse.c:1786–1801`, `vr_input.c:438–448`, `vr_openxr.cpp:1395–1400` connect local-sound/menu/wheel pulses to focused physical-hand haptics. |
+| VR-011 | S | `vr_input.c:4841–4924` supplies physical muzzle rays; `gl_rmain.c:1315–1377,1508–1592` consumes depth, size, opacity and actual draw geometry. |
+| VR-012 | S | `gl_screen.c:1840–1932,2276–2455` connects shared physical panels to native HUD, console, scores, modal/intermission and CSQC drawing. |
+| VR-013 | S | `gl_screen.c:1890–1924,2314,2682`, `menu.c:7740–7775` use the same panel/ray for hover and post-draw trigger dispatch. |
+| VR-014 | S | `view.c:194–264,308–359,2287`, `cl_parse.c:3573` preserve reset/relative authority and separate physical view from command roll/intermission base. |
+| WPN-001 | S | `gl_screen.c:1933–2102,2462–2467,2605–2606`, `gl_rmain.c:2723,2760` connect captured full-basis VR and native desktop wheel presentation. |
+| WPN-002 | S | `vr_weapon_menu.c:2928–2960` resolves retained stable hover ID against rebuilt current eligibility, session generation and tracking on release. |
+| WPN-003 | S | `vr_weapon_menu.c:589–644,1277–1359`; `sv_main.c:1065–1112` connect explicit descriptors/private masks and active-only discovery. |
+| WPN-004 | S | `sv_main.c:945–1030,1106–1112`, `vr_weapon_menu.c:1325–1338,1438–1458` connect validated capacities, reserves/current ammo and readiness. |
+| WPN-005 | S | `vr_weapon_menu.c:985–1053` loads stock/profile data; `vr_weapon_calibration.c:2733–2817` reuses contextual/explicit AD presets and authored precedence. |
+| WPN-006 | S | `vr_weapon_menu.c:646–675,985–1053` enforces active-path schema/roster loading, complete-roster precedence and reset lifetime. Catalog header is P-identical. |
+| WPN-007 | S | `vr_weapon_calibration.c:3005–3050` supplies one finite held calibration; `r_alias.c:889–918` consumes it without a player-count branch. |
+| WPN-008 | S | `vr_weapon_calibration.c:1690–1771,2255–2275,3051–3095` connects independent muzzle/global saves, readback/publication and failure rollback. Legacy MP fields are discarded. |
+| WPN-009 | S | `view.c:435,570,990–1018`, `r_alias.c:889–918`, `vr_input.c:4732–4824` keep grip/model scale and physical firing muzzle transforms distinct. |
+| WPN-011 | S | `vr_weapon_menu.c:2962–3050` rechecks live action, slot/name, session and tracking before fixed native save/load/teleport commands. |
+| WPN-012 | S | `gl_model.c:940–1045` generates split geometry; `view.c:1242–1424` prepares pairs; `gl_rmain.c:1384,1441` draws them. `sv_phys.c:4307–4348,4489–4528` and `pr_cmds.c:250,821,1805` consume per-hand ranged poses. |
+| MOVE-001 | S | `pmove.c:2358–2510` queries current world/entities and resolves grip/shaft/edge obstruction; `view.c:1330–1369,1508–1575` consumes it. Matches P `vr.c:7388–7478`; no full-mesh damage solver implied. |
+| MOVE-003 | S | `vr_input.c:103–127,2083–2120`, `cl_input.c:622`, `r_alias.c:485` connect gesture-only normal attack and observational ready pose. Physical-contact damage publication is disabled. |
+| MOVE-008 | S | `view.c:1242–1424`, `vr_input.c:4493–4520` retain per-hand identity/continuity; P-identical `vr_mdl_split.h` feeds `gl_model.c:940`; `r_avatar.c:1987–1997` retains support-hand cosmetic consumer. Parry/hybrids excluded. |
+| MOVE-011 | S | `pmove.c:1465,2146`, `cl_main.c:1750–1981`, `sv_phys.c:10389–10746` retain native ladders/liquids/momentum and QC handoff. Gorilla propulsion excluded. |
+| FBT-001 | S | P-identical manager; `vr_input.c:1043–1129,1262` connects once-per-sample reconciliation, safe serial/ephemeral identity and explicit role assignment. |
+| FBT-002 | S | P-identical filter; `vr_input.c:3189–3268,3275–3359` applies corrected velocity/pose, one filter update per sample and stale expiration. |
+| FBT-003 | S | `vr_input.c:2805–2932` connects capture/preview/accept/cancel; `gl_rmain.c:488–522,2627–2649,2734` draws actual calibration targets. |
+| FBT-004 | S | P-identical profile/storage; `vr_input.c:737–923,2882–2921`, `menu.c:3135–3204` connect validated save/select/reset and menu role/profile actions. |
+| FBT-005 | S | `vr_input.c:3275–3289,3514` makes lower-body targets optional; retained NET-026 codec/capability/relay and `r_vrik_render.c:826,1101` consume them independently. |
+| UI-001 | S | `common.c:4038–4161,4246–4301` invokes native store/flavor/root discovery; existing Steam and native Unicode file owners remain. |
+| UI-002 | S | `menu.c:4948–5008` retains installed/filter/selection and queues `playgame`; `common.c:3559,4257` uses native game-change/start policy. |
+| UI-003 | S | `addon_catalog.c:430,539,562,663,812`, `menu.c:5024–5075` connect validated worker/install/cancel/rename and immutable approved-entry confirmation. |
+| UI-004 | **M** | `cl_parse.c:2281–2288` still calls `Host_Error` on a missing precached model; `cl_main.c:332–399,665–681` permits pending retry to survive. Same missing item as NET-022. |
+| UI-005 | S | `gl_screen.c:240,744–783`, `pr_cmds.c:146–172`, `menu.c:7740–7775` retain wrapping/localization, relative/manual scales and native pointer handling. |
+| UI-006 | S | `vr_openxr.cpp:1280–1282` retains project identity with native engine name; existing Meson/resource/config/version owners remain authoritative. |
+| XR-003 | S | `vr_openxr.cpp:456–497,694–717,997,1253,1268,1395–1400` connects per-hand profiles/actions, conditional Frame bindings and focused haptics. |
+| XR-008 | S | `vr_openxr.cpp:567–615,932–955,1000,1328–1330` connects HTCX persistent roles/MNDX tracker spaces to the reconciler. Startup-role and preview-ABI limits remain explicit. |
+| XR-009 | S | `gl_screen.c:1933–2102,2461–2467,2605–2606` connects wheel draw/hit/model transforms; calibration visuals use the existing native scene owner. |
+
+UI-004’s smallest repair remains the existing load boundary: reuse `CL_CancelAutoReconnect`, disconnect/loading-end/menu handling and the **current caller’s abort return convention**. P `cl_parse.c:850–862` is the behavioral reference; no retry framework.
+
+Lead coverage is now **143/185**: **117 S, 11 M, 2 Q, 2 R, 11 X**. Next is the bounded **12 co-op IDs**, plus explicit AV-001 linkage; the **29 sidecar IDs** await integration. No code or execution occurred.
+
+---
+
+The remaining lead-owned tranche is complete: **COOP-001–006/008–013 and AV-001 are S**. No new missing-code finding emerged.
+
+| ID | Class | Actual owner/evidence |
+|---|---|---|
+| COOP-001 | S | `host.c:108` finite modern/classic feature policy reaches `world.c:604,631,1929` and `sv_phys.c:6090–6100` consumers. |
+| COOP-002 | S | `world.c:604–642,2736,3039,3642` connects telefrag/player-clip policy to trigger, PMove and native collision; `sv_phys.c:197–244,1930–1953` scopes friendly-fire protection around callbacks. |
+| COOP-003 | S | `world.c:2206–2247,2626–2669,2740–2797` shares only accepted ownership/progression gains after native touch. Ammo may prove acceptance; it is not team-copied. |
+| COOP-004 | S | `world.c:2744–2754,2799–2810`, `sv_phys.c:9373–9404` snapshot unchanged targets, invoke native `SUB_UseTargets` under the existing cancellation scope and clear matching targets. |
+| COOP-005 | S | `world.c:884–914,2813–2820` schedules existing `SUB_regen` only for eligible consumed pickups, preserving existing pending thinks and bounded timing. |
+| COOP-006 | S | `sv_phys.c:5649–5682,5924–5980,6042–6125` connects safe death/teammate placement, cooldown, inventory and native PostThink completion; `host.c:221,267,602` cancels borrowed policy. |
+| COOP-008 | S | `host_cmd.c:3765–3788,3829–3853`, `sv_phys.c:6128–6170,9410` connect authorized relocation, selector cancellation and native safe placement; wheel caller verified separately. |
+| COOP-009 | S | `gl_rmain.c:2513,2570–2607,2662–2703,2740`, `r_alias.c:1271` consume prepared body/prop palettes for outlines and depth-tested names. Names are not promised through walls. |
+| COOP-010 | S | `host_cmd.c:2677–2706,1949–1996,2090–2159,2214–2217` connects dialect preflight and checked native save publication; `savegame_dialect.h` owns native/inherited discrimination. |
+| COOP-011 | S | `host_cmd.c:2500–2530,2560–2598,3587–3674` connects payload-only reserved-edict restore, named pending clients and live/dead/new joins; `sv_phys.c:1383–1404,5981–6021` preserves detached inventory and changelevel behavior. |
+| COOP-012 | S | `host.c:908` calls `host_cmd.c:2258–2388`: finite controls, pending-restore refusal, progress/minimum/backoff gates and rotation only after successful native writing. |
+| COOP-013 | S | `sv_phys.c:690–855,6042–6080,11403` connects typed QBJ3 recovery/void cleanup to actual PostThink completion and the captured discontinuity epoch. Physical melee and revival are not dependencies. |
+| AV-001 | S | Explicitly covered by NET-026: `cl_main.c:106,140,2711`, `sv_user.c:1636–1691`, `sv_main.c:36–70,5365`, `cl_parse.c:313,350` connect selection, capability-gated identity relay, retry and local resolution. |
+
+Lead coverage: **156 unique IDs** — **130 S, 11 M, 2 Q, 2 R, 11 X**. I’m now integrating the **29 completed sidecar rows** and reconciling the draft’s missing-item list. Final totals and the complete crosswalk will follow that integration.
+
+---
+
+**All 185 feature IDs are reviewed and dispositioned: 153 S, 18 M, 2 Q, 11 X, 1 R. No feature IDs remain unreviewed.** This integrates 156 lead-owned rows and 29 completed sidecar rows. It establishes source-review coverage, not executable completion.
+
+The final checklist contains **22 confirmed implementation/delivery subitems and one unresolved transparency design contract shared by two IDs**. No further enumeration continuation is needed. Implementation remains paused.
+
+**S** = source integrated/native, qualification pending; **M** = confirmed missing behavior/delivery; **Q** = exact unresolved source contract; **X** = excluded; **R** = preserved experiment.
+
+Paths below are relative to `Quake/` unless stated otherwise. Pins: **P** primary `51b452c0`; **QSS** `03a498`; **V** vkQuake `4bc898`; **I** Ironwail `08d578`. Earlier `gl_vid.c` receipts mean **`gl_vidsdl.c`**.
+
+The highest-priority functional repairs are tracked avatar root yaw and QBJ3 body/equipment admission, followed by precache/metadata, physics, reconnect cancellation and particle indexing. Packaging omissions block delivery. Smoothing, diagnostic presentation and audio tuning remain required, smaller repairs.
+
+| Item | IDs | Confirmed omission, reference and smallest seam |
+|---|---|---|
+| C01 | NET-007 | `pr_cmds.c:1522–1540` tags late models as sounds. Reuse correct `SV_Precache_Model` at `:1497`; QSS `pr_cmds.c:1206,1239`. |
+| C02 | NET-021 | Initial/full metadata and retired-slot clearing are absent from `sv_main.c:3578`, `host_cmd.c:2423`, `host.c:646`. Reuse signon/spawn/drop messages; QSS `sv_main.c:2276`, `host_cmd.c:9802`, `host.c:1437`. |
+| C03 | NET-021 | `pr_ext.c:4478,4528` lacks ordinary SSQC world/player infokey fallback. Reuse existing `Info_GetKey` stores; QSS `:4622,4676`. |
+| C04 | NET-007 | Loading keepalive helper is disabled at `cl_parse.c:1908`, with no precache callers at `:2281,2290`. Adapt existing helper preserving parser/message state; P `:641,864,871`. |
+| C05 | NET-020 | `net_dgrm.c:2672` advertises unsupported DP7/BJP3. Remove those offer tokens; actual decoder `cl_parse.c:2060` supports NQ/Fitz/RMQ. V inherited the mismatch. |
+| C06 | NET-022, UI-004 | Missing required models reach `Host_Error` at `cl_parse.c:2286`; reconnect state survives `cl_main.c:332–399,665–681`. Reuse cancellation, disconnect, loading/menu cleanup; P `cl_parse.c:850–862`. Current caller requires **true** to abort. |
+| C07 | NET-014 | `cl_main.c:275` only clears correction state; `:2059` publishes replay directly. Restore bounded optional presentation correction at existing command/ACK/view owners; P `cl_main.c:1595,1618,1683,1949`, `view.c:836`. |
+| C08 | MOD-011 | `sv_phys.c:11749` returns grounded after Think without validating support. Adapt P `:6767–6804` ground-reference check immediately before that return. |
+| C09 | MOD-011 | Successful legacy elevator nudge at `sv_phys.c:3283` lacks relink. Add existing non-triggering link call; P `:4414`, QSS `:922–930`. |
+| C10 | AV-002 | Sampled yaw at `r_alias.c:687` never reaches root construction `:1028`. Carry accepted yaw through existing prepared root/muzzle consumers; P `:5961–5975`. |
+| C11 | AV-002 | `r_vrik_render.c:826,1101` lacks viewer-side enable/game eligibility. Restore one preparation predicate while retaining ordinary avatar animation; P `r_alias.c:5809,5961`, `vr.c:3229`. |
+| C12 | AV-006 | `r_vrik_render.c:472,476` cannot admit inherited QBJ3 live selection. Adapt exact player-model/143-frame admission and explicit-avatar precedence; P `r_alias.c:5735,5772,5840`. |
+| C13 | AV-003, AV-006 | `r_vrik_render.c:465,1250` omits eligible QBJ3 death/queued-corpse selection. Extend existing enumeration with independent corpse palettes and current scoreboard identity; P `r_alias.c:5749,5836`. |
+| C14 | AV-006 | `r_vrik_render.c:709,743`, `gl_model.c:6957` provide Ranger equipment only. Adapt verified QBJ3 shotgun/back-wrench resources and optional-equipment fallback; P `r_alias.c:5262,5280,5570`. |
+| C15 | AUDIO-011 | Spatial activation `snd_spatial.c:674` bypasses native loop pause `snd_mix.c:444,469`; callback `snd_steamaudio.c:396` advances loops. Project existing pause policy into source activity, preserving cursor/generation. V has native pause behavior. |
+| C16 | AUDIO-009 | `snd_spatial.c:679` omits P `:359`’s **0.35** looping-source room-send multiplier. Restore it at the existing assignment. |
+| C17 | AUDIO-010 | `voice.c:83` defaults wet monitoring to 1 rather than P `:52`’s **0.6**. Restore initializer only; preserve saved values and independent permission. |
+| C18 | PLAT-004; AUDIO-006 delivery | Root `flake.nix:25,49` omits inherited GPL3 notice from source/install closure. Reuse existing packaging for that and applicable component notices; P Linux workflow `:104`, `SPATIAL_AUDIO.md:42,50`. |
+| C19 | PLAT-003 | Root `flake.nix:43–49` supplies a store-bound installation, not the retained portable/GLIBC≤2.39 contract. Add architecture-matched portable closure through native packaging and executable-relative loader `vr_openxr.cpp:1213–1235`; P Linux workflow supplies reference. No current binary ABI violation was asserted. |
+| C20 | MOD-014 | `gl_screen.c:1100–1136` draws information outside the physical panel transform. Reuse native collector and `gl_draw.c:1331,1344` panel boundary; P `gl_screen.c:748–765`, `gl_draw.c:935–939`. |
+| C21 | PERF-F001 | `gl_vidsdl.c:4523–4539`, `gl_rmain.c:2796–2811` lack truthful frame-timing availability/shared-stereo labeling. Preserve native queries/counters; no fabricated per-eye timing or new profiler. |
+| C22 | MOD-010 | `r_part.c:163,204,215,238,1021` accepts large pools but wraps 16-bit quad indices. Bound argument parsing/allocation to 512–65,536, restore adopted 32,768 default, and change existing sizing/staging/binding to 32-bit. P `:26,30,153,797`; V contains the defect. |
+
+**Exact remaining design gate:** XR-011/PERF-021 require a minimal correct **non-OIT eye/water-boundary exception**, or proof that existing native/primary consumers already resolve it. Shared sorting alone matches primary and is not M. OIT currently bypasses sorting, but remains optional. Neither a blanket sorter nor forced-OIT/hardware policy is justified.
+
+The complete crosswalk follows. Each S preserves its applicable qualification obligations.
+
+| ID | Class | Actual owner/evidence |
+|---|---|---|
+| BASE-001 | S | `host.c:1357,1390,1448,1467`; `cl_demo.c:152,203,640,772`: native startup/dedicated/shutdown and bounded desktop demos. |
+| BASE-002 | S | `cmd.c:345,403,422,1006–1082`; `host.c:1440`; `common.c:3543`: source-aware dispatch and ordered post-config callers. |
+| BASE-003 | S | `cl_input.c:544,568–575`; `in_sdl.c:887–929`: native desktop controls. Primary opposing-key arbitration superseded explicitly. |
+| VR-001 | S | `gl_vidsdl.c:4746,4821,5181`: explicit attach/toggle, joined detach, input release and desktop fallback. |
+| VR-002 | S | `vr_openxr.cpp:984,1077,1341`; `gl_vidsdl.c:4725`: sampling, session/reference events and retirement. |
+| VR-003 | S | `vr_openxr_math.h:52`; `gl_rmain.c:811`; `Shaders/stereo.inc`: independent runtime-eye transforms. |
+| VR-004 | S | `vr_input.c:4926–4947,5104–5165`; `view.c:1642–1651`: roomscale finalization, units/floor and reset callers. |
+| VR-005 | S | `view.c:156–194,308–359`; `vr_input.c:5074–5096`: resolver/history transitions and mapped command aim. |
+| VR-006 | S | `vr_input.c:422–435,3632–3655,4058–4127`: physical identity, shared-key release and context/focus gates. |
+| VR-007 | S | `vr_input.c:4982–5038`: once-consumed 180°, signed snap and timed smooth turning. |
+| VR-008 | S | `vr_input.c:5040–5072`: filtered axes/basis/finite native speed contribution; instant-stop excluded. |
+| VR-009 | S | `vr_input.c:3770–3830,3894–3908,4058`: profile click/squeeze/axis dispatch and missing-only bindings. |
+| VR-010 | S | `cl_parse.c:1786–1801`; `vr_input.c:438`; `vr_openxr.cpp:1395`: sound/menu/wheel-to-physical-hand haptics. |
+| VR-011 | S | `vr_input.c:4841–4924`; `gl_rmain.c:1315–1377,1508–1592`: physical rays and depth/size/opacity rendering. |
+| VR-012 | S | `gl_screen.c:1840–1932,2276–2455`: physical panels feeding HUD/console/scores/modal/intermission/CSQC. |
+| VR-013 | S | `gl_screen.c:1890–1924,2314,2682`; `menu.c:7740`: shared ray/panel hover and trigger consumer. |
+| VR-014 | S | `view.c:194–264,308–359,2287`; `cl_parse.c:3573`: authoritative continuity and physical/command-angle separation. |
+| VR-015 | S | `gl_vidsdl.c:4965,5026,5534,5558,5593`: optional mirror, submission ordering and conservative hidden-area eligibility. |
+| VR-016 | S | `gl_vidsdl.c:1525,1558,2749`; `r_passes.c:1152`: native formats/samples and stereo resolve topology. |
+| WPN-001 | S | `gl_screen.c:1933–2102,2462,2605`; `gl_rmain.c:2723,2760`: captured VR/native desktop wheel presentation. |
+| WPN-002 | S | `vr_weapon_menu.c:2928–2960`: stable hover identity revalidated against live eligibility/session/tracking at release. |
+| WPN-003 | S | `vr_weapon_menu.c:589–644,1277–1359`; `sv_main.c:1065–1112`: declarations, masks and active-only discovery. |
+| WPN-004 | S | `sv_main.c:945–1030,1112`; `vr_weapon_menu.c:1325,1438–1458`: capacities, current ammo/reserves and readiness. |
+| WPN-005 | S | `vr_weapon_menu.c:985–1053`; `vr_weapon_calibration.c:2733–2817`: built-in/contextual profiles and explicit AD preset. |
+| WPN-006 | S | `vr_weapon_menu.c:646–675,985–1053`: active-path loading, authoritative roster precedence and reset lifetime. |
+| WPN-007 | S | `vr_weapon_calibration.c:3005–3050`; `r_alias.c:889–918`: one finite held calibration for solo/multiplayer. |
+| WPN-008 | S | `vr_weapon_calibration.c:1690–1771,2255,3051–3095`: independent muzzle/global persistence, readback and rollback. |
+| WPN-009 | S | `view.c:435,570,990`; `r_alias.c:889–918`; `vr_input.c:4732`: distinct grip/model/muzzle transforms. |
+| WPN-010 | S | `vr_input.c:4650,4793`; `sv_user.c:733`; `sv_phys.c:4367,4782,4909,8446`: accepted QC firing-source chain. |
+| WPN-011 | S | `vr_weapon_menu.c:2962–3050`: live slot/name/action validation before fixed native commands. |
+| WPN-012 | S | `gl_model.c:940–1045`; `view.c:1242`; `gl_rmain.c:1441`; `sv_phys.c:4489`; `pr_cmds.c:250,821,1805`: generated pairs and per-hand ranged consumers. |
+| COOP-001 | S | `host.c:108`; `world.c:604,631,1929`; `sv_phys.c:6090`: actual modern/classic policy consumers. |
+| COOP-002 | S | `world.c:604–642,2736,3039,3642`; `sv_phys.c:197–244,1930`: telefrag/clip and scoped friendly-fire protection. |
+| COOP-003 | S | `world.c:2206–2247,2626–2669,2740–2797`: accepted pickup gains and shared progression, without team ammo copying. |
+| COOP-004 | S | `world.c:2744,2799–2810`; `sv_phys.c:9373–9404`: unchanged-target snapshot and cancellation-aware native target callback. |
+| COOP-005 | S | `world.c:884–914,2813–2820`: eligible native `SUB_regen` scheduling, preserving existing pending thinks. |
+| COOP-006 | S | `sv_phys.c:5649,5924–5980,6042–6125`; `host.c:221,267,602`: placement/cooldown/inventory and cancellation. |
+| COOP-007 | X | Current user scope excludes revival; ordinary respawn remains COOP-006. |
+| COOP-008 | S | `host_cmd.c:3765,3829`; `sv_phys.c:6128–6170,9410`: authorized relocation, safe placement and selector cancellation. |
+| COOP-009 | S | `gl_rmain.c:2513,2570,2662,2740`; `r_alias.c:1271`: prepared outlines and depth-tested names. |
+| COOP-010 | S | `host_cmd.c:2677–2706,1949,2090,2214`; `savegame_dialect.h`: dialect preflight and checked native publication. |
+| COOP-011 | S | `host_cmd.c:2500–2530,2560,3587–3674`; `sv_phys.c:1383,5981`: payload-only restore, named joins and detached inventory. |
+| COOP-012 | S | `host.c:908` → `host_cmd.c:2258–2388`: finite controls, progress/backoff gates and success-only rotation. |
+| COOP-013 | S | `sv_phys.c:690–855,6042–6080,11403`: typed QBJ3 lifecycle recovery at actual PostThink completion. |
+| MOVE-001 | S | `pmove.c:2358–2510`; `view.c:1330,1508`: current-scene grip/shaft/verified-edge obstruction; P `vr.c:7388–7478`. |
+| MOVE-002 | X | Gesture-only decision excludes physical reach/contact damage solver. |
+| MOVE-003 | S | `vr_input.c:103–127,2083–2120`; `cl_input.c:622`; `r_alias.c:485`: normal-attack gestures and observational ready pose. |
+| MOVE-004–007 | X | Same explicit exclusion of physical/contact/hybrid attack adapters; ordinary mod/native play survives. |
+| MOVE-008 | S | `view.c:1242–1424`; `vr_input.c:4493`; `gl_model.c:940`; `r_avatar.c:1987`: continuity/support geometry; parry/hybrids excluded. |
+| MOVE-009–010 | X | Same explicit exclusion of Gorilla propulsion/contact/platform policy. |
+| MOVE-011 | S | `pmove.c:1465,2146`; `cl_main.c:1750–1981`; `sv_phys.c:10389–10746`: native liquids/ladders/momentum and QC handoff. |
+| MOVE-012 | X | Gorilla contribution/ACK work excluded; retained wire code adds no obligation. |
+| AV-001 | S | `cl_main.c:106,140,2711`; `sv_user.c:1636`; `sv_main.c:36,5365`; `cl_parse.c:313,350`: selected identity/capability/relay/resolution. |
+| AV-002 | M | `r_alias.c:687,1028`; `r_vrik_render.c:826,1101`: missing tracked root yaw and viewer/game gate, C10/C11. |
+| AV-003 | M | `r_vrik_render.c:465,1250`: QBJ3 death/queued-corpse admission, C13; existing desktop repairs survive. |
+| AV-004 | S | `cl_parse.c:350`; `custom_avatar.c:732,752`; `gl_model.c:7749`: key+digest identity and actual admission snapshots. |
+| AV-005 | S | `custom_avatar.c:421,501,657`; `gl_model.c:6875,7049,7179,7278,7798`: bounded package/native asset admission and cleanup. |
+| AV-006 | M | `r_vrik_render.c:472,476,709,743`; `gl_model.c:6957`: missing QBJ3 selection/equipment/fallback, C12–C14. |
+| AV-007 | S | `gl_model.c:132`; `r_vrik_render.c:1323`; `r_alias.c:411`; `gl_mesh.c:1817`; `r_brush.c:3188`: independent shared palettes/resources. |
+| AV-008 | S | `r_vrik_render.c:490,905,1116`; `r_avatar.c:747,786,897`: calibrated custom-rig policy and tracked targets. |
+| AV-009 | R | P `r_alicia_spike.c:70,80,261`: fingerprinted OpenGL/CPU experiment, not a general production VRM importer. |
+| FBT-001 | S | P-identical manager; `vr_input.c:1043–1129,1262`: once-per-sample identities and explicit roles. |
+| FBT-002 | S | P-identical filter; `vr_input.c:3189–3268,3275–3359`: correction, prediction and stale expiration. |
+| FBT-003 | S | `vr_input.c:2805–2932`; `gl_rmain.c:488,2627,2734`: capture/preview/accept/cancel and visible targets. |
+| FBT-004 | S | P-identical profile/storage; `vr_input.c:737–923`; `menu.c:3135–3204`: save/select/reset and role/profile UI. |
+| FBT-005 | S | `vr_input.c:3275,3514`; NET-026 codec/relay; `r_vrik_render.c:826,1101`: optional independently negotiated lower-body targets. |
+| MOD-001 | S | `pr_ext.c:6494,6790,6811,6860,7002`; `pr_edict.c:2072,2296`: numbered/VM-specific dispatch and loader remaps. |
+| MOD-002 | S | `cl_main.c:2734`; `sbar.c:895,903`; `gl_screen.c:2326,2646,2670`: command filtering, HUD clock and GUI/error ownership. |
+| MOD-003 | S | `pr_ext.c:5439,5523,5552,6314`; `gl_draw.c:856`: client drawing, panel clipping, padded subpictures and alpha. |
+| MOD-004 | S | `pr_ext.c:3286,3433,3608,3677,3806,4039,4077,4110,6916`; `common.c:2806`: file/search/buffer/string lifetimes. |
+| MOD-005 | S | `pr_ext.c:4145,1988,2291,4352,4374,4417`; `pr_edict.c:1301,1917`; `pr_cmds.c:1413,1774`: entity/surface/reflection consumers. |
+| MOD-006 | S | `pr_cmds.c:2153,149,2004`; `pr_edict.c:2054`; `common.c:2446,4929,5154,5213,5393`: EX/localization consumers. |
+| MOD-007 | X | Skyrooms explicitly excluded; retained server-side source does not reverse that decision. |
+| MOD-008 | S | `pr_cmds.c:2215`; `sv_main.c:2586`; `cl_parse.c:1285`; `r_alias.c:1220`; `cl_main.c:2371,2479`: static/alpha/trail consumers. |
+| MOD-009 | S | `r_part_fte.c:937,1142,3609,3636,6693`; `gl_rmain.c:2963,2984,3010`: effect loading/lifetimes and task ordering. |
+| MOD-010 | M | `r_part.c:163,204,215,238,1021`: large-pool quad-index wrap, C22; weather/palette/beam owners remain. |
+| MOD-011 | M | `sv_phys.c:3283,11749`: C08/C09; native customphysics, ladder, velocity and robust-pusher consumers otherwise present. |
+| MOD-012 | S | `pr_edict.c:80,1411,1835`; `host_cmd.c:3044,3052,3072,3196`; `sv_phys.c:11565`: saved references/FIFO/load teardown. |
+| MOD-013 | S | `cl_input.c:382,628,1115`; `sv_user.c:1330`; `menu.c:4454,4569`; `common.c:3477,3545`: impulses/bindings/switching. |
+| MOD-014 | M | `gl_rmain.c:1884`; `gl_screen.c:1100–1136`: collector exists, physical-panel placement missing, C20. |
+| UI-001 | S | `common.c:4038–4161,4246–4301`; native Steam/platform file owners: store/flavor/root and Unicode discovery. |
+| UI-002 | S | `menu.c:4948–5008`; `common.c:3559,4257`: installed/filter/selection and native `playgame` launch. |
+| UI-003 | S | `addon_catalog.c:430,539,562,663,812`; `menu.c:5024–5075`: validated worker/install/cancel and approved-entry confirmation. |
+| UI-004 | M | `cl_parse.c:2286`; `cl_main.c:332–399,665–681`: same missing-model retry cancellation as C06/NET-022. |
+| UI-005 | S | `gl_screen.c:240,744–783`; `pr_cmds.c:146–172`; `menu.c:7740`: wrapping/localization/scaling/native pointer. |
+| UI-006 | S | `vr_openxr.cpp:1280–1282`; native Meson/resource/config/version owners: stable project/native engine identities. |
+| AUDIO-001 | S | `voice.c:233,1053,1299`; `cl_input.c:952,1166,1263`; `sv_main.c:308,745`: capture/encode/bounded relay/decode chain. |
+| AUDIO-002 | S | `voice_settings.c:126,174`; `voice.c:501,519,1040,1073,1615`: saved profiles, opt-out and transmit/PTT gates. |
+| AUDIO-003 | S | `voice.c:384,488,519,762,787`: default-system/unique explicit capture, failure cooldown, retry and revocation. |
+| AUDIO-004 | S | `voice_jitter.c:134,202`; `voice.c:933,952,1387,1559`; `cl_main.c:295,351`: jitter/generations/mute/gain/reset. |
+| AUDIO-005 | S | `host.c:1277`; `snd_dma.c:916`; `voice.c:1072,1111,1599`; `sbar.c:1332,1401`: once-frame update and HUD consumers. |
+| AUDIO-006 | S | `snd_dma.c:224,264,388`; `snd_spatial.c:428,635`; `snd_sdl.c:45`, `snd_sdl3.c:43`: spatial/fallback ownership; delivery C18. |
+| AUDIO-007 | S | `snd_spatial.c:680`; `voice.c:1434`; `snd_steamaudio.c:421`: calibrated muzzle and positional/radio blend consumers. |
+| AUDIO-008 | S | `snd_spatial.c:138,179`; `snd_steamaudio.c:99,438`: static-world obstruction and filter/compression/drive controls. |
+| AUDIO-009 | M | `snd_room.c:63,223`; `snd_spatial.c:679,957,981`: worker lifecycle exists; loop room-send C16 missing. |
+| AUDIO-010 | M | `voice.c:83,549,618,1065,1429`: wet-only permission/output present; adopted default restoration C17. |
+| AUDIO-011 | M | `snd_mix.c:444,469`; `snd_spatial.c:674`; `snd_steamaudio.c:396`: loop-pause C15; native music/format owners survive. |
+| XR-001 | S | `vr_openxr.cpp:1238,1490,1534,1638`; `gl_vidsdl.c:1339,2379`: runtime GPU/creation metadata and native adoption. |
+| XR-002 | S | `vr_openxr.cpp:1013,1028,1039,1077,1341`; `gl_vidsdl.c:5026`: bounded image ownership/events/submission. |
+| XR-003 | S | `vr_openxr.cpp:456–497,694–717,997,1253,1268,1395`: profiles/actions, conditional Frame bindings and haptics. |
+| XR-004 | S | `vr_openxr.cpp:668,957,1299`; `gl_vidsdl.c:5243`; `vr_foveation_policy.h:31`: optional finite/fresh tracked gaze. |
+| XR-005 | S | `gl_vidsdl.c:5091,5118`; `glquake.h:888`; `r_brush.c:1106`; `r_world.c:1452`: rate-map production/material admission. |
+| XR-006 | S | `vr_openxr.cpp:1749`; `gl_vidsdl.c:5046`; `gl_rmain.c:2274`; `r_passes.c:1152`: paired centers/fine-depth/protected resolve. |
+| XR-007 | S | `view.c:89`; `vr_foveation_policy.h:15,31`; `vr_openxr.cpp:1749`: eye default, explicit fixed mode and full-rate fallback. |
+| XR-008 | S | `vr_openxr.cpp:567–615,932–955,1000,1328`: HTCX persistent roles/MNDX tracker spaces; stated ABI/startup limits. |
+| XR-009 | S | `gl_screen.c:1933–2102,2461–2467,2605`; existing calibration scene owner: shared draw/hit/model transforms. |
+| XR-010 | S | `gl_rmain.c:811,2848`; `r_world.c:994`; `Shaders/indirect.comp:88`: shared preparation and either-eye visibility. |
+| XR-011 | Q | `gl_rmain.c:2345–2465`; `gl_rmisc.c:114`; `gl_vidsdl.c:4677,5205`: exact non-OIT eye/water-boundary contract. |
+| XR-012 | S | `gl_rmisc.c:3197,3242,3337,3425,3482,5072`: bounded persisted pipeline cache and actual native consumers. |
+| PLAT-001 | S | Root `meson.build:340–424,531,560–568`, `flake.nix:8,14,28–42`: platform sources/dependencies/install recipes. |
+| PLAT-002 | S | `vr_openxr.cpp:1238,1490,1534,1638`; `gl_vidsdl.c:4746,5026,5181`: common target-runtime/device/stereo ownership. |
+| PLAT-003 | M | Root `flake.nix:43–49`; `vr_openxr.cpp:1213–1235`: portable architecture/ABI/loader delivery C19. |
+| PLAT-004 | M | Root `flake.nix:25,49`, license inventory; P GPL3/workflow artifacts: inherited notice delivery C18. |
+| PLAT-005 | S | Root `meson.build:113–142,352,560–568`, `flake.nix:47–48`: generated/consumed PAK and native installation assets. |
+| PLAT-006 | S | Root `flake.nix:18–26`: explicit public source closure; private deployment/telemetry outside product packaging. |
+| PLAT-007 | S | Existing focused test sources and pinned-reference ledgers remain inputs; actual final Linux/ARM execution is a delivery gate. |
+| PLAT-008 | S | Preservation ledger’s 12 WIP hashes and upstream/reference records retained; WIP content remains reference-only; merge rehearsal pending. |
+| PERF-F001 | M | `gl_vidsdl.c:4456–4539`; `gl_rmain.c:2796–2811`: native timing owners, missing truthful presentation C21. |
+| PERF-F002 | S | `gl_model.c:2458,2514,2640,2694,2748,3289`: initialized styles, bounded references and exact-count plane storage. |
+| PERF-F003 | S | `r_brush.c:3109`; `gl_mesh.c:1622,1746`; `gl_rmain.c:2887`: palette dependencies and animated BLAS/TLAS consumers. |
+| NET-001 | S | `sv_main.c:2889,3394,3456,3672`; `cl_parse.c:2014,2135`: protocol selection/intersection/limits/validation. |
+| NET-002 | S | `protocol.h:461`; `sv_main.c:3421`; `cl_parse.c:2027,2075`; `sv_user.c:2108`: explicit private profile. |
+| NET-003 | S | `sv_main.c:1914,2256,2529,2669,2751,2803,4605`: recipient deltas/customization/solid/owner seeding. |
+| NET-004 | S | `sv_main.c:1590,1656,2201,4702–4767`; `cl_parse.c:1376,1485`; `cl_input.c:812`: ACK/resend/continuation ownership. |
+| NET-005 | S | `common.c:1319,1560`; `sv_main.c:1427`; `cl_parse.c:810,1033`; `pmove.c:2550`: precision/solid encoding consumers. |
+| NET-006 | S | `sv_main.c:1059,1094,1772,1819`; `cl_parse.c:1700,3101,3849`; `pmove.c:2704`: typed stats/movement variables. |
+| NET-007 | M | `pr_cmds.c:1497,1522`; `cl_parse.c:1908,2281,2977`: late-model tag and loading keepalive C01/C04. |
+| NET-008 | S | `cl_parse.c:1079,3565,3894`; `view.c:264`: native effect consumption, authoritative angles and public VM event gates. |
+| NET-009 | S | `host.c:1064,1190`; `cl_main.c:2680,2765`; `sv_main.c:1610,2368,4725`; `cl_parse.c:2327–2438`: CSQC entity lifecycle. |
+| NET-010 | S | `cl_input.c:1100,1152`; `sv_user.c:1199,1232,1440,1572`; `server.h:179`: bounded redundant command sequencing. |
+| NET-011 | S | `cl_input.c:843`; `sv_user.c:657,1202`; `sv_phys.c:9899,10755`: finite monotonic msec and authority credit. |
+| NET-012 | S | `host.c:156,187,1200,1235`; `cl_main.c:2664`: native render/physics cadence and once-render private command production. |
+| NET-013 | S | `cl_main.c:1750–1981,2143`; `sv_phys.c:10389,10546,10618,10746`: replay, QC velocity and handoff/timer consumers. |
+| NET-014 | M | `cl_main.c:275,2059`: correction storage/reset without producer/view consumer; optional smoothing C07. |
+| NET-015 | S | `cl_input.c:657,732`; `sv_user.c:794,1080,1940,2022`; `pr_ext.c:5815,6341`: private inputs and framed QC events. |
+| NET-016 | S | `net_dgrm.c:405,453,485,566,818`; `net_main.c:203`: fragmentation/retry/ACK/EOM and MSS bounds. |
+| NET-017 | S | `net_dgrm.c:111–195,770,799,1811`; NAT review `:23`: validated remap; fast same-IP pruning explicitly rejected. |
+| NET-018 | S | `net_loop.c:33,71,136,184,217,268`; `net_main.c:163`: native loopback sequence/send/reset ownership. |
+| NET-019 | S | `net_bsd.c`, `net_win.c`, `net_udp.c`, `net_wins.c` match V; native driver IPv4/IPv6 dispatch retained. |
+| NET-020 | M | `net_dgrm.c:2672`; `cl_parse.c:2060`: unsupported advertised dialects C05; native discovery/control remains. |
+| NET-021 | M | `sv_main.c:3578`; `host_cmd.c:2423`; `host.c:646`; `pr_ext.c:4478,4528`: metadata/infokey C02/C03. |
+| NET-022 | M | `cl_main.c:448,543,665,837–958`; `cl_parse.c:2286`: installer/reconnect owners present; terminal model failure C06 missing. |
+| NET-023 | S | `vr_input.c:5129`; `cl_input.c:703`; `sv_user.c:733,1486`; `sv_phys.c:3763,4367`: finite roomscale/private pose chain. |
+| NET-024 | S | `vr_input.c:4487,5159`; `cl_input.c:716`; `sv_user.c:760`; `sv_phys.c:4310,4401`: surviving paired-pose transport. |
+| NET-025 | X | Gorilla-specific transport/authority excluded; existing validation remains. |
+| NET-026 | S | `cl_input.c:881`; `sv_user.c:1715,1877,2125`; `sv_main.c:540,590,625,4856`; `cl_parse.c:474,588`: negotiated pose relay/consumers. |
+| NET-027 | S | `cl_parse.c:200,263,711`; `sv_user.c:1811,1848`; `sv_main.c:258,745,3644,4866`: framed/generation-aware gameplay-first voice relay. |
+| NET-028 | S | `cl_main.c:3224`; `host_cmd.c:1656`; `sv_main.c:863–897`: native ordinary solo and explicit `qsvr1` shared-command opt-in. |
+| NET-029 | S | `sv_phys.c:3770,11403,11422,11562`; `world.c:565,2734,2778`; `pr_edict.c:169`: teleport/death/discontinuity lifecycle. |
+| PERF-001 | S | `tasks.c:296,453`: actual scalar/indexed scheduling and worker creation. |
+| PERF-002 | S | `gl_rmain.c:2848`: submitted renderer/particle/lightmap/BLAS dependency graph and retained serial path. |
+| PERF-003 | S | `gl_model.c:1525,1847`: native texture jobs and join before return. |
+| PERF-004 | S | `gl_model.c:4470,6609,6760`: MDL/MDX skin jobs, distinct slots and joined temporary lifetimes. |
+| PERF-005 | S | `gl_model.c:2595`: indexed extents jobs with worker-context serial fallback. |
+| PERF-006 | S | `mem.c:88,120`; native loader callers: dynamic allocation rather than replacement fixed heap. |
+| PERF-007 | S | `gl_model.h:795`; `gl_model.c:2973`: indexed marksurfaces consumed by native visibility. |
+| PERF-008 | S | `r_brush.c:2795`: uploaded ordinary polygons released; tiled/BSP consumers retained. |
+| PERF-009 | S | `r_brush.c:1994,1310`: native sorter/packing; sorter matches V `:1799`. |
+| PERF-010 | S | `gl_model.c:3716,3742`: BSP29/2PSB/BSP2/Valve/Quake64 loader dispatch. |
+| PERF-011 | S | `mem.c:88,120` and native loader allocation; named-map load/exit remains qualification, not proven by allocation alone. |
+| PERF-012 | S | `gl_model.c:1847,2595,4470,6760`: actual parallel loading/join mechanisms; no measured speedup claimed. |
+| PERF-013 | S | `r_world.c:994`; stereo frusta; `Shaders/indirect.comp:88`: gaze-independent conservative visibility. |
+| PERF-014 | S | `r_brush.c:1053`; `r_world.c:1234`: native direct/indirect material/atlas/alpha boundaries. |
+| PERF-015 | S | `r_brush.c:3912`; `Shaders/update_lightmap.inc:289`: dirty-lightmap work and either-eye lighting admission. |
+| PERF-016 | S | `r_world.c:994`: native no-VIS/PVS and serial/worker paths; no claim of equal cost to primary GL cache. |
+| PERF-017 | S | `r_alias.c:91,110,135,397`; `gl_rmain.c:1216,1275`: bounded compatible instance batching and immediate exclusions. |
+| PERF-018–019 | S | `gl_vidsdl.c:1525,2749`: same native high-precision color/depth selection and stereo attachment consumers. |
+| PERF-020 | S | `Shaders/world.vert:45`; `r_brush.c:1152`: masked reversed-Z bias matching I `gl_shaders.h:518`. |
+| PERF-021 | Q | Same `gl_rmain.c:2345–2465`/OIT consumers and exact non-OIT water-boundary contract as XR-011. |
+| PERF-022 | S | `r_alias.c:1157`: loaded offscreen aliases rejected before skin/pose work; named-map correctness remains pending. |
+| PERF-023 | S | `gl_mesh.c:1491,1662,1767`: exact untracked pose-cache reuse; tracked palettes bypass cache. |
+| ASSET-001 | S | `image.c:157`: path-priority-first image selection and native decoder dispatch. |
+| ASSET-002 | S | `gl_model.c:6609,8059`: MD3 fallback names feed native skin/material workers. |
+| ASSET-003 | S | `gl_model.c:7236`: MD5 loading through existing model/material ownership. |
+| ASSET-004 | S | `r_alias.c:391`; native skin descriptors: glow/luma/indexed fullbright consumers. |
+| ASSET-005 | S | `gl_model.c:1525`: map/global external-texture search paths and actual loading. |
+| ASSET-006 | S | `gl_model.c:1540` and alias loaders: search-path precedence floor retained. |
+| ASSET-007 | S | `gl_model.c:1228,1280,1706,1741`: WAD lists/palettes and bounded loader callers. |
+| ASSET-008 | S | `gl_model.c:2539`; `r_world.c:1395`; `r_brush.c:1156`: lit-liquid samples/atlas consumers. |
+| ASSET-009 | S | `r_light.c:41`; `r_brush.c:1231,3912`: native CPU/GPU lighting-mode consumers. |
+
+The final dispositions explicitly preserve these boundaries:
+
+- **BASE-003:** native opposing-key subtraction governs; do not restore `cl_iDrive` arbitration or blanket aliases.
+- **NET-017:** native established timeout is deliberate policy, not equivalent fast pruning. Correct stale acceptance wording; add no same-IP eviction.
+- **NET-028:** explicit `qsvr1` solo opt-in may use the shared private command path. No demonstrated default-play regression warrants another guard.
+- **PLAT-008:** S covers preservation/integration ownership. Preserved WIP does not become production implementation.
+- **AV-009:** retain the experiment and conditional asset/performance discussion. No general importer or mandatory manual-animation conversion follows.
+- **PERF-F001:** truthful shared/availability reporting is required; per-eye numbers must not be fabricated.
+
+The interface/history obligations remain attached to the checklist: **512 QC rows, 1,303 command/settings rows, 906 preservation paths, 540 history entries—497 MAIN and 43 XR**. The absent-literal screen’s 285 declarations/145 unique pairs is not a missing-feature count. Current receipts resolve native equivalents, unsupported declarations, retired settings, exclusions and experiments. Registry names and routing counts do not certify every signature, permission or executed VM contract.
+
+After implementation, retain all eight software/delivery gates:
+
+1. Complete Linux x86-64 client/dedicated and isolated native ARM64 client builds with required OpenXR/shaders/codecs/CURL/Steam Audio dependencies.
+2. Native desktop campaigns, mission packs, controls, graphics/AO, demos, configuration ordering and lifecycle.
+3. Actual two-eye rendering, visibility, transparency/water, MSAA, panels, wheel, outlines and body/prop/muzzle/shadow agreement.
+4. Real public/private/native network paths, prediction, loss/reordering, metadata, voice, slot reuse and mod-install/reconnect cancellation.
+5. Loaded QC contracts, resource lifetimes, malformed-input cleanup, co-op/save/hub identity and callback behavior.
+6. Required representative large/mod maps, including mj4m1, with correct load/render/exit and no heapsize workaround.
+7. Portable installed resources, architecture-matched dependencies, loader resolution, GLIBC ceiling/notices and one disposable substantive upstream merge rehearsal.
+8. Close resulting software findings and perform final local Astra integration review.
+
+Excluded remain revival, skyrooms, quad views, Gorilla/hand-swim/instant-stop, physical-contact melee/parry/hybrids, Mjolnir dual-state extensions, imagedump, VR/additional demos, legacy aliases and general incompatible-device reconstruction. Windows builds and user headset/gaze/listening/live-multiplayer/performance trials remain deferred.
+
+The eleven mapped additions—background saves, general connection retries, demo timeline, dithering, live previews, per-file downloads, CSQC prediction APIs, DP7/BJP3, clustered lighting, ICE/WebRTC and 255 slots—remain optional research; demo timeline is additionally excluded.
+
+Verified local Astra xhigh provenance applies to this source review. No edits, builds, tests, runtime actions, branch checks, telemetry access or nested agents occurred.
+
+---
+
+**Final source-review totals: 185 reviewed — 153 S, 18 M, 2 Q, 11 X, 1 R.** No unreviewed feature IDs remain. PLAT-008 is **S**; its preserved WIP material remains reference-only. AV-009 is the sole **R**.
+
+These tables supplement the retained per-ID returns. Paths are relative to `Quake/` unless marked otherwise; **P** = primary `51b452c0`. S means source integrated, qualification pending.
+
+| ID | Class | Actual owner/evidence and disposition |
+|---|---|---|
+| BASE-001 | S | `host.c:1357,1390,1448,1467` connects native initialization, dedicated startup and shutdown. `cl_demo.c:152,203,640,772` retains bounded desktop recording/playback/seek; `sbar.c:589,633,662` retains mission-pack branches. |
+| BASE-002 | S | `cmd.c:1006–1082` preserves source-aware native/CSQC dispatch. `cmd.c:345,403,422,427`, `host.c:1440–1452`, `common.c:3543–3547` connect ordered post-config loading to startup and game changes. |
+| BASE-003 | S | `cl_input.c:544,568–575`, `in_sdl.c:887–929` retain native desktop movement, mouse, joystick and gyro consumers. The explicit native desktop contract supersedes P’s later-opposing-key `cl_iDrive` behavior. |
+| PLAT-001 | S | Root `meson.build:340–424,531,560–568` selects platform sources/dependencies/install owners; `flake.nix:8,14,28–42` supplies Linux x86/ARM recipes. Builds remain unqualified. |
+| PLAT-002 | S | `vr_openxr.cpp:1238,1490,1534,1638`, `gl_vidsdl.c:4746,5026,5181` connect runtime/device discovery, native Vulkan adoption and stereo submission. Target-device qualification remains separate. |
+| PLAT-003 | **M** | Root `flake.nix:43–49` produces a store-bound installation, including an absolute loader link. Portable architecture-matched closure and GLIBC≤2.39 delivery remain missing. Reuse native packaging and executable-relative loader search at `vr_openxr.cpp:1213–1235`; P Linux workflow supplies the portability/ABI reference. |
+| PLAT-004 | **M** | Root `flake.nix:25,49` and current license inventory omit the inherited GPL3 notice from source/install closure. Reuse existing packaging for P’s `LICENSE-GPL-3.0.txt` and applicable component notices; P Linux workflow `:104`, `SPATIAL_AUDIO.md:42,50`. |
+| PLAT-005 | S | Root `meson.build:113–142,352,560–568` generates, consumes and installs native embedded resources; `flake.nix:47–48` installs desktop/icon assets. Portable closure remains PLAT-003. |
+| PLAT-006 | S | Root `flake.nix:18–26` uses an explicit engine/build-resource source set. Private deployment material remains outside product packaging; final artifact inspection is pending. |
+| PLAT-007 | S | Existing focused production-owner test sources and pinned-reference ledgers remain qualification inputs. Their presence does not establish execution or parity; consolidated meaningful Linux/ARM checks remain required. |
+| PLAT-008 | S | `docs/migration-preservation.csv` retains the 12 nonempty `wip_sha256` records; `docs/final-scope-interface-history-2.0.md:36–54` reconciles WIP/research dispositions. Archival reconciliation and merge ownership survive; experimental contents are reference-only. Disposable substantive upstream merge rehearsal remains a delivery gate. |
+
+The required classification revisions are:
+
+| ID | Final class | Evidence and exact disposition |
+|---|---|---|
+| MOD-014 | **M** | `gl_screen.c:1100–1136` draws the existing collector outside a tracked panel. Reuse `gl_draw.c:1331,1344` at that canvas boundary; P `gl_screen.c:748–765`, `gl_draw.c:935–939`. No new collector. |
+| PERF-F001 | **M** | `gl_vidsdl.c:4523–4539` owns native frame/AO timing; `gl_rmain.c:2796–2811` lacks truthful frame availability/shared-stereo presentation. Preserve queries/counters; no fabricated per-eye split. |
+| XR-011 | **Q** | `gl_rmain.c:2345–2465` uses shared sorting and center-leaf water partition; `gl_rmisc.c:114` bypasses sorting under OIT, but `gl_vidsdl.c:4677,5205–5208` permits OIT off. Resolve only the non-OIT eye/water-boundary exception or prove existing consumers suffice. |
+| PERF-021 | **Q** | Same actual consumers and single shared design gate as XR-011. Primary shared sorting is intentional; no blanket sorter or forced-OIT policy. |
+| NET-028 | **S** | `cl_main.c:3224` keeps ordinary solo native; `host_cmd.c:1656` exposes explicit `qsvr1`; `sv_main.c:863–897` gates shared-command admission. The accepted opt-in contract does not require primary’s solo exclusion. |
+| AUDIO-010 | **M** | Main-adopted restoration: `voice.c:83` default 1 versus P `voice.c:52` default 0.6, consumed at current `:1429`. Change only the initializer; preserve saved values and independent permission. |
+
+The **22 confirmed subitems and one shared transparency design gate** remain the final implementation scope. Preserve the eight end-of-implementation software/delivery groups and the explicit exclusions. Keep missing implementation, pending qualification and optional research distinct.
+
+No additional source tranche is needed. After main merges these rows into the canonical CSV, the remaining review is a **brief synthesis/consistency check only**, using the retained evidence. No edits or execution occurred.

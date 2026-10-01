@@ -1,6 +1,6 @@
 # Local Astra xhigh source review returns
 
-Review inputs at production2b420380. Current effective Astra/xhigh routing verified by main; older unavailable-routing statements below are superseded. Only source-review terminal results are reproduced, no operational telemetry. Intermediate coverage counts are historical.
+Review inputs at production2b420380. Current effective Astra/xhigh routing verified by main; older unavailable-routing statements below are superseded. Only source-review terminal results are reproduced, no operational telemetry. Intermediate counts are historical.
 
 **scope_done:** AUDIO-001–011 and NET-027 reviewed: **9 S, 2 M, 1 Q**. No unreviewed IDs. One additional confirmed delivery omission is listed separately.
 
@@ -76,3 +76,68 @@ The actionable missing behavior is:
 **Assumptions/open risks:** accepted pose/descriptor inputs come from lead-owned transport. The explicit retargeting disposition at `docs/avatar-vulkan-implementation-review.md:68` retains the existing per-player palette path; manual clips and a general VRM importer are not additional requirements. Source presence establishes neither rendered correctness nor performance.
 
 **Follow-up/software obligations:** main integrates these findings without double-counting shared root/corpse dependencies. After all implementation, qualify complete Linux x86-64 and isolated native Linux ARM64 clients with required Steam Audio libraries, including asset rejection/reload, independent poses, equipment and shadow agreement. Windows builds remain deferred; user headset/live-multiplayer/performance trials remain outside this goal.
+
+---
+
+**scope_done:** MOD-001,002,004,005,006,008,009,010,012,013. **Nine S; one M; no Q.** No other confirmed missing production behavior emerged in this bounded review.
+
+**MOD-010.a — P2: large classic-particle pools render incorrect quads.** Current [r_part.c:238](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/r_part.c:238) accepts `-particles 32768`, but [r_part.c:204](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/r_part.c:204) generates `uint16_t` indices using `i*4`, and [r_part.c:1021](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/r_part.c:1021) submits the entire population with `VK_INDEX_TYPE_UINT16`. At particle index 16,384, indices wrap to zero: later particles redraw earlier vertices instead of their own. Quad mode defaults on.
+
+Primary **P** (`51b452c018273647dcf94f4628a370267ff8fa91`) supports 32,768 by default and up to 65,536, with direct quad emission: `Quake/r_part.c:26,153,797`. Donor **D** (`4bc898f29073e8aa41069f0e79e3cb5a9eb73afa`) contains the same index defect as current. **Smallest adapter:** change the existing index-buffer sizing, staging element type and binding to 32-bit indices; retain particle allocation, simulation, tasks and draw ownership. The native 16,384 default itself is not classified missing, given the accepted native-graphics baseline.
+
+All paths below are within `Quake/`. **S means source present, final software qualification pending.**
+
+| ID | Class | Actual current evidence | Reference / disposition |
+|---|---|---|---|
+| MOD-001 | S | [pr_ext.c:6494](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_ext.c:6494), `6790,6811,6860,7002`; `pr_edict.c:2072,2296`: assigned-slot lookup, discovery, capability checks, VM-specific lazy dispatch, exact declaration remaps and loader invocation. | P `pr_cmds.c:2710,2733,6427`; D `pr_ext.c:6038,6168`. Collision adapters and unsupported-debug failures preserve native ownership. |
+| MOD-002 | S | [cl_main.c:2734](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/cl_main.c:2734); `sbar.c:895,903`; `gl_screen.c:2326,2646,2670`: per-command filtering, HUD clock, one GUI execution and error restoration. | P `cl_main.c:2656`, `sbar.c:1415,1423`. Committed-preview disposition retained; raw QSS-M InputEvent remains unselected. |
+| MOD-004 | S | [pr_ext.c:3286](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_ext.c:3286), `3433,3608,3677,3806,4039,4077,4110,6916`; `common.c:2806`: owned search/file/buffer consumers, repaired seek/line/sort/replacement lifetimes and checked loading. | P `pr_cmds.c:5393,5806,5832`. Native filesystem precedence, bounded strings/tokenization and immediate write-error policy retained. |
+| MOD-005 | S | [pr_ext.c:4145](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_ext.c:4145), `1988,2291,4352,4374,4417`; `pr_edict.c:1301,1917`; `pr_cmds.c:1413,1774`: payload copying, surfaces, reflection/relinking, named invocation and inherited search predicates. | P `pr_cmds.c:1296,1935,3472,5851,5997,6077`. Existing VM/math/search owners reused; repaired field-table and string lifetimes verified. |
+| MOD-006 | S | [pr_cmds.c:2153](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_cmds.c:2153); `pr_edict.c:2054`; `common.c:2446,4929,5154,5213,5393`; `pr_cmds.c:149,2004`: EX semantics and localization reach actual text consumers. | P `pr_cmds.c:2608`, `common.c:2455,4131,4283`. EXFlags/path zero fallbacks match reference; FGD, rerelease English and message fallbacks use native localization. |
+| MOD-008 | S | [pr_cmds.c:2215](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_cmds.c:2215); `sv_main.c:2586`; `cl_parse.c:1285`; `r_alias.c:1220`; `cl_main.c:2371,2479,2499`: fresh statics, alpha and merged trail/light flags reach rendering. | `mod-entity-consumers-2.0-plan.md` / repair `05e881cc`. No demonstrated primary drawflags renderer requires another implementation. |
+| MOD-009 | S | [r_part_fte.c:937](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/r_part_fte.c:937), `1142,3609,3636,6693`; `gl_rmain.c:2963,2984,3010`: namespace/effectinfo loading, preserved names, growth repair, setup and reader ordering. | P `r_part_fte.c:932,3454`; native task architecture retained. Dynamic/static emission guards exist at `cl_main.c:2521`, `gl_refrag.c:243`. |
+| MOD-010 | **M** | [r_part.c:204](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/r_part.c:204), `215,238,1021`: confirmed large-pool index wrap. Weather/palette/beam consumers remain present at `pr_ext.c:2969,3015,3081`, `cl_tent.c:267,283,414`. | **MOD-010.a above.** P `r_part.c:26,153,797`. Beam/temp limits match P: 32/256. Primary bloodstain consumers are under `#if UNSUPPORTED`. |
+| MOD-012 | S | [pr_edict.c:1411](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_edict.c:1411), `80,1835`; `host_cmd.c:3044,3052,3072,3196,3579`; `sv_phys.c:11565`: saved references preserve free state, admission detaches FIFO entries, load rebuilds and VM teardown releases resources. | P `pr_edict.c:204,996`, `host_cmd.c:2425`; D `host_cmd.c:2309,2686`. Repair `7485407a` reuses native lifecycle. |
+| MOD-013 | S | [cl_input.c:382](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/cl_input.c:382), `628,1115`; `sv_user.c:1330`; `menu.c:4454,4569`; `vr_input.c:3971,3991`; `common.c:3477,3545`: deliberate impulses, bindlist/defaults and switching have active owners. | P `menu.c:1535`, `cl_input.c:264`; D `menu.c:2829`. Exact reciprocal loopback query, pre-CSQC projection and native game/config reload retained. |
+
+**verification_performed:** source only—current consumers, indexed plans/dispositions and pinned primary/donor comparisons. No writes, execution checks, telemetry or agents. Unreviewed assigned IDs: none. MOD-003/011/014 and completed audio/avatar findings were not reopened.
+
+**Assumptions/open risks:** Established workspace/pins accepted without branch checks. Registry metadata is not certification that all 512 entries execute correctly. Authored HUD output, VM errors/reloads, file/buffer behavior, saved-reference reuse, mod switching and dense effects still require final software qualification.
+
+**Follow-up:** Main should spot-check and integrate MOD-010.a. After all implementation, perform consolidated Linux x86-64 and isolated native Linux ARM64 client qualification, including required matching Steam Audio libraries. Windows builds remain deferred; user headset/performance trials remain outside this goal.
+
+---
+
+**scope_done:** all ten assigned rows. **9 S, 1 M, no unresolved Q.** MOD-010’s M is limited to classic-particle capacity/index handling.
+
+P = primary `51b452c018273647dcf94f4628a370267ff8fa91`; D = vkQuake `4bc898f29073e8aa41069f0e79e3cb5a9eb73afa`. Current paths below are under `Quake/`. **S = source present; final software qualification pending.**
+
+| ID | Class | Actual current evidence | Reference / retained seam |
+|---|---|---|---|
+| MOD-001 | S | [pr_ext.c:6494](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_ext.c:6494), `6790,6811,6860,7002`; `pr_edict.c:2072,2296`: assigned numbers, discovery, VM-specific dispatch, declaration remapping and loader invocation. | P `pr_cmds.c:2710,2733,6427`; D `pr_ext.c:6038,6168`. Preserve native lazy binding, permissions and explicit unsupported fallbacks. |
+| MOD-002 | S | [cl_main.c:2734](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/cl_main.c:2734); `sbar.c:895,903`; `gl_screen.c:2326,2646,2670`: each outgoing command filtered; HUD clock, once-frame GUI and error cleanup wired. | P `cl_main.c:2656`, `sbar.c:1415,1423`. Retain accepted committed-preview policy. Raw QSS-M InputEvent remains unselected. |
+| MOD-004 | S | [pr_ext.c:3286](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_ext.c:3286), `3433,3608,3677,3806,4039,4077,4110,6916`; `common.c:2806`: owned resources, search, seek, sparse-sort cleanup, buffer loading/writing and shutdown. | P `pr_cmds.c:5393,5806,5832`. String/token/file receipts match current consumers; native filesystem precedence and write-error policy retained. |
+| MOD-005 | S | [pr_ext.c:4145](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_ext.c:4145), `1988,2291,4352,4374,4417`; `pr_edict.c:1301,1917`; `pr_cmds.c:1413,1774`: payload copy, surfaces, reflection, named calls and inherited search predicates. | P `pr_cmds.c:1296,1935,3472,5851,5997,6077`. Existing VM/math/entity owners reused; field-table and replacement-string lifetime repairs present. |
+| MOD-006 | S | [pr_cmds.c:2153](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_cmds.c:2153); `pr_edict.c:2054`; `common.c:2446,4929,5154,5213,5393`; `pr_cmds.c:149,2004`: EX bindings and localization reach text consumers. | P `pr_cmds.c:2608`, `common.c:2455,4131,4283`. EXFlags/path zero results match reference; FGD, English rerelease source and fallbacks reuse native localization. |
+| MOD-008 | S | [pr_cmds.c:2215](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_cmds.c:2215); `sv_main.c:2586`; `cl_parse.c:1285`; `r_alias.c:1220`; `cl_main.c:2371,2479,2499`: fresh static transforms, alpha and merged trail/light flags consumed. | `mod-entity-consumers-2.0-plan.md`, repair `05e881cc`. No demonstrated primary drawflags renderer requires a new implementation. |
+| MOD-009 | S | [r_part_fte.c:937](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/r_part_fte.c:937), `1142,3609,3636,6693`; `gl_rmain.c:2963,2984,3010`: growth/name lifetime repairs, namespace/effectinfo loading, setup and reader ordering. | P `r_part_fte.c:932,3454`; native task architecture retained. Dynamic/static emission guards at `cl_main.c:2521`, `gl_refrag.c:243`. |
+| MOD-010 | **M** | [r_part.c:238](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/r_part.c:238) accepts larger pools; `163,204,215,1021` use wrapping 16-bit quad indices. Weather, palette and beam consumers remain present at `pr_ext.c:2969,3015,3081`, `cl_tent.c:267,283,414`. | P `r_part.c:26,30,153,797`: 32,768 default, 65,536 maximum and full quad emission. **Capacity/index adapter below only.** Beam/temp limits already match P’s 32/256. |
+| MOD-012 | S | [pr_edict.c:1411](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/pr_edict.c:1411), `80,1835`; `host_cmd.c:3044,3052,3072,3196,3579`; `sv_phys.c:11565`: saved-reference liveness, FIFO detachment/rebuild, admission and teardown. | P `pr_edict.c:204,996`, `host_cmd.c:2425`; D `host_cmd.c:2309,2686`. Repair `7485407a` preserves native entity lifecycle. |
+| MOD-013 | S | [cl_input.c:382](/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0/Quake/cl_input.c:382), `628,1115`; `sv_user.c:1330`; `menu.c:4454,4569`; `vr_input.c:3971,3991`; `common.c:3477,3545`: deliberate impulses, bindlist/defaults and switching. | P `menu.c:1535`, `cl_input.c:264`; D `menu.c:2829`. Exact-loopback suspension query, pre-CSQC projection, eligible recording and native config reload retained. |
+
+**Confirmed missing item — MOD-010.a, P2:** With more than 16,384 active classic particles in quad mode, `i*4` exceeds the 16-bit index range. Later particles consequently reference earlier vertices. This is a source-demonstrated defect, also inherited from D.
+
+The smallest adapter is the agreed bounded initialization plus **32-bit existing static quad indices**:
+
+- Validate the supplied count before conversion/allocation; retain the 512 minimum and primary 65,536 maximum.
+- Use the primary 32,768 default as the restoration lean.
+- Update existing index-buffer sizing, staging elements and Vulkan binding together.
+- Keep native particle ownership, quad/triangle appearance and rendering paths. This creates no FTE-pool item.
+
+The lower default alone was not the basis for M. The confirmed defect is incorrect rendering of an accepted larger population; restoring inherited capacity belongs in the same narrow adapter.
+
+**verification_performed:** source only—current consumers, relevant indexed plans/dispositions and pinned P/D comparisons. No writes, tests, builds, probes, telemetry or nested agents. No outstanding assigned IDs requiring the missing-evidence failure path.
+
+**Qualification limit:** the **512-name inventory establishes literal candidates only**. This review does not certify every builtin’s signature, slot, VM permissions or execution. S classifications reflect the verified owners and bounded contracts above; loaded SSQC/CSQC behavior, errors/reloads, authored HUDs, resource lifetimes, save restoration, switching and dense effects remain final software obligations.
+
+**Follow-up:** Main integrates MOD-010.a into the final checklist. After all implementation, complete consolidated Linux x86-64 and isolated native Linux ARM64 client qualification, including required matching Steam Audio libraries. Windows builds remain deferred; user headset/performance trials remain outside goal.

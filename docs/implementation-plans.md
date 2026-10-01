@@ -1,5 +1,10 @@
 # Major-feature implementation plans
 
+The [final senior-reviewed checklist](final-checklist-2.0.md) enumerates the
+remaining implementation and design work. Plan each major slice before coding,
+reuse its native/reference owners, and run consolidated qualification after all
+implementation is finished.
+
 The [consolidated Linux/ARM qualification plan](final-linux-arm-qualification-2.0-plan.md)
 records the full-scope end-of-implementation pass; it is not authorization to
 run checks early or a claim of completion.

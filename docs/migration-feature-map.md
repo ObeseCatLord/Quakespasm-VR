@@ -1,5 +1,10 @@
 # Complete-scope feature map for the 2.0 migration
 
+The [final senior-reviewed checklist](final-checklist-2.0.md) and
+[185-row current crosswalk](final-scope-enumeration-2.0-worksheet.csv) are the
+current remaining-work authority. They supersede historical pending labels;
+source integration still needs end-of-implementation Linux/ARM qualification.
+
 The [current user scope decisions](migration-scope-decisions.md) exclude Gorilla
 locomotion and instant stop from the goal. Their historical rows below remain
 source inventory, not requirements; ordinary VR swim/ladder and joystick behavior
