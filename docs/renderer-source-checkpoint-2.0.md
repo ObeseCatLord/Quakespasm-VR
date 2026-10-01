@@ -88,10 +88,10 @@ Linux/ARM software qualification remains required after all implementation.
 ## XR-012 source gap: pipeline-cache persistence
 
 Main checked actual native graphics/base-alternative/compute creation in
-`gl_rmisc.c:3188,3207,3246`: each passes a null driver-cache handle. Whole-source
+`gl_rmisc.c:3188,3207,3245`: each passes a null driver-cache handle. Whole-source
 and pinned donor searches find no `VkPipelineCache` owner. Existing eager
 `R_CreatePipelines` and format/sample/pass setup already provide native warmup;
-`R_PrepareStereoView` already uses the shared native dynamic uniform descriptors.
+`R_PrepareStereoFrame` already uses the shared native dynamic uniform descriptors.
 Those owners do not require replacement, but the retained XR driver-cache
 behavior is a concrete remaining implementation gap. The
 [before-code design brief](native-pipeline-cache-2.0-plan.md) compares translating

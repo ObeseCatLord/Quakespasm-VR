@@ -19,7 +19,7 @@ XR work through a small adapter; it does not authorize another renderer.
   atomic replacement and retirement. Its graphics/compute callers pass the
   cache. Reuse these algorithms by translating their small private helpers to C;
   do not transplant its renderer, C++ container state or pass cache.
-- `gl_rmain.c:R_PrepareStereoView` already allocates stereo camera data from
+- `gl_rmain.c:R_PrepareStereoFrame` already allocates stereo camera data from
   native `R_UniformAllocate`, reusing the scene descriptor unless protected
   projection scaling needs a second one. `glquake.h:R_BindPipeline` binds the
   existing shared dynamic descriptor/offset. No new camera descriptor cache.
@@ -85,6 +85,28 @@ which existing atomic-file code can be reused without creating a service, and
 whether optional allocation/failure/threading/driver identity safeguards suffice.
 No effective reviewer-settings certification is available. Production is held
 for that design disposition, not for user permission.
+
+## Before-code Astra disposition
+
+Requested local Astra xhigh accepted the minimal adapter with one P2 Windows
+optional-I/O correction. Main verified the source-backed creation, scheduling,
+shutdown, bootstrap and private file-wrapper evidence; source advice is not
+effective-model certification or runtime signoff.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Reuse one private driver cache; leave eager warmup and camera descriptors intact. | Adopt. All three creation sites use it; native create-info and alternative pass/subpass identity remain. Correct the brief's function name to R_PrepareStereoFrame. |
+| Initialize once, including failed initialization. | Adopt. A private attempted boolean prevents repeated cache-load/create work on ordinary resource rebuilds. No new task or mutex: native creation is serialized before frame submission. |
+| Save after each complete pipeline batch, not each Vulkan call. | Adopt. Reuse native R_CreatePipelines completion; no steady-frame or map hook and no extra GPU wait. Retain the cache through R_DestroyPipelines and same-device transitions. |
+| Destroy in joined VID_Shutdown outside render_resources_created gating. | Adopt. A retained cache can exist while render resources are absent. One device-present idempotent hook; no redundant shutdown save. |
+| Add cache teardown to bootstrap failure or implement live device replacement. | Reject adjacent scope. Existing GL_OpenXRCreationFailed callers precede lazy cache creation; no live reconstruction needed. |
+| Sys_fopen is unconditionally safe for optional Windows cache I/O. | Correct P2. Native Windows conversion can call Sys_Error and uses MAX_PATH. Reuse the private checked UTF-8/wide patterns with _wfopen, temporary creation, MoveFileExW replacement and cleanup; no shared platform API rewrite. Linux retains Sys_fopen. |
+| Preserve bounded device/header/checksum validation and optional failures. | Adopt. Check every allocation; invalid/missing data initializes empty. Seeded creation gets at most one empty retry, unavailable cache retains native null-cache operation; device-loss/pipeline failures retain native policy. CRC_Block is16-bit stored in a32-bit envelope slot, preserving retained XR format rather than promising CRC32. |
+| Avoid duplicated payload containers and application pipeline keys. | Adopt. Stack envelope plus one payload allocation; driver caches full native creation inputs. Atomic replacement only after successful write/flush/close; failed snapshots/files preserve the previous destination. |
+
+No human decision is required. The three-file write set and250–300-line bound
+remain. Reopen if the adapter requires a new renderer/registry, task, filesystem
+service or lifecycle beyond the verified owners.
 
 ## Final software qualification
 
