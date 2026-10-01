@@ -108,6 +108,16 @@ move production work outside the bound. These limits include the prior846 lines.
     behavior/star rejection, individual tokens/text and local unchanged/retry
     diagnostics. No general rollback or eventual retry promise for live settings.
 
+12. Main source review found a native desktop-demo boundary: cl_demo.c:813 sets
+    demoplayback/connected, and cl_parse.c:3693 still invokes CL_SignonReply.
+    Live reply preflight must not disconnect playback because a local name or
+    userinfo field is unrepresentable. At the existing TryAppend owner, retire
+    pending reply without formatting/enqueue when demoplayback is true. Keep
+    accepted-header logical selection, native once-only CSQC loading, signon
+    progression and case4 loading completion. Existing CL_SendCmd demo clearing
+    stays native. This is preservation of built-in desktop demos, not VR/extra
+    demo functionality; include it in the unchanged aggregate bound.
+
 ## Handoff, main review and final acceptance
 
 Report scope_done, exact changed files/aggregate counts, source/diff verification,
