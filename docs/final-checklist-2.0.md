@@ -36,8 +36,10 @@ another renderer, VM, networking stack or movement solver.
 
 Receiver argc, nonnegative bounded scoreboard slots and terminated full
 replacement are source-integrated in `2a43c96b`, following the
-[receiver plan](metadata-receivers-2.0-plan.md). Quoting/reader and publication
-work remain; this partial receipt does not close C02.
+[receiver plan](metadata-receivers-2.0-plan.md). Complete-command quote/trailing
+validation and the explicit full-userinfo reader allowance are integrated in
+`c2f8d0fd`, following the [command plan](metadata-command-validation-2.0-plan.md).
+Publication/privacy/envelope work remains; these partial receipts do not close C02.
 
 - [ ] Settle stock-QSS-M interoperability/recipient command limits and an explicit
   permanent-oversize outcome; the existing optional user question is unanswered.
@@ -52,8 +54,11 @@ work remain; this partial receipt does not close C02.
   without silent1024-byte truncation or changes to local stores.
 - [x] Repair full/update receiver argc, bounded nonnegative slots and full-string
   termination; `2a43c96b` (source integration, final qualification pending).
-- [ ] Finish quoted-command validation and extend only the explicit required
-  full-userinfo reader allowance. No new metadata protocol or copied queue.
+- [x] Finish quoted-command validation and extend only the explicit required
+  full-userinfo reader allowance; `c2f8d0fd`. Main source review checked native
+  span parsing, distinct closing quotes including lone-opening refusal,
+  unchanged quoted LF, trailing-whitespace admission and existing truncation
+  checks/generic command limits. Final software qualification remains pending.
 
 **C07 / NET-014 — source-integrated; final qualification pending**
 
