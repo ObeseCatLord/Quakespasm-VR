@@ -1654,7 +1654,7 @@ BuildSurfaceDisplayList -- called at level load time
 */
 static qboolean GL_BrushRegenerationSourceValid (const qmodel_t *model, const msurface_t *surf)
 {
-	if (!model || !surf || surf->numedges < 3 ||
+	if (!model || !surf || surf->numedges < 2 ||
 		(unsigned int)surf->numedges > UINT_MAX / (VERTEXSIZE * sizeof (float)) ||
 		model->numsurfedges < 0 || model->numedges < 0 || model->numvertexes < 0 ||
 		!model->surfedges || !model->edges || !model->vertexes ||
