@@ -18,11 +18,12 @@ another renderer, VM, networking stack or movement solver.
 
 ## Confirmed implementation work
 
-The table below preserves the audit's 22 implementation findings. Seventeen items
+The table below preserves the audit's 22 implementation findings. Eighteen items
 were subsequently source-integrated in the commits below, following committed
 before-code plans and main review of the Luna patches. Their executable
-acceptance remains pending. **Five implementation items remain**: C02, C07,
-C14 and C19/C20. The shared Q01 rendering correction is also source-integrated;
+acceptance remains pending. **Four implementation items remain**: C02, C07,
+C14 and C19. C07's native replay/camera phase is integrated in `3f8b398c`, but its
+renderer/HUD phase remains required. The shared Q01 rendering correction is also source-integrated;
 its rendered acceptance remains pending.
 No tests or builds have run since the audit.
 Each remaining slice needs a committed before-code plan, implementation/source
@@ -40,6 +41,7 @@ qualification phase.
 | Q01 — per-eye alpha categories at liquid boundaries | [Stereo transparency plan](stereo-water-transparency-2.0-plan.md); source commit `a7d06c01`. Main reviewed the Luna six-file adapter, serialized exceptional recording, context resets and local non-alias angles. Shared sorting, native passes and opaque single-pass stereo remain. Final rendered boundary/OIT/context acceptance pending. |
 | C12 — inherited QBJ3 live-player admission | [Live-avatar plan](qbj3-live-avatar-2.0-plan.md); source commit `33d6b90a`. Main reviewed exact model/frame/live admission, explicit choice precedence, unresolved-descriptor fallback and implicit tracking recheck; raster and BLAS share eligibility. Final installed-content/rendered acceptance pending. |
 | C13 — independent QBJ3 selected death/corpse presentation | [Corpse-avatar plan](qbj3-corpse-avatar-2.0-plan.md); source commit `f96ad216`. Main reviewed the unified bounded frame owner, reserve-before-fill/player priority, current selection/colormap identity checks, explicit death animation and no native live-tracking fallback, independent palettes and raster/BLAS consumers. Final installed-content/lifetime/rendered acceptance pending. |
+| C20 — physical native VR developer field table | [Field-panel plan](vr-field-panel-2.0-plan.md); source commit `a42de70f`. Main checked actual default-canvas ortho/viewport inversion, frozen HUD pose, finite/dimension gates before division, paired panel restoration and unchanged collector/desktop content. Final two-eye/resolution/context visual acceptance pending. |
 | C18 — inherited combined-build/component notices | [Notice installation plan](license-install-2.0-plan.md); source commits `fb0f41d9` / `3adf25fb`. Copied primary GPL3 text and unmodified official Valve4.8.1 notices through Meson/Nix source/install owners, including vendored Monado ABI provenance. Source-copy hashes checked; installed/artifact notice qualification pending. C19 remains separate. |
 | C21 — valid GPU samples and shared stereo diagnostics | [Diagnostic plan](gpu-diagnostic-validity-2.0-plan.md); source commit `d659894c`. Main reviewed per-slot sampled modes, successful-query/conversion validity and measured-zero distinction; existing queries retained. Final software timing/status/mode-change acceptance pending. |
 
@@ -169,8 +171,8 @@ research; they were not blanket-approved implementation.
   dispositions. Names and routes alone do not certify runtime semantics.
 
 Q01, C10–C13, C18 and C21 are source-integrated. Finish C14 at the native
-equipment owner; C02/C07 as native metadata/presentation adapters; C20
-at its existing render boundary; C19 through native packaging. Reuse reference
+equipment owner; C02/C07 as native metadata/presentation adapters; C19 through
+native packaging. Reuse reference
 code and write a bounded plan before each major slice. Then perform the one
 consolidated Linux/ARM qualification phase above and review its final fixes.
 Source-present features should not be ported again.
