@@ -72,3 +72,17 @@ trails and rocket light. Preserve native alpha/OIT and ordinary effects.
 No execution, compiler, build, test or benchmark belongs to this source slice.
 Rendered/software evidence remains pending; user hardware/performance trials
 and Windows builds remain deferred.
+
+## Source integration receipt
+
+Implemented `05e881cc` after before-code plan/disposition `22ceceb6`: exactly
+the nine planned replacements in the two owned production files. Main reviewed
+the complete delegated diff and surrounding state, linking, flags and trail
+ordering. Scoped diff hygiene passes. The final requested local Astra xhigh
+review found no P1/P2 blocker in the actual patch: static transforms come from
+the newly built baseline, and all seven fallback tests consume merged flags
+while scripted precedence and native light/particle behavior remain.
+
+No entity/protocol/rendering owner or interface was introduced. Effective
+reviewer settings remain uncertified. Actual rendered/static/trail/light and
+broader MOD-008 software qualification are pending; no execution validation ran.

@@ -86,6 +86,15 @@ retire intent. Native desktop playback must latch without writes even when its
 live buffer is unusable. Invalid/overflowed live buffers retain intent; this
 repair does not claim a new general buffer-recovery implementation.
 
+The [native mod entity consumer repairs](mod-entity-consumers-2.0-plan.md)
+require actual CSQC VM creation/conversion, efrag collection and desktop/stereo
+rendering for nonzero static translation/rotation with skin/frame/alpha/effects
+retained. Exercise actual server `.modelflags` snapshot-to-client relink on
+unflagged models, model-only/both/zero flags, all seven fallback branches,
+scripted entity/model precedence, pause/teleport/reset and native rocket light.
+No renderer replacement or new general drawflags behavior is implied by these
+bounded repairs; broader alpha/OIT/effects remain their native qualifications.
+
 The inherited aim source repairs add focused cases to the VR movement and
 presentation row: deadzone 0/70/out-of-range/nonfinite and unchanged valid
 fractional values; controller-to-head/mouse/blended history with unavailable
