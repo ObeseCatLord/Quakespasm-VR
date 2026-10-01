@@ -82,6 +82,16 @@ not a signing scheme or proof of in-process driver/runtime ABI isolation.
 
 ## Bound and final qualification
 
+The second source-derived reopening and
+[local Astra disposition](portable-linux-staging-second-reopen-2.0-review.md)
+supersede the estimate below. Its
+[bounded in-place refinement](portable-linux-staging-refinement-2.0-plan.md)
+targets950–1000 staging/policy lines, stopping before1050/new owner; combined
+delivery target1403–1453/reopening1503. It retains deb payload binding, original
+receipt completeness, offline ownership and native shared notices, and adds a
+loader-only $ORIGIN:$ORIGIN/../lib exception validated from canonical and bin
+load contexts. Existing global engine/install/host boundaries remain unchanged.
+
 The paused763-line Python/41-line policy draft exceeded the original550-line
 boundary. The [senior reopening disposition](portable-linux-staging-reopen-2.0-review.md)
 supersedes that estimate before refinement: target600–625 total lines for both

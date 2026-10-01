@@ -148,6 +148,11 @@ tools/features and ISA qualification remain required.
    the committed [staging senior disposition](portable-linux-staging-reopen-2.0-review.md)
    and [refined plan](portable-linux-staging-2.0-plan.md) supersede it with a
    target600–625 combined lines, stopping before650/new resolver/framework.
+   A returned973+41 draft exceeded that bound; the subsequent
+   [second Astra disposition](portable-linux-staging-second-reopen-2.0-review.md)
+   and [in-place refinement](portable-linux-staging-refinement-2.0-plan.md) now
+   supersede both estimates: target950–1000 combined staging/policy lines,
+   stop before1050/new owner. Required receipts/closure/source guards are retained.
    Read native metadata, never execute a copied library as dependency analysis.
 3. Packaging/Linux/build-foundry.sh plus concise README only: immutable archive
    transport into a unique native ARM directory, invoke same builder and retrieve
@@ -157,6 +162,12 @@ Combined rough800–1000 lines, reopen before1200, duplicated policy or unexpect
 runtime/engine changes. Delegate disjoint slices only after dependent interfaces
 are source-reviewed. Each source patch gets main integration review and regular
 scoped commits. Execute none of these scripts until all implementation is done.
+
+The second staging reopening revises this main-owned combined estimate to
+1403–1453, reopening before1503/new owner; it does not change user scope or
+guarantees. Only the OpenXR loader gets $ORIGIN:$ORIGIN/../lib so both its canonical
+lib and executable-side bin alias load contexts can be validated. Other bin/lib
+ELFs retain the policy above, and native engine loader discovery remains unchanged.
 
 Final qualification: build the same immutable source on Linux/isolated Foundry,
 qualify shaders/features/native ISA, actual installed ELF closure/RUNPATH/ABI/
