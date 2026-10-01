@@ -39,7 +39,18 @@ this is generic compatible content rather than a mod-specific exception.
 
 Extend this same repair to that one lower-bound expression in Quake/r_brush.c,
 3 to2, keeping every pointer/edge/vertex/range and allocation guard. The separate
-convex polygon culling guard at681 remains unchanged: fewer than three vertices
-need not generate a visible polygon. Main owns the exact second substitution;
+ShowTris outline guard at681 remains unchanged: fewer than three vertices
+need not generate a debug polygon. Main owns the exact second substitution;
 combined source repair4 changed lines, within the original reopen-before10 bound.
 Commit before the next affected load/render retry; no broader brush rewrite.
+
+The next retry reached initial GPU vertex upload and exposed the same stricter
+bound in GL_ValidateBModelVertexSources's aggregate-count pass (r_brush.c:2706).
+Main read both count/span passes and the upload loops: two vertices are counted,
+their assigned spans stay bounded, and the unchanged native triangulation emits
+zero indices. This is the same admission policy at a third existing consumer,
+not a new incompatibility or reason to replace regeneration. Extend only that
+count lower bound to2, retain all aggregate overflow/submodel/destination/polygon
+checks. Combined three substitutions6 changed lines, still below10. Main owns
+this final exact substitution; search the complete loader/regeneration family
+for equivalent local-count guards before another actual load retry.
