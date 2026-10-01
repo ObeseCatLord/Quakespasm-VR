@@ -62,6 +62,16 @@ without replacing its server or assets.
 
 ## Native metadata qualification
 
+Both portable builders reached pinned SDL3 configuration and failed because
+the direct Ubuntu dependency selection omitted XTEST's libxtst-dev. SDL's own
+configuration requires that dependency and official Linux build documentation
+lists it: https://wiki.libsdl.org/SDL3/README-linux#build-dependencies.
+Add that package to the existing shared sources.json list; preserve SDL features,
+native builds and exact binary/source/notice receipt capture. One list addition,
+no backend disable or packaging bypass. Rebuild both images and retry a new
+immutable source archive containing all source repairs; old failed snapshots
+remain diagnostic evidence only.
+
 One verified gpt-6-luna/xhigh worker owns the new native publication fixture,
 runner and bounded receipt only. It must exercise actual sender/parser owners
 and report phase/resource boundaries; older prepared-signon fixtures are not

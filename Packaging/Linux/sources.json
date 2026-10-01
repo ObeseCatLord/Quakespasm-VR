@@ -6,7 +6,7 @@
   },
   "apt_packages": [
     "build-essential", "cmake", "ninja-build", "meson", "python3", "pkg-config", "git", "ca-certificates", "patch", "binutils", "patchelf", "dpkg-dev", "xz-utils",
-    "libx11-dev", "libx11-xcb-dev", "libxcb1-dev", "libxcb-randr0-dev", "libxext-dev", "libxcursor-dev", "libxrandr-dev", "libxfixes-dev", "libxi-dev", "libxss-dev", "libxrender-dev", "libxinerama-dev",
+    "libx11-dev", "libx11-xcb-dev", "libxcb1-dev", "libxcb-randr0-dev", "libxext-dev", "libxcursor-dev", "libxrandr-dev", "libxfixes-dev", "libxi-dev", "libxss-dev", "libxrender-dev", "libxinerama-dev", "libxtst-dev",
     "libwayland-dev", "libwayland-bin", "wayland-protocols", "libxkbcommon-dev", "libdecor-0-dev",
     "libegl-dev", "libgl-dev", "libgles-dev", "libdrm-dev", "libgbm-dev", "libudev-dev", "libdbus-1-dev", "libsystemd-dev", "libusb-1.0-0-dev",
     "libasound2-dev", "libpulse-dev", "libpipewire-0.3-dev", "libjack-jackd2-dev", "libsndio-dev",
