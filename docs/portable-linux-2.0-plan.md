@@ -113,6 +113,31 @@ never infer incorporated notices from ldd alone.
 
 ## Bounded coding slices and failure paths
 
+### Slice1 handoff refinement before source integration
+
+Main source review of the returned318-line builder found that gzip piped to
+git get-tar-commit-id may receive SIGPIPE because the latter reads only the
+archive's initial header. Under pipefail this can reject valid compressed input.
+Decompress fully into the builder's unique temporary workspace before checking
+the archive commit; retain original compressed source/hash in output. Keep the
+single native build owner and existing cleanup trap.
+
+Install SDKs directly under the actual deps prefix, preserving their metadata
+and build-time loader paths, rather than configuring prefix=/ then DESTDIR
+relocating them. The pinned official
+[Vulkan pkg-config template](https://github.com/KhronosGroup/Vulkan-Loader/blob/32fcb949e253cbeb40cda7ea76122b492db579ae/loader/vulkan.pc.in)
+uses the configured prefix for include/library paths. Do not depend on implicit
+pkg-config relocation to find the selected SDK. Engine Meson installation still
+uses its native logical prefix=/ plus install DESTDIR. Set SDK install RUNPATH
+to the deps/lib build prefix; final staging replaces every shipped RUNPATH with
+the reviewed relative policy. Logical OpenXR sysconfdir remains /etc.
+
+Version/path-query pipelines must consume complete producer output; replace
+early-exit head/awk consumers with first-result selection without early exit.
+These are source-derived corrections within slice1's500-line bound, not an
+executed build or a new packaging architecture. Final installed metadata, native
+tools/features and ISA qualification remain required.
+
 1. Packaging/Linux sources.json, Dockerfile and build-native.sh only: explicit
    pins/options and shared native SDK/engine build/install. Target300–400 lines,
    pause before500 or engine edits. Emit installed-tree/dependency/source receipts
