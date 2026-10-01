@@ -3178,28 +3178,36 @@ static void CL_UserinfoChanged (scoreboard_t *sb)
 		R_TranslateNewPlayerSkin (sb - cl.scores);
 	}
 }
+static qboolean CL_ParseBoundedDecimal (const char *text, unsigned int maximum,
+	unsigned int *value);
+
 static void CL_ServerExtension_FullUserinfo_f (void)
 {
-	int			slot = atoi (Cmd_Argv (1));
-	const char *newserverinfo = Cmd_Argv (2);
-	if (slot < cl.maxclients)
-	{
-		scoreboard_t *sb = &cl.scores[slot];
-		strncpy (sb->userinfo, newserverinfo, sizeof (sb->userinfo) - 1); // just replace it
-		CL_UserinfoChanged (sb);
-	}
+	unsigned int slot;
+	scoreboard_t *sb;
+	const char *newuserinfo;
+	if (Cmd_Argc () != 3 || !cl.scores || cl.maxclients <= 0 ||
+		cl.maxclients > MAX_SCOREBOARD ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (1), (unsigned int)(cl.maxclients - 1), &slot))
+		return;
+	newuserinfo = Cmd_Argv (2);
+	sb = &cl.scores[slot];
+	if (strlen (newuserinfo) >= sizeof (sb->userinfo))
+		return;
+	q_strlcpy (sb->userinfo, newuserinfo, sizeof (sb->userinfo));
+	CL_UserinfoChanged (sb);
 }
 static void CL_ServerExtension_UserinfoUpdate_f (void)
 {
-	int			slot = atoi (Cmd_Argv (1));
-	const char *newserverkey = Cmd_Argv (2);
-	const char *newservervalue = Cmd_Argv (3);
-	if (slot < cl.maxclients)
-	{
-		scoreboard_t *sb = &cl.scores[slot];
-		Info_SetKey (sb->userinfo, sizeof (sb->userinfo), newserverkey, newservervalue);
-		CL_UserinfoChanged (sb);
-	}
+	unsigned int slot;
+	scoreboard_t *sb;
+	if (Cmd_Argc () != 4 || !cl.scores || cl.maxclients <= 0 ||
+		cl.maxclients > MAX_SCOREBOARD ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (1), (unsigned int)(cl.maxclients - 1), &slot))
+		return;
+	sb = &cl.scores[slot];
+	Info_SetKey (sb->userinfo, sizeof (sb->userinfo), Cmd_Argv (2), Cmd_Argv (3));
+	CL_UserinfoChanged (sb);
 }
 
 static void SV_DecodeUserInfo (client_t *client)
