@@ -99,3 +99,33 @@ record main full-diff review and requested-Astra source advice with no P1/P2
 findings. Actual driver use, rendering, invalid-file/failure handling and Linux/
 ARM qualification remain pending until all implementation ends. No startup or
 performance measurement or effective-model certification is claimed.
+
+## Asymmetric eye-camera source reconciliation
+
+Main traced VR-003 from the actual runtime pose/FOV producer through shared
+native shader consumption. vr_openxr.cpp:locate_frame locates PRIMARY_STEREO
+at predicted display time in the same app space as the head, requires both eye
+positions/orientations and a valid head, and publishes separate tangent bounds
+and metre-space eye matrices. GL_BeginXRFrame aborts unusable clip preparation;
+VRXR_StereoClipForViews computes each relative head-to-eye transform and an
+asymmetric Vulkan-Y/reversed-Z correction to the native center MVP. It does not
+substitute a guessed IPD or another renderer camera owner.
+
+R_PrepareStereoFrame maps the physical head through desired view basis times
+inverse raw head when the view owner has already resolved head orientation.
+It derives separate runtime eye offsets, retains shared center coordinates,
+and publishes both clip matrices/offsets through native R_UniformAllocate.
+Shaders/stereo.inc selects them by gl_ViewIndex; basic.vert applies the shared
+correction after the native MVP, with panel eligibility retaining its existing
+gate. Composition end_frame submits the original runtime pose/FOV for each eye.
+Scene-only underwater tangent scaling uses separate effective views without
+mutating the compositor frame. V_VRUnitsPerMetre retains the primary
+world_scale/(1.5*0.0254) conversion and a finite positive fallback.
+
+R_TrackedHeadBodyOffset and stereo preparation suppress historical horizontal
+offset once V_TrackedBodyOwnsRoomscale selects the collision-resolved body owner.
+This is source evidence for the intended no-double-translation boundary, not
+proof of movement receipt, collision/camera agreement or complete VR-004 parity.
+Final Linux/ARM software checks still need actual independent asymmetric eye
+images, handedness/scale/IPD and pose/reference changes. No shader build, math
+fixture, rendered image, headset or runtime check ran in this reconciliation.
