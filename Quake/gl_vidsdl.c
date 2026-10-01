@@ -1597,7 +1597,7 @@ static uint32_t density_offset_format_cache_count;
 static qboolean GL_DensityOffsetSceneFormatSupported (VkFormat format, VkImageUsageFlags usage, VkSampleCountFlagBits samples,
 	uint32_t width, uint32_t height)
 {
-	VkResult result;
+	VkResult result = VK_ERROR_FORMAT_NOT_SUPPORTED;
 	uint32_t i;
 	ZEROED_STRUCT (VkImageFormatProperties, properties);
 

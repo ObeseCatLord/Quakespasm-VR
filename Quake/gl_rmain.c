@@ -919,6 +919,8 @@ void R_PrepareStereoFrame (void)
 		{
 			const double phase = sin (cl.time * 1.5);
 			vrxr_view_t views[2];
+			views[0] = frame->views[0];
+			views[1] = frame->views[1];
 			stereo_scene_scale[0] = 0.97 + phase * 0.03;
 			stereo_scene_scale[1] = 1.03 - phase * 0.03;
 			R_StereoSceneView (0, &views[0]);
@@ -937,6 +939,7 @@ void R_PrepareStereoFrame (void)
 	for (int eye = 0; eye < 2; ++eye)
 	{
 		vrxr_view_t effective_view;
+		effective_view = frame->views[eye];
 		R_StereoSceneView (eye, &effective_view);
 		const vrxr_view_t *view = &effective_view;
 		for (int i = 0; i < 3; ++i)
