@@ -42,7 +42,7 @@ scope shrink. Main makes final dispositions and integrates the checklist.
 | Existing source receipts | implementation-plans.md and current source checkpoints for renderer/assets/input/menu/gaze/foveation/tracker/custom-avatar/co-op policy+saves/discovery/commands/QC strings/vectors/message reads plus native networking source receipts. Verify actual consumers, not prose alone. |
 | Assets | Read-only game data in `/home/obesecatlord/Windows/Games/quakespasm_straight`, per inherited AGENTS guidance. No deployed assets/settings/saves/server changes. |
 | Execution | User forbids tests/builds/compiler/lint/probes/fixtures/game/performance until implementation ends. This review is source-only; final consolidated Linux+isolated ssh Foundry ARM client/software qualification remains required. Windows builds deferred. |
-| Delegation | Coding, when resumed, uses direct gpt-6-luna xhigh. Requested local Astra review uses explicit gpt-6-astra/xhigh. No ChatGPT-web models. Effective reviewer routing metadata is not currently exposed by multi_agent; requested-source-review provenance must stay explicit rather than claim certified settings. |
+| Delegation | Coding, when resumed, uses direct gpt-6-luna xhigh. This local senior review selected gpt-6-astra/xhigh. Main verified the effective current reviewer turn_context model=gpt-6-astra and effort=xhigh on2026-10-01, reading only those routing fields; no raw telemetry was exported or modified. No ChatGPT-web models. Verified routing is not goal/parity certification. |
 
 ## Verified changes and known missing code
 
