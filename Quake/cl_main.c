@@ -3267,7 +3267,7 @@ static void SV_DecodeUserInfo (client_t *client)
 }
 void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 {
-	char oldvalue[1024];
+	char oldvalue[SERVER_INFO_STRING_SIZE];
 	char prestr[64];
 
 	char	   *info;

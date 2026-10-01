@@ -1051,8 +1051,8 @@ const char *Info_GetKey (const char *info, const char *key, char *out, size_t ou
 
 void Info_Enumerate (const char *info, void (*cb) (void *ctx, const char *key, const char *value), void *cbctx)
 {
-	char   key[1024];
-	char   val[1024];
+	char   key[SERVER_INFO_STRING_SIZE];
+	char   val[SERVER_INFO_STRING_SIZE];
 	size_t kl, vl;
 	while (*info)
 	{
