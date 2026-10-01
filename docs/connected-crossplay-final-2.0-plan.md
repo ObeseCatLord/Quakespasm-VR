@@ -1,0 +1,30 @@
+# Connected desktop/VR software qualification
+
+2026-10-01. Existing final qualification network slice; no new product feature.
+Current prepared/captured fixtures do not prove real connected crossplay. Reuse
+local_private_legacy_peer_smoke.gdb and pinned_vr_gameplay_smoke.gdb against
+the current native dedicated server and two simultaneously connected clients.
+The latter's name describes its historical peer, not a required old server.
+
+Implement only a small Python orchestration runner: caller supplies debug client
+and optional dedicated binary, assets, output and private runtime environment.
+Create separate temporary server/desktop/VR profiles, link only licensed pak0
+and an explicitly supplied weapon preset if needed, never installed configs.
+Bind server to127.0.0.1 on an available explicit/allocated port, coop stocke1m1,
+private profile and existing movement selection. Run both existing probes
+concurrently: desktop requires two named peers, both require actual signon,
+movement/attack/ACK and selected prediction according to their existing checks.
+No usercmd/body/weapon/ammo injections beyond existing documented controller/key
+inputs. Preserve full logs and structured results; pass only on both positive
+result statuses/markers and successful GDB processes. Server/client shutdown
+must target only subprocesses created by this runner, with bounded waits and
+finally cleanup. Do not start/stop global runtimes or change external services.
+
+Bound BEFORE220 new runner lines plus40 README lines; tests only. No edits to
+existing probes or production until a concrete stale API/assertion is diagnosed
+and planned separately. Syntax check now, actual run by main using existing
+private simulated-Monado environment. Any unsupported probe behavior reports
+exact failure instead of disabling a check. No hardware/performance/audio claim.
+Public profile, reconnect/loss/metadata/voice cases remain separate existing
+network-owner obligations; this runner closes only simultaneous private
+desktop/VR software gameplay at real transport/render/input boundaries.
