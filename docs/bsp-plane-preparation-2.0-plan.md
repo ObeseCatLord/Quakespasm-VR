@@ -93,3 +93,16 @@ model plane storage was found. No builds or execution-based verification ran.
 Production write set remains only Quake/gl_model.c, fewer than35 added lines.
 Final exact-patch source review and end-of-implementation software qualification
 remain required. Effective reviewer settings and runtime behavior are unverified.
+
+## Source integration receipt
+
+Production commit `3c440916` changes only gl_model.c:16 additions and1 removal.
+It restores the retained face guard and three node plane guards, initializes
+the face lightstyle accumulator before either decoder, and removes the unused
+plane allocation factor while preserving native zero-filled ownership.
+
+Main reviewed the entire patch. Requested-Astra final bounded source advice
+found no P1/P2 issues; subtraction short-circuit order, signed decoding, task
+joins and inline ownership remain. Scoped diff --check passed. No builds/tests/
+compiler/runtime or measured performance qualification ran. The final Linux/ARM
+plan includes actual loading/render/collision/lightmap and refusal boundaries.

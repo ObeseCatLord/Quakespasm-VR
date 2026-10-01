@@ -36,6 +36,12 @@ Linux Make and bounded backend/command/creation checks pass. Real headless
 Vulkan creation/capture passes on SwiftShader; the real donor-layout test skips
 because that driver has four descriptor sets and stereo needs six. XR/driver
 spies and empty render resources do not prove loaded-scene/asset continuity or
-real borrowed-image GPU completion. Live headset/gaze/performance and Windows/
-ARM verification remain deferred. Full incompatible-device recovery and late
-foveation readiness remain implementation scope.
+real borrowed-image GPU completion. These are historical component-check
+results, not qualification of the current tree. Live headset/gaze/performance and Windows builds remain user-deferred;
+Linux ARM software qualification belongs to the final consolidated pass.
+General live incompatible-device reconstruction and device-loss recovery are
+explicitly deferred by the current scope disposition. The
+[late-foveation readiness adapter](openxr-late-foveation-2.0-plan.md) is already
+source-integrated; actual foveated draws and borrowed-image behavior remain
+software qualification requirements after all implementation, not permission
+to introduce a second device/session owner.

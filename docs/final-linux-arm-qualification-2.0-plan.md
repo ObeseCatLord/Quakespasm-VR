@@ -105,6 +105,16 @@ Incomplete data must not replace a valid file; failed initialization must not
 retry each frame/rebuild. Driver pipeline identity and shared native camera
 descriptors stay intact; no new timing measurement or async compiler gate.
 
+The [native BSP preparation adapter](bsp-plane-preparation-2.0-plan.md) requires
+actual BSP29/2PSB/BSP2/Valve/Quake64 and inline-brush loading, visibility,
+collision/hull0, native particles and serial/worker geometry preparation. Cover
+animated/zero-style dependency and dirty-lightmap masks on CPU/GPU paths and
+reload. Disposable malformed face surfedge spans/plane/texinfo and all three
+node-format plane references must refuse before pointer/polygon/worker use.
+This narrow boundary is not full malformed-BSP validation. Exact-count plane
+storage leaves separately padded SIMD and box-hull arrays intact; no measured
+RSS/loading-time benefit follows from source integration alone.
+
 The inherited aim source repairs add focused cases to the VR movement and
 presentation row: deadzone 0/70/out-of-range/nonfinite and unchanged valid
 fractional values; controller-to-head/mouse/blended history with unavailable
