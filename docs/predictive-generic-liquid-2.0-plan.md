@@ -80,3 +80,29 @@ ledge transitions, complete snapshot permission and pending replay, pause/load/
 relocation/native return and desktop/VR coexistence. Reuse existing fixtures;
 prepared inputs and captured delivery remain explicit. No live headset or
 performance testing is required of the implementation goal. Windows is deferred.
+
+## Requested-Astra disposition before production
+
+The requested Astra xhigh advisory supports the ordinary-swimming extension
+and found two concrete handoff omissions in the proposed design. Main checked
+actual solver result materialization, the native `SV_WaterJump` consumer, the
+callback boundary assignment and completed-head timer clearing. These are
+source-derived paths, not executed failures; effective model/effort remains
+unexposed, so no certified senior-skill or final-goal signoff is claimed.
+
+| Recommendation | Main disposition |
+| --- | --- |
+| Extend ordinary generic swimming without presumed stock force subtraction. | Adopt. QC-authored velocity is followed by the shared movement solver; ordinary client forecast may need authoritative corrections even for conventional QC swimming. Do not claim numerically identical replay or native trajectory parity. |
+| Seed native waterjump horizontal direction before handing off. | Adopt. When the generic shared solver produces a positive waterjump timer, set existing `movedir[0..1]` from completed solver horizontal velocity during result materialization, before any impact/trigger/contact/PostThink callback. Preserve movedir Z and all subsequent QC writes. |
+| Latch the generic solver-created ledge boundary before callbacks. | Adopt. Reuse the existing frame-local `native_boundary_completed`, then OR subsequent boundary observations into it. Even when QC cancels that ledge, the current head's existing tail retires private timers, withholds replay for this frame and retains the unstarted suffix. No persistent transition state. |
+| Restrict liquid lookahead to the exact-q30 reference and delete its shared-next-head use. | Adopt. Early return from the existing lookahead outside that reference; remove the now-inapplicable shared block. Retain `defer_next_head` and its completion/fence owner for cooperative handoff. |
+| Treat arbitrary cooperative hooks as universally replay-compatible. | Reject. Correction-only replacement-hook execution is intentional until a genuinely supported replay contract exists. Calling the standard builtin alone is not such a contract; transformed/repeated/omitted calls cannot be inferred away. This open design does not block ordinary swimming. |
+| Keep the original dispatch-only estimate. | Adapt. The same one-file, under80-line estimate remains, but includes result materialization and sticky-boundary changes. No new queue, protocol, timer owner, client policy, solver or per-mod admission. |
+
+Final production contract: Luna xhigh owns only `Quake/sv_phys.c` classification,
+the exact-q30 liquid lookahead restriction, removal of shared-next-head liquid
+lookahead, generic solver-ledgeresult movedir seed and sticky completed-head
+boundary. Stock/q30 reference semantics, QC cadence, existing continuations,
+native timer/deadline lifetime, callback order and completion/credit/suffix
+owners stay intact. Main reviews the actual diff and requests bounded Astra
+source advice before accepting the patch. No tests, builds or fixtures now.
