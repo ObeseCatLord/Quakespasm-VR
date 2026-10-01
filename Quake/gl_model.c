@@ -2455,6 +2455,8 @@ static void Mod_LoadFaces (qmodel_t *mod, byte *mod_base, lump_t *l, qboolean bs
 
 	for (surfnum = 0; surfnum < count; surfnum++, out++)
 	{
+		out->styles_bitmap = 0;
+
 		if (bsp2)
 		{
 			out->firstedge = ReadLongUnaligned (inl + offsetof (dlface_t, firstedge));
@@ -2505,6 +2507,13 @@ static void Mod_LoadFaces (qmodel_t *mod, byte *mod_base, lump_t *l, qboolean bs
 
 		out->flags = 0;
 		out->polys = NULL;
+
+		if (out->numedges < 3 || out->firstedge < 0 ||
+			out->firstedge > mod->numsurfedges ||
+			out->numedges > mod->numsurfedges - out->firstedge ||
+			planenum < 0 || planenum >= mod->numplanes ||
+			texinfon < 0 || texinfon >= mod->numtexinfo)
+			Host_Error ("Mod_LoadFaces: bad face %d in %s", surfnum, mod->name);
 
 		if (side)
 			out->flags |= SURF_PLANEBACK;
@@ -2628,6 +2637,8 @@ static void Mod_LoadNodes_S (qmodel_t *mod, byte *mod_base, lump_t *l)
 		}
 
 		p = ReadLongUnaligned (in + offsetof (dsnode_t, planenum));
+		if (p < 0 || p >= mod->numplanes)
+			Host_Error ("Mod_LoadNodes: bad planenum %d at node %d in %s", p, i, mod->name);
 		out->plane = mod->planes + p;
 
 		out->firstsurface = (unsigned short)ReadShortUnaligned (in + offsetof (dsnode_t, firstface)); // johnfitz -- explicit cast as unsigned short
@@ -2680,6 +2691,8 @@ static void Mod_LoadNodes_L1 (qmodel_t *mod, byte *mod_base, lump_t *l)
 		}
 
 		p = ReadLongUnaligned (in + offsetof (dl1node_t, planenum));
+		if (p < 0 || p >= mod->numplanes)
+			Host_Error ("Mod_LoadNodes: bad planenum %d at node %d in %s", p, i, mod->name);
 		out->plane = mod->planes + p;
 
 		out->firstsurface = ReadLongUnaligned (in + offsetof (dl1node_t, firstface)); // johnfitz -- explicit cast as unsigned short
@@ -2732,6 +2745,8 @@ static void Mod_LoadNodes_L2 (qmodel_t *mod, byte *mod_base, lump_t *l)
 		}
 
 		p = ReadLongUnaligned (in + offsetof (dl2node_t, planenum));
+		if (p < 0 || p >= mod->numplanes)
+			Host_Error ("Mod_LoadNodes: bad planenum %d at node %d in %s", p, i, mod->name);
 		out->plane = mod->planes + p;
 
 		out->firstsurface = ReadLongUnaligned (in + offsetof (dl2node_t, firstface)); // johnfitz -- explicit cast as unsigned short
@@ -3271,7 +3286,7 @@ static void Mod_LoadPlanes (qmodel_t *mod, byte *mod_base, lump_t *l)
 	if (l->filelen % sizeof (dplane_t))
 		Sys_Error ("MOD_LoadBmodel: funny lump size in %s", mod->name);
 	count = l->filelen / sizeof (dplane_t);
-	out = (mplane_t *)Mem_Alloc (count * 2 * sizeof (*out));
+	out = (mplane_t *)Mem_Alloc (count * sizeof (*out));
 
 	mod->planes = out;
 	mod->numplanes = count;
