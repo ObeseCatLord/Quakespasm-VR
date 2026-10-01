@@ -8,9 +8,9 @@ are listed below. No final-tree builds or tests have run. The user-owned changes
 to migration-2.0.md remain untouched.
 
 Following that review, C07's draw phase was source-integrated in `1b5b2d84` and
-C14's optional extraction phase in `19e2c6b3` and producer in `3b80ac1a`.
-**Three implementation areas now remain: C02, C14 and C19.** C14 still needs
-consumer refinement/integration. None of these
+C14's optional extraction phase in `19e2c6b3`, producer in `3b80ac1a` and native
+consumers in `4179ef1e`. **Two implementation areas now remain: C02 and C19.**
+None of these
 source receipts constitutes final executable acceptance.
 
 Local Astra xhigh reviewed all 185 inventory rows: 153 source-integrated/native
@@ -22,7 +22,7 @@ below; no row remains unreviewed.
 The [current local Astra xhigh refresh](final-checklist-refresh-2.0-review.md)
 accounts for all185 IDs using the original review and current receipts, verifies
 challenged consumers, and confirmed **four remaining implementation areas at
-that review snapshot**. C07 has since been source-integrated, leaving three.
+that review snapshot**. C07 and C14 have since been source-integrated, leaving two.
 It found necessary C07/C14 refinements, not a fifth independent missing feature.
 Source integration and software acceptance remain separate.
 
@@ -76,29 +76,32 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
 - [x] Preserve default-off finite bounded smoothing, exact command/ACK history,
   semantic resets, and unchanged gameplay/collision/transmitted tracking/muzzles.
 
-**C14 / AV-006 — inherited QBJ3 shotgun and back-wrench attachments**
+**C14 / AV-006 — source-integrated; final qualification pending**
 
 - [x] Reopen/source-review the extraction phase (216 changed lines versus
   210-line threshold), fix the unfinished helper rename and finish optional pair
   extraction through existing model-owned slots/upload/free owners; `19e2c6b3`.
 - [x] Separate verified source key/digest/geometry admission from selected target
   ATTACH_HAND policy; `19e2c6b3` removed that erroneous source-policy gate.
-  Frame preparation still needs the selected-target attachment branch.
+  Frame preparation's selected-target branch is integrated in `3b80ac1a`.
 - [x] Stage source identity/readiness and publish two immutable attachment records
   at the existing frame owner: dominant-hand shotgun and upper-spine wrench,
   correct source presentation/socket mapping, skin/glow and independent bounds;
   `3b80ac1a` after main source review (398 changed lines).
-  Follow the [phase2 senior reopening](qbj3-equipment-phase2-reopen-2.0-review.md):
-  correct relative cache indexing, effective-target staging gate and native
-  affine reuse before accepting the paused producer.
-- [ ] Extend native raster, co-op overlays, ShowTris and matching TLAS count/
+  The [phase2 senior reopening](qbj3-equipment-phase2-reopen-2.0-review.md)
+  corrections are integrated: relative cache indexing, effective-target staging
+  gate and native affine reuse.
+- [x] Extend native raster, co-op overlays, ShowTris and matching TLAS count/
   emission to both records, with all masks before outlines and consistent shadows.
   The [consumer senior reopening](qbj3-equipment-consumers-reopen-2.0-review.md)
-  requires native per-record helper reuse, rolling skin fallback alignment,
-  duplicate declaration removal and simpler temporary state before integration.
-- [ ] Keep the selected body on optional pair failure, publish neither equipment
+  corrections are integrated in `4179ef1e`: native per-record helper reuse,
+  rolling skin fallback alignment, duplicate declaration removal and simpler
+  temporary state (225 changed lines, combined840 within855 revised bound).
+- [x] Keep the selected body on optional pair failure, publish neither equipment
   nor derived muzzle, avoid Ranger substitution and preserve ordinary Ranger plus
   independent C13 death/corpse presentation and lifetime rules.
+  Main source-reviewed complete-count/matrix/shade/inflation/AS preflight and
+  conditional draw/emission. Rendered/software acceptance remains required.
 
 **C19 / PLAT-003 — portable Linux x86-64 and native ARM64 release artifacts**
 
@@ -114,6 +117,9 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
 - [ ] Stage complete dependency closure, explicitly seed executable-side OpenXR
   loader, normalize each ELF RUNPATH and preserve internal SONAME aliases;
   reject unresolved/conflicting/escaping dependencies and retain GLIBC<=2.39.
+  The oversized763-line draft is paused/unaccepted under the
+  [staging reopening brief](portable-linux-staging-reopen-2.0-brief.md); schema,
+  receipt and closure corrections require reviewed simplification before coding.
 - [ ] Include matching dependency notices, header/static contributions,
   versions/hashes/patches and source-access artifacts through existing owners.
 - [ ] Implement artifact verification at the shared staging owner.
@@ -122,19 +128,19 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   retrieval preserves aliases; depends on the unfinished staging/verifier slice.
   Execute builders/wrapper/verifiers only in final qualification after implementation.
 
-The sole unresolved product choice is C02's stock-QSS-M peer contract. C07/C14
-refinements and C19 policy choices are technical work, already within scope.
+The sole unresolved product choice is C02's stock-QSS-M peer contract. C19's
+staging refinement is technical work, already within scope.
 The detailed plans and review evidence below define their native integration seams.
 
 ## Original audit findings and source integrations
 
-The table below preserves the audit's 22 implementation findings. Nineteen items
+The table below preserves the audit's 22 implementation findings. Twenty items
 were subsequently source-integrated in the commits below, following committed
 before-code plans and main review of the Luna patches. Their executable
-acceptance remains pending. **Three implementation items remain**: C02,
-C14 and C19. C07's native replay/camera phase is integrated in `3f8b398c` and its
-renderer/HUD phase in `1b5b2d84`. C14 phase1 is integrated in `19e2c6b3`, while
-consumer integration remains required after producer `3b80ac1a`. The shared Q01 rendering correction is also source-integrated;
+acceptance remains pending. **Two implementation items remain**: C02 and C19.
+C07's native replay/camera phase is integrated in `3f8b398c` and its
+renderer/HUD phase in `1b5b2d84`. C14's three phases are integrated in
+`19e2c6b3` / `3b80ac1a` / `4179ef1e`. The shared Q01 rendering correction is also source-integrated;
 its rendered acceptance remains pending.
 No tests or builds have run since the audit.
 Each remaining slice needs a committed before-code plan, implementation/source
@@ -144,6 +150,7 @@ qualification phase.
 | Source-integrated since the audit | Plan / remaining acceptance |
 | --- | --- |
 | C07 — optional native ACK presentation smoothing | [Smoothing plan](prediction-smoothing-2.0-plan.md); commits `3f8b398c` / `1b5b2d84`. Main checked native gameplay matrices retained, desktop bob/FOV and pointer/winding preserved, controller/paired beam near endpoints translated after trace with world impacts unchanged, controller HUD offset inherited once and non-controller target explicitly corrected. All final replay/rendered acceptance remains pending. |
+| C14 — inherited QBJ3 shotgun/back-wrench attachments | [Equipment plan](qbj3-equipment-2.0-plan.md); commits `19e2c6b3` / `3b80ac1a` / `4179ef1e`. Main checked model-owned optional extraction, source/target policy separation, copied staging context and immutable records, relative cache identity, native affine and conservative bound union, complete-pair raster/overlay/ShowTris/TLAS preflight, rolling skin fallback, zero-pose identity views and selected-body/no-muzzle optional miss. Ordinary Ranger/C13 source paths retained; all final installed-content/rendered/lifetime acceptance pending. |
 | C08/C09 — Toss support validity and elevator relink | [Physics plan](toss-support-elevator-2.0-plan.md); source commit `0d2c182c`. Final physics/content qualification pending. |
 | C22 — bounded classic-particle capacity and 32-bit quad indices | [Particle plan](classic-particle-capacity-2.0-plan.md); source commit `0d2c182c`. Final dense-particle rendered acceptance pending. |
 | C01/C03/C05 — late-model helper, ordinary QC metadata lookup, truthful protocol offers | [Networking plan](precache-infokey-protocol-2.0-plan.md); source commit `ab1423fb`. Final remote precache/QC/negotiation qualification pending. C02 publication is still separate. |
@@ -285,8 +292,8 @@ research; they were not blanket-approved implementation.
   interface, preservation and history inventories plus legacy/native/research
   dispositions. Names and routes alone do not certify runtime semantics.
 
-Q01, C07, C10–C13, C18 and C21 are source-integrated. Finish C14 staging/consumers
-at the native equipment owner; C02 at native metadata boundaries; C19 through
+Q01, C07, C10–C14, C18 and C21 are source-integrated. Finish C02 at native
+metadata boundaries; C19 through
 native packaging. Reuse reference
 code and write a bounded plan before each major slice. Then perform the one
 consolidated Linux/ARM qualification phase above and review its final fixes.
