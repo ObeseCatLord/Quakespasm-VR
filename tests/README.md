@@ -3326,6 +3326,32 @@ cases also pass ASan/UBSan (`-fsanitize=address,undefined
 `ASAN_OPTIONS=detect_leaks=0` in this ptrace-managed sandbox: LeakSanitizer
 cannot run here, so this result does not include leak checking.
 
+## Native connected desktop/VR crossplay
+
+`run_connected_crossplay_native.py` starts an isolated loopback stock-coop
+`e1m1` dedicated server and runs the existing desktop and OpenXR GDB probes at
+the same time. It inherits the caller's private XDG, OpenXR, and runtime
+environment; it does not start or stop a global runtime. Supply licensed
+`pak0.pak`, debug binaries, and a fresh output directory that does not already
+exist. The server binds to loopback, enables private transport and private WALK
+PMove before loading `e1m1`, and each native process gets separate `-basedir`
+and `-userdir` paths. Optional `--weapon-preset RELATIVE_DEST=SOURCE` links an
+explicit preset into every private `id1` profile. No installed configuration is
+copied or used.
+
+```sh
+python3 tests/run_connected_crossplay_native.py \
+  --desktop-binary /path/to/quakespasm-debug \
+  --vr-binary /path/to/quakespasmvr-debug \
+  --dedicated-binary /path/to/quakespasm-debug \
+  --pak0 /licensed/id1/pak0.pak --output /tmp/qsvr-crossplay
+```
+
+The runner records `server.log`, `desktop.log`, `vr.log`, both probe result
+files, and `connected-crossplay-result.json`. It passes only when both GDB
+processes exit successfully, both JSON statuses are `passed`, and both probe
+pass markers are present; timeout or missing evidence fails the run.
+
 
 Later 2026-09-29 capability update: native NVIDIA and RADV GPUs are accessible
 in this session. Running `/tmp/qsvr-openxr-layout` without a SwiftShader override
