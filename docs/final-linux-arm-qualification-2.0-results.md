@@ -19,6 +19,14 @@ native field at both cache comparison/assignment; retain pointer/CRC cache,
 fingerprint, SSQC guard and traversal. Two expression substitutions, no new
 VM identity owner. Actual loaded-QC reload behavior still requires qualification.
 
+The next compiler pass reached co-op respawn: an immutable death-origin snapshot
+was passed to the native mutable-vector trace API, and GCC warned that a local
+anchor-angle vector may be uninitialized across the relocation branch. Preserve
+both APIs/policies: copy the snapshot into a local vec3 at the existing caller,
+and initialize the local angle vector (the validated anchor branch still writes
+all three components before use). No cast, mutable saved snapshot, trace rewrite
+or warning suppression. Rebuild and retain actual co-op qualification as pending.
+
 First build stopped at gl_model.c:4828/4829 under native warnings-as-errors:
 the inherited Copper axe cache passes const input to ReadLongUnaligned(byte*).
 The helper only memcpy-reads into a local int. Smallest correction: accept

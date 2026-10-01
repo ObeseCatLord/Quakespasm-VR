@@ -1267,10 +1267,12 @@ static void SV_CoopRespawnRecordDeathAnchor (edict_t *ent, int num,
 	const coop_respawn_postthink_state_t *state)
 {
 	int index = num - 1;
+	vec3_t death_origin;
 	if (!coop.value || !ent || ent->free || !state ||
 		index < 0 || index >= MAX_SCOREBOARD)
 		return;
-	if (SV_CoopRespawnCanPlaceAt (ent, state->death_origin, false))
+	VectorCopy (state->death_origin, death_origin);
+	if (SV_CoopRespawnCanPlaceAt (ent, death_origin, false))
 	{
 		VectorCopy (state->death_origin, coop_respawn_death_anchor[index]);
 		VectorCopy (state->death_angles, coop_respawn_death_angles[index]);
@@ -5715,7 +5717,7 @@ static void SV_CoopRespawnRemoveSpawnTeledeath (edict_t *owner)
 static qboolean SV_CoopRespawnRelocatePolicy (edict_t *ent, edict_t *anchor,
 	vec3_t spot, const coop_respawn_postthink_state_t *state)
 {
-	vec3_t angles;
+	vec3_t angles = {0.0f, 0.0f, 0.0f};
 	int i;
 
 	for (i = 0; i < 3; i++)
