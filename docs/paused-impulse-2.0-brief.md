@@ -60,3 +60,33 @@ Preserve existing paused-time discard and newer-epoch permission checks. No
 header-only or counter fixture can establish the requested gameplay result.
 Builds/tests/compiler/probes/fixtures/game runs remain deferred until all
 implementation is finished; Windows and user live trials stay later work.
+
+## Bounded reference audit and design disposition
+
+Requested-Astra source advice established retained preservation beyond the
+sender: primary SV_AcceptLatestUsercmd retains the last nonzero impulse across
+zero commands (sv_user.c:1388–1394), and the suspended native branch deliberately
+keeps impulses while discarding button taps (2453–2462). Main spot-checked both.
+The reviewer additionally traced native QC and queued command restoration after
+PostThink; QSS-M retains nonzero edict impulses but its independent receipt-time
+QC is not a universal pause reference. Current native public/selected bridges
+already contain impulse consumers; do not replace the server/QC implementation.
+
+| Source recommendation | Main disposition |
+| --- | --- |
+| Keep the existing single in_impulse pending value. | Adopt as design constraint: latest explicit assignment wins; no second impulse/command queue or acknowledged duplicate. |
+| Add bounded provenance for deliberate input during suspension/recovery. | Adopt in principle, not yet production: identical values from before/after suspension cannot express the required cancellation distinction alone. |
+| Project through ordinary pre-CSQC input and consume on eligible recording. | Adopt: filtering must be able to suppress/replace once; never inject after QC or retry a suppressed impulse indefinitely. The exact existing sampling/recording seam must be specified before coding. |
+| Use accepted selected-server epoch/positive first-sequence readiness. | Adopt: zero-sequence pause observation grants no release. Do not wait for prediction permission or recovery completion, because the first correctly fenced command must carry new actions. Reserve startup sequences0/1 as before. |
+| Console-only suspension cannot be inferred from cl.paused alone. | Confirmed open decision: the existing local single-player server also suspends at key_dest != key_game. Establish an authoritative observation boundary without manufacturing an epoch or stranding a console opening the server never observed. |
+| Preserve existing admission/recovery and lifecycle resets. | Adopt: no paused duration, stale attack/tracking replay, alternate transport, or client-created epoch. Specify successive suspension and delayed older-event cancellation before implementation. |
+
+Main rechecked CL_FinishMove/CL_SendCmd pre-CSQC ordering, the private paused
+return, reserved-sequence recorder, resume clear and the validated parser's
+zero/positive marker distinction. These support the gap and constraints, not a
+complete corrected adapter. The console observation and exact one-time
+consumption decisions remain unresolved implementation work; this brief is
+not a claim that MOD-013 is closed. A narrower mostly-worked design and bounded
+source review must resolve them before any production edit. Requested Astra
+xhigh source advice has no available effective-runtime settings certification;
+no execution or formal final-goal signoff is claimed.
