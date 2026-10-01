@@ -38,7 +38,8 @@ static const r_vrik_prepared_palette_t *R_TLASVRIKPalette (const entity_t *e)
 	if (!prepared || !e || !e->model || !e->blas_data || !geometry ||
 		prepared->model != e->blas_data->model || prepared->geometry != geometry ||
 		(!prepared->alternate_avatar && prepared->model != e->model) ||
-		(prepared->alternate_avatar && (!Mod_IsAdmittedAvatarModel (prepared->model) ||
+		(prepared->alternate_avatar && (!R_VRIKRenderOriginalModelEligible (e) ||
+			!Mod_IsAdmittedAvatarModel (prepared->model) ||
 			geometry != (const aliashdr_t *)prepared->model->extradata[PV_MD5])) ||
 		prepared->descriptor_set == VK_NULL_HANDLE || !prepared->palette_address ||
 		(geometry->poseverttype != PV_MD5 && geometry->poseverttype != PV_MD5_8) ||
@@ -3118,15 +3119,6 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 
 	cb_context_t *cbx = &vulkan_globals.primary_cb_contexts[PCBX_BUILD_ACCELERATION_STRUCTURES];
 	GLMesh_BuildPendingAvatarPropBLASes (cbx);
-
-	// Tracked players need ray-query geometry even when their efrags are offscreen.
-	if (cl.entities)
-	{
-		const int maxclients = q_min (q_max (0, cl.maxclients), cl.num_entities - 1);
-		for (int player = 1; player <= maxclients; ++player)
-			if (!cl.entities[player].blas_data && R_VRIKRenderLookup (&cl.entities[player]))
-				R_AllocateEntityBLASForVRIK (&cl.entities[player]);
-	}
 
 	// Update animated entity BLASes first
 	R_UpdateAnimatedBLASes (cbx);

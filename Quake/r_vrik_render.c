@@ -5,6 +5,7 @@
 #include "r_vrik.h"
 #include "r_vrik_render.h"
 #include "vr_input.h"
+#include "mem.h"
 
 #include <float.h>
 #include <limits.h>
@@ -16,6 +17,7 @@ extern VkAccelerationStructureKHR bmodel_tlas;
 
 #define R_VRIK_RENDER_MAX_JOINTS 256
 #define R_VRIK_RENDER_MAX_AVATARS (PLAYER_AVATAR_COUNT + CUSTOM_AVATAR_MAX_PACKAGES)
+#define R_VRIK_RENDER_FRAME_CPU_BUDGET (8u * 1024u * 1024u)
 
 cvar_t r_avatar_humanoid = {"r_avatar_humanoid", "0", CVAR_ARCHIVE};
 
@@ -71,6 +73,29 @@ typedef struct r_vrik_staged_avatar_s
 	qboolean valid;
 } r_vrik_staged_avatar_t;
 
+typedef struct r_vrik_frame_entry_s
+{
+	const entity_t *entity;
+	int owner_slot;
+	int selected_id;
+	qboolean corpse;
+	qboolean qbj3_death;
+	qboolean custom_key_empty;
+	qboolean selection_valid;
+	r_vrik_staged_avatar_t selection;
+	r_vrik_candidate_t candidate;
+	float palette[R_VRIK_RENDER_MAX_JOINTS][12];
+	r_vrik_prepared_palette_t prepared[DOUBLE_BUFFERED];
+} r_vrik_frame_entry_t;
+
+typedef struct r_vrik_frame_entries_s
+{
+	r_vrik_frame_entry_t *entries;
+	size_t capacity;
+	size_t count;
+	size_t prepared_count[DOUBLE_BUFFERED];
+} r_vrik_frame_entries_t;
+
 typedef struct r_vrik_floor_cache_s
 {
 	const qmodel_t *source_model, *target_model;
@@ -99,9 +124,7 @@ typedef struct r_vrik_rig_cache_s
 	qboolean valid;
 } r_vrik_rig_cache_t;
 
-static r_vrik_candidate_t candidates[MAX_SCOREBOARD];
-static float candidate_palettes[MAX_SCOREBOARD][R_VRIK_RENDER_MAX_JOINTS][12];
-static r_vrik_staged_avatar_t staged[MAX_SCOREBOARD];
+static r_vrik_frame_entries_t frame_entries;
 static qmodel_t *builtin_models[PLAYER_AVATAR_COUNT];
 static qboolean builtin_attempted[PLAYER_AVATAR_COUNT];
 static qmodel_t *custom_models[CUSTOM_AVATAR_MAX_PACKAGES];
@@ -109,8 +132,6 @@ static qboolean custom_attempted[CUSTOM_AVATAR_MAX_PACKAGES];
 static r_vrik_floor_cache_t floor_cache[R_VRIK_RENDER_MAX_AVATARS][2];
 static r_vrik_rig_cache_t rig_cache[R_VRIK_RENDER_MAX_AVATARS];
 static char admission_gamedir[MAX_OSPATH];
-static r_vrik_prepared_palette_t prepared[DOUBLE_BUFFERED][MAX_SCOREBOARD];
-static size_t prepared_count[DOUBLE_BUFFERED];
 static VkDescriptorSet palette_descriptor_sets[DOUBLE_BUFFERED];
 static uint32_t active_frame_slot;
 static qboolean active_frame_valid;
@@ -118,12 +139,12 @@ static qboolean active_frame_valid;
 void R_VRIKRenderInvalidatePublication (void)
 {
 	active_frame_valid = false;
+	frame_entries.count = 0;
+	memset (frame_entries.prepared_count, 0, sizeof (frame_entries.prepared_count));
 }
 
-void R_VRIKRenderResetAdmission (void)
+static void R_VRIKRenderResetModelCaches (void)
 {
-	R_VRIKRenderInvalidatePublication ();
-	memset (staged, 0, sizeof (staged));
 	memset (builtin_models, 0, sizeof (builtin_models));
 	memset (builtin_attempted, 0, sizeof (builtin_attempted));
 	memset (custom_models, 0, sizeof (custom_models));
@@ -133,10 +154,51 @@ void R_VRIKRenderResetAdmission (void)
 	q_strlcpy (admission_gamedir, com_gamedir, sizeof (admission_gamedir));
 }
 
+void R_VRIKRenderResetAdmission (void)
+{
+	R_VRIKRenderInvalidatePublication ();
+	R_VRIKRenderResetModelCaches ();
+}
+
+static qboolean R_VRIKRenderReserveEntries (size_t required)
+{
+	const size_t max_capacity = R_VRIK_RENDER_FRAME_CPU_BUDGET / sizeof (*frame_entries.entries);
+	size_t capacity, bytes;
+	r_vrik_frame_entry_t *entries;
+
+	if (required > max_capacity)
+		required = max_capacity;
+	if (required > SIZE_MAX / sizeof (*frame_entries.entries))
+		return false;
+	if (required <= frame_entries.capacity)
+		return true;
+	capacity = frame_entries.capacity ? frame_entries.capacity : 1;
+	while (capacity < required)
+	{
+		if (capacity > max_capacity / 2)
+		{
+			capacity = max_capacity;
+			break;
+		}
+		capacity *= 2;
+	}
+	if (capacity < required || capacity > SIZE_MAX / sizeof (*frame_entries.entries))
+		return false;
+	bytes = capacity * sizeof (*frame_entries.entries);
+	if (bytes > R_VRIK_RENDER_FRAME_CPU_BUDGET)
+		return false;
+	entries = (r_vrik_frame_entry_t *)Mem_Realloc (frame_entries.entries, bytes);
+	if (!entries)
+		return false;
+	frame_entries.entries = entries;
+	frame_entries.capacity = capacity;
+	return true;
+}
+
 static qmodel_t *R_VRIKRenderBuiltinModel (int id)
 {
 	if (strcmp (admission_gamedir, com_gamedir))
-		R_VRIKRenderResetAdmission ();
+		R_VRIKRenderResetModelCaches ();
 	qmodel_t *model = builtin_models[id];
 	if (model && !model->needload && model->avatar_builtin && model->type == mod_alias &&
 		model->extradata[PV_MD5] && model->md5_skeleton)
@@ -179,13 +241,19 @@ static qboolean R_VRIKRenderQBJ3LivePlayer (const entity_t *entity)
 		!(entity->frame >= 41 && entity->frame <= 102);
 }
 
+static qboolean R_VRIKRenderQBJ3Death (const entity_t *entity)
+{
+	return R_VRIKRenderQBJ3PlayerFrame (entity) &&
+		entity->frame >= 41 && entity->frame <= 102;
+}
+
 qboolean R_VRIKRenderOriginalModelEligible (const entity_t *entity)
 {
 	if (!entity || !entity->model || entity->model->needload ||
 		entity->model->type != mod_alias)
 		return false;
 	if (R_VRIKRenderQBJ3Game ())
-		return R_VRIKRenderQBJ3LivePlayer (entity);
+		return R_VRIKRenderQBJ3PlayerFrame (entity);
 	return !strcmp (entity->model->name, "progs/player.mdl");
 }
 
@@ -196,7 +264,7 @@ static qmodel_t *R_VRIKRenderCustomModel (int id)
 	if (index < 0 || index >= CUSTOM_AVATAR_MAX_PACKAGES || !CustomAvatar_Get (id))
 		return NULL;
 	if (strcmp (admission_gamedir, com_gamedir))
-		R_VRIKRenderResetAdmission ();
+		R_VRIKRenderResetModelCaches ();
 	model = custom_models[index];
 	if (model && Mod_IsAdmittedAvatarModel (model) && model->avatar_custom_id == id)
 		return model;
@@ -487,25 +555,68 @@ static qboolean R_VRIKRenderStageHumanoidPresentation (r_vrik_staged_avatar_t *s
 	return true;
 }
 
-qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
+static int R_VRIKRenderQBJ3CorpseOwner (const entity_t *entity)
+{
+	uintptr_t address;
+	int slot;
+
+	if (!R_VRIKRenderQBJ3Game () || !cl.entities || !cl.scores || !entity ||
+		cl.maxclients < 1 || cl.maxclients >= cl.num_entities ||
+		cl.num_entities <= cl.maxclients + 1 ||
+		!R_VRIKRenderQBJ3Death (entity) || entity->colormap == vid.colormap)
+		return -1;
+	address = (uintptr_t)entity;
+	/* Only dynamic entities beyond the reserved player slots can be queued
+	 * corpses. Static entities and arbitrary aliases have no owner identity. */
+	if (address < (uintptr_t)&cl.entities[cl.maxclients + 1] ||
+		address >= (uintptr_t)&cl.entities[cl.num_entities])
+		return -1;
+	for (slot = 0; slot < cl.maxclients && slot < MAX_SCOREBOARD; ++slot)
+		if (cl.scores[slot].name[0] &&
+			entity->colormap == cl.scores[slot].translations)
+			return slot;
+	return -1;
+}
+
+static qboolean R_VRIKRenderExplicitAvatarForSlot (int owner_slot, int *id_out)
+{
+	int id;
+	if (!id_out || owner_slot < 0 || owner_slot >= MAX_SCOREBOARD)
+		return false;
+	id = cl.avatar_ids[owner_slot];
+	if (id <= PLAYER_AVATAR_RANGER || id >= R_VRIK_RENDER_MAX_AVATARS ||
+		!R_VRIKRenderProfileForId (id))
+		return false;
+	*id_out = id;
+	return true;
+}
+
+static void R_VRIKRenderRebindSelection (r_vrik_staged_avatar_t *selection)
+{
+	if (!selection || !selection->valid)
+		return;
+	selection->source_rig.live = &selection->source_skeleton;
+	selection->target_rig.live = &selection->target_skeleton;
+	if (selection->humanoid)
+		selection->target_rig.profile = &selection->normalized_profile;
+}
+
+static qboolean R_VRIKRenderStageSelection (r_vrik_frame_entry_t *entry, int id)
 {
 	r_vrik_staged_avatar_t selection = {0};
+	const entity_t *entity;
 	qmodel_t *source, *target;
 	const r_avatar_profile_t *profile;
 	const custom_avatar_t *custom = NULL;
 	vrik_pose_t pose;
-	int player, selected_id = id;
+	int selected_id = id;
 	qboolean qbj3_game, implicit_qbj3 = false;
 
-	if (!entity || !cl.entities)
+	if (!entry)
 		return false;
-	for (player = 1; player <= cl.maxclients && player < cl.num_entities && player <= MAX_SCOREBOARD; ++player)
-		if (entity == &cl.entities[player])
-			break;
-	if (player > cl.maxclients || player >= cl.num_entities || player > MAX_SCOREBOARD)
+	entity = entry->entity;
+	if (!entity)
 		return false;
-	/* Replace any prior choice even when admission fails. */
-	staged[player - 1] = selection;
 	qbj3_game = R_VRIKRenderQBJ3Game ();
 	if (!R_VRIKRenderOriginalModelEligible (entity))
 		return false;
@@ -513,20 +624,21 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 	{
 		/* The receiver leaves unresolved custom descriptors at Ranger. Keep
 		 * QBJ3's native art for those descriptors instead of inferring a pack. */
-		if (cl.avatar_custom_keys[player - 1][0] || !VR_InputVRIKAllowed () ||
+		if (!R_VRIKRenderQBJ3LivePlayer (entity) ||
+			cl.avatar_custom_keys[entry->owner_slot][0] || !VR_InputVRIKAllowed () ||
 			!R_VRIKSampleEntityPose (entity, &pose))
-			return true;
+			return false;
 		selected_id = CustomAvatar_IdForKey ("qbj3");
 		if (selected_id < PLAYER_AVATAR_COUNT || selected_id >= R_VRIK_RENDER_MAX_AVATARS)
-			return true;
+			return false;
 		custom = CustomAvatar_Get (selected_id);
 		if (!custom || CustomAvatar_HasFailed (selected_id) ||
 			custom->profile.equipment_policy != R_AVATAR_EQUIPMENT_RANGER)
-			return true;
+			return false;
 		implicit_qbj3 = true;
 	}
 	else if (id == PLAYER_AVATAR_RANGER)
-		return true;
+		return false;
 	if (selected_id < 0 || selected_id >= R_VRIK_RENDER_MAX_AVATARS)
 		return false;
 	profile = R_VRIKRenderProfileForId (selected_id);
@@ -584,14 +696,82 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 	selection.source_skeleton_data = source->md5_skeleton;
 	selection.target_skeleton_data = target->md5_skeleton;
 	selection.valid = true;
-	staged[player - 1] = selection;
-	/* Resolution borrowed selection's stack views; the published rigs must
-	 * instead borrow the views embedded in this frame's staged record. */
-	staged[player - 1].source_rig.live = &staged[player - 1].source_skeleton;
-	staged[player - 1].target_rig.live = &staged[player - 1].target_skeleton;
-	if (staged[player - 1].humanoid)
-		staged[player - 1].target_rig.profile = &staged[player - 1].normalized_profile;
+	entry->selection = selection;
+	/* ResolveRigs borrowed the local selection. Rebind after copying into the
+	 * reserved frame entry; the vector will not grow while it is being filled. */
+	R_VRIKRenderRebindSelection (&entry->selection);
+	entry->selection_valid = true;
+	entry->qbj3_death = qbj3_game && R_VRIKRenderQBJ3Death (entity);
 	return true;
+}
+
+void R_VRIKRenderStageAvatars (void)
+{
+	size_t player_count, corpse_count = 0, required, count = 0;
+	int maxclients;
+
+	R_VRIKRenderInvalidatePublication ();
+	if (strcmp (admission_gamedir, com_gamedir))
+		R_VRIKRenderResetModelCaches ();
+	if (!cl.entities || !cl.worldmodel || con_forcedup || cl.num_entities <= 1)
+		return;
+	maxclients = q_min (MAX_SCOREBOARD,
+		q_min (q_max (0, cl.maxclients), cl.num_entities - 1));
+	player_count = (size_t)maxclients;
+	if (R_VRIKRenderQBJ3Game () && cl.maxclients > 0 &&
+		cl.maxclients < cl.num_entities)
+	{
+		for (int entitynum = cl.maxclients + 1; entitynum < cl.num_entities; ++entitynum)
+		{
+			const int owner_slot = R_VRIKRenderQBJ3CorpseOwner (&cl.entities[entitynum]);
+			int id;
+			if (owner_slot >= 0 && R_VRIKRenderExplicitAvatarForSlot (owner_slot, &id))
+				++corpse_count;
+		}
+	}
+	if (corpse_count > SIZE_MAX - player_count)
+		required = SIZE_MAX;
+	else
+		required = player_count + corpse_count;
+	/* A failed realloc leaves the previous capacity intact; use that capacity
+	 * for players first, then as many corpses as fit. */
+	(void)R_VRIKRenderReserveEntries (required);
+
+	/* Reserve first, then fill all player slots before queued corpses. Model
+	 * cache resets during first-load admission never clear this frame list. */
+	for (int player = 1; player <= maxclients && count < frame_entries.capacity; ++player)
+	{
+		r_vrik_frame_entry_t *entry = &frame_entries.entries[count++];
+		memset (entry, 0, sizeof (*entry));
+		entry->entity = &cl.entities[player];
+		entry->owner_slot = player - 1;
+		entry->selected_id = cl.avatar_ids[player - 1];
+		entry->custom_key_empty = !cl.avatar_custom_keys[player - 1][0];
+		entry->qbj3_death = R_VRIKRenderQBJ3Game () &&
+			R_VRIKRenderQBJ3Death (entry->entity);
+		R_VRIKRenderStageSelection (entry, entry->selected_id);
+	}
+	if (R_VRIKRenderQBJ3Game () && cl.maxclients > 0 &&
+		cl.maxclients < cl.num_entities)
+	{
+		for (int entitynum = cl.maxclients + 1;
+			entitynum < cl.num_entities && count < frame_entries.capacity; ++entitynum)
+		{
+			const int owner_slot = R_VRIKRenderQBJ3CorpseOwner (&cl.entities[entitynum]);
+			int id;
+			if (owner_slot < 0 || !R_VRIKRenderExplicitAvatarForSlot (owner_slot, &id))
+				continue;
+			r_vrik_frame_entry_t *entry = &frame_entries.entries[count++];
+			memset (entry, 0, sizeof (*entry));
+			entry->entity = &cl.entities[entitynum];
+			entry->owner_slot = owner_slot;
+			entry->selected_id = id;
+			entry->corpse = true;
+			entry->qbj3_death = true;
+			R_VRIKRenderStageSelection (entry, id);
+		}
+	}
+	frame_entries.count = count;
 }
 
 static void R_VRIKRenderReleaseDescriptorSet (uint32_t frame_slot)
@@ -879,12 +1059,16 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 	r_vrik_palette_output_t output;
 	r_vrik_lowerbody_targets_t lower_targets;
 	const r_vrik_lowerbody_targets_t *lower_input = NULL;
+	qboolean qbj3_game;
 
 	if (!entity || !candidate || !palette)
 		return false;
 	memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
 	candidate->tracked_root_yaw = 0.0f;
 	candidate->tracked_root_valid = false;
+	qbj3_game = R_VRIKRenderQBJ3Game ();
+	if (qbj3_game && !R_VRIKRenderQBJ3LivePlayer (entity))
+		return false;
 	if (!VR_InputVRIKAllowed () || !R_VRIKSampleEntityPose (entity, &candidate->pose))
 		return false;
 	if (!entity->model || entity->model->needload || entity->model->type != mod_alias)
@@ -904,9 +1088,8 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 	output.matrices = palette;
 	output.capacity = R_VRIK_RENDER_MAX_JOINTS;
 	output.joint_count = 0;
-	if (R_VRIKBuildRangerPalette (
-			&candidate->skeleton, &candidate->lerpdata, &candidate->pose,
-			lower_input, candidate->muzzleflash, &output) != R_VRIK_PALETTE_OK ||
+	if (R_VRIKBuildRangerPalette (&candidate->skeleton, &candidate->lerpdata,
+		&candidate->pose, lower_input, candidate->muzzleflash, &output) != R_VRIK_PALETTE_OK ||
 		output.joint_count > UINT32_MAX)
 		return false;
 	if (isfinite (candidate->pose.body_yaw))
@@ -1088,11 +1271,11 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	r_vrik_palette_output_t ranger;
 	r_vrik_lowerbody_targets_t lower_targets;
 	const r_vrik_lowerbody_targets_t *lower_input = NULL;
-	vrik_pose_t pose;
+	vrik_pose_t pose = {0};
 	entity_t canonical_entity;
 	float source_palette[R_VRIK_RENDER_MAX_JOINTS][12];
 	r_vrik_palette_result_t result;
-	qboolean tracked;
+	qboolean tracked, qbj3_death;
 
 	memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
 	candidate->tracked_root_yaw = 0.0f;
@@ -1127,6 +1310,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		target_rig->profile != (selection->humanoid ?
 			&selection->normalized_profile : selection->base_profile))
 		return false;
+	qbj3_death = R_VRIKRenderQBJ3Game () && R_VRIKRenderQBJ3Death (entity);
 
 	canonical_entity = *entity;
 	canonical_entity.model = selection->source_model;
@@ -1166,7 +1350,8 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	ranger.matrices = source_palette;
 	ranger.capacity = R_VRIK_RENDER_MAX_JOINTS;
 	ranger.joint_count = 0;
-	tracked = VR_InputVRIKAllowed () && R_VRIKSampleEntityPose (entity, &pose);
+	tracked = !qbj3_death && VR_InputVRIKAllowed () &&
+		R_VRIKSampleEntityPose (entity, &pose);
 	if (selection->implicit_qbj3 && !tracked)
 		return false;
 	if (tracked)
@@ -1259,7 +1444,22 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	if (!R_VRIKRenderAttachProp(selection, source_rig, target_rig,
 		&pose, tracked, tracked && ranger.muzzle_valid, (const float (*)[12])source_palette,
 		(const float (*)[12])palette, candidate))
-		return false;
+	{
+		if (!qbj3_death)
+			return false;
+		/* Optional gear must not suppress a complete death body. */
+		candidate->attached_prop_geometry = NULL;
+		candidate->attached_prop_valid = false;
+		candidate->attached_prop_local_bound = 0.0;
+		memset (candidate->attached_prop_to_canonical, 0,
+			sizeof (candidate->attached_prop_to_canonical));
+	}
+	if (qbj3_death)
+	{
+		candidate->tracked_root_yaw = 0.0f;
+		candidate->tracked_root_valid = false;
+		memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
+	}
 
 	candidate->entity = entity;
 	candidate->model = selection->target_model;
@@ -1298,6 +1498,66 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	return candidate->joint_count != 0;
 }
 
+static qboolean R_VRIKRenderEntryCurrent (r_vrik_frame_entry_t *entry)
+{
+	const entity_t *entity;
+	const int slot = entry ? entry->owner_slot : -1;
+	int current_id;
+	qboolean qbj3_game;
+
+	if (!entry || !cl.entities || slot < 0 || slot >= MAX_SCOREBOARD ||
+		slot >= cl.maxclients || slot + 1 >= cl.num_entities || !entry->entity)
+		return false;
+	entity = entry->entity;
+	qbj3_game = R_VRIKRenderQBJ3Game ();
+	if (entry->corpse)
+	{
+		uintptr_t address;
+		if (!qbj3_game || cl.maxclients < 1 || cl.maxclients >= cl.num_entities ||
+			cl.num_entities <= cl.maxclients + 1)
+			return false;
+		address = (uintptr_t)entity;
+		if (address < (uintptr_t)&cl.entities[cl.maxclients + 1] ||
+			address >= (uintptr_t)&cl.entities[cl.num_entities] ||
+			R_VRIKRenderQBJ3CorpseOwner (entity) != slot ||
+			!R_VRIKRenderExplicitAvatarForSlot (slot, &current_id) ||
+			current_id != entry->selected_id)
+			return false;
+	}
+	else
+	{
+		if (entity != &cl.entities[slot + 1])
+			return false;
+		current_id = cl.avatar_ids[slot];
+		if (current_id != entry->selected_id ||
+			(!cl.avatar_custom_keys[slot][0]) != entry->custom_key_empty)
+			return false;
+		if (current_id > PLAYER_AVATAR_RANGER &&
+			(!R_VRIKRenderExplicitAvatarForSlot (slot, &current_id) ||
+			 current_id != entry->selected_id))
+			return false;
+	}
+	if (!R_VRIKRenderOriginalModelEligible (entity))
+		return false;
+	if (entry->selection_valid)
+	{
+		if (entry->selection.entity != entity)
+			return false;
+		if (entry->selection.implicit_qbj3)
+		{
+			if (entry->corpse || !qbj3_game || current_id != PLAYER_AVATAR_RANGER ||
+				cl.avatar_custom_keys[slot][0] ||
+				CustomAvatar_IdForKey ("qbj3") != entry->selection.id ||
+				!R_VRIKRenderQBJ3LivePlayer (entity))
+				return false;
+		}
+		else if (entry->selection.id != entry->selected_id)
+			return false;
+	}
+	entry->qbj3_death = qbj3_game && R_VRIKRenderQBJ3Death (entity);
+	return true;
+}
+
 void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 {
 	size_t candidate_count = 0;
@@ -1308,26 +1568,32 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 
 	if (frame_slot >= DOUBLE_BUFFERED)
 	{
-		active_frame_valid = false;
+		R_VRIKRenderInvalidatePublication ();
 		return;
 	}
 	active_frame_slot = frame_slot;
 	active_frame_valid = false;
-	prepared_count[frame_slot] = 0;
-	if (!cl.entities || cl.num_entities <= 1)
+	frame_entries.prepared_count[frame_slot] = 0;
+	if (!cl.entities || !frame_entries.count)
 	{
 		R_VRIKRenderReleaseDescriptorSet (frame_slot);
 		active_frame_valid = true;
 		return;
 	}
-	const int maxclients = q_min (MAX_SCOREBOARD, q_min (q_max (0, cl.maxclients), cl.num_entities - 1));
 
-	for (int player = 1; player <= maxclients && player < cl.num_entities; ++player)
+	for (size_t i = 0; i < frame_entries.count; ++i)
 	{
-		r_vrik_candidate_t candidate;
-		if (!R_VRIKRenderAlternateCandidate (&cl.entities[player], &staged[player - 1],
-			&candidate, candidate_palettes[candidate_count]) &&
-			!R_VRIKRenderCandidate (&cl.entities[player], &candidate, candidate_palettes[candidate_count]))
+		r_vrik_frame_entry_t *entry = &frame_entries.entries[i];
+		r_vrik_candidate_t candidate = {0};
+		if (!R_VRIKRenderEntryCurrent (entry))
+			continue;
+		const qboolean alternate = entry->selection_valid &&
+			R_VRIKRenderAlternateCandidate (entry->entity, &entry->selection,
+				&candidate, entry->palette);
+		if (!alternate && (entry->corpse || entry->qbj3_death))
+			continue;
+		if (!alternate && !R_VRIKRenderCandidate (entry->entity, &candidate,
+			entry->palette))
 			continue;
 		const VkDeviceSize palette_bytes = (VkDeviceSize)candidate.joint_count * sizeof (float[12]);
 		if (palette_bytes > max_range || total_joints > UINT32_MAX - candidate.joint_count ||
@@ -1336,15 +1602,25 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		const VkDeviceSize used_bytes = (VkDeviceSize)total_joints * sizeof (float[12]);
 		if (palette_bytes > max_range - used_bytes)
 			continue;
-		candidate.muzzle.original_model = cl.entities[player].model;
-		candidate.muzzle.avatar_id = cl.avatar_ids[player - 1];
-		candidate.muzzle.generation = cl.entities[player].vrik_generation;
-		candidate.muzzle.tracking_flags = cl.entities[player].vrik_poses[0].flags & VRIK_FLAG_KNOWN;
-		candidate.muzzle.time = realtime;
-		candidates[candidate_count] = candidate;
+		if (!entry->corpse && !entry->qbj3_death &&
+			entry->owner_slot >= 0 && entry->owner_slot < MAX_SCOREBOARD)
+		{
+			candidate.muzzle.original_model = entry->entity->model;
+			candidate.muzzle.avatar_id = cl.avatar_ids[entry->owner_slot];
+			candidate.muzzle.generation = entry->entity->vrik_generation;
+			candidate.muzzle.tracking_flags = entry->entity->vrik_poses[0].flags & VRIK_FLAG_KNOWN;
+			candidate.muzzle.time = realtime;
+		}
+		entry->candidate = candidate;
+		if (candidate_count != i)
+		{
+			frame_entries.entries[candidate_count] = *entry;
+			R_VRIKRenderRebindSelection (&frame_entries.entries[candidate_count].selection);
+		}
 		candidate_count++;
 		total_joints += candidate.joint_count;
 	}
+	frame_entries.count = candidate_count;
 
 	if (!candidate_count || total_joints == 0)
 	{
@@ -1392,10 +1668,12 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 	size_t joint_cursor = 0;
 	for (size_t i = 0; i < candidate_count; ++i)
 	{
-		r_vrik_candidate_t *candidate = &candidates[i];
+		r_vrik_frame_entry_t *entry = &frame_entries.entries[i];
+		r_vrik_candidate_t *candidate = &entry->candidate;
 		float (*palette)[12] = (float (*)[12])(storage + joint_cursor * sizeof (float[12]));
-		memcpy (palette, candidate_palettes[i], candidate->joint_count * sizeof (float[12]));
-		r_vrik_prepared_palette_t *record = &prepared[frame_slot][prepared_count[frame_slot]++];
+		memcpy (palette, entry->palette, candidate->joint_count * sizeof (float[12]));
+		r_vrik_prepared_palette_t *record = &entry->prepared[frame_slot];
+		memset (record, 0, sizeof (*record));
 		record->entity = candidate->entity;
 		record->model = candidate->model;
 		record->geometry = candidate->geometry;
@@ -1421,9 +1699,10 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		record->tracked_cull_valid = candidate->tracked_cull_valid;
 		record->muzzle = candidate->muzzle;
 		joint_cursor += candidate->joint_count;
+		frame_entries.prepared_count[frame_slot] = i + 1;
 	}
 
-	if (!prepared_count[frame_slot])
+	if (!frame_entries.prepared_count[frame_slot])
 	{
 		R_VRIKRenderReleaseDescriptorSet (frame_slot);
 		active_frame_valid = true;
@@ -1450,9 +1729,9 @@ const r_vrik_prepared_palette_t *R_VRIKRenderLookup (const entity_t *entity)
 {
 	if (!active_frame_valid || !entity || active_frame_slot >= DOUBLE_BUFFERED)
 		return NULL;
-	for (size_t i = 0; i < prepared_count[active_frame_slot]; ++i)
-		if (prepared[active_frame_slot][i].entity == entity)
-			return &prepared[active_frame_slot][i];
+	for (size_t i = 0; i < frame_entries.prepared_count[active_frame_slot]; ++i)
+		if (frame_entries.entries[i].prepared[active_frame_slot].entity == entity)
+			return &frame_entries.entries[i].prepared[active_frame_slot];
 	return NULL;
 }
 
@@ -1460,10 +1739,10 @@ void R_VRIKRenderInvalidateMuzzle (const entity_t *entity)
 {
 	if (!active_frame_valid || !entity || active_frame_slot >= DOUBLE_BUFFERED)
 		return;
-	for (size_t i = 0; i < prepared_count[active_frame_slot]; ++i)
-		if (prepared[active_frame_slot][i].entity == entity)
+	for (size_t i = 0; i < frame_entries.prepared_count[active_frame_slot]; ++i)
+		if (frame_entries.entries[i].prepared[active_frame_slot].entity == entity)
 		{
-			prepared[active_frame_slot][i].muzzle.valid = false;
+			frame_entries.entries[i].prepared[active_frame_slot].muzzle.valid = false;
 			return;
 		}
 }
@@ -1472,11 +1751,13 @@ qboolean R_VRIKRenderGetMuzzleOrigin (const entity_t *entity, qboolean discontin
 {
 	if (!active_frame_valid || !entity || !origin || !cl.entities || active_frame_slot >= DOUBLE_BUFFERED)
 		return false;
-	for (size_t i = 0; i < prepared_count[active_frame_slot]; ++i)
+	for (size_t i = 0; i < frame_entries.prepared_count[active_frame_slot]; ++i)
 	{
-		if (prepared[active_frame_slot][i].entity != entity)
+		r_vrik_prepared_palette_t *record =
+			&frame_entries.entries[i].prepared[active_frame_slot];
+		if (record->entity != entity)
 			continue;
-		r_vrik_prepared_muzzle_t *muzzle = &prepared[active_frame_slot][i].muzzle;
+		r_vrik_prepared_muzzle_t *muzzle = &record->muzzle;
 		if (!muzzle->valid)
 			return false;
 		int player;
@@ -1509,7 +1790,9 @@ void R_VRIKRenderShutdown (void)
 	active_frame_slot = 0;
 	for (int slot = 0; slot < DOUBLE_BUFFERED; ++slot)
 	{
-		prepared_count[slot] = 0;
+		frame_entries.prepared_count[slot] = 0;
 		R_VRIKRenderReleaseDescriptorSet (slot);
 	}
+	Mem_Free (frame_entries.entries);
+	memset (&frame_entries, 0, sizeof (frame_entries));
 }

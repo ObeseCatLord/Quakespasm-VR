@@ -50,14 +50,13 @@ typedef struct r_vrik_prepared_palette_s
 	r_vrik_prepared_muzzle_t muzzle;
 } r_vrik_prepared_palette_t;
 
-/* Main thread, before this frame's render tasks. Stage one selected
- * selection for each original player entity each frame.
+/* Main thread, before this frame's render tasks. Reserve and stage supported
+ * players and attributed QBJ3 corpses into one bounded frame list.
  * Call before SCR_UpdateScreen transfers prev_end_rendering_task to its new
  * begin task. On a needed first load, Stage joins prior CPU render tasks before
  * admission and its possible model/texture uploads; loaded cached IDs do not join.
- * Ranger clears a prior selection. False clears it on admission failure.
  * This is the only render path that may load an avatar model. */
-qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id);
+void R_VRIKRenderStageAvatars (void);
 
 /* Shared raster and BLAS admission for supported original player models. */
 qboolean R_VRIKRenderOriginalModelEligible (const entity_t *entity);

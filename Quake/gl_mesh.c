@@ -1643,7 +1643,7 @@ void R_UpdateAnimatedBLASes (cb_context_t *cbx)
 			if ((e->alpha != ENTALPHA_DEFAULT) && (ENTALPHA_DECODE (e->alpha) < 1.0f))
 				continue;
 			const r_vrik_prepared_palette_t *prepared =
-				(i > 0 && i <= cl.maxclients) ? R_VRIKRenderLookup (e) : NULL;
+				(i > 0 && i < cl.num_entities) ? R_VRIKRenderLookup (e) : NULL;
 			if (e->blas_data || prepared)
 				R_AllocateEntityBLASForVRIK (e);
 			if (!e->blas_data || e->blas_data->blas == VK_NULL_HANDLE)

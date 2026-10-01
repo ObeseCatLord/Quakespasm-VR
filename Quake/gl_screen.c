@@ -2627,10 +2627,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	/* Admit optional avatar meshes before render tasks can inspect model or
 	 * texture tables. A first load may join the previous end task; do this
 	 * before that task is transferred to the new begin dependency below. */
-	if (cl.entities && cl.worldmodel && !con_forcedup)
-		for (int player = 1; player <= cl.maxclients && player <= MAX_SCOREBOARD &&
-			player < cl.num_entities; ++player)
-			R_VRIKRenderStageAvatar (&cl.entities[player], cl.avatar_ids[player - 1]);
+	R_VRIKRenderStageAvatars ();
 
 	if (use_tasks)
 	{
