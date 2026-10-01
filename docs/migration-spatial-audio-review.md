@@ -81,3 +81,27 @@ admission; the existing client send loop retries the complete reply independentl
 of VRIK. Existing reset owners retire it. Main and the final requested-Astra
 bounded source review found no P1/P2 blocker. Actual negotiation, mixed-peer
 budgets and capture/playback qualification remain deferred.
+
+## Actual optional voice transport source reconciliation (2026-09-30)
+
+Main inspected the actual capture-to-queue-to-client/server/recipient chain for
+AUDIO-001/NET-027, independently of the receive-jitter checkpoint:
+
+| Existing owner | Source-supported behavior |
+| --- | --- |
+| `voice_protocol.h` / primary definitions | Retains version1, 48kHz mono, 20ms/960-sample frames, 400-byte maximum payload, exact header fields and START/END/RADIO flags. Existing queue/budget constants consolidate primary client/server definitions; this is not byte-identical header reuse. Primary copyright/license notice is restored without changing definitions. |
+| `snd_dma.c:241,916` / `voice.c:Voice_Init,Voice_Frame,Voice_QueuePacket` | Native sound initialization/frame owns optional Opus capture/encoding, callback registration and playback. The 24kbps VBR/DTX encoder produces bounded packets through `CL_QueueVoicePacket`; stopping transmit clears queued speech and can enqueue END. Meson's Opus selection includes this existing owner. |
+| `cl_main.c:CL_QueueVoicePacket` | Requires live signed-on negotiated transport, rejects invalid packets, holds four copied packets and replaces oldest speech when capture outruns blocked networking. Map/disconnect transport reset clears admission and the queue. Pending capability intent from b5bd74ea is not active transport. |
+| `cl_input.c:CL_AppendVoicePacket,CL_ConsumeSentVoicePacket` | Public and private movement paths append voice only after their movement/ACK/optional pose work. Requires complete remaining capacity, no overflow and the512-byte client budget. One queued packet is consumed only after native unreliable send returns1; blocked sending retains it. Initial private command suppression retains the existing optional-pose/voice branch. |
+| `sv_user.c:SV_HandleVoiceCapability,SV_ReadVoicePacket` | Exact negotiated capability establishes receive/relay eligibility and skips pre-opt-in history. Reads the entire bounded payload even when admission fails or datagram acceptance limit is exceeded. Malformed/truncated framing follows native message errors; valid over-limit packets are consumed without queueing. |
+| `sv_main.c:SV_ReceiveVoicePacket,SV_SendPendingVoice` | Retains primary duplicate/rate guards (75packets/16KB per second),32-packet source queue, nonzero generation and0.25-second stale age. A separate at-most900-byte native unreliable datagram follows ordinary snapshot/VRIK submission, additionally bounded by peer MSS. Existing round-robin source order and three-per-source tick limit remain. Live relay cursors commit on send result1; stale queued packets may retire without sending. |
+| `cl_parse.c:CL_ParseVoicePacket` / `voice.c:Voice_ReceivePacket` | Parser consumes complete framing, bounds source/generation/capability/payload and dispatches the synchronous registered callback. Existing recipient owner rejects retired generations, resets prior PCM/Opus/spatial state and copies the new payload into inherited jitter storage. Native/spatial audio consumers remain unchanged. |
+| Signon and server-map owner | Offers are appended only when they fit after ordinary serverinfo/precaches in the same message. No separate loading-time offer or reduction of mandatory precaches. Server-map reset retires capability/queue/cursors and advances active source generations. |
+
+This records source integration and reuse rather than network latency,
+crossplay, audible quality or successful platform delivery. It does not change
+the server offer-capacity policy or introduce a second audio/network owner.
+Final Linux/ARM checks must exercise actual negotiation, public/private send,
+blocked send and gameplay-first saturation, stale/rate/duplicate handling,
+ordinary incapable peers and transport-to-jitter-to-playback continuity. No
+build, test, compiler check, fixture, game or benchmark ran in this checkpoint.
