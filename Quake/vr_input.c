@@ -3821,6 +3821,8 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 		VR_InputAddAxis (desired, hand, input, 0, K_LEFTARROW, K_RIGHTARROW, axis_extra);
 		VR_InputAddAxis (desired, hand, input, 1, K_DOWNARROW, K_UPARROW, axis_extra);
 	}
+	if (context->destination == key_game && !logical_left)
+		VR_InputAddAxis (desired, hand, input, 0, K_LEFTARROW, K_RIGHTARROW, axis_extra);
 	if (!logical_left && (context->destination == key_game || context->destination == key_menu))
 		VR_InputAddAxis (desired, hand, input, 1, K_VR_RIGHT_STICK_DOWN, K_VR_RIGHT_STICK_UP, axis_extra);
 
@@ -4044,11 +4046,14 @@ void VR_InputInit (void)
 
 void VR_InputCommands (const vrxr_frame_t *frame)
 {
+	const qboolean impulse_blocked_at_entry =
+		VR_WeaponMenu_IsOpenVR () || VR_WeaponCalibrationAdjustActive ();
 	const unsigned int dispatch_epoch = ++vr_input_dispatch_epoch;
 	const int dominant = VR_InputDominantPhysicalHand ();
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
+	int weapon_cycle_impulse = 0;
 	/* The first completed XR frame fills missing startup bindings; a later
 	 * detached defaults request fills once, respecting intervening changes. */
 	if (vr_default_bindings_phase != VR_DEFAULT_BINDINGS_APPLIED && frame && frame->sample_id)
@@ -4159,8 +4164,21 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 		}
 
 		if (context.input_grab || context.destination == key_game || context.destination == key_menu)
+		{
 			VR_InputBuildHandDesired (desired, hand, input, &context,
 				hand == dominant && vr_input_adjust_trigger_suppressed);
+			if (state->role == VR_INPUT_ROLE_RIGHT && state->profile == VRXR_PROFILE_VIVE &&
+				context.destination == key_game && !context.binding_capture &&
+				!context.input_grab && !impulse_blocked_at_entry &&
+				desired[hand][K_RTHUMB] && !state->owned[K_RTHUMB])
+			{
+				const float weapon_axis = VR_InputFilteredAxis (input, 0, 0.0f);
+				if (weapon_axis > 0.3f)
+					weapon_cycle_impulse = 10;
+				else if (weapon_axis < -0.3f)
+					weapon_cycle_impulse = 12;
+			}
+		}
 		else if (role == VR_INPUT_ROLE_LEFT && (input->pressed & (VRXR_BUTTON_SECONDARY | VRXR_BUTTON_MENU)))
 			// Preserve native Escape navigation from the startup console/chat
 			// without dispatching gameplay bindings into those destinations.
@@ -4188,7 +4206,11 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 			desired[0][K_ABUTTON] = desired[1][K_ABUTTON] = false;
 	}
 
-	VR_InputEmitDesired (desired, &context, dispatch_epoch);
+	if (VR_InputEmitDesired (desired, &context, dispatch_epoch) && weapon_cycle_impulse &&
+		dispatch_epoch == vr_input_dispatch_epoch &&
+		VR_InputContextMatchesCurrent (&context) &&
+		!VR_WeaponMenu_IsOpenVR () && !VR_WeaponCalibrationAdjustActive ())
+		Cbuf_AddText (weapon_cycle_impulse == 10 ? "impulse 10\n" : "impulse 12\n");
 	if (vr_input_adjust_trigger_suppressed && dominant >= 0 && dominant < 2 &&
 		frame && frame->focused && input_hands[dominant].active &&
 		VR_InputTriggerValue (&input_hands[dominant]) < 0.45f)
