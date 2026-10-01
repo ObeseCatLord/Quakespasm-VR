@@ -35,6 +35,13 @@ runtime, packet counter or helper test must keep its proof limitations explicit.
 
 ## Full surviving scope matrix
 
+The [music format-transition repair](music-format-transition-2.0-plan.md)
+requires actual native track replacement across rates, mono/stereo and8/16-bit
+input, including replacement after EOF with no live decoder, repeated stop,
+same-format replacement, bounded queue progress, natural EOF tail drain,
+pause/loop and audio restart. Qualify SDL2/SDL3 configurations where supported
+and native fallback; preserve the documented bounded already-mixed remainder.
+
 | Family | Required software evidence at the actual owner |
 | --- | --- |
 | Native base and delivery | Desktop map/menu/console/config and built-in vkQuake desktop demo behavior; build/install/packaging and resource lookup; requested shared changes without replacing native vkQuake ownership; documented upstream adapter provenance and a separate disposable upstream merge rehearsal. No VR demos or additional demo feature gate. |

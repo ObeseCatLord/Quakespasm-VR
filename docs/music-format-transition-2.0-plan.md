@@ -53,3 +53,32 @@ sources merely to remove that inherited bounded remainder.
 Before those deferred checks, main and requested-Astra source review inspect
 the actual patch and callers. Source inspection does not prove audible output,
 dependency packaging or performance. Headset listening stays with the user.
+
+## Official API references
+
+The existing wrapper uses [SDL2 SDL_FreeAudioStream](https://wiki.libsdl.org/SDL2/SDL_FreeAudioStream)
+or [SDL3 SDL_DestroyAudioStream](https://wiki.libsdl.org/SDL3/SDL_DestroyAudioStream).
+SDL3 documents that destroying the stream releases allocated data and queued
+audio, so clearing before freeing is unnecessary. This converter is not bound
+to the playback device; its destruction does not replace or close the native
+SDL playback owner.
+
+## Actual-patch source receipt
+
+Production commit `13a1e9eb` changes only Spatial_ClearMusic: three added lines
+and one replacement. Luna implemented the fully specified slice; main inspected
+the complete diff and producer/consumer/lifecycle callers. Requested local
+Astra xhigh independently reviewed the actual patch and recommended narrow
+acceptance with no P1/P2 finding. Effective runtime routing metadata was not
+available, so this is source advice rather than certified model/goal signoff.
+
+| Review point | Main disposition |
+| --- | --- |
+| Explicit BGM_Stop handles replacement after EOF even with no live decoder | Adopt: the unconditional clear now retires pointer and source format. |
+| Callback consumes the separate SA ring, not the converter | Adopt: preserve ring exclusion and free host-owned converter afterward. |
+| Repeated stop and shutdown must tolerate NULL | Adopt: existing wrapper and shutdown already do so. |
+| Natural EOF must drain | Adopt: FinishMusic still flushes/pumps; later Spatial_Update pumps without a live decoder. |
+| Do not discard unrelated already-rendered sources | Adopt: existing bounded mixed remainder is unchanged. |
+
+Scoped whitespace inspection passed. No tests, builds, compiler invocations,
+audio capture/playback or runtime probes ran; all qualification above is pending.

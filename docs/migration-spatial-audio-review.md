@@ -201,3 +201,31 @@ exist and need no separate solo/MP sound calibration. This is source-owner
 reconciliation only: audible direction/continuity, mixer/cursor behavior,
 cache rollover, actual fallback and Linux/ARM dependency execution remain at
 end-of-implementation qualification. No builds/tests/audio/runtime checks ran.
+
+## Native music, codecs and ambience source reconciliation
+
+2026-09-30. AUDIO-011 retains native vkQuake owners: snd_codec.c has no diff
+against the pinned donor, while bgmusic.c keeps its handler order, native
+filesystem track choice, decoder, looping, pause/resume and commands. Meson
+selects the existing optional codecs; available release dependencies still need
+final Linux/ARM package qualification. bgmvolume1/volume0.7 and native
+water1/wind2 ambience remain native. The volume defaults deliberately retain
+vkQuake behavior instead of copying the primary VR fork's quieter0.2 values;
+the ambience assets match both references.
+
+Host_Frame updates BGM once, then S_Update once. Spatial_MusicSpace bounds
+decoded input against native paintedtime/s_rawend and the SA ring plus converter
+tail; Spatial_RawSamples converts to the sole48kHz spatial clock. SDL playback
+asks for that clock when spatial audio is active and retains snd_mixspeed
+otherwise. Native S_UpdateAmbientSounds still selects leaf levels and smoothly
+fades them; native snd_waterfx/intensity smoothing projects alpha to the spatial
+callback or the native mixer. Music is added dry after room processing, while
+the final underwater filter applies to mixed playback as before.
+
+Main found a concrete differing-track-format stall at the explicit stop
+boundary. The [before-code adapter plan and actual-patch receipt](music-format-transition-2.0-plan.md)
+records Luna's production repair13a1e9eb and main/requested-Astra source
+acceptance. Existing EOF drain, same-stream mismatch guard, bounded queue and
+native fallback remain. This source checkpoint does not claim audible behavior,
+SDL2/SDL3 execution, codec packaging or device-restart qualification. No tests,
+builds or audio/runtime probes ran.
