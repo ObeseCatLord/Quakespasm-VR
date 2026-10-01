@@ -40,6 +40,10 @@ replacement are source-integrated in `2a43c96b`, following the
 [receiver plan](metadata-receivers-2.0-plan.md). Complete-command quote/trailing
 validation and the explicit full-userinfo reader allowance are integrated in
 `c2f8d0fd`, following the [command plan](metadata-command-validation-2.0-plan.md).
+Native enumeration and old/committed-value scratch buffers now match the existing
+8192-byte stores in `44592006`, following the
+[local-capacity plan](metadata-local-capacity-2.0-plan.md). This removes the local
+1023-byte prefix limitation; it does not certify sender framing or peer capacity.
 Publication/privacy/envelope work remains; these partial receipts do not close C02.
 
 - [ ] Settle stock-QSS-M interoperability/recipient command limits and an explicit
