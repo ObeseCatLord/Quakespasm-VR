@@ -109,6 +109,8 @@ typedef struct
 {
 	VkRenderPass		  handles[MAIN_RENDER_PASS_STENCIL_COUNT];
 	uint32_t			  attachment_count;
+	uint32_t			  logical_attachment_count;
+	uint32_t			  attachment_slots[MAX_PASS_ATTACHMENTS];
 	VkFramebuffer		 *framebuffers;
 	uint32_t			  framebuffer_count;
 	render_pass_binding_t bindings[MAX_PASS_SUBPASSES];
@@ -323,6 +325,22 @@ static void R_MarkAttachments (const VkSubpassDescription *subpass, bool *used)
 		used[subpass->pDepthStencilAttachment->attachment] = true;
 }
 
+static void R_CopyRemapAttachmentReferences (
+	VkAttachmentReference *destination, const VkAttachmentReference *source, uint32_t count, const uint32_t *logical_to_physical)
+{
+	if (!source)
+		return;
+	for (uint32_t i = 0; i < count; ++i)
+	{
+		destination[i] = source[i];
+		if (source[i].attachment != VK_ATTACHMENT_UNUSED)
+		{
+			assert (logical_to_physical[source[i].attachment] != VK_ATTACHMENT_UNUSED);
+			destination[i].attachment = logical_to_physical[source[i].attachment];
+		}
+	}
+}
+
 static bool R_UseFragmentShadingRate (void)
 {
 	return current_layout.fragment_shading_rate;
@@ -486,20 +504,79 @@ static bool R_CreateGraphicsPasses (
 		if (desc->target != target)
 			continue;
 		physical_pass_t *physical = &physical_passes[variant][pass_index];
-		physical->attachment_count = attachment_count;
+		physical->logical_attachment_count = attachment_count;
 
 		VkAttachmentDescription pass_attachments[MAX_PASS_ATTACHMENTS];
 		memcpy (pass_attachments, attachments, attachment_count * sizeof (*attachments));
-		VkSubpassDescription subpasses[MAX_PASS_SUBPASSES] = {0};
 		bool				 used_here[MAX_PASS_ATTACHMENTS] = {0};
+		bool				 retained[MAX_PASS_ATTACHMENTS] = {0};
+		uint32_t			 logical_to_physical[MAX_PASS_ATTACHMENTS];
 		bool				 continues = false;
 		for (uint32_t later = pass_index + 1; later < frame->pass_count; ++later)
 			continues |= frame->passes[later].target == target;
 
 		for (uint32_t i = 0; i < desc->subpass_count; ++i)
 		{
-			subpasses[i] = stage_definitions[desc->subpasses[i]];
-			R_MarkAttachments (&subpasses[i], used_here);
+			const VkSubpassDescription *subpass = &stage_definitions[desc->subpasses[i]];
+			R_MarkAttachments (subpass, used_here);
+			for (uint32_t j = 0; j < subpass->preserveAttachmentCount; ++j)
+				retained[subpass->pPreserveAttachments[j]] = true;
+		}
+		for (uint32_t i = 0; i < attachment_count; ++i)
+		{
+			retained[i] |= used_here[i];
+			logical_to_physical[i] = VK_ATTACHMENT_UNUSED;
+		}
+		if ((use_fragment_shading_rate || use_density_map) && attachment_count)
+			retained[attachment_count - 1] = true;
+		physical->attachment_count = 0;
+		for (uint32_t i = 0; i < attachment_count; ++i)
+			if (retained[i])
+			{
+				physical->attachment_slots[physical->attachment_count] = i;
+				logical_to_physical[i] = physical->attachment_count++;
+			}
+
+		VkSubpassDescription subpasses[MAX_PASS_SUBPASSES] = {0};
+		VkAttachmentReference color_references[MAX_PASS_SUBPASSES][MAX_PASS_ATTACHMENTS];
+		VkAttachmentReference input_references[MAX_PASS_SUBPASSES][MAX_PASS_ATTACHMENTS];
+		VkAttachmentReference resolve_references[MAX_PASS_SUBPASSES][MAX_PASS_ATTACHMENTS];
+		VkAttachmentReference depth_references[MAX_PASS_SUBPASSES];
+		uint32_t preserve_attachments[MAX_PASS_SUBPASSES][MAX_PASS_ATTACHMENTS];
+		for (uint32_t i = 0; i < desc->subpass_count; ++i)
+		{
+			const VkSubpassDescription *definition = &stage_definitions[desc->subpasses[i]];
+			subpasses[i] = *definition;
+			if (definition->pColorAttachments)
+			{
+				R_CopyRemapAttachmentReferences (color_references[i], definition->pColorAttachments, definition->colorAttachmentCount, logical_to_physical);
+				subpasses[i].pColorAttachments = color_references[i];
+			}
+			if (definition->pInputAttachments)
+			{
+				R_CopyRemapAttachmentReferences (input_references[i], definition->pInputAttachments, definition->inputAttachmentCount, logical_to_physical);
+				subpasses[i].pInputAttachments = input_references[i];
+			}
+			if (definition->pResolveAttachments)
+			{
+				R_CopyRemapAttachmentReferences (resolve_references[i], definition->pResolveAttachments, definition->colorAttachmentCount, logical_to_physical);
+				subpasses[i].pResolveAttachments = resolve_references[i];
+			}
+			if (definition->pDepthStencilAttachment)
+			{
+				R_CopyRemapAttachmentReferences (&depth_references[i], definition->pDepthStencilAttachment, 1, logical_to_physical);
+				subpasses[i].pDepthStencilAttachment = &depth_references[i];
+			}
+			if (definition->preserveAttachmentCount)
+			{
+				for (uint32_t j = 0; j < definition->preserveAttachmentCount; ++j)
+				{
+					const uint32_t logical = definition->pPreserveAttachments[j];
+					assert (logical_to_physical[logical] != VK_ATTACHMENT_UNUSED);
+					preserve_attachments[i][j] = logical_to_physical[logical];
+				}
+				subpasses[i].pPreserveAttachments = preserve_attachments[i];
+			}
 		}
 		for (uint32_t i = 0; i < attachment_count; ++i)
 		{
@@ -523,7 +600,7 @@ static bool R_CreateGraphicsPasses (
 					pass_attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 
 		// A preceding compute step may leave depth read-only for the first subpass.
-		const VkAttachmentReference *depth = subpasses[0].pDepthStencilAttachment;
+		const VkAttachmentReference *depth = stage_definitions[desc->subpasses[0]].pDepthStencilAttachment;
 		if (depth && depth->attachment != VK_ATTACHMENT_UNUSED && used_before[depth->attachment])
 			pass_attachments[depth->attachment].initialLayout = depth->layout;
 
@@ -569,8 +646,13 @@ static bool R_CreateGraphicsPasses (
 		}
 		for (int stencil = 0; stencil < MAIN_RENDER_PASS_STENCIL_COUNT; ++stencil)
 		{
+			VkAttachmentDescription stencil_attachments[MAX_PASS_ATTACHMENTS];
+			memcpy (stencil_attachments, pass_attachments, attachment_count * sizeof (*pass_attachments));
 			if (target == FRAME_TARGET_SCENE && !used_before[1] && stencil == MAIN_RENDER_PASS_NO_STENCIL)
-				pass_attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+				stencil_attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+			VkAttachmentDescription compact_attachments[MAX_PASS_ATTACHMENTS];
+			for (uint32_t i = 0; i < physical->attachment_count; ++i)
+				compact_attachments[i] = stencil_attachments[physical->attachment_slots[i]];
 			uint32_t view_masks[MAX_PASS_SUBPASSES];
 			for (uint32_t view = 0; view < desc->subpass_count; ++view)
 				view_masks[view] = 3;
@@ -586,15 +668,15 @@ static bool R_CreateGraphicsPasses (
 			VkRenderPass created = VK_NULL_HANDLE;
 			if (use_fragment_shading_rate || use_density_map)
 				result = R_CreateRateMapRenderPass (
-					pass_attachments, attachment_count, subpasses, desc->subpass_count, dependencies, dependency_count,
+					compact_attachments, physical->attachment_count, subpasses, desc->subpass_count, dependencies, dependency_count,
 					use_density_map, &created);
 			else
 			{
 				const VkRenderPassCreateInfo info = {
 					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
 					.pNext = current_layout.stereo ? &multiview : NULL,
-					.attachmentCount = attachment_count,
-					.pAttachments = pass_attachments,
+					.attachmentCount = physical->attachment_count,
+					.pAttachments = compact_attachments,
 					.subpassCount = desc->subpass_count,
 					.pSubpasses = subpasses,
 					.dependencyCount = dependency_count,
@@ -686,46 +768,49 @@ bool R_CreateFrameBuffers (const render_framebuffer_images_t *images)
 		}
 		for (uint32_t i = 0; i < physical->framebuffer_count; ++i)
 		{
-			VkImageView attachments[MAX_PASS_ATTACHMENTS] = {0};
+			VkImageView logical_attachments[MAX_PASS_ATTACHMENTS] = {0};
+			uint32_t next = 0;
 			if (ui)
 			{
-				attachments[0] = images->ui_color;
-				attachments[1] = images->swapchain[i];
+				logical_attachments[next++] = images->ui_color;
+				logical_attachments[next++] = images->swapchain[i];
 			}
 			else
 			{
 				const uint32_t scene_slot = density ? i / images->density_map_count : i;
-				attachments[0] = images->color[scene_slot];
-				attachments[1] = images->depth;
-				uint32_t next = 2;
+				logical_attachments[next++] = images->color[scene_slot];
+				logical_attachments[next++] = images->depth;
 				if (msaa)
-					attachments[next++] = images->msaa_color;
+					logical_attachments[next++] = images->msaa_color;
 				if (!density && variant == MAIN_RENDER_PASS_OIT)
 				{
-					attachments[next++] = images->oit_accum;
-					attachments[next++] = images->oit_reveal;
+					logical_attachments[next++] = images->oit_accum;
+					logical_attachments[next++] = images->oit_reveal;
 				}
 				else if (!density && variant == MAIN_RENDER_PASS_MBOIT)
 				{
-					attachments[next++] = images->mboit_b0;
-					attachments[next++] = images->mboit_moments;
-					attachments[next++] = images->mboit_color;
+					logical_attachments[next++] = images->mboit_b0;
+					logical_attachments[next++] = images->mboit_moments;
+					logical_attachments[next++] = images->mboit_color;
 				}
 				if (!density && R_UseFragmentShadingRate ())
 				{
 					if (!images->fragment_shading_rate || next >= MAX_PASS_ATTACHMENTS)
 						Sys_Error ("Fragment shading rate framebuffer attachment is missing");
-					attachments[next++] = images->fragment_shading_rate;
+					logical_attachments[next++] = images->fragment_shading_rate;
 				}
 				if (density)
 				{
 					if (next >= MAX_PASS_ATTACHMENTS || !images->density_maps[i % images->density_map_count])
 						return false;
-					attachments[next++] = images->density_maps[i % images->density_map_count];
+					logical_attachments[next++] = images->density_maps[i % images->density_map_count];
 				}
-				if (next != physical->attachment_count)
-					Sys_Error ("Render pass framebuffer attachment count mismatch (%u != %u)", next, physical->attachment_count);
 			}
+			if (next != physical->logical_attachment_count)
+				Sys_Error ("Render pass framebuffer attachment count mismatch (%u != %u)", next, physical->logical_attachment_count);
+			VkImageView attachments[MAX_PASS_ATTACHMENTS] = {0};
+			for (uint32_t attachment = 0; attachment < physical->attachment_count; ++attachment)
+				attachments[attachment] = logical_attachments[physical->attachment_slots[attachment]];
 			const VkFramebufferCreateInfo info = {
 				.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 				.renderPass = physical->handles[MAIN_RENDER_PASS_STENCIL_CLEAR],
@@ -1078,13 +1163,16 @@ uint32_t R_RecordFrame (
 					0, 0, NULL, 0, NULL, 1, &barrier);
 			}
 			assert (image < physical->framebuffer_count);
+			VkClearValue pass_clear_values[MAX_PASS_ATTACHMENTS] = {0};
+			for (uint32_t attachment = 0; attachment < physical->attachment_count; ++attachment)
+				pass_clear_values[attachment] = clear_values[physical->attachment_slots[attachment]];
 			const VkRenderPassBeginInfo begin = {
 				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 				.renderPass = physical->handles[ui || Sky_NeedStencil () ? MAIN_RENDER_PASS_STENCIL_CLEAR : MAIN_RENDER_PASS_NO_STENCIL],
 				.framebuffer = physical->framebuffers[image],
 				.renderArea = {{0, 0}, {ui ? parms->vid_width : parms->render_width, ui ? parms->vid_height : parms->render_height}},
 				.clearValueCount = ui ? 0 : physical->attachment_count,
-				.pClearValues = clear_values,
+				.pClearValues = pass_clear_values,
 			};
 			if (density)
 			{
