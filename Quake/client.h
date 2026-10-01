@@ -519,6 +519,7 @@ void	 CL_SendCmd (void);
 void	 CL_TryEnableCSQCEntities (void);
 void	 CL_SendMove (const usercmd_t *cmd);
 void CL_PrivateMoveResumeObserved (void);
+void CL_ResetPendingImpulse (void);
 int		 CL_ReadFromServer (void);
 qboolean CL_AngleLocked (void);
 void	 CL_AdjustAngles (void);

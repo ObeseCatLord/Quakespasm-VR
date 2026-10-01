@@ -287,6 +287,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	CL_ResetPendingImpulse ();
 	/* The wheel borrows precached client models; drop those references before
 	 * serverinfo tears down the old client state, including same-map restarts. */
 	VR_WeaponMenu_ClientReset ();
@@ -330,6 +331,7 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	CL_ResetPendingImpulse ();
 	VR_WeaponMenu_ClientReset ();
 	NET_DatagramConnectCancel ();
 	SpatialWorld_Clear ();

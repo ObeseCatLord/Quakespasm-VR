@@ -1311,10 +1311,44 @@ static void SV_PrivatePublishRecoveryFence (client_t *client)
 	client->private_input_phase = PRIVATE_INPUT_AWAIT_MARKER;
 }
 
+static qboolean SV_PrivateInputGloballySuspended (void)
+{
+	return sv.paused ||
+		(svs.maxclients <= 1 && key_dest != key_game);
+}
+
+/* Read-only: the terminal guard reads client/edict fields only, with no qcvm
+ * requirement. Keep this predicate safe for the client-side local query. */
+static qboolean SV_PrivateArrivalRecoveryDue (client_t *client)
+{
+	return (client->private_input_phase == PRIVATE_INPUT_RUNNING ||
+		client->private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION) &&
+		!SV_PrivateWalkTrialTerminalState (client) && client->lastmovetime > 0 &&
+		realtime - client->lastmovetime > 1.0;
+}
+
+qboolean SV_LocalPrivateInputSuspended (const struct qsocket_s *socket)
+{
+	if (!sv.active)
+		return false;
+	for (int slot = 0; slot < svs.maxclients; ++slot)
+	{
+		client_t *client = &svs.clients[slot];
+		if (!client->active || client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+			!NET_QSocketIsLoopbackPeer (socket, client->netconnection))
+			continue;
+		return SV_PrivateInputGloballySuspended () ||
+			(SV_PrivateWalkTrialSelected (client) &&
+			 (client->private_input_phase == PRIVATE_INPUT_SUSPENDED ||
+			  client->private_input_phase == PRIVATE_INPUT_AWAIT_MARKER ||
+			  SV_PrivateArrivalRecoveryDue (client)));
+	}
+	return false;
+}
+
 static void SV_PrivateSyncPauseState (client_t *client)
 {
-	const qboolean suspended = sv.paused ||
-		(svs.maxclients <= 1 && key_dest != key_game);
+	const qboolean suspended = SV_PrivateInputGloballySuspended ();
 
 	if (!SV_PrivateWalkTrialSelected (client))
 		return;
@@ -1333,10 +1367,7 @@ static void SV_PrivateSyncPauseState (client_t *client)
 		SV_PrivatePublishRecoveryFence (client);
 		return;
 	}
-	if ((client->private_input_phase == PRIVATE_INPUT_RUNNING ||
-		 client->private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION) &&
-		!SV_PrivateWalkTrialTerminalState (client) && client->lastmovetime > 0 &&
-		realtime - client->lastmovetime > 1.0)
+	if (SV_PrivateArrivalRecoveryDue (client))
 	{
 		SV_PrivateClearTransientInput (client);
 		SV_PrivatePublishRecoveryFence (client);

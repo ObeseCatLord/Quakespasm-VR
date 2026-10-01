@@ -61,6 +61,8 @@ static kbutton_t in_button4, in_button5, in_button6, in_button7, in_button8;
 kbutton_t in_up, in_down;
 
 int in_impulse;
+static qboolean in_impulse_deferred;
+static qboolean in_impulse_projected;
 static kbutton_t in_vr_weaponmenu;
 static qboolean in_vr_weaponmenu_desktop_capture;
 
@@ -351,9 +353,40 @@ void IN_JumpUp (void)
 	KeyUp (&in_jump);
 }
 
+static qboolean CL_PrivateImpulseInputActive (void)
+{
+	return cls.state == ca_connected && cls.signon == SIGNONS &&
+		!cls.demoplayback && cl.protocol_qsvr == QSVR_PROTOCOL_PINNED;
+}
+
+static qboolean CL_PrivateDeferredImpulseReady (void)
+{
+	if (!CL_PrivateImpulseInputActive () || cl.paused || cl.movemessages < 2 ||
+		SV_LocalPrivateInputSuspended (cls.netcon))
+		return false;
+	if (cl.move_ack_selected_owner && cl.move_ack_resume_pending)
+		return cl.move_resume_marker_epoch_valid &&
+			cl.move_resume_marker_first_sequence > 0 &&
+			cl.move_resume_marker_epoch_sent == cl.move_ack_discontinuity_epoch &&
+			cl.movemessages >= cl.move_resume_marker_first_sequence;
+	return true;
+}
+
+void CL_ResetPendingImpulse (void)
+{
+	in_impulse = 0;
+	in_impulse_deferred = false;
+	in_impulse_projected = false;
+}
+
 void IN_Impulse (void)
 {
 	in_impulse = atoi (Cmd_Argv (1));
+	/* A newer assignment, including explicit cancellation, owns the value. */
+	in_impulse_projected = false;
+	in_impulse_deferred = in_impulse != 0 && CL_PrivateImpulseInputActive () &&
+		(cl.paused || (cl.move_ack_selected_owner && cl.move_ack_resume_pending) ||
+		 SV_LocalPrivateInputSuspended (cls.netcon));
 }
 
 /*
@@ -557,6 +590,8 @@ static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 	unsigned int bits;
 	kbutton_t *extra_buttons[] = {&in_button4, &in_button5, &in_button6,
 		&in_button7, &in_button8};
+	if (isfinal)
+		in_impulse_projected = false;
 	//
 	// send button bits
 	//
@@ -590,7 +625,14 @@ static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 	cmd->buttons = bits;
 	cmd->impulse = in_impulse;
 
-	if (isfinal)
+	if (in_impulse_deferred)
+	{
+		if (!CL_PrivateDeferredImpulseReady ())
+			cmd->impulse = 0;
+		else if (isfinal)
+			in_impulse_projected = true;
+	}
+	else if (isfinal)
 		in_impulse = 0;
 }
 
@@ -971,7 +1013,9 @@ void CL_PrivateMoveResumeObserved (void)
 	};
 	for (size_t i = 0; i < countof (buttons); ++i)
 		buttons[i]->state &= 1;
-	in_impulse = 0;
+	if (!in_impulse_deferred)
+		in_impulse = 0;
+	in_impulse_projected = false;
 	VR_InputResetMotionContinuity ();
 	memset (&cl.pendingcmd, 0, sizeof (cl.pendingcmd));
 	cl.pendingcmd.servertime = cl.time;
@@ -1067,6 +1111,9 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	cl.net_move_msec_generated += sendcmd.msec;
 	cl.movecmds[seq & MOVECMDS_MASK] = sendcmd;
 	cl.cmd = sendcmd;
+	/* The ring owns this final projection even if CSQC filtered its impulse. */
+	if (seq >= 2 && in_impulse_projected)
+		CL_ResetPendingImpulse ();
 
 	if (seq < 2)
 	{

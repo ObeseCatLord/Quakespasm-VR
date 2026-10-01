@@ -656,6 +656,8 @@ extern cvar_t sv_gorilla_trustclient;
 extern cvar_t sv_voice;
 void SV_FinishPrivateUsercmds (void);
 void SV_SendPauseNotifications (void);
+/* Read-only local endpoint query; never synchronizes pause or recovery state. */
+qboolean SV_LocalPrivateInputSuspended (const struct qsocket_s *socket);
 qboolean SV_PrivateWalkTrialSelected (client_t *client);
 qboolean SV_PrivateWalkTrialTerminalState (client_t *client);
 typedef enum

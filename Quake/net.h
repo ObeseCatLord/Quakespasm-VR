@@ -72,6 +72,7 @@ const char *NET_QSocketGetConnectAddressString (const struct qsocket_s *sock);
 const char *NET_QSocketGetTrueAddressString (const struct qsocket_s *sock);
 const char *NET_QSocketGetMaskedAddressString (const struct qsocket_s *sock);
 qboolean	NET_QSocketGetProQuakeAngleHack (const struct qsocket_s *sock);
+qboolean NET_QSocketIsLoopbackPeer (const struct qsocket_s *a, const struct qsocket_s *b);
 int			NET_QSocketGetSequenceIn (const struct qsocket_s *sock);
 int			NET_QSocketGetSequenceOut (const struct qsocket_s *sock);
 void		NET_QSocketSetMSS (struct qsocket_s *s, int mss);

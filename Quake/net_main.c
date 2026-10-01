@@ -186,6 +186,13 @@ const char *NET_QSocketGetMaskedAddressString (const qsocket_t *s)
 {
 	return s->maskedaddress;
 }
+qboolean NET_QSocketIsLoopbackPeer (const qsocket_t *a, const qsocket_t *b)
+{
+	return a && b && !a->disconnected && !b->disconnected &&
+		a->driver == 0 && b->driver == 0 &&
+		a->driverdata == b && b->driverdata == a;
+}
+
 qboolean NET_QSocketGetProQuakeAngleHack (const qsocket_t *s)
 {
 	if (s && !s->disconnected)
