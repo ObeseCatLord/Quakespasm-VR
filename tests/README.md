@@ -3534,3 +3534,13 @@ Require native exit0 and `VOICE_PCM_NATIVE_PASSED`. Driverless fixture qsocket
 retirement precedes normal native client/host shutdown; this cannot certify real
 socket teardown. [Plan and integration boundaries](../docs/voice-pcm-final-2.0-plan.md)
 and [current results/limits](../docs/voice-pcm-current-2.0-results.md).
+
+Add `-recovery` to the same isolated run to exercise native producer pressure,
+duplicate packet-rate charging/next-window admission, relay expiry, gain,
+captured loss/reordering and old/new generation handling after source-slot
+replacement. Require both native pass markers and exit0. The same global voice
+owner runs sequential directed client states; captured END redelivery is a test
+seam, not a reliable transport promise. Byte-rate/send failure, receiver/map
+reset and live delivery remain distinct. See the
+[recovery plan](../docs/voice-recovery-final-2.0-plan.md) and
+[exact results](../docs/voice-recovery-current-2.0-results.md).

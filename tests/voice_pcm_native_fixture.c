@@ -115,26 +115,49 @@ static void SendControlledFrame (client_t *source, client_state_t *state,
 	assert (source->voice_next_serial >= serial_before + 2);
 }
 
-static void RelayToReceiver (client_t *receiver, client_state_t *state)
+typedef struct
+{
+	byte bytes[VOICE_SERVER_DATAGRAM_BUDGET];
+	int length;
+} voice_fixture_datagram_t;
+
+static void CaptureVoiceRelay (client_t *receiver, voice_fixture_datagram_t *packet)
 {
 	captured_length = captured_sends = 0;
 	assert (SV_SendPendingVoice (receiver));
-	assert (captured_sends == 1 && captured_length > VOICE_SVC_HEADER_BYTES);
+	assert (captured_sends == 1 && captured_length >= VOICE_SVC_HEADER_BYTES &&
+		captured_length <= (int)sizeof (packet->bytes));
+	packet->length = captured_length;
+	memcpy (packet->bytes, captured, packet->length);
+}
+
+static void ReceiveVoiceRelay (client_t *receiver, client_state_t *state,
+	voice_fixture_datagram_t *packet)
+{
 	cl = *state;
-	cls.state = ca_connected;
-	cls.signon = SIGNONS;
 	cls.netcon = receiver->netconnection;
-	net_message.data = captured;
-	net_message.cursize = captured_length;
-	net_message.maxsize = sizeof (captured);
+	net_message.data = packet->bytes;
+	net_message.cursize = packet->length;
+	net_message.maxsize = sizeof (packet->bytes);
 	CL_ParseServerMessage ();
-	assert (msg_readcount == net_message.cursize && voice_speakers[0].jitter.count > 0);
+	assert (msg_readcount == net_message.cursize);
 	*state = cl;
+}
+
+static void RelayToReceiver (client_t *receiver, client_state_t *state)
+{
+	voice_fixture_datagram_t packet;
+	CaptureVoiceRelay (receiver, &packet);
+	ReceiveVoiceRelay (receiver, state, &packet);
+	assert (voice_speakers[0].jitter.count > 0);
 }
 
 static void PlayUntilBuffered (void)
 {
-	for (int frame = 0; frame < 6; ++frame)
+	const unsigned ticks = 1 + (voice_speakers[0].jitter.target_delay_ms +
+		voice_speakers[0].jitter.count * VOICE_FRAME_MILLISECONDS +
+		VOICE_FRAME_MILLISECONDS - 1) / VOICE_FRAME_MILLISECONDS;
+	for (unsigned frame = 0; frame < ticks; ++frame)
 	{
 		realtime += VOICE_FRAME_MILLISECONDS / 1000.0;
 		Voice_Frame ();
@@ -174,6 +197,153 @@ static qboolean MixHasSignal (qboolean muted)
 	return nonzero;
 }
 
+static void WarmVoiceCommands (client_t *peer, client_state_t *state)
+{
+	for (int frame = 0; frame < 3; ++frame)
+	{
+		usercmd_t command = {0};
+		cl = *state;
+		cls.netcon = peer->netconnection;
+		command.servertime = cl.time = qcvm->time;
+		captured_length = captured_sends = 0;
+		CL_SendMove (&command);
+		*state = cl;
+		if (captured_length) GapDeliver (peer, captured, captured_length);
+	}
+}
+
+static void VoiceGainChecks (client_t **peers, client_state_t **states)
+{
+	for (int gain = 0; gain <= 1; ++gain)
+	{
+		int16_t pcm[VOICE_FRAME_SAMPLES];
+		cl = *states[1];
+		Cmd_ExecuteString (gain ? "voice_player_volume 1 1" :
+			"voice_player_volume 1 0", src_command);
+		assert (voice_speakers[0].volume == gain);
+		for (int i = 0; i < VOICE_FRAME_SAMPLES; ++i)
+			pcm[i] = (i / 96) & 1 ? 12000 : -12000;
+		SendControlledFrame (peers[0], states[0], pcm);
+		RelayToReceiver (peers[1], states[1]);
+		PlayUntilBuffered ();
+		qboolean decoded_signal = false;
+		for (int i = 0; i < VOICE_FRAME_SAMPLES; ++i)
+			decoded_signal |= voice_decode_frame[i] != 0;
+		assert (decoded_signal);
+		MixHasSignal (!gain);
+		*states[1] = cl;
+	}
+}
+
+static void VoiceGenerationChecks (client_t **peers, client_state_t **states,
+	const char *offer)
+{
+	int16_t pcm[VOICE_FRAME_SAMPLES];
+	voice_fixture_datagram_t old_packet;
+	for (int i = 0; i < VOICE_FRAME_SAMPLES; ++i)
+		pcm[i] = (i / 96) & 1 ? 12000 : -12000;
+	SendControlledFrame (peers[0], states[0], pcm);
+	RelayToReceiver (peers[1], states[1]);
+	PlayUntilBuffered ();
+	SendControlledFrame (peers[0], states[0], pcm);
+	CaptureVoiceRelay (peers[1], &old_packet);
+	ReceiveVoiceRelay (peers[1], states[1], &old_packet);
+	assert (UnreadSpeakerHasSignal () && voice_speakers[0].jitter.count > 0);
+	const uint32_t old_generation = voice_speakers[0].generation;
+	client_state_t *retired = states[0];
+	NET_FreeQSocket (peers[0]->netconnection);
+	host_client = peers[0];
+	SV_DropClient (false);
+	published_voice_length[0] = 0;
+	peers[0] = SpawnPeer (0, offer, 0);
+	states[0] = CreateMixedPeerState (peers[0], 0);
+	NegotiateVoice (peers[0], states[0]);
+	WarmVoiceCommands (peers[0], states[0]);
+	Mem_Free (retired->entities);
+	Mem_Free (retired->scores);
+	Mem_Free (retired);
+	assert ((uint32_t)(peers[0]->voice_generation - old_generation) > 0 &&
+		(uint32_t)(peers[0]->voice_generation - old_generation) < 0x80000000u);
+	SendControlledFrame (peers[0], states[0], pcm);
+	RelayToReceiver (peers[1], states[1]);
+	assert (voice_speakers[0].generation == peers[0]->voice_generation &&
+		Voice_AtomicGet (&voice_speakers[0].pcm_read) ==
+		Voice_AtomicGet (&voice_speakers[0].pcm_write));
+	assert (voice_speakers[0].jitter.entries[0].sequence ==
+		SV_VoicePacketForSerial (peers[0], 1)->packet.sequence);
+	voice_jitter_t retained;
+	memcpy (&retained, &voice_speakers[0].jitter, sizeof (retained));
+	ReceiveVoiceRelay (peers[1], states[1], &old_packet);
+	assert (voice_speakers[0].generation == peers[0]->voice_generation &&
+		!memcmp (&retained, &voice_speakers[0].jitter, sizeof (retained)));
+	assert (Voice_AtomicGet (&voice_speakers[0].pcm_read) ==
+		Voice_AtomicGet (&voice_speakers[0].pcm_write));
+	PlayUntilBuffered ();
+	MixHasSignal (false);
+	*states[1] = cl;
+}
+
+static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
+{
+	for (int loss = 0; loss <= 1; ++loss)
+	{
+		voice_fixture_datagram_t packets[4];
+		uint16_t sequences[4];
+		int16_t pcm[VOICE_FRAME_SAMPLES];
+		for (int i = 0; i < VOICE_FRAME_SAMPLES; ++i)
+			pcm[i] = (i / 96) & 1 ? 12000 : -12000;
+		assert (!voice_speakers[0].jitter.count && !voice_sending);
+		assert (Voice_AtomicGet (&voice_speakers[0].pcm_read) ==
+			Voice_AtomicGet (&voice_speakers[0].pcm_write));
+		for (int frame = 0; frame < 4; ++frame)
+		{
+			cl = *states[0];
+			cls.netcon = peers[0]->netconnection;
+			Voice_PTTKeyEvent (K_F12, frame != 3);
+			Voice_EncodeCaptureFrame (pcm);
+			assert (cl.voice_outgoing_count == 1);
+			captured_length = captured_sends = 0;
+			CL_SendMove (NULL);
+			assert (captured_sends == 1 && !cl.voice_outgoing_count);
+			*states[0] = cl;
+			GapDeliver (peers[0], captured, captured_length);
+			sequences[frame] = SV_VoicePacketForSerial (peers[0],
+				peers[0]->voice_next_serial)->packet.sequence;
+			if (frame) assert ((uint16_t)(sequences[frame] - sequences[frame - 1]) == 1);
+			CaptureVoiceRelay (peers[1], &packets[frame]);
+			realtime += VOICE_FRAME_MILLISECONDS / 1000.0;
+		}
+		ReceiveVoiceRelay (peers[1], states[1], &packets[2]);
+		ReceiveVoiceRelay (peers[1], states[1], &packets[0]);
+		if (!loss) ReceiveVoiceRelay (peers[1], states[1], &packets[1]);
+		ReceiveVoiceRelay (peers[1], states[1], &packets[3]);
+		assert (voice_speakers[0].jitter.count == (unsigned)(loss ? 3 : 4));
+		assert (voice_speakers[0].jitter.entries[0].sequence == sequences[0] &&
+			voice_speakers[0].jitter.entries[1].sequence == sequences[loss ? 2 : 1]);
+		PlayUntilBuffered ();
+		const int frames = (Voice_AtomicGet (&voice_speakers[0].pcm_write) -
+			Voice_AtomicGet (&voice_speakers[0].pcm_read) + VOICE_PCM_RING_FRAMES) %
+			VOICE_PCM_RING_FRAMES;
+		assert (frames == 3 * VOICE_FRAME_SAMPLES && !voice_speakers[0].jitter.count);
+		if (loss)
+		{
+			qboolean concealed_signal = false;
+			const int start = Voice_AtomicGet (&voice_speakers[0].pcm_read);
+			for (int i = 0; i < VOICE_FRAME_SAMPLES; ++i)
+			{
+				const int index = (start + VOICE_FRAME_SAMPLES + i) % VOICE_PCM_RING_FRAMES;
+				concealed_signal |= voice_speakers[0].pcm[index * 2] != 0 ||
+					voice_speakers[0].pcm[index * 2 + 1] != 0;
+			}
+			assert (concealed_signal);
+		}
+		MixHasSignal (false);
+		*states[1] = cl;
+	}
+}
+
+#include "voice_queue_recovery_native_fixture.h"
+
 int main (int argc, char **argv)
 {
 	client_t *peers[2];
@@ -200,18 +370,7 @@ int main (int argc, char **argv)
 	for (int slot = 0; slot < 2; ++slot)
 		states[slot] = CreateMixedPeerState (peers[slot], slot);
 	OfferBothPeers (peers, states);
-	/* Preserve the native command warmup instead of seeding its sequence. */
-	for (int frame = 0; frame < 3; ++frame)
-	{
-		usercmd_t command = {0};
-		cl = *states[0];
-		cls.netcon = peers[0]->netconnection;
-		command.servertime = cl.time = qcvm->time;
-		captured_length = captured_sends = 0;
-		CL_SendMove (&command);
-		*states[0] = cl;
-		if (captured_length) GapDeliver (peers[0], captured, captured_length);
-	}
+	WarmVoiceCommands (peers[0], states[0]);
 	controlled_dma.channels = 2;
 	controlled_dma.samples = VOICE_FRAME_SAMPLES * 2;
 	controlled_dma.samplebits = 16;
@@ -224,7 +383,7 @@ int main (int argc, char **argv)
 	assert (voice_initialized && !voice_settings.desktop.transmit);
 	voice_settings.desktop.transmit = 1; /* Prepared fixture preference only. */
 	voice_settings.desktop.mode = 1;
-Voice_RefreshCapture (true);
+	Voice_RefreshCapture (true);
 	assert (voice_capture_device && Voice_CaptureReady ());
 	saved_binding = keybindings[K_F12];
 	keybindings[K_F12] = "+voicerecord";
@@ -251,6 +410,13 @@ Voice_RefreshCapture (true);
 	}
 	Cmd_ExecuteString ("voice_mute 1", src_command);
 	assert (!voice_speakers[0].muted);
+	if (COM_CheckParm ("-recovery"))
+	{
+		Voice_QueueRecoveryChecks (peers[0], states[0], peers[1], states[1]);
+		VoiceGainChecks (peers, states);
+		VoiceLossReorderChecks (peers, states);
+		VoiceGenerationChecks (peers, states, public_offer);
+	}
 	/* Leave real PCM buffered, then real jitter queued, without consuming either. */
 	for (int burst = 0; burst < 2; ++burst)
 	{
@@ -308,6 +474,8 @@ Voice_RefreshCapture (true);
 		Mem_Free (states[slot]->scores);
 		Mem_Free (states[slot]);
 	}
+	if (COM_CheckParm ("-recovery"))
+		puts ("VOICE_RECOVERY_NATIVE_PASSED generated stream/queue/gain/loss/reorder/generation; captured transport");
 	puts ("VOICE_PCM_NATIVE_PASSED native negotiated codec/relay/PCM/mute/reset; captured transport/dummy capture");
 	return 0;
 }
