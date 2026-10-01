@@ -4336,7 +4336,8 @@ static void R_CreateWorldPipelines ()
 
 void R_SetWorldFragmentShadingRate (cb_context_t *cbx, qboolean eligible)
 {
-	if (!vulkan_globals.openxr_fragment_shading_rate_active)
+	// Depth replay binds static, full-rate pipelines with no fragment stage.
+	if (!vulkan_globals.openxr_fragment_shading_rate_active || cbx->depth_only)
 		return;
 
 	const VkExtent2D fragment_size = {1, 1};
