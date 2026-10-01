@@ -3376,7 +3376,10 @@ they are not game-state injections. Replacement uses diagnostic native30Hz
 commands so its original between-send and short-jump assertions can both run;
 VR retains10Hz, original Desktop native cadence. No speed/performance claim.
 All three lifecycle JSON statuses/markers and normal exits must pass in addition
-to the original probe checks. Public-only layout fields are never assumed.
+to the original probe checks. XR also reuses the existing selected-prediction
+permission/authority/coherent-snapshot assertions after replacement and at final
+observation. Public-only layout fields are never assumed. Runner success alone
+does not certify Vulkan validation; separately inspect all native logs.
 See [the before-code plan](../docs/connected-lifecycle-final-2.0-plan.md).
 
 

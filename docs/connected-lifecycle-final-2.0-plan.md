@@ -125,3 +125,28 @@ all nativeclient/server exits0 and clean Vulkan validation logs. No production
 repair needed under this finite transition owner. Both earlier intermittent
 original movement failures remain unresolved; passing repeats do not prove
 those first failures fixed. Loss/IPv6/metadata boundaries remain separate.
+
+## Focused Astra disposition before final acceptance
+
+Main verified four effective gpt-6-astra/xhigh contexts and spot-checked the
+load-bearing source findings. This is a bounded helper/runner review, not F10
+overall signoff.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Post-replacement VR prediction permission/authority/coherent snapshot not reasserted | Adopted before rerun: call the original prediction_sample/require_selected_prediction_state at replacement and final observation, retaining structured evidence. Reuse these owners, no new prediction probe or product instrumentation. |
+| Runner success alone omits validation-log acceptance | Adapted: main independently scans all four native logs for each accepted run; document that aggregate status alone does not certify Vulkan validation. No general log framework added. |
+| Explicit internal-breakpoint retirement and exact-name admission wait preserve native acceptance | Accepted, main verified source and actual normal-exit private/public results. |
+
+Rerun the two affected private/public lifecycle profiles after adding the
+missing post-replacement prediction assertions; earlier passes remain valid
+for their narrower boundary but do not establish these new assertions.
+
+Affected reruns: private-selected passes complete native acceptance including
+new XR state checkpoints and normal exits. Public-selected passes gameplay and
+both XR checkpoints, then unchanged baseline Desktop reports corrupted
+double-linked list/SIGABRT on quit. Keep aggregate FAILED and old public-ready
+clean-shutdown proof separate; no root cause or repaired baseline claimed.
+All four logs in each run have no VUID/synchronization hazards. No new product
+source change or reference modification follows from this external-baseline
+failure. Precise results/limitations are retained in the current receipt.

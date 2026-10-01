@@ -77,6 +77,10 @@ class ConnectedLifecycle:
                       ack=self.iv('cl.ackedmovemessages'), sent=self.iv('cl.movemessages'),
                       shells=self.iv('cl.stats[6]'),
                       private=False if self.upstream else bool(self.iv('cl.protocol_qsvr')))
+        if self.role == 'vr' and label in ('replacement', 'observed'):
+            selected = self.s['prediction_sample']()
+            self.s['require_selected_prediction_state'](selected)
+            record['selected_prediction'] = selected
         if not self.upstream:
             record['unreliable_send_sequence'] = self.iv('cls.netcon->unreliableSendSequence')
             record['unreliable_receive_sequence'] = self.iv('cls.netcon->unreliableReceiveSequence')

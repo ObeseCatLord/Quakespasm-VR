@@ -1,5 +1,11 @@
 # F01 current connected desktop/VR results
 
+Current follow-up: private and unchanged-public connected map/reset/disconnect/
+slot-reuse qualification now passes at its documented boundaries:
+[exact lifecycle evidence](connected-lifecycle-current-2.0-results.md).
+The historical original-distance failures below remain unresolved; transport/
+metadata boundaries and whole F01 acceptance remain open.
+
 2026-10-01. Production repair482cd9f5, preliminary host DEBUG Meson binary
 rebuilt successfully; SteamAudio disabled only in this preliminary host route.
 Actual isolated current server and simultaneous private desktop/simulated-XR
@@ -86,5 +92,4 @@ JSON, logs and aggregate statuses. This establishes successful actual mixed
 peer gameplay at these bounded runs; the inconsistent first movement outcome
 remains an F01 follow-up, not a new feature or a silently discarded failure.
 Map/slot/loss/IPv6/remaining metadata boundaries are still open. No production
-source edits or rebuilds were needed for this peer test. KWrite remains open
-on the frozen final checklist.
+source edits or rebuilds were needed for this peer test. The frozen final checklist retains the remaining owners.

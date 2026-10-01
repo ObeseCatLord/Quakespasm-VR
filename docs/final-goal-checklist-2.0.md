@@ -72,8 +72,10 @@ receipts. These overlap intentionally; test shared boundaries once.
 - F01: current private connected map/reset/disconnect/reused-slot vertical
   proofs pass for private and unchanged public desktop peers, with fresh
   gameplay, mutual received poses and natural client/server exits; [exact results/limits](connected-lifecycle-current-2.0-results.md).
-  Transport/metadata boundaries and intermittent original
-  movement-distance evidence remain open.
+  Reused XR prediction-state assertions pass; newest unchanged-public rerun
+  aborts at baseline shutdown, retained separately from its earlier clean run.
+  Transport/metadata boundaries and intermittent original movement-distance
+  evidence remain open.
 - F03: actual loaded SSQC/CSQC core numeric/name binding, permission discovery,
   simultaneous VM preservation and toggle/reload subset passes;
   [exact results and limits](qc-binding-current-qualification-2.0.md).

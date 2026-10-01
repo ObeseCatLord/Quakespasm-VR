@@ -66,8 +66,44 @@ before sampling. Structured desktop samples retain their already-observed
 vectors so future distance failures can be diagnosed without changing inputs
 or thresholds. The original intermittent distance outcome remains unresolved.
 
-This completes the private and unchanged-public native map/reset/disconnect/
-reused-slot vertical proofs only. Loss/reorder/split
+## Focused senior-review correction and affected reruns
+
+Verified local Astra xhigh identified missing post-replacement XR prediction
+state assertions. Main spot-checked and adopted the finding, reusing original
+prediction_sample/require_selected_prediction_state at replacement and final
+observation. The helper records real permission, authority, ACK and snapshot
+owner/state. [Review dispositions](connected-lifecycle-final-2.0-plan.md).
+
+The private-selected rerun passes all original/lifecycle checks, native client/
+server exits0 and four clean validation logs. Both new XR checkpoints have
+permissiontrue, authority2, snapshot valid with matching ACK38/108 and owner1.
+The retired/reused slot is selected dynamically, not assumed to be slot0.
+Mutual pose errors0.240/0units. Earlier detailed table describes the first
+accepted private run; this is the affected final-helper rerun.
+
+The public-selected rerun passes all original gameplay and reaches both new
+XR state assertions (permissiontrue, authority2, matching snapshotACK43/113
+and owner2), native map/retirement/reused-slot and renewed gameplay/received
+poses (0/0units). It then FAILS aggregate acceptance: unchanged public Desktop
+reports 'corrupted double-linked list' and SIGABRT during native quit. No normal
+exit is claimed for that client, remaining client/server shutdown is interrupted
+by owned-run cleanup. Four logs contain no VUID/synchronization hazards.
+This matches a previously documented untouched-baseline failure symptom, but
+this run does not establish the corruption owner/root cause. The read-only
+baseline is untouched. Do not call this newest public-selected run a full pass;
+retain the earlier public-ready normal-exit proof and this precisely narrower
+post-replacement state evidence separately.
+
+Private evidence: connected-lifecycle-current-private-selected and
+connected-lifecycle-current-public-selected, complete original/lifecycle JSON
+and native logs. Runner success alone omits validation acceptance; main's
+independent four-log inspection is the evidence for each stated clean run.
+The focused review found no further concrete helper/role/layout/reset/slot/
+input/quit assertion issue; it was not overall F10 signoff.
+
+This establishes the private and earlier unchanged-public native map/reset/
+disconnect/reused-slot vertical proofs and the stated post-replacement XR
+state boundaries. The newest unchanged-public full-shutdown rerun is failed. Loss/reorder/split
 snapshots, IPv6 and remaining metadata lifecycle/refusal boundaries remain
 F01 work. Packaged Linux/native ARM refresh and overall senior acceptance
 remain F10 work; no whole-F01 or whole-goal completion is claimed.
