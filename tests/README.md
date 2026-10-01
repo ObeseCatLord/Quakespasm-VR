@@ -46,7 +46,8 @@ External dispatch/resources are spies; no borrowed density image runs here.
 borrowed-view constructor/destructor. Valid maps, rejected second density view,
 missing later map, insufficient extent and absent maps check retained color
 views, optional failure latch, exact one-time owned-view retirement and repeated
-creation. Metadata and Vulkan dispatch are controlled; no real runtime images,
+creation. Every retained view is matched to its corresponding source image.
+Metadata and Vulkan dispatch are controlled; no real runtime images,
 allocation fault or render-pass/framebuffer claim.
 
 ```sh
@@ -61,6 +62,28 @@ Require exit0 and `OPENXR_IMAGE_VIEW_FAULT_PASSED`. Native color views remain
 until ordinary cleanup; error output handles are not owned. See the
 [finite plan](../docs/foveation-device-selection-final-2.0-plan.md) and
 [actual constructor results](../docs/foveation-image-view-current-2.0-results.md).
+
+`openxr_device_selection_fixture.c` invokes actual native `GL_InitDevice` with
+controlled discovery inputs, capturing its final device-create request before
+any driver sees invented capabilities. Seventeen cases cover FB eye/fixed
+preference, desktop readiness, individual missing capabilities, formats/MSAA/
+settings and no-family cases. Exact extension/feature/node assertions reject
+mixed families, leaked query nodes and unwanted feature bits; required desktop
+render-pass2 dependency is also checked. It does not create a Vulkan device or
+certify runtime density maps; QCOM offset input is used here.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Werror \
+  -ffunction-sections -fdata-sections tests/openxr_device_selection_fixture.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lvulkan -lm \
+  -o /tmp/qsvr-openxr-device-selection
+/tmp/qsvr-openxr-device-selection
+```
+
+Require exit0, all17 named cases and `OPENXR_DEVICE_SELECTION_PASSED`.
+Both new components reject `NDEBUG` because their checks require assertions.
+[Plan and official sources](../docs/foveation-device-selection-final-2.0-plan.md),
+[native selection results/limits](../docs/foveation-device-selection-current-2.0-results.md).
 See the [plan and recorded review](../docs/openxr-session-recovery-2.0-plan.md)
 for retained-binding boundaries and broader recovery work.
 See [current F06 recovery evidence](../docs/foveation-recovery-current-qualification-2.0.md)

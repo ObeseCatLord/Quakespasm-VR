@@ -107,10 +107,16 @@ receipts. These overlap intentionally; test shared boundaries once.
   remain open; no actual FB/META provider pass is claimed.
 - F06: actual native borrowed-view constructor/cleanup passes controlled valid,
   rejected-view, missing-map, insufficient-extent and absent-map cases, retaining
-  color views and retiring partial density views once;
+  color views and retiring partial density views once, with each retained view
+  matched to its corresponding borrowed image;
   [constructor results/limits](foveation-image-view-current-2.0-results.md).
   Allocation and render-pass/framebuffer faults plus protected output remain
-  distinct; device selection work is in progress.
+  distinct. Actual native device-create selection requests pass17 controlled
+  capability/settings cases, exact exclusive family/feature/node assertions
+  including required dependency and unwanted feature bits. Local Astra/xhigh
+  review completed; both strengthened components compile/run0;
+  [selection results/limits](foveation-device-selection-current-2.0-results.md).
+  This does not create a device or certify real FB/META runtime images.
 - F04/F05: signed XYZ/yaw/pitch/roll, composed camera at nonzero game yaw and
   native live Vulkan eye-mirror parallax/rotation pass. Local Astra found paused
   body-owned horizontal freeze; repaired8071a46b. Actual-source query/reset/

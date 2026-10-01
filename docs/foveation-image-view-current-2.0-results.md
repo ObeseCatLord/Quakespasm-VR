@@ -1,6 +1,6 @@
 # F06 actual optional density-view constructor results
 
-2026-10-01. No production edits.132-line main fixture reuses the existing
+2026-10-01. No production edits.148-line reviewed main fixture reuses the existing
 renderer fixture and actual gl_vidsdl.c GL_CreateXRImageViews/DestroyXRImageViews.
 Only the inherited destroy spy is conditionally replaced with a tracked spy;
 ordinary fixture behavior is unchanged. Controlled XR metadata and Vulkan
@@ -21,7 +21,11 @@ All cases retain ordinary color views until final native cleanup. Repeated
 constructor entry adds no metadata queries or views. Tracking accepts only
 successfully created handles, rejects duplicate/unowned destruction and requires
 all successful handles retired. Borrowed VkImages are not destroyed by the view
-owner. Source has no new resource manager/state machine or substituted policy.
+owner. Each retained color/density view is independently matched to its
+corresponding borrowed image through the successful create-call record; a view
+of a different recognized image cannot pass. Source has no new resource manager/
+state machine or substituted policy. Both new components reject NDEBUG builds
+because their acceptance checks require assertions.
 
 Before-code scope and official reference are in
 [the F06 selection/constructor plan](foveation-device-selection-final-2.0-plan.md).
@@ -35,8 +39,12 @@ qualification remain distinct F06 boundaries. No whole F06/F10 closure.
 
 Private evidence /tmp/qsvr-final-qualification-thchgzi8:
 foveation-device-current/image-view-fault;
-logs/foveation-image-view-current-{build,run}.log, both exit0. No assets, user
-settings, deployed server or main/reference changes. Focused final senior
-assessment of this result and device selection follows integration.
+logs/foveation-image-view-current-{build,run}.log, both exit0 before senior changes;
+foveation-device-current/image_view_fault-reviewed;
+logs/foveation-image_view_fault-reviewed-{build,run}.log, both exit0 after the
+source-image correspondence assertion. Local Astra/xhigh review completed;
+main verified effective routing, checked both findings and incorporated the
+minimal fixture corrections. [Senior disposition](foveation-device-final-2.0-review-brief.md#final-disposition).
+No assets, user settings, deployed server or main/reference changes.
 The unchanged normal renderer fixture also compiles/runs0 after its six guard
 lines, with OPENXR_ENABLE_PASSED; logs/foveation-enable-after-guards-{build,run}.log.

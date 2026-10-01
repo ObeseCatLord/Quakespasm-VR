@@ -89,3 +89,29 @@ non-subsampled support for this existing ordinary-image renderer route.
 provides paired image/extent; it does not expose format/layers/readiness in its
 returned struct. Selection/constructor fixtures do not attest to those runtime
 integration assumptions or target performance. No quad views are introduced.
+
+## Estimate reopened before acceptance
+
+Luna's first implementation is402 lines versus the360-line estimate. Main read
+the complete file: extra code is explicit case data and the required native
+query/create-boundary replies, not a copied GL_InitDevice selector, resource
+manager or new production state. Keep that reuse design; permit up to450 lines
+including main's independent-capability cases. Do not cosmetically compress code
+to satisfy a count or move policy into a new production helper for testing.
+
+Main found two format negatives lacked a complete positive FB candidate, so
+their expected KHR result could pass without the intended format rejection.
+Seed those from the working FB/offset/flags inputs and vary only RG8/layers.
+Similarly split unavailable eye, flags and offsets into individual mutations
+of the positive case. This changes assertions/evidence, not product policy.
+Perform these main integration corrections after coding handoff, before native
+execution. Reopen again if additional dependencies or wider rewrite appear.
+
+Final integration remains inside the reopened bounds: selection441 lines,
+constructor148 lines, reusable guards6 lines. Local Astra/xhigh found two
+assertion gaps; main strengthened feature/dependency checks and per-view source
+correspondence, then compiled/executed each affected component once successfully.
+No production change or architecture expansion. See the
+[final senior disposition](foveation-device-final-2.0-review-brief.md#final-disposition)
+and linked result receipts. This finishes this finite software qualification
+slice; it does not close the whole frozen F06/F10 owners.

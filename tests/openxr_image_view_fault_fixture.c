@@ -1,5 +1,8 @@
 /* Actual borrowed-view constructors with controlled metadata/Vulkan dispatch.
  * No driver, runtime image ownership, render-pass or framebuffer proof. */
+#ifdef NDEBUG
+#error "OpenXR view fixture requires assertions"
+#endif
 #define OPENXR_ENABLE_CUSTOM_IMAGE_VIEW_DESTROY
 #define main ImageViewInheritedFixtureMain
 #include "openxr_enable_fixture.c"
@@ -8,6 +11,7 @@
 viddef_t vid;
 static vrxr_vulkan_eye_t source_images[3];
 static VkImageView created_views[6], destroyed_views[6];
+static VkImage created_images[6];
 static unsigned created_count, destroyed_count, image_queries, create_calls;
 static int failed_density_index;
 
@@ -54,6 +58,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView (VkDevice device,
   }
   assert (created_count < countof (created_views));
   *out = (VkImageView)(uintptr_t)(301 + created_count);
+  created_images[created_count] = info->image;
   created_views[created_count++] = *out;
   return VK_SUCCESS;
  }
@@ -70,6 +75,14 @@ VKAPI_ATTR void VKAPI_CALL vkDestroyImageView (VkDevice device,
  assert (owned && destroyed_count < countof (destroyed_views));
  for (unsigned i = 0; i < destroyed_count; ++i) assert (destroyed_views[i] != view);
  destroyed_views[destroyed_count++] = view;
+}
+
+static VkImage view_source (VkImageView view)
+{
+ for (unsigned i = 0; i < created_count; ++i)
+  if (created_views[i] == view) return created_images[i];
+ assert (!"unknown retained image view");
+ return VK_NULL_HANDLE;
 }
 
 static void run_case (int failure)
@@ -95,12 +108,15 @@ static void run_case (int failure)
 
  GL_CreateXRImageViews ();
  assert (image_queries == 3 && openxr_image_count == 3 && openxr_image_views);
- for (int i = 0; i < 3; ++i) assert (openxr_image_views[i]);
+ for (int i = 0; i < 3; ++i)
+  assert (openxr_image_views[i] && view_source (openxr_image_views[i]) == source_images[i].image);
  if (!failure)
  {
   assert (openxr_density_image_views && !openxr_density_backend_failed);
   assert (created_count == 6 && destroyed_count == 0 && create_calls == 6);
-  for (int i = 0; i < 3; ++i) assert (openxr_density_image_views[i]);
+  for (int i = 0; i < 3; ++i)
+   assert (openxr_density_image_views[i] &&
+    view_source (openxr_density_image_views[i]) == source_images[i].density_image);
  }
  else
  {
