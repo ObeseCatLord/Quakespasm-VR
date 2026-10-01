@@ -117,9 +117,11 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
 - [ ] Stage complete dependency closure, explicitly seed executable-side OpenXR
   loader, normalize each ELF RUNPATH and preserve internal SONAME aliases;
   reject unresolved/conflicting/escaping dependencies and retain GLIBC<=2.39.
-  The oversized763-line draft is paused/unaccepted under the
-  [staging reopening brief](portable-linux-staging-reopen-2.0-brief.md); schema,
-  receipt and closure corrections require reviewed simplification before coding.
+  The oversized763-line draft remains unaccepted. The
+  [local Astra staging disposition](portable-linux-staging-reopen-2.0-review.md)
+  and updated [staging plan](portable-linux-staging-2.0-plan.md) are committed in
+  `0eb04c2a`; bounded Luna refinement of the schema, receipts and actual staged
+  dependency closure is in progress. Main source review is required before integration.
 - [ ] Include matching dependency notices, header/static contributions,
   versions/hashes/patches and source-access artifacts through existing owners.
 - [ ] Implement artifact verification at the shared staging owner.
