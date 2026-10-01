@@ -10,16 +10,22 @@ to migration-2.0.md remain untouched.
 Following that review, C07's draw phase was source-integrated in `1b5b2d84` and
 C14's optional extraction phase in `19e2c6b3`, producer in `3b80ac1a` and native
 consumers in `4179ef1e`. C19 staging/verification is source-integrated in
-`adee8d98`. **One implementation area now remains: C02.**
+`adee8d98`. C02's complete sender/control refinement is now source-integrated
+in `f3727a10`, following the final bounded reopening and main source review.
+**No established feature implementation gap remains in the reviewed scope.**
 None of these
 source receipts constitutes final executable acceptance.
 
 The [current local Astra xhigh review](final-checklist-current-2.0-review.md)
-reconciles all185 IDs and confirms that C02 is the only established unfinished
-implementation area. Exact unreviewed IDs: none. It independently checked recent
+reconciles all185 IDs and found C02 as the only established unfinished
+implementation area at its review snapshot. Exact unreviewed IDs: none.
+It independently checked recent
 source closures and the unaccepted846-line C02 draft, finding additional signon
 control-pressure and console persistence-flag gaps within C02. The full remaining
-subchecklist and main dispositions are in that review. All eight final software/
+subchecklist and main dispositions are in that historical review. Its remaining
+source obligations are now integrated; see the
+[final metadata integration receipt](metadata-publication-final-integration-2.0.md).
+All eight final software/
 delivery groups remain open; no final-tree executable acceptance is claimed.
 
 Read-only reference revalidation found one newer primary commit after canonical
@@ -39,7 +45,7 @@ The [earlier local Astra xhigh refresh](final-checklist-refresh-2.0-review.md)
 accounts for all185 IDs using the original review and current receipts, verifies
 challenged consumers, and confirmed **four remaining implementation areas at
 that review snapshot**. C07, C14 and C19 have since been source-integrated,
-leaving C02.
+leaving C02 at that snapshot; C02 is now source-integrated too.
 It found necessary C07/C14 refinements, not a fifth independent missing feature.
 Source integration and software acceptance remain separate.
 
@@ -48,9 +54,9 @@ baseline. Each missing behavior below belongs at an existing boundary, using
 the pinned primary/QSS-M reference where applicable. It is not a request for
 another renderer, VM, networking stack or movement solver.
 
-## Final remaining implementation checklist
+## Final source implementation checklist
 
-**C02 / NET-021 — server and player metadata publication**
+**C02 / NET-021 — source-integrated; final qualification pending**
 
 Receiver argc, nonnegative bounded scoreboard slots and terminated full
 replacement are source-integrated in `2a43c96b`, following the
@@ -61,13 +67,16 @@ Native enumeration and old/committed-value scratch buffers now match the existin
 8192-byte stores in `44592006`, following the
 [local-capacity plan](metadata-local-capacity-2.0-plan.md). This removes the local
 1023-byte prefix limitation; it does not certify sender framing or peer capacity.
-Publication/privacy/envelope work remains; these partial receipts do not close C02.
+Those partial receipts alone did not close C02. Complete publication/privacy/
+envelope and control work is now source-integrated in `f3727a10` (1011 changed
+lines in seven files, below BEFORE1300). Main source review and boundaries are
+recorded in the final integration receipt; no executable acceptance is claimed.
 
 - [x] Integrate explicit directional reader-capacity declaration at native pext;
   `68f8ec51` after main source review. Both ordinary/legacy replies, complete
   unsigned raw-token/pair validation, duplicate/malformed refusal and native
   connection/map offered-attribute lifetime are integrated (74 changed lines).
-- [ ] Implement complete recipient-envelope checks and visible permanent-oversize
+- [x] Implement complete recipient-envelope checks and visible permanent-oversize
   handling. The [local Astra reopening](metadata-capability-reopen-2.0-review.md),
   `c42cc32d`, resolves reader selection technically without an answer to the
   optional stock-peer question. The [capability slice](metadata-capability-2.0-plan.md)
@@ -81,44 +90,46 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   is resolved by the [live Astra disposition](metadata-live-admission-2.0-review.md)
   and updated coupled plan in `85db34e7`: complete control-sequence preflight,
   prospective committed values, visible pre-mutation refusal and no extra queue.
-  The seven-file Luna draft is stopped and unaccepted: the final handoff contains
+  The earlier seven-file Luna draft was stopped and unaccepted: its handoff contained
   846 added/deleted lines, beyond the BEFORE800 reopening boundary (the initial
   interruption snapshot was819). Main source review
   found missing ordered native overlay/companion preflight and connection dirty
   coverage. The current Astra review confirms those gaps and adds complete
-  prespawn/begin pressure handling and refusal-through-seta flags. Reopen the
-  bounded plan with these dispositions before coding resumes. That reopening is
-  now committed in `2f07022f`, [final refinement plan](metadata-publication-final-reopen-2.0-plan.md).
-  One fresh Luna xhigh worker is implementing the same seven-file region under
-  target1000–1200/reopen BEFORE1300; no sender source receipt or testing yet.
-- [ ] Honor explicit directional metadata support independently of PREDINFO,
+  prespawn/begin pressure handling and refusal-through-seta flags. The required
+  before-code reopening was committed in `2f07022f`,
+  [final refinement plan](metadata-publication-final-reopen-2.0-plan.md).
+  The fresh Luna xhigh refinement completed at1002 changed lines. Main read the
+  complete patch and integrated final native signon capacity/key-validation
+  corrections after the committed step13 amendment (`a1eef772`), producing1011
+  changed lines. Source-integrated `f3727a10`; testing remains pending.
+- [x] Honor explicit directional metadata support independently of PREDINFO,
   retaining the conservative legacy eligibility path. Ordinary public/private
   defaults already include PREDINFO; no default-profile exclusion is established.
-- [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
+- [x] Publish initial/empty serverinfo before signon2 and all current userinfo
   slots before signon3 using current stores and native reliable-buffer retry.
-- [ ] Preserve publication across mid-signon changes, map changes and spawn/
+- [x] Preserve publication across mid-signon changes, map changes and spawn/
   fastload buffer clears; deliver retired/empty or reused-current slot metadata.
-- [ ] Retire only after disconnect QC sees old state; keep current native name/
+- [x] Retire only after disconnect QC sees old state; keep current native name/
   colors after custom snapshots and retain native frags. Notify new/reused slot
   occupation even when QC intercepts ordinary name commands. Preflight canonical
   userinfo plus actual ordered name/topcolor/bottomcolor overlays, including
   intermediate stores, quoted binary names and complete companion byte counts.
-- [ ] Share public projection for full publication and compatible incremental
+- [x] Share public projection for full publication and compatible incremental
   reconstruction, including the cvar path; exclude
   private underscore keys, retain star keys and clear unrepresentable old values
   without silent1024-byte truncation or changes to local stores.
   The current Astra adaptation permits full current-store live publication;
   a separate incremental fast path or persistent change queue is unnecessary.
-- [ ] Complete initial client publication with one persistent native reliable
+- [x] Complete initial client publication with one persistent native reliable
   allocation, protocol-selected logical envelopes, complete command/reply
   preflight and native pending-reply retry. Reset logical limits on map/new
   connection/disconnect; retain empty-full and updates-only initialization.
   Larger staging does not enlarge reverse tokens or stock-QSS-M's userinfo store.
-  Connected live cvar/control framing gaps must be resolved or explicitly retained
-  as C02 findings before closing implementation.
-- [ ] Include prespawn and begin in complete client control admission/retry,
+  Connected live cvar/control framing is integrated at existing native owners;
+  final producer/parser and lifecycle qualification remains pending.
+- [x] Include prespawn and begin in complete client control admission/retry,
   preserving loading/name order without unchecked reliable-buffer appends.
-- [ ] Preserve the complete no-effects live-refusal guarantee through console
+- [x] Preserve the complete no-effects live-refusal guarantee through console
   wrappers, including seta archive/persistence flags, as well as cvar/default/
   VM/store/emitted-byte effects. Keep successful native behavior.
 - [x] Repair full/update receiver argc, bounded nonnegative slots and full-string
@@ -207,36 +218,36 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   retrieval preserves aliases; shared staging/verifier source is now integrated.
   Execute builders/wrapper/verifiers only in final qualification after implementation.
 
-C02's reader-selection and complete sender design are now reviewed technical
-decisions; the optional stock-peer question is not a prerequisite. C02 publication
-is the remaining implementation slice. Its live-admission decision is resolved,
-but the oversized draft remains unaccepted. Its reviewed, bounded refinement is
-active under the final reopening plan; C19 source integration awaits qualification.
+C02's reader-selection and complete sender design are reviewed technical
+decisions; the optional stock-peer question is not a prerequisite. The earlier
+oversized draft was superseded by the reviewed, bounded refinement in `f3727a10`.
+C02 and C19 source integration both await final software/artifact qualification.
 The detailed plans and review evidence below define their native integration seams.
 
 ## Original audit findings and source integrations
 
-The table below preserves the audit's 22 implementation findings. Twenty-one items
+The table below preserves the audit's 22 implementation findings. All22 items
 were subsequently source-integrated in the commits below, following committed
 before-code plans and main review of the Luna patches. Their executable
-acceptance remains pending. **One implementation item remains**: C02.
+acceptance remains pending. **No established source implementation item remains.**
 C07's native replay/camera phase is integrated in `3f8b398c` and its
 renderer/HUD phase in `1b5b2d84`. C14's three phases are integrated in
 `19e2c6b3` / `3b80ac1a` / `4179ef1e`. The shared Q01 rendering correction is also source-integrated;
 its rendered acceptance remains pending.
 No tests or builds have run since the audit.
-Each remaining slice needs a committed before-code plan, implementation/source
-review, then observable acceptance in the single end-of-implementation Linux/ARM
-qualification phase.
+Any required final software fix needs a bounded plan at its existing owner,
+implementation/source review and relevant observable acceptance in the single
+end-of-implementation Linux/ARM qualification phase.
 
 | Source-integrated since the audit | Plan / remaining acceptance |
 | --- | --- |
+| C02 — complete native metadata publication and control admission | [Final refinement plan](metadata-publication-final-reopen-2.0-plan.md), source commit `f3727a10` and [main receipt](metadata-publication-final-integration-2.0.md). Complete projected bundles, native overlays/companions, reliable pressure, signon ordering, slot lifecycle and live no-effects refusal are source-integrated. Actual sender/parser/QC, transport pressure, capacity and desktop-demo qualification remain pending. |
 | C19 — portable native Linux/ARM staging and verifier | [Refinement plan](portable-linux-staging-refinement-2.0-plan.md), source commit `adee8d98` and [main receipt](portable-linux-staging-integration-2.0.md). Main reviewed full closure, actual binary/source versions, exact deb/notice binding, independent original receipts, namespace/aliases/ABI and both OpenXR load contexts. Real native builds, relocated execution, source/notice/negative artifact qualification remain pending. |
 | C07 — optional native ACK presentation smoothing | [Smoothing plan](prediction-smoothing-2.0-plan.md); commits `3f8b398c` / `1b5b2d84`. Main checked native gameplay matrices retained, desktop bob/FOV and pointer/winding preserved, controller/paired beam near endpoints translated after trace with world impacts unchanged, controller HUD offset inherited once and non-controller target explicitly corrected. All final replay/rendered acceptance remains pending. |
 | C14 — inherited QBJ3 shotgun/back-wrench attachments | [Equipment plan](qbj3-equipment-2.0-plan.md); commits `19e2c6b3` / `3b80ac1a` / `4179ef1e`. Main checked model-owned optional extraction, source/target policy separation, copied staging context and immutable records, relative cache identity, native affine and conservative bound union, complete-pair raster/overlay/ShowTris/TLAS preflight, rolling skin fallback, zero-pose identity views and selected-body/no-muzzle optional miss. Ordinary Ranger/C13 source paths retained; all final installed-content/rendered/lifetime acceptance pending. |
 | C08/C09 — Toss support validity and elevator relink | [Physics plan](toss-support-elevator-2.0-plan.md); source commit `0d2c182c`. Final physics/content qualification pending. |
 | C22 — bounded classic-particle capacity and 32-bit quad indices | [Particle plan](classic-particle-capacity-2.0-plan.md); source commit `0d2c182c`. Final dense-particle rendered acceptance pending. |
-| C01/C03/C05 — late-model helper, ordinary QC metadata lookup, truthful protocol offers | [Networking plan](precache-infokey-protocol-2.0-plan.md); source commit `ab1423fb`. Final remote precache/QC/negotiation qualification pending. C02 publication is still separate. |
+| C01/C03/C05 — late-model helper, ordinary QC metadata lookup, truthful protocol offers | [Networking plan](precache-infokey-protocol-2.0-plan.md); source commit `ab1423fb`. Final remote precache/QC/negotiation qualification pending. C02's separate publication source receipt is recorded above. |
 | C15/C16/C17 — shared loop pause, reduced loop room send, inherited wet-monitor default | [Audio plan](spatial-loop-monitor-2.0-plan.md); source commit `ab1423fb`. Callback code/sample identity/generation/offset and independent mic permissions retained. Final software audio qualification pending. |
 | C04/C06 — loading nop and missing-model cancellation | [Loading/reconnect plan](loading-keepalive-reconnect-2.0-plan.md); source commit `486d1b42`. Main checked independent nop buffer preserves parser/reliable state and current true-to-abort cleanup. Newer-primary generic filename fallback is integrated in `c034a2f5`, following [its narrow plan](model-path-whitespace-2.0-plan.md). Final peer/loading/reconnect/filesystem/cache qualification pending. |
 | C10/C11 — sampled avatar root yaw and viewer eligibility | [Avatar plan](avatar-root-viewer-gate-2.0-plan.md); source commit `73bd354b`. Main checked immutable published yaw, preparation-time muzzle override and shared viewer/sender eligibility. Ordinary selected-avatar animation remains available without tracking. Final body/prop/muzzle/shadow and toggle acceptance pending. |
@@ -365,8 +376,11 @@ research; they were not blanket-approved implementation.
   snapshot classification and actual owner/evidence or exact question for every row.
   Older status/route columns remain historical, explicitly not proof.
 - [Final current senior disposition](final-checklist-current-2.0-review.md):
-  all185 IDs reconciled, exhaustive remaining C02 substeps, source-verified
-  refinements and the eight pending qualification/delivery groups.
+  all185 IDs reconciled, exhaustive C02 substeps at that review snapshot,
+  source-verified refinements and the eight pending qualification/delivery groups.
+- [Final metadata integration receipt](metadata-publication-final-integration-2.0.md):
+  closes those C02 source obligations in `f3727a10`; all executable acceptance
+  and final integration review remain open.
 - [Earlier senior refresh](final-checklist-refresh-2.0-review.md):
   historical four-area snapshot and source findings before their integrations.
 - [Senior-review dispositions](final-scope-senior-disposition-2.0.md): adopted,
@@ -377,10 +391,9 @@ research; they were not blanket-approved implementation.
   interface, preservation and history inventories plus legacy/native/research
   dispositions. Names and routes alone do not certify runtime semantics.
 
-Q01, C07, C10–C14, C18, C19 and C21 are source-integrated. Finish C02 at native
-metadata boundaries. Reuse reference
-code and write a bounded plan before each major slice. Then perform the one
+All22 original findings and Q01 are source-integrated. Perform the one
 consolidated Linux/ARM qualification phase above and review its final fixes.
+Reuse reference code and record a bounded plan before any required major fix.
 Source-present features should not be ported again.
 
 Official runtime/API evidence is retained in

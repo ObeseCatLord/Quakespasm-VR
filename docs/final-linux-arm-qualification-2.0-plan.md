@@ -191,6 +191,14 @@ empty/deleted value while preserving native cvar assignment semantics, rather th
 requiring requested and stored values to match. These are software correctness/
 ordering cases, not performance measurements or added demo features.
 
+Final C02 source integration (`f3727a10`) also requires actual native prespawn
+sender cases where signon bytes plus signon2 exactly fill an empty recipient
+envelope, where they temporarily cannot fit the remaining room, and where they
+permanently exceed that recipient's limit. Exact fit must progress, temporary
+pressure must drain/retry, and permanent incompatibility must fail visibly at
+the native recipient owner. Keep native signon storage and QC writers; no
+split-buffer rewrite or simulated-counter-only acceptance.
+
 The [C19 refinement plan](portable-linux-staging-refinement-2.0-plan.md) adds
 artifact cases on both native architectures from the same committed snapshot.
 Stage/verify the actual final dependency closure, then relocate into a disposable
