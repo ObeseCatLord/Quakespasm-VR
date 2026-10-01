@@ -106,3 +106,46 @@ One verified gpt-6-luna/xhigh worker owns the new native publication fixture,
 runner and bounded receipt only. It must exercise actual sender/parser owners
 and report phase/resource boundaries; older prepared-signon fixtures are not
 accepted as complete C02 lifecycle evidence. Result pending.
+
+## Completed bounded results and remaining failures
+
+Full preliminary host compilation/rebuild succeeded through `a1df3ffd`, including
+all generated shaders and native warnings-as-errors. Steam Audio remains disabled
+only in this preliminary host configuration; full enabled builds are required.
+
+The actual full-engine simulated-Monado/Vulkan run passed24 probes with zero
+validation errors/hazards and exit0. Native tasks/GPU lightmaps, stereo SSAO,
+OIT/MSAA/indirect variants, camera changes and firing were exercised. Main inspected
+initial rendered two-eye world/HUD output. Exact command/evidence/limits are in
+[the GPU receipt](final-openxr-gpu-qualification-2.0.md). No actual gaze/foveation
+or headset claim follows.
+
+Eighteen of19 standalone fixtures pass after six narrow test-only current-API
+adaptations, reviewed and integrated in `aacc54e9`. The broad controller input
+fixture still fails to link because its stubs are stale/incomplete. This is an
+unfinished verification case, not an established production feature omission.
+[Receipt and commands](standalone-vr-final-qualification-2.0.md) distinguish
+helper/spies, simulated dispatch, real headless creation and loaded rendering.
+
+Desktop rendered signon4 but reports Vulkan WRITE_AFTER_WRITE hazards; normal
+process quit aborts134 with allocator corruption. Independently built untouched
+vkQuake `4bc898f2` reproduces ten matching hazards and allocator corruption/
+exit134. Root-cause identity remains unproved. Both software acceptance defects
+remain open. The [focused Astra disposition](final-renderer-qualification-2.0-review.md)
+requires exact attachment/pass mapping and teardown localization before narrow
+fixes, preserving native renderer/lifetime owners.
+
+Third complete portable build attempt: same immutable `48e026e0` archive on
+local amd64 and isolated native Foundry arm64, including all prior source/recipe
+repairs. Builders are running; no staging/relocation or artifact acceptance yet.
+
+A substantive upstream merge rehearsal was executed in a disposable shared clone
+at `a1df3ffd`, merging pinned official `0d812138` (36 upstream commits since
+baseline). Fourteen files conflict. Actual hunk/adapter disposition documentation
+is unfinished, so maintainability acceptance remains open. No production branch
+or history was merged/rewritten.
+
+All results are partial acceptance within their named boundaries. The full
+eight-group final checklist remains open; feature source presence alone does
+not establish behavior. The refreshed senior checklist will reconcile these
+results without narrowing scope.

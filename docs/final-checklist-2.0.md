@@ -4,8 +4,9 @@
 2026-10-01. Original audited production snapshot: `2b420380`; refreshed against
 source integrations through `99eea1f0` and paused uncommitted C07/C14 patches.
 Both enumeration reviews changed documentation only; intervening source commits
-are listed below. No final-tree builds or tests have run. The user-owned changes
-to migration-2.0.md remain untouched.
+are listed below. Consolidated final qualification is now in progress; see the
+[results ledger](final-linux-arm-qualification-2.0-results.md). The user-owned
+changes to migration-2.0.md remain untouched.
 
 Following that review, C07's draw phase was source-integrated in `1b5b2d84` and
 C14's optional extraction phase in `19e2c6b3`, producer in `3b80ac1a` and native
@@ -25,8 +26,10 @@ control-pressure and console persistence-flag gaps within C02. The full remainin
 subchecklist and main dispositions are in that historical review. Its remaining
 source obligations are now integrated; see the
 [final metadata integration receipt](metadata-publication-final-integration-2.0.md).
-All eight final software/
-delivery groups remain open; no final-tree executable acceptance is claimed.
+All eight final software/delivery groups remain open in full scope. Some bounded
+current-tree executable cases now pass; no complete feature-group or artifact
+acceptance is claimed. Confirmed desktop validation/shutdown failures remain
+explicit, including their independently reproduced vkQuake baseline provenance.
 
 Read-only reference revalidation found one newer primary commit after canonical
 51b452c0:7acafa8b adds generic model-path trailing-whitespace fallback. That
@@ -192,7 +195,7 @@ recorded in the final integration receipt; no executable acceptance is claimed.
 - [x] Implement shared native builder using Meson installation and reused
   Steam Audio4.8.1 recipe with required SDL3, shaders, codecs and CURL enabled;
   `8059edb7`, including main source-derived compressed-input/SDK-prefix repairs.
-  No execution/build qualification yet.
+  Complete native build/artifact qualification is in progress, not accepted.
 - [x] Implement complete dependency staging, explicitly seed executable-side OpenXR
   loader, normalize each ELF RUNPATH and preserve internal SONAME aliases;
   reject unresolved/conflicting/escaping dependencies and retain GLIBC<=2.39.
@@ -234,7 +237,9 @@ C07's native replay/camera phase is integrated in `3f8b398c` and its
 renderer/HUD phase in `1b5b2d84`. C14's three phases are integrated in
 `19e2c6b3` / `3b80ac1a` / `4179ef1e`. The shared Q01 rendering correction is also source-integrated;
 its rendered acceptance remains pending.
-No tests or builds have run since the audit.
+The final qualification phase has started. Current host compilation, standalone
+fixtures and rendered simulated-OpenXR results, plus failures and limits, are
+recorded in the results ledger; historical audit receipts remain source-only.
 Any required final software fix needs a bounded plan at its existing owner,
 implementation/source review and relevant observable acceptance in the single
 end-of-implementation Linux/ARM qualification phase.
