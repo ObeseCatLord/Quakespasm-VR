@@ -36,10 +36,22 @@ found generic mj4m1 two-edge face compatibility repairs in `92bc7775`/`56e592ce`
 The affected native map load/render/screenshot/normal-exit run passed through29129513
 with clean validation and no heapsize workaround. A native metadata negative trial
 crash is localized to the fixture's unarmed host longjmp boundary; it requires a
-proper host-frame test, not a production drop rewrite. Broad controller-input fixture linkage
-is unfinished verification; equivalent native-input evidence may replace it.
+proper host-frame test, not a production drop rewrite (historical diagnosis;
+the follow-up below now supplies that bounded case). Broad controller-input fixture
+linkage was unfinished at this snapshot and is repaired in the follow-up below.
 The complete remaining scope is the eight groups below, with exact cases in
 the qualification plan and partial results in the ledger.
+
+Current follow-up: f074a570 arms the native host abort boundary and all six
+metadata cases pass, including real permanent-limit drop/disconnect/shutdown.
+9a2d2e18 repairs the last controller fixture; all19 standalone fixtures now pass
+within their recorded boundaries. Current native desktop shib1_drake, tavistock
+and ad_tears load/render/normal-exit runs passed alongside mj4m1; see the
+[large-map receipt](large-map-native-qualification-2.0.md). Full Linux enabled
+build from immutableff83e66a exited0 and staging is in progress; native ARM from
+the same archive is still building. Previous55eaa33b Linux candidate verification,
+two relocated OpenXR loader contexts and four integrity-negative refusals passed;
+those do not qualify the final newer artifact. All eight full groups remain open.
 
 Already established bounded results: full preliminary host compilation,18 of19
 standalone fixtures, and actual simulated-OpenXR24-probe rendering with clean
