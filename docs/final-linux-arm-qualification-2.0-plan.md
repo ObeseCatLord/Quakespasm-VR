@@ -74,6 +74,18 @@ message-angle branches, tagentity, EF_ROTATE, absent movement history, local and
 remote identities and viewmodels. Native non-alias dispatch and the non-tracked
 TLAS pitch convention stay unchanged. Rendered agreement remains unqualified.
 
+The [optional VRIK/voice capability retry](optional-capability-retry-2.0-plan.md)
+requires actual offer parsing, successive `CL_SendCmd` frames, native reliable
+draining and server capability consumption. Cover full buffers, exact12/13-byte
+capacity versus one byte short, one reply fitting while the other remains
+pending, `NET_CanSendMessage` false, malformed/unsupported exact tokens and first
+supported choices including pending2 followed by4. Pending offers must not
+activate send/receive admission; successful complete enqueue retains native
+unreliable-before-reliable ordering without a new ACK gate. Map/disconnect must
+retire intent. Native desktop playback must latch without writes even when its
+live buffer is unusable. Invalid/overflowed live buffers retain intent; this
+repair does not claim a new general buffer-recovery implementation.
+
 The inherited aim source repairs add focused cases to the VR movement and
 presentation row: deadzone 0/70/out-of-range/nonfinite and unchanged valid
 fractional values; controller-to-head/mouse/blended history with unavailable

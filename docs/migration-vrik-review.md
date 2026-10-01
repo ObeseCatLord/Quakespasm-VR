@@ -21,6 +21,10 @@ records the repair and source-review disposition; pending offer intent must not
 activate pose/voice sending or receive admission. Complete enqueue remains the
 existing meaning of cap-sent, not delivery/ACK. Generic predictive movement,
 packet clocks, server generation policy and native reliable machinery are reused.
+Repair `b5bd74ea` now retains the first supported offer and retries through
+`CL_SendCmd`, committing active state only after complete enqueue or the existing
+playback latch. Main full-diff inspection and final requested-Astra bounded
+source review found no P1/P2 blocker; executable negotiation remains pending.
 
 Final isolated Linux/ARM qualification still needs actual negotiated native
 round trips, packet capacity/reorder/loss, source retirement/slot reuse, map and

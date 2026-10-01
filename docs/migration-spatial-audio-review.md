@@ -73,3 +73,11 @@ Final Linux/ARM qualification still needs actual transport-to-jitter-to-playback
 coverage, loss/reorder/wrap and END/stale handling, mute/gain changes, slot and
 generation replacement, real serverinfo map clearing and capture resumption.
 No tests, builds, compiler checks or runtime probes were performed in this pass.
+
+The companion [optional capability retry](optional-capability-retry-2.0-plan.md)
+repairs consumed voice offers when the native reliable buffer is full in
+`b5bd74ea`. Pending voice intent stays separate from active receive/transmit
+admission; the existing client send loop retries the complete reply independently
+of VRIK. Existing reset owners retire it. Main and the final requested-Astra
+bounded source review found no P1/P2 blocker. Actual negotiation, mixed-peer
+budgets and capture/playback qualification remain deferred.

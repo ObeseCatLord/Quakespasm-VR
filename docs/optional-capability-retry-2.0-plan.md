@@ -95,3 +95,21 @@ model/runtime evidence; no executable or full-goal signoff is claimed.
 No human decision blocks the bounded repair. The two existing offer grammars,
 native reliable sender, avatar retry order and separate movement profiles are
 preserved. Implementation remains within the stated three-file contract.
+
+## Source integration and bounded review
+
+Implemented `b5bd74ea` after committed plan/disposition `b6da7846`: 73 added,
+39 removed production lines in the three owned files. The delegated worker
+extracted the replies beside the existing parsers and added independent retry
+calls to native `CL_SendCmd`. Existing reset functions retire pending intent;
+no reset caller, sender, wire message or acknowledgment barrier was added.
+Main inspected the complete patch, exact byte budgets, grammar, lifecycle and
+send ordering. Scoped diff hygiene passes.
+
+The final requested local Astra xhigh source review found no P1/P2 blocker in
+this bounded patch: signed-size guards precede capacity subtraction, active
+fields commit after complete enqueue, first-supported pending choice is frozen,
+and playback preserves no-write latching. Main confirmed these claims against
+the full diff. Effective reviewer settings remain uncertified. No compiler,
+build, test, fixture or runtime probe ran; actual negotiation round trips and
+native buffer recovery remain final Linux/ARM qualification, not source proof.
