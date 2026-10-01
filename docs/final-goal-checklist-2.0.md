@@ -105,6 +105,12 @@ receipts. These overlap intentionally; test shared boundaries once.
   [Exact recovery results and limits](foveation-recovery-current-qualification-2.0.md).
   Capability/selection, protected GPU output and constructor-failure distinctions
   remain open; no actual FB/META provider pass is claimed.
+- F06: actual native borrowed-view constructor/cleanup passes controlled valid,
+  rejected-view, missing-map, insufficient-extent and absent-map cases, retaining
+  color views and retiring partial density views once;
+  [constructor results/limits](foveation-image-view-current-2.0-results.md).
+  Allocation and render-pass/framebuffer faults plus protected output remain
+  distinct; device selection work is in progress.
 - F04/F05: signed XYZ/yaw/pitch/roll, composed camera at nonzero game yaw and
   native live Vulkan eye-mirror parallax/rotation pass. Local Astra found paused
   body-owned horizontal freeze; repaired8071a46b. Actual-source query/reset/

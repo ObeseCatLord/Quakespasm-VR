@@ -19,7 +19,9 @@ static vrxr_stop_reason_t abort_stop, detach_stop;
 static void (*retire_callback)(void *);
 atomic_uint32_t num_vulkan_misc_allocations;
 int Cmd_Argc (void) { return 2; }
+#ifndef OPENXR_DEVICE_SELECTION_CUSTOM_SPIES
 int COM_CheckParm (const char *argument) { assert (!strcmp (argument, "-novr")); return novr; }
+#endif
 const char *Cmd_Argv (int argument) { assert (argument == 1); return enable_argument; }
 void Con_Printf (const char *format, ...) { (void)format; ++messages; }
 vrxr_stop_reason_t VRXR_StopReason (void) { return stop_reason; }
@@ -33,9 +35,11 @@ int VRXR_AdoptVulkan (void (*log)(const char *), VkInstance instance, VkPhysical
 }
 int VRXR_SetVulkanQueueCallbacks (void (*lock)(void *), void (*unlock)(void *), void *owner)
 { assert (lock == GL_OpenXRLockQueue && unlock == GL_OpenXRUnlockQueue && owner == vulkan_globals.queue_mutex); ++registrations; return 1; }
+#ifndef OPENXR_DEVICE_SELECTION_CUSTOM_SPIES
 int VRXR_VulkanFoveationSupported (void) { return runtime_fb_supported; }
 int VRXR_VulkanFoveationEyeSupported (void) { return 0; }
 int VRXR_VulkanSwapchainImageFlagsSupported (void) { return 0; }
+#endif
 int VRXR_AttachVulkan (uint32_t family, uint32_t index, VkImageUsageFlags usage,
  uint32_t layers, void (*retire)(void *), void *owner, int density, VkImageCreateFlags flags)
 {
@@ -90,8 +94,10 @@ void R_FreeVulkanMemory (vulkan_memory_t *memory, atomic_uint32_t *count)
 void Mem_Free (const void *memory) { free ((void *)memory); }
 VKAPI_ATTR void VKAPI_CALL vkDestroyImage (VkDevice device, VkImage image, const VkAllocationCallbacks *allocator)
 { (void)device; (void)allocator; assert (!image); }
+#ifndef OPENXR_ENABLE_CUSTOM_IMAGE_VIEW_DESTROY
 VKAPI_ATTR void VKAPI_CALL vkDestroyImageView (VkDevice device, VkImageView view, const VkAllocationCallbacks *allocator)
 { (void)device; (void)allocator; assert (!view); }
+#endif
 
 static void preparation_cases (void)
 {

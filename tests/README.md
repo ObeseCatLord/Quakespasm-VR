@@ -41,6 +41,26 @@ paired density offsets, off requests after failure/missing views, fresh input
 release before terminal-abort retirement, stop-reason/ineligible-binding refusal,
 and one ordinary attachment (including rejected attachment/desktop dimensions).
 External dispatch/resources are spies; no borrowed density image runs here.
+
+`openxr_image_view_fault_fixture.c` reuses that fixture and invokes the native
+borrowed-view constructor/destructor. Valid maps, rejected second density view,
+missing later map, insufficient extent and absent maps check retained color
+views, optional failure latch, exact one-time owned-view retirement and repeated
+creation. Metadata and Vulkan dispatch are controlled; no real runtime images,
+allocation fault or render-pass/framebuffer claim.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Werror \
+  -ffunction-sections -fdata-sections tests/openxr_image_view_fault_fixture.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lvulkan -lm \
+  -o /tmp/qsvr-openxr-image-view-fault
+/tmp/qsvr-openxr-image-view-fault
+```
+
+Require exit0 and `OPENXR_IMAGE_VIEW_FAULT_PASSED`. Native color views remain
+until ordinary cleanup; error output handles are not owned. See the
+[finite plan](../docs/foveation-device-selection-final-2.0-plan.md) and
+[actual constructor results](../docs/foveation-image-view-current-2.0-results.md).
 See the [plan and recorded review](../docs/openxr-session-recovery-2.0-plan.md)
 for retained-binding boundaries and broader recovery work.
 See [current F06 recovery evidence](../docs/foveation-recovery-current-qualification-2.0.md)
