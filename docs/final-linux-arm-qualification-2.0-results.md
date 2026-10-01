@@ -1,5 +1,26 @@
 # Final Linux/ARM qualification ledger
 
+## Current completed follow-up
+
+Full native Linux/ARM build obligation (group1) is complete for immutableff83e66a;
+all308 tracked production files match the current worktree. Both current packages
+verify45 ELF/651 inventory entries/118 contributors. ARM retrieval was recovered
+from the existing verified archive after the local storage failure; native ARM
+dedicated launch loads/exits successfully. Relocated packaged Linux desktop and
+24-probe actual simulated-XR runs pass clean validation/normal exit, both OpenXR
+loader contexts load, four integrity negatives refuse. Exact claims/limits/hashes
+and failures are in [current portable evidence](portable-current-qualification-2.0.md).
+
+All19 standalone fixtures now pass their documented boundaries; six native
+metadata cases include permanent-limit native drop/disconnect/host shutdown.
+Four current mixed-network profiles pass after native frame-owner reuse and
+test-only co-op timing/inventory/phase-order repairs; [network receipt](mixed-network-current-qualification-2.0.md).
+Native initial shib1_drake/tavistock/ad_tears load/render/normal-exit passes join
+mj4m1, without heapsize arguments; [large-map receipt](large-map-native-qualification-2.0.md).
+
+Groups2–8 remain open at full scope; no new source-feature gap established.
+The chronological paragraphs below retain their historical failure/scope limits.
+
 2026-10-01. In progress; goal remains incomplete. Source entry snapshot
 `8e48f41c9932a5475c1228b9143e80c01bccbb07`, immutable git archive. Final checklist
 and all185 feature dispositions remain authoritative; narrow results below do

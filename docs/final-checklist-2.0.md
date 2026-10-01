@@ -8,6 +8,16 @@ are listed below. Consolidated final qualification is now in progress; see the
 [results ledger](final-linux-arm-qualification-2.0-results.md). The user-owned
 changes to migration-2.0.md remain untouched.
 
+**Current qualification update:** full Linux/ARM native builds (group1) are now
+complete from immutableff83e66a, whose308 tracked production files match the
+current worktree. Both45-ELF packages pass verification; the packaged Linux
+desktop and24-probe actual simulated-XR cases pass, and the packaged ARM dedicated
+mode loads/exits successfully. See [current portable evidence](portable-current-qualification-2.0.md).
+The four native mixed-network profiles also pass after bounded test-only repairs;
+see [their receipt](mixed-network-current-qualification-2.0.md). Groups2–8 remain
+open at their full scope. Earlier eight-open snapshots below are historical;
+no additional missing source feature has been established.
+
 Following that review, C07's draw phase was source-integrated in `1b5b2d84` and
 C14's optional extraction phase in `19e2c6b3`, producer in `3b80ac1a` and native
 consumers in `4179ef1e`. C19 staging/verification is source-integrated in
