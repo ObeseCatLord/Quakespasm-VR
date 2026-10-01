@@ -319,6 +319,28 @@ benchmark is required.
 
 ## Exit and final review
 
+Upstream rehearsal source evidence (2026-10-01, read-only git ls-remote plus
+official GitHub commit/compare API): Novum/vkQuake HEAD is
+0d8121387e4c988951d2d58952793fa2482ef290,36 commits ahead of the pinned base
+4bc898f29073e8aa41069f0e79e3cb5a9eb73afa, with that base as merge base. The
+cached web commit listing was older; use an immutable fetched object in the
+later disposable rehearsal rather than treating the cached listing as HEAD.
+No fetch/merge/rehearsal has been performed in the production checkout.
+
+This is a substantive candidate: changes intersect SSAO code/shaders, native
+signon/QC writers, save owners, input/UI, textures and renderer resources. In
+particular [upstream signon splitting](https://github.com/Novum/vkQuake/commit/57aa6f69b1f192a3dec68e07cb7436e5d9519c77)
+changes the native server signon storage and several QC writers, beyond C02's
+seven-file publication slice; do not improvise that port inside the active
+worker. [Current upstream low-quality AO](https://github.com/Novum/vkQuake/commit/0d8121387e4c988951d2d58952793fa2482ef290)
+changes depth-aware half-resolution evaluation. Rehearsal must document actual
+conflict/resolution owners and preserve the shared quality setting with native
+desktop versus stereo VR implementations, rather than claiming maintainability
+from a clean cherry-pick of an unrelated file. New upstream features are not
+silently added to the185-row frozen migration scope. Record any required
+compatibility defect against its existing acceptance owner and resolve it before
+completion; production integration requires its own bounded plan.
+
 Record exact source revision, build options, platform, selected cases, results
 and coverage limits per requirement. Correct failures at native owners, then
 rerun affected coverage; do not repeatedly broaden green testing without cause.
