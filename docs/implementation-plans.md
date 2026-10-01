@@ -2,7 +2,8 @@
 
 [C18 combined-build/component notices](license-install-2.0-plan.md) restores the
 inherited notices through native Meson installation and the Nix source closure.
-Portable artifact bundling remains the separate C19 slice.
+Source-integrated in `fb0f41d9` / `3adf25fb`, with source-copy provenance checked;
+installed acceptance remains pending. Portable artifact bundling remains C19.
 
 [C12 QBJ3 live-avatar admission](qbj3-live-avatar-2.0-plan.md) reuses the inherited
 strict frame/selection contract at the native staged palette, raster and BLAS
@@ -12,6 +13,9 @@ owners with one bounded frame list and native per-entity animation. C14 optional
 equipment remains separate.
 [C21 native GPU diagnostic availability](gpu-diagnostic-validity-2.0-plan.md)
 retains existing queries and adds truthful validity and sampled stereo labels.
+Source-integrated in `d659894c` after main review; timing/status qualification
+remains pending. C07 has a [native ACK smoothing review brief](prediction-smoothing-2.0-brief.md),
+not an implementation plan yet; review is checking coherent draw-only VR output.
 
 Committed correction plans:
 [C01/C03/C05 native networking](precache-infokey-protocol-2.0-plan.md) and
