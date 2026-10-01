@@ -83,11 +83,14 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   prospective committed values, visible pre-mutation refusal and no extra queue.
   The seven-file Luna draft is stopped and unaccepted: the final handoff contains
   846 added/deleted lines, beyond the BEFORE800 reopening boundary (the initial
-  interruption snapshot was819). No worker remains active. Main source review
+  interruption snapshot was819). Main source review
   found missing ordered native overlay/companion preflight and connection dirty
   coverage. The current Astra review confirms those gaps and adds complete
   prespawn/begin pressure handling and refusal-through-seta flags. Reopen the
-  bounded plan with these dispositions before coding resumes. No sender receipt yet.
+  bounded plan with these dispositions before coding resumes. That reopening is
+  now committed in `2f07022f`, [final refinement plan](metadata-publication-final-reopen-2.0-plan.md).
+  One fresh Luna xhigh worker is implementing the same seven-file region under
+  target1000–1200/reopen BEFORE1300; no sender source receipt or testing yet.
 - [ ] Honor explicit directional metadata support independently of PREDINFO,
   retaining the conservative legacy eligibility path. Ordinary public/private
   defaults already include PREDINFO; no default-profile exclusion is established.
@@ -207,8 +210,8 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
 C02's reader-selection and complete sender design are now reviewed technical
 decisions; the optional stock-peer question is not a prerequisite. C02 publication
 is the remaining implementation slice. Its live-admission decision is resolved,
-but the oversized draft remains stopped for source/design review; C19 source
-integration awaits final qualification.
+but the oversized draft remains unaccepted. Its reviewed, bounded refinement is
+active under the final reopening plan; C19 source integration awaits qualification.
 The detailed plans and review evidence below define their native integration seams.
 
 ## Original audit findings and source integrations
