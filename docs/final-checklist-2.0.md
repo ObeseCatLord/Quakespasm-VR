@@ -18,9 +18,19 @@ another renderer, VM, networking stack or movement solver.
 
 ## Confirmed implementation work
 
-All 22 rows below remain open. Each row needs a small before-code plan,
-implementation/source review, then its observable acceptance in the single
-end-of-implementation Linux/ARM qualification phase.
+The table below preserves the audit's 22 implementation findings. C08, C09 and
+C22 were subsequently source-integrated in `0d2c182c`, following committed
+before-code plans and main review of the Luna patches. Their executable
+acceptance remains pending. **19 implementation items remain**, plus the Q01
+rendering correction assessed below. No tests or builds have run since the audit.
+Each remaining slice needs a committed before-code plan, implementation/source
+review, then observable acceptance in the single end-of-implementation Linux/ARM
+qualification phase.
+
+| Source-integrated since the audit | Plan / remaining acceptance |
+| --- | --- |
+| C08/C09 — Toss support validity and elevator relink | [Physics plan](toss-support-elevator-2.0-plan.md); source commit `0d2c182c`. Final physics/content qualification pending. |
+| C22 — bounded classic-particle capacity and 32-bit quad indices | [Particle plan](classic-particle-capacity-2.0-plan.md); source commit `0d2c182c`. Final dense-particle rendered acceptance pending. |
 
 | Item | Feature IDs | Missing behavior and smallest implementation seam | Source evidence / eventual observable acceptance |
 | --- | --- | --- | --- |
@@ -49,14 +59,23 @@ end-of-implementation Linux/ARM qualification phase.
 
 ## One remaining design task
 
-**Q01 — XR-011/PERF-021:** determine the minimal correct non-OIT stereo
-transparency/water-boundary behavior, or show the existing consumers suffice.
+**Q01 — XR-011/PERF-021:** implement the senior-assessed minimal non-OIT stereo
+transparency/water-boundary correction after committing its before-code plan.
 Current gl_rmain.c:2345–2465 sorts from one origin and partitions water from the
 center leaf; gl_rmisc.c:114 bypasses sorting under OIT, but OIT-off remains
 allowed. Primary deliberately shares alpha-sort origin, so shared sorting alone
 is not a demonstrated regression. Compare native/primary behavior before
 planning a narrow per-eye exception. Preserve opaque single-pass stereo; do not
 force OIT or create another sorter simply to close the row.
+
+The subsequent [Astra design disposition](stereo-water-transparency-2.0-review.md)
+adopts per-eye category participation in the existing alpha stages, retaining
+the 160-byte stereo uniform layout, shared sorting and opaque single-pass stereo.
+Exceptional recording must be serialized to avoid duplicate entity cache writes;
+repeated local-pitch mutation and persistent context reset must be addressed at
+their existing owners. This is a reviewed design, not implemented or rendered
+acceptance. The original crosswalk Q classifications remain the frozen audit
+snapshot, not a claim that the design is still undecided.
 
 All input, weapon, tracker, UI, base, co-op and platform rows now have explicit
 source dispositions. Their software qualification remains required. No separate

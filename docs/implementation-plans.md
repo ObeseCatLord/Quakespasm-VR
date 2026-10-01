@@ -3,6 +3,9 @@
 Final-checklist correction slices planned before implementation:
 [Toss/elevator C08–C09](toss-support-elevator-2.0-plan.md) and
 [classic-particle capacity C22](classic-particle-capacity-2.0-plan.md).
+These three items are source-integrated in `0d2c182c`; final qualification is
+pending. The [Q01 senior design disposition](stereo-water-transparency-2.0-review.md)
+must be translated into a committed before-code plan before renderer changes.
 
 The [final senior-reviewed checklist](final-checklist-2.0.md) enumerates the
 remaining implementation and design work. Plan each major slice before coding,
