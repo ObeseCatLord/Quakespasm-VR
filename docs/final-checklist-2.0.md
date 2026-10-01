@@ -9,7 +9,8 @@ to migration-2.0.md remain untouched.
 
 Following that review, C07's draw phase was source-integrated in `1b5b2d84` and
 C14's optional extraction phase in `19e2c6b3`, producer in `3b80ac1a` and native
-consumers in `4179ef1e`. **Two implementation areas now remain: C02 and C19.**
+consumers in `4179ef1e`. C19 staging/verification is source-integrated in
+`adee8d98`. **One implementation area now remains: C02.**
 None of these
 source receipts constitutes final executable acceptance.
 
@@ -22,7 +23,8 @@ below; no row remains unreviewed.
 The [current local Astra xhigh refresh](final-checklist-refresh-2.0-review.md)
 accounts for all185 IDs using the original review and current receipts, verifies
 challenged consumers, and confirmed **four remaining implementation areas at
-that review snapshot**. C07 and C14 have since been source-integrated, leaving two.
+that review snapshot**. C07, C14 and C19 have since been source-integrated,
+leaving C02.
 It found necessary C07/C14 refinements, not a fifth independent missing feature.
 Source integration and software acceptance remain separate.
 
@@ -61,8 +63,11 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   dirty obligations and the native spawn-drain phase. Luna stopped with zero
   edits under step11 after confirming live reverse publication lacks a retry
   owner. The [narrow reopening](metadata-live-admission-2.0-brief.md), `0b02269e`,
-  resolves that native admission seam before restarting coding; local Astra
-  review is active. No sender source receipt yet.
+  is resolved by the [live Astra disposition](metadata-live-admission-2.0-review.md)
+  and updated coupled plan in `85db34e7`: complete control-sequence preflight,
+  prospective committed values, visible pre-mutation refusal and no extra queue.
+  Fresh Luna coding is active in the seven-file region, target550–750/reopen
+  BEFORE800/new owner. No sender source receipt yet.
 - [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
   slots before signon3 using current stores and native reliable-buffer retry.
 - [ ] Preserve publication across mid-signon changes, map changes and spawn/
@@ -129,7 +134,7 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   Main source-reviewed complete-count/matrix/shade/inflation/AS preflight and
   conditional draw/emission. Rendered/software acceptance remains required.
 
-**C19 / PLAT-003 — portable Linux x86-64 and native ARM64 release artifacts**
+**C19 / PLAT-003 — source-integrated; Linux/ARM artifact qualification pending**
 
 - [x] Select exact SDK/tool/dependency pins and flags, portable ISA, OpenXR
   JsonCpp/system configuration-prefix choices and explicit host/bundled SONAME
@@ -140,40 +145,43 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   Steam Audio4.8.1 recipe with required SDL3, shaders, codecs and CURL enabled;
   `8059edb7`, including main source-derived compressed-input/SDK-prefix repairs.
   No execution/build qualification yet.
-- [ ] Stage complete dependency closure, explicitly seed executable-side OpenXR
+- [x] Implement complete dependency staging, explicitly seed executable-side OpenXR
   loader, normalize each ELF RUNPATH and preserve internal SONAME aliases;
   reject unresolved/conflicting/escaping dependencies and retain GLIBC<=2.39.
-  The oversized763-line draft remains unaccepted. The
+  Earlier oversized763-line draft was unaccepted. The
   [local Astra staging disposition](portable-linux-staging-reopen-2.0-review.md)
   and updated [staging plan](portable-linux-staging-2.0-plan.md) are committed in
   `0eb04c2a`. The returned refinement also exceeded its bound (973+41 lines) and
-  remains paused/unaccepted. The [second reopening](portable-linux-staging-second-reopen-2.0-brief.md),
+  was paused/unaccepted. The [second reopening](portable-linux-staging-second-reopen-2.0-brief.md),
   `9c3a1570`, records main-verified version/ownership/notice/duplication defects.
   The [second Astra disposition](portable-linux-staging-second-reopen-2.0-review.md)
   and [bounded refinement](portable-linux-staging-refinement-2.0-plan.md),
-  `238898d6`, are committed; in-place Luna refinement is active. This keeps exact
-  deb-byte binding, independent original receipts and both OpenXR load contexts.
-  No artifact acceptance yet.
-- [ ] Include matching dependency notices, header/static contributions,
+  `238898d6`, governed the returned in-place Luna refinement. Main reviewed and
+  corrected its original-source additions/shared-doc ownership handling, regular
+  member extraction and schema guard. Source-integrated in `adee8d98`; the
+  [integration receipt](portable-linux-staging-integration-2.0.md) records complete
+  source checks and1049 combined lines, below1050. Exact deb binding, independent
+  original receipts and both OpenXR load contexts retained. No artifact acceptance.
+- [x] Implement matching dependency notices, header/static contributions,
   versions/hashes/patches and source-access artifacts through existing owners.
-- [ ] Implement artifact verification at the shared staging owner.
+- [x] Implement artifact verification at the shared staging owner; `adee8d98`.
 - [x] Implement isolated source-in/results-out Foundry transport for one immutable
   snapshot, without modifying the deployed server; `2785feb9`. Tar/checksum
-  retrieval preserves aliases; depends on the unfinished staging/verifier slice.
+  retrieval preserves aliases; shared staging/verifier source is now integrated.
   Execute builders/wrapper/verifiers only in final qualification after implementation.
 
 C02's reader-selection and complete sender design are now reviewed technical
 decisions; the optional stock-peer question is not a prerequisite. C02 publication
-and C19 staging are the two remaining disjoint implementation slices. C02 coding
-is paused for its live-admission disposition; C19 Luna refinement remains active.
+is the remaining implementation slice. Its live-admission decision is resolved
+and fresh Luna coding is active; C19 source integration awaits final qualification.
 The detailed plans and review evidence below define their native integration seams.
 
 ## Original audit findings and source integrations
 
-The table below preserves the audit's 22 implementation findings. Twenty items
+The table below preserves the audit's 22 implementation findings. Twenty-one items
 were subsequently source-integrated in the commits below, following committed
 before-code plans and main review of the Luna patches. Their executable
-acceptance remains pending. **Two implementation items remain**: C02 and C19.
+acceptance remains pending. **One implementation item remains**: C02.
 C07's native replay/camera phase is integrated in `3f8b398c` and its
 renderer/HUD phase in `1b5b2d84`. C14's three phases are integrated in
 `19e2c6b3` / `3b80ac1a` / `4179ef1e`. The shared Q01 rendering correction is also source-integrated;
@@ -185,6 +193,7 @@ qualification phase.
 
 | Source-integrated since the audit | Plan / remaining acceptance |
 | --- | --- |
+| C19 — portable native Linux/ARM staging and verifier | [Refinement plan](portable-linux-staging-refinement-2.0-plan.md), source commit `adee8d98` and [main receipt](portable-linux-staging-integration-2.0.md). Main reviewed full closure, actual binary/source versions, exact deb/notice binding, independent original receipts, namespace/aliases/ABI and both OpenXR load contexts. Real native builds, relocated execution, source/notice/negative artifact qualification remain pending. |
 | C07 — optional native ACK presentation smoothing | [Smoothing plan](prediction-smoothing-2.0-plan.md); commits `3f8b398c` / `1b5b2d84`. Main checked native gameplay matrices retained, desktop bob/FOV and pointer/winding preserved, controller/paired beam near endpoints translated after trace with world impacts unchanged, controller HUD offset inherited once and non-controller target explicitly corrected. All final replay/rendered acceptance remains pending. |
 | C14 — inherited QBJ3 shotgun/back-wrench attachments | [Equipment plan](qbj3-equipment-2.0-plan.md); commits `19e2c6b3` / `3b80ac1a` / `4179ef1e`. Main checked model-owned optional extraction, source/target policy separation, copied staging context and immutable records, relative cache identity, native affine and conservative bound union, complete-pair raster/overlay/ShowTris/TLAS preflight, rolling skin fallback, zero-pose identity views and selected-body/no-muzzle optional miss. Ordinary Ranger/C13 source paths retained; all final installed-content/rendered/lifetime acceptance pending. |
 | C08/C09 — Toss support validity and elevator relink | [Physics plan](toss-support-elevator-2.0-plan.md); source commit `0d2c182c`. Final physics/content qualification pending. |
@@ -328,9 +337,8 @@ research; they were not blanket-approved implementation.
   interface, preservation and history inventories plus legacy/native/research
   dispositions. Names and routes alone do not certify runtime semantics.
 
-Q01, C07, C10–C14, C18 and C21 are source-integrated. Finish C02 at native
-metadata boundaries; C19 through
-native packaging. Reuse reference
+Q01, C07, C10–C14, C18, C19 and C21 are source-integrated. Finish C02 at native
+metadata boundaries. Reuse reference
 code and write a bounded plan before each major slice. Then perform the one
 consolidated Linux/ARM qualification phase above and review its final fixes.
 Source-present features should not be ported again.
