@@ -103,6 +103,39 @@ reopened explicitly for coherent VR output. Reopen again if a new authority,
 protocol, simulation owner or broad rendering layer appears, or combined work
 materially exceeds320 lines. No new metrics or perf measurements required.
 
+## Estimate reopening and source review before phase1 integration
+
+The phase1 worker stopped at372 changed lines, exceeding its120–200 estimate
+and the original whole-feature320 estimate. Main read the full four-file diff:
+finite policy/decay, semantic context, transactional replay evidence and cached
+camera apply/undo account for the growth. The command journal, ACK admission,
+movement solver and replay outcome remain native. One presentation history is
+committed only after successful replay; result-local samples are transaction
+scratch, not another persistent history. Removing context or finite/preview
+guards to meet a line estimate would violate the reviewed behavior.
+
+Keep the adapter; revise phase1 bound to approximately400 lines and combined
+work to approximately520. Before further coding/integration:
+
+- Tag successful replay with the existing host_framecount and refuse a camera
+  offset from a skipped/stale relink frame. This is presentation freshness only,
+  not a new replay admission condition.
+- Use exact native32-bit command identities consistently. A64-slot sample ring
+  does not require an invented64-bit sequence extension. Do not change native
+  wrap/ACK/movement policy; ordinary reversal clears presentation history.
+- Unknown/out-of-range private ground contact refuses smoothing; dynamic
+  physent.info!=0 (including negative native entity IDs) remains excluded.
+- Keep native forcelink as an actual no-previous-pose discontinuity. Main checked
+  CLFTE_ReadDelta/CL_EntitiesDeltaed and CLFTE_CommitMoveSnapshot: UF_RESET alone
+  is snapshot decoding, not a forcelink assignment; semantic teleport already
+  resets and snaps at the accepted snapshot owner. Do not add UF_RESET gating.
+- Remove redundant result zeroing if the compute owner initializes it; keep
+  result evidence and sample publication transactional on full success.
+
+Phase1 alone still does not close C07. Main must review refinements before
+phase2; that renderer write set waits for C20 to release gl_screen.c. Reopen
+again on material growth or any duplicated authority/solver/render owner.
+
 ## Final acceptance after all implementation
 
 Show enabled/disabled/default-off corrections using exact ACK identities,
