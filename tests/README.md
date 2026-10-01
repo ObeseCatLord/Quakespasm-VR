@@ -2121,20 +2121,24 @@ have `should_render == false`: focused actions remain usable independently of
 visibility. The key sink does not qualify native binding
 execution or a physical controller.
 
+Initialization checks all 17 current input cvars and all 14 registered input
+commands, including the `vr_turn180` handler. Unavailable FBT storage/profile,
+calibration adjustment, native weapon menu, tracked presentation and paired
+weapon/model owners use fail-closed typed fixture seams. Those seams provide no
+native menu, FBT or paired-weapon integration evidence.
+
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -Wall -Wextra -Werror \
   -Wno-missing-field-initializers -Wno-unused-parameter \
   -fsanitize=address,undefined -fno-omit-frame-pointer \
   -ffunction-sections -fdata-sections tests/vr_input_fixture.c \
-  Quake/vr_input.c Quake/vr_locomotion.c Quake/mathlib.c -Wl,--gc-sections \
+  Quake/vr_input.c Quake/vr_locomotion.c Quake/mathlib.c \
+  -Wl,--gc-sections \
   $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/qsvr-controller-input-asan
 /tmp/qsvr-controller-input-asan
 ```
 
-The broad input fixture's standalone link currently needs updated FBT,
-weapon-menu and calibration stubs after later source ports. Its command above
-is retained as a coverage target; a Linux build does not substitute for it.
 The focused production-source default-binding fixture runs independently:
 
 ```sh

@@ -3,12 +3,21 @@
 #include "../Quake/menu.h"
 #include "../Quake/vr_input.h"
 #include "../Quake/vr_locomotion.h"
+#include "../Quake/vr_fbt.h"
+#include "../Quake/vr_fbt_filter.h"
+#include "../Quake/vr_fbt_profile.h"
+#include "../Quake/vr_fbt_storage.h"
 #include "../Quake/vr_weapon_calibration.h"
 #include "../Quake/view.h"
+#include "../Quake/gl_model.h"
+#include "../Quake/world.h"
+#include "../Quake/r_vrik.h"
 
 #include <assert.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 
 typedef struct
 {
@@ -36,6 +45,7 @@ cvar_t cl_movespeedkey = {"cl_movespeedkey", "2", CVAR_NONE};
 cvar_t cl_alwaysrun = {"cl_alwaysrun", "1", CVAR_ARCHIVE_GAME};
 cvar_t vr_aimmode = {"vr_aimmode", "7", CVAR_ARCHIVE};
 cvar_t vr_gunmodelpitch = {"vr_gunmodelpitch", "19", CVAR_ARCHIVE};
+cvar_t vr_gunmodely = {"vr_gunmodely", "0", CVAR_ARCHIVE};
 cvar_t vr_gunmodelscale = {"vr_gunmodelscale", "1.35", CVAR_ARCHIVE};
 
 static qboolean waiting_for_binding;
@@ -64,7 +74,8 @@ static int haptic_count;
 static int registered_cvars;
 static cvar_t *registered_cvar[32];
 static xcommand_t turn180_command;
-static cmd_function_t registered_command;
+static int registered_command_count;
+static cmd_function_t registered_commands[32];
 static int escape_changes_context;
 static int escape_reenters_clear;
 static int start_binding_on_abutton;
@@ -86,14 +97,25 @@ void Cvar_SetCallback (cvar_t *var, cvarcallback_t callback)
 
 cmd_function_t *Cmd_AddCommand2 (const char *name, xcommand_t function, cmd_source_t source, qboolean qcinterceptable)
 {
-	assert (!strcmp (name, "vr_turn180"));
 	assert (source == src_command && !qcinterceptable);
-	turn180_command = function;
-	memset (&registered_command, 0, sizeof (registered_command));
-	registered_command.name = name;
-	registered_command.function = function;
-	registered_command.srctype = source;
-	return &registered_command;
+	assert (function != NULL);
+	assert (registered_command_count < (int)(sizeof (registered_commands) / sizeof (registered_commands[0])));
+	cmd_function_t *command = &registered_commands[registered_command_count++];
+	memset (command, 0, sizeof (*command));
+	command->name = name;
+	command->function = function;
+	command->srctype = source;
+	if (!strcmp (name, "vr_turn180"))
+		turn180_command = function;
+	return command;
+}
+
+static cmd_function_t *fixture_command (const char *name)
+{
+	for (int i = 0; i < registered_command_count; ++i)
+		if (!strcmp (registered_commands[i].name, name))
+			return &registered_commands[i];
+	return NULL;
 }
 
 static cvar_t *fixture_cvar (const char *name)
@@ -261,6 +283,158 @@ qboolean M_VRPointerCanClick (void)
 	return pointer_can_click;
 }
 
+static void fixture_clear_vec (vec3_t out)
+{
+	if (out)
+		memset (out, 0, sizeof (vec3_t));
+}
+
+/* The isolated adapter fixture has no console, config store, or native menu. */
+char *keybindings[MAX_KEYS];
+
+void VRXR_SetTrackerEnabled (int enabled) { (void)enabled; }
+qboolean VR_WeaponMenu_IsOpenVR (void) { return false; }
+qboolean M_VRPointerRequiresHit (void) { return false; }
+qboolean VR_WeaponCalibrationAdjustActive (void) { return false; }
+void VR_WeaponCalibrationAdjustCancel (void) {}
+void VR_WeaponCalibrationAdjustInput (int hand, qboolean trigger, qboolean pose,
+	const vec3_t origin, const vec3_t angles)
+{ (void)hand; (void)trigger; (void)pose; (void)origin; (void)angles; }
+qboolean VR_WeaponCalibrationLookupHeld (const char *name, qboolean enhanced,
+	vec3_t offset, float *scale)
+{ (void)name; (void)enhanced; fixture_clear_vec (offset); if (scale) *scale = 0; return false; }
+qboolean VR_WeaponCalibrationLookupMelee (const char *name, vr_melee_gesture_profile_t *out)
+{ (void)name; if (out) memset (out, 0, sizeof (*out)); return false; }
+qboolean VR_WeaponCalibrationStockRangedViewmodel (const char *name)
+{ (void)name; return false; }
+
+/* Optional FBT is disabled here; these fail-closed seams do not test its policy. */
+void VR_FBT_Init (vr_fbt_manager_t *manager) { if (manager) memset (manager, 0, sizeof (*manager)); }
+int VR_FBT_SerialIsSafe (const char *serial) { (void)serial; return false; }
+int VR_FBT_Reconcile (vr_fbt_manager_t *manager, uint64_t id, double time,
+	const vr_fbt_candidate_t *candidates, unsigned int count)
+{ (void)manager; (void)id; (void)time; (void)candidates; (void)count; return false; }
+unsigned int VR_FBT_GetCandidateCount (const vr_fbt_manager_t *manager)
+{ (void)manager; return 0; }
+int VR_FBT_GetCandidate (const vr_fbt_manager_t *manager, unsigned int index,
+	vr_fbt_candidate_status_t *status)
+{ (void)manager; (void)index; if (status) memset (status, 0, sizeof (*status)); return false; }
+int VR_FBT_GetRoleStatus (const vr_fbt_manager_t *manager, vr_fbt_role_t role,
+	vr_fbt_role_status_t *status)
+{ (void)manager; (void)role; if (status) memset (status, 0, sizeof (*status)); return false; }
+int VR_FBT_AssignCandidate (vr_fbt_manager_t *manager, vr_fbt_role_t role, unsigned int index)
+{ (void)manager; (void)role; (void)index; return false; }
+int VR_FBT_BindSerial (vr_fbt_manager_t *manager, vr_fbt_role_t role, const char *serial)
+{ (void)manager; (void)role; (void)serial; return false; }
+int VR_FBT_UnassignRole (vr_fbt_manager_t *manager, vr_fbt_role_t role)
+{ (void)manager; (void)role; return false; }
+void VR_FBT_FilterInit (vr_fbt_filter_t *filter)
+{ if (filter) memset (filter, 0, sizeof (*filter)); }
+int VR_FBT_ProfileCaptureBegin (vr_fbt_profile_capture_t *capture,
+	unsigned int roles, const char *const serials[VR_FBT_ROLE_COUNT])
+{ (void)capture; (void)roles; (void)serials; return false; }
+int VR_FBT_ProfileCaptureAddSnapshot (vr_fbt_profile_capture_t *capture,
+	uint64_t id, double time, const vr_fbt_profile_capture_sample_t samples[VR_FBT_ROLE_COUNT])
+{ (void)capture; (void)id; (void)time; (void)samples; return false; }
+int VR_FBT_ProfileCaptureFinalize (const vr_fbt_profile_capture_t *capture,
+	const vr_fbt_profile_capture_metadata_t *metadata, vr_fbt_profile_t *destination,
+	vr_fbt_profile_error_t *error)
+{ (void)capture; (void)metadata; (void)destination; (void)error; return false; }
+int VR_FBT_StorageNameIsSafe (const char *name) { (void)name; return false; }
+int VR_FBT_StorageLoadProfile (const char *name, vr_fbt_profile_t *profile,
+	vr_fbt_profile_error_t *profile_error, vr_fbt_storage_error_t *storage_error)
+{ (void)name; (void)profile; (void)profile_error; (void)storage_error; return false; }
+int VR_FBT_StorageSaveProfile (const vr_fbt_profile_t *profile,
+	vr_fbt_profile_error_t *profile_error, vr_fbt_storage_error_t *storage_error)
+{ (void)profile; (void)profile_error; (void)storage_error; return false; }
+int VR_FBT_StorageLoadSelected (char *name, size_t capacity, vr_fbt_storage_error_t *error)
+{ (void)name; (void)capacity; (void)error; return false; }
+int VR_FBT_StorageSaveSelected (const char *name, vr_fbt_storage_error_t *error)
+{ (void)name; (void)error; return false; }
+
+/* Presentation and optional paired-weapon owners are outside this fixture. */
+qboolean V_TrackedPlayerBase (float *height) { if (height) *height = 0; return false; }
+qboolean V_TrackedPresentationYaw (float *yaw) { if (yaw) *yaw = 0; return false; }
+qboolean V_TrackedPresentationHandAngles (int hand, vec3_t angles)
+{ (void)hand; fixture_clear_vec (angles); return false; }
+qboolean V_TrackedPresentationHandWorldPose (int hand, vec3_t origin, vec3_t angles)
+{ (void)hand; fixture_clear_vec (origin); fixture_clear_vec (angles); return false; }
+qboolean V_AkimboPairReady (void) { return false; }
+void V_AkimboPairCollisionOffset (int hand, vec3_t offset)
+{ (void)hand; fixture_clear_vec (offset); }
+qboolean V_AkimboRecipeSupported (const char *name) { (void)name; return false; }
+qboolean V_AkimboRecipeUsesPairedCollision (const char *name) { (void)name; return false; }
+qboolean V_AkimboModelAngles (const char *name, int hand, const vec3_t raw, vec3_t out)
+{ (void)name; (void)hand; (void)raw; fixture_clear_vec (out); return false; }
+qboolean V_AkimboTransformAnchor (int hand, const vec3_t angles, vec3_t out)
+{ (void)hand; (void)angles; fixture_clear_vec (out); return false; }
+qboolean V_AkimboDwellEdgeOffsets (int hand, const vec3_t angles, vec3_t base, vec3_t tip)
+{ (void)hand; (void)angles; fixture_clear_vec (base); fixture_clear_vec (tip); return false; }
+qboolean V_HeldMeleeEdgeOffsets (vec3_t base, vec3_t tip, vec3_t collision)
+{ fixture_clear_vec (base); fixture_clear_vec (tip); fixture_clear_vec (collision); return false; }
+qboolean V_HeldMeleeRawEdgeOffsets (const vec3_t angles, vec3_t base, vec3_t tip)
+{ (void)angles; fixture_clear_vec (base); fixture_clear_vec (tip); return false; }
+qboolean CL_ResolveWeaponCollision (const vec3_t torso, const vec3_t grip,
+	const vec3_t base, const vec3_t tip, vec3_t delta)
+{ (void)torso; (void)grip; (void)base; (void)tip; fixture_clear_vec (delta); return false; }
+
+int R_AliasViewmodelHandMatrix (entity_t *entity, const aliashdr_t *geometry,
+	lerpdata_t *lerpdata, float matrix[16], int hand)
+{ (void)entity; (void)geometry; (void)lerpdata; (void)matrix; (void)hand; return false; }
+qboolean R_TrackedHeadEyeHeight (float base, float *height)
+{ (void)base; if (height) *height = 0; return false; }
+qboolean R_TrackedHeadBodyOffset (vec3_t offset)
+{ fixture_clear_vec (offset); return false; }
+qboolean R_VRIKProjectCalibrationReference (qmodel_t *model,
+	const r_vrik_calibration_projection_input_t *input, r_vrik_calibration_projection_t *out)
+{ (void)model; (void)input; if (out) memset (out, 0, sizeof (*out)); return false; }
+void *Mod_Extradata_CheckSkin (qmodel_t *model, int skin)
+{ (void)model; (void)skin; return NULL; }
+const mod_akimbo_pair_recipe_t *Mod_GetAkimboPairRecipe (const char *name)
+{ (void)name; return NULL; }
+const mod_held_melee_recipe_t *Mod_GetHeldMeleeRecipe (const char *name)
+{ (void)name; return NULL; }
+qboolean Mod_GetStockAxeEdge (qmodel_t *model, int skin, stockaxe_edge_t *out)
+{ (void)model; (void)skin; if (out) memset (out, 0, sizeof (*out)); return false; }
+qboolean Mod_GetAlkalineAxeEdge (qmodel_t *model, int skin, stockaxe_edge_t *out)
+{ (void)model; (void)skin; if (out) memset (out, 0, sizeof (*out)); return false; }
+qboolean Mod_GetCopperAxeEdge (qmodel_t *model, int skin, stockaxe_edge_t *out)
+{ (void)model; (void)skin; if (out) memset (out, 0, sizeof (*out)); return false; }
+
+/* Unused console/filesystem entry points fail closed for registered commands. */
+void Con_Printf (const char *format, ...) { (void)format; }
+void Con_Warning (const char *format, ...) { (void)format; }
+int Cmd_Argc (void) { return 0; }
+const char *Cmd_Argv (int arg) { (void)arg; return ""; }
+qboolean Cmd_AliasExists (const char *name) { (void)name; return false; }
+double Cvar_VariableValue (const char *name) { (void)name; return 0; }
+void Cbuf_AddText (const char *text) { (void)text; }
+void Key_SetBinding (int key, const char *binding) { (void)key; (void)binding; }
+byte *COM_LoadFile (const char *path, unsigned int *path_id) { (void)path; (void)path_id; return NULL; }
+const char *COM_GetWriteRoot (void) { return NULL; }
+void Mem_Free (const void *pointer) { (void)pointer; }
+findfile_t *Sys_FindFirst (const char *directory, const char *extension)
+{ (void)directory; (void)extension; return NULL; }
+findfile_t *Sys_FindNext (findfile_t *find) { (void)find; return NULL; }
+void Sys_FindClose (findfile_t *find) { (void)find; }
+double Sys_DoubleTime (void) { return 0; }
+int q_strcasecmp (const char *left, const char *right) { return strcasecmp (left, right); }
+char *q_strcasestr (const char *haystack, const char *needle)
+{ return haystack && needle ? strcasestr (haystack, needle) : NULL; }
+int q_snprintf (char *buffer, size_t size, const char *format, ...)
+{ va_list args; va_start (args, format); int result = vsnprintf (buffer, size, format, args); va_end (args); return result; }
+size_t q_strlcpy (char *destination, const char *source, size_t size)
+{
+	size_t length = strlen (source);
+	if (size)
+	{
+		size_t copied = length < size - 1 ? length : size - 1;
+		memcpy (destination, source, copied);
+		destination[copied] = '\0';
+	}
+	return length;
+}
+
 static void reset_events (void)
 {
 	event_count = 0;
@@ -317,11 +491,20 @@ static void native_clear_then_neutral (vrxr_frame_t *frame)
 
 static void test_init_and_no_vr (void)
 {
+	static const char *expected_commands[] = {
+		"vr_turn180", "vr_defaultbindings", "vr_migrate_mod_bindings",
+		"vr_fbt_list", "vr_fbt_assign", "vr_fbt_unassign",
+		"vr_fbt_profile_select", "vr_fbt_profile_reset", "vr_fbt_profile_list",
+		"vr_fbt_profile_save", "vr_fbt_calibrate_begin", "vr_fbt_calibrate_capture",
+		"vr_fbt_calibrate_accept", "vr_fbt_calibrate_cancel"
+	};
 	registered_cvars = 0;
 	memset (registered_cvar, 0, sizeof (registered_cvar));
+	registered_command_count = 0;
+	memset (registered_commands, 0, sizeof (registered_commands));
 	turn180_command = NULL;
 	VR_InputInit ();
-	assert (registered_cvars == 12);
+	assert (registered_cvars == 17);
 	assert (fixture_cvar ("vr_lefthanded")->value == 0.0f);
 	assert (fixture_cvar ("vr_haptic")->value == 1.0f);
 	assert (fixture_cvar ("vr_joystick_axis_deadzone")->value == 0.25f);
@@ -334,7 +517,16 @@ static void test_init_and_no_vr (void)
 	assert (fixture_cvar ("vr_180_snap_turn")->value == 1.0f);
 	assert (fixture_cvar ("vr_turn_speed")->value == 2.0f);
 	assert (fixture_cvar ("vr_joystick_yaw_multi")->value == 1.0f);
+	assert (fixture_cvar ("vr_gorilla") != NULL);
+	assert (fixture_cvar ("vr_vrik") != NULL);
+	assert (fixture_cvar ("vr_immersive_melee") != NULL);
+	assert (fixture_cvar ("vr_fbt_enabled") != NULL);
+	assert (fixture_cvar ("vr_weapon_collision") != NULL);
+	assert (registered_command_count == (int)(sizeof (expected_commands) / sizeof (expected_commands[0])));
+	for (int i = 0; i < (int)(sizeof (expected_commands) / sizeof (expected_commands[0])); ++i)
+		assert (fixture_command (expected_commands[i]) != NULL);
 	assert (turn180_command != NULL);
+	assert (fixture_command ("vr_turn180")->function == turn180_command);
 	reset_events ();
 	VR_InputCommands (NULL);
 	assert (event_count == 0);

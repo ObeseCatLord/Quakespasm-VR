@@ -1,5 +1,29 @@
 # Standalone VR final qualification, current 2.0 source
 
+## Broad controller follow-up — PASS
+
+2026-10-01, production source through29129513. Under the bounded
+[follow-up plan](final-fixture-followup-2.0-plan.md), Luna/xhigh repaired only
+tests/vr_input_fixture.c and its README recipe (226 changed lines before main's
+same-line generic output-path correction). Main independently verified effective
+gpt-6-luna/xhigh routing and read the complete patch. Existing behavioral
+assertions remain; current17 cvars/14 commands register with persistent command
+storage and the specific turn180 handler assertion retained.
+
+The documented strict ASan/UBSan build passed and the fixture exited0, printing
+all four private-pose, native-key/context/reentry, movement and roomscale markers.
+Logs: qualification logs/controller-input-final-build.log and
+controller-input-final-run.log. This resolves the last standalone fixture failure:
+all19 now have bounded passing evidence at their recorded snapshots.
+
+Unavailable FBT/storage, native weapon menu, calibration adjustment, paired
+weapon/model and tracked-presentation owners use typed fail-closed test seams.
+Console/filesystem command execution and actual native key bindings remain
+excluded. Supplied grip/muzzle inputs retain the original fixture boundary;
+these passes do not establish full native gameplay, tracking, menu, FBT or
+paired-weapon integration. No production edits or broader acceptance claim.
+The sections below preserve the initial run and repair history.
+
 Run on 2026-10-01 from `/home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0`, Linux x86_64, GCC 16.2.1, SDL3 3.4.16, Vulkan headers/loader 1.4.357. Initial binaries used `/tmp/qsvr-final-qualification-2.0-DUIuAC`; adapted reruns and direct helper fixtures used `/tmp/qsvr-final-qualification-followup-UQmm1g`. No repository build directory, assets, headset, SSH, benchmark, `make`, production file, or broad input fixture was changed. `tests/README.md` supplied the six adapted recipes; their rerun commands below use the same compiler arguments with the follow-up output prefix.
 
 ## Results
