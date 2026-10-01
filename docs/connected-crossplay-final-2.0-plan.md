@@ -51,3 +51,12 @@ transport/server/ACK and all replay/output assertions remain unchanged. Record
 the10Hz diagnostic limit explicitly; this is not default-cadence or performance
 proof. A failure after actual stable frames is a different finding requiring
 diagnosis, not another assertion relaxation.
+
+The10Hz trial passes every existing VR assertion, including real rendered
+between-send prediction and three shells consumed. Desktop also observes actual
+between-send prediction but fails its additional short jump-timer assertion.
+Main checked pmove.c:2133: that timer expires above50ms, so100ms commands cannot
+provide the asserted nonzero final sample. BEFORE4 changed runner lines: keep
+the desktop at its native network cadence, while retaining10Hz only for the
+heavy VR debugger profile. Preserve every desktop jump and prediction assertion.
+No native movement/prediction change is justified by this diagnostic mismatch.
