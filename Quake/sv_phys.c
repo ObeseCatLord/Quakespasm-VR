@@ -3282,7 +3282,12 @@ static void SV_PushMove (edict_t *pusher, float movetime)
 			{
 				check->v.origin[2] += DIST_EPSILON;
 				if (!SV_TestEntityPosition (check))
+				{
+					// SV_PushEntity already evaluated triggers; only relink the
+					// epsilon-adjusted final position.
+					SV_LinkEdict (check, false);
 					continue;
+				}
 			}
 
 			VectorCopy (entorig, check->v.origin);
@@ -11736,6 +11741,29 @@ SV_Physics_Toss
 Toss, bounce, and fly movement.  When onground, do nothing.
 =============
 */
+static qboolean SV_TossGroundIsValid (edict_t *ent)
+{
+	int groundref = ent->v.groundentity;
+	int groundindex;
+	edict_t *ground;
+
+	// The world entity is a stable support for the lifetime of the server.
+	if (!groundref)
+		return true;
+
+	if (groundref < 0 || !qcvm || qcvm->edict_size <= 0 || qcvm->num_edicts <= 0 ||
+		groundref % qcvm->edict_size)
+		return false;
+
+	// Divide before comparing so the range check cannot overflow a product.
+	groundindex = groundref / qcvm->edict_size;
+	if (groundindex >= qcvm->num_edicts)
+		return false;
+
+	ground = PROG_TO_EDICT (groundref);
+	return !ground->free && ground->v.solid >= SOLID_BBOX;
+}
+
 static void SV_Physics_Toss (edict_t *ent, qboolean think_already_ran)
 {
 	trace_t trace;
@@ -11746,9 +11774,14 @@ static void SV_Physics_Toss (edict_t *ent, qboolean think_already_ran)
 	if (!think_already_ran && !SV_RunThink (ent))
 		return;
 
-	// if onground, return without moving
-	if (((int)ent->v.flags & FL_ONGROUND))
-		return;
+	// Release toss entities whose recorded support is no longer valid.
+	if ((int)ent->v.flags & FL_ONGROUND)
+	{
+		if (SV_TossGroundIsValid (ent))
+			return;
+		ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+		ent->v.groundentity = 0;
+	}
 
 	SV_CheckVelocity (ent);
 

@@ -24,8 +24,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 
-// default max # of particles at one time
-#define MAX_PARTICLES 16384
+#define DEFAULT_NUM_PARTICLES 32768
+#define ABSOLUTE_MAX_PARTICLES 65536
 
 // no fewer than this no matter what's
 //  on the command line (-particles)
@@ -160,7 +160,7 @@ R_InitParticleIndexBuffer
 */
 void R_InitParticleIndexBuffer (void)
 {
-	uint32_t particle_index_buffer_size = r_numparticles * sizeof (uint16_t) * 6; // 6 indices per particle quad
+	uint32_t particle_index_buffer_size = r_numparticles * sizeof (uint32_t) * 6; // 6 indices per particle quad
 
 	VkResult err;
 
@@ -201,7 +201,7 @@ void R_InitParticleIndexBuffer (void)
 	VkBuffer		staging_buffer;
 	VkCommandBuffer cb_context;
 	int				staging_offset;
-	uint16_t	   *staging_indices = (uint16_t *)R_StagingAllocate (particle_index_buffer_size, 1, &cb_context, &staging_buffer, &staging_offset);
+	uint32_t	   *staging_indices = (uint32_t *)R_StagingAllocate (particle_index_buffer_size, 4, &cb_context, &staging_buffer, &staging_offset);
 
 	VkBufferCopy region;
 	region.srcOffset = staging_offset;
@@ -230,18 +230,22 @@ R_InitParticles
 void R_InitParticles (void)
 {
 	int i;
+	long requested_particles;
 
 	i = COM_CheckParm ("-particles");
 
-	if (i)
+	if (i && i < com_argc - 1 && com_argv[i + 1] != NULL)
 	{
-		r_numparticles = (int)(atoi (com_argv[i + 1]));
-		if (r_numparticles < ABSOLUTE_MIN_PARTICLES)
-			r_numparticles = ABSOLUTE_MIN_PARTICLES;
+		requested_particles = strtol (com_argv[i + 1], NULL, 10);
+		if (requested_particles < ABSOLUTE_MIN_PARTICLES)
+			requested_particles = ABSOLUTE_MIN_PARTICLES;
+		else if (requested_particles > ABSOLUTE_MAX_PARTICLES)
+			requested_particles = ABSOLUTE_MAX_PARTICLES;
+		r_numparticles = (int)requested_particles;
 	}
 	else
 	{
-		r_numparticles = MAX_PARTICLES;
+		r_numparticles = DEFAULT_NUM_PARTICLES;
 	}
 
 	particles = (particle_t *)Mem_Alloc (r_numparticles * sizeof (particle_t));
@@ -1018,7 +1022,7 @@ static void R_DrawParticlesFaces (cb_context_t *cbx)
 	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &vertex_buffer, &vertex_buffer_offset);
 	if (r_quadparticles.value)
 	{
-		vulkan_globals.vk_cmd_bind_index_buffer (cbx->cb, particle_index_buffer, 0, VK_INDEX_TYPE_UINT16);
+		vulkan_globals.vk_cmd_bind_index_buffer (cbx->cb, particle_index_buffer, 0, VK_INDEX_TYPE_UINT32);
 		vulkan_globals.vk_cmd_draw_indexed (cbx->cb, num_particles * 6, 1, 0, 0, 0);
 	}
 	else
