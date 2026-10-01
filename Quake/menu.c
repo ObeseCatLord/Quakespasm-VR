@@ -2828,7 +2828,7 @@ typedef struct
 } vr_weapon_option_t;
 
 static const vr_weapon_option_t vr_weapon_options[] = {
-	{"vr_gunmodeloffsets", "Weapon Preset", 0.0f, 1.0f, 0.0f, 4.0f},
+	{"vr_gunmodeloffsets", "Weapon Preset", 0.0f, 1.0f, 0.0f, 5.0f},
 	{"vr_gunangle", "Gun Angle", 32.0f, 2.5f, -180.0f, 180.0f},
 	{"vr_gunmodelpitch", "Gun Model Pitch", 0.0f, 0.5f, -90.0f, 90.0f},
 	{"vr_gunmodelscale", "Gun Model Scale", 1.0f, 0.05f, 0.1f, 2.0f},

@@ -68,6 +68,7 @@ enum
 	VR_WEAPON_PRESET_AUTHENTIC,
 	VR_WEAPON_PRESET_PLAGUE,
 	VR_WEAPON_PRESET_BLOCKQUAKE,
+	VR_WEAPON_PRESET_AD,
 	VR_WEAPON_PRESET_COUNT
 };
 
@@ -2736,6 +2737,9 @@ static qboolean VR_WeaponCalibrationPresetAppendGeneric(
 	const vr_weapon_preset_row_t *rows = NULL;
 	size_t row_count = 0;
 
+	if (preset == VR_WEAPON_PRESET_AD)
+		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
+			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks), ad_root_only);
 	if (preset == VR_WEAPON_PRESET_BLOCKQUAKE)
 		return VR_WeaponCalibrationPresetAppendRows(entries, count,
 			vr_blockquake_classic, countof(vr_blockquake_classic), ad_root_only);
@@ -2782,7 +2786,7 @@ static qboolean VR_WeaponCalibrationBuildPreset(
 	{
 		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
 			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks), false) &&
-			(preset == VR_WEAPON_PRESET_VANILLA ||
+			(preset == VR_WEAPON_PRESET_VANILLA || preset == VR_WEAPON_PRESET_AD ||
 			 VR_WeaponCalibrationPresetAppendGeneric(entries, count, preset, true));
 	}
 	if (VR_WeaponCalibrationGameIs("alk"))
@@ -2804,7 +2808,8 @@ static qboolean VR_WeaponCalibrationBuildPreset(
 		preset = VR_WEAPON_PRESET_ENHANCED;
 	if (!VR_WeaponCalibrationPresetAppendGeneric(entries, count, preset, false))
 		return false;
-	if (preset == VR_WEAPON_PRESET_BLOCKQUAKE && !reload_defaults)
+	if ((preset == VR_WEAPON_PRESET_BLOCKQUAKE || preset == VR_WEAPON_PRESET_AD) &&
+		!reload_defaults)
 		return true;
 	return VR_WeaponCalibrationPresetAppendSchema(entries, count,
 			vr_copper_axe_fallback, countof(vr_copper_axe_fallback), false) &&
@@ -2852,7 +2857,8 @@ static void VR_WeaponCalibrationPresetChanged(cvar_t *var)
 const char *VR_WeaponCalibrationPresetName(void)
 {
 	static const char *const names[] = {
-		"Vanilla", "Enhanced", "Authentic", "Plague", "Block-Quake"
+		"Vanilla", "Enhanced", "Authentic", "Plague", "Block-Quake",
+		"Arcane Dimensions"
 	};
 	return names[vr_weapon_preset_accepted];
 }
