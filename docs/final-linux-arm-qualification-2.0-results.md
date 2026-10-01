@@ -4,7 +4,9 @@
 
 Final audit now freezes ten finite owners; F09semantic checks pass, and actual
 simultaneous private desktop/VR gameplay plus all six metadata regressions pass
-after production482cd9f5. [Connected evidence](connected-crossplay-current-2.0-results.md).
+after production482cd9f5. Two unchanged public desktop/private XR repeats also
+pass; the first mixed movement-distance failure remains documented/open under
+F01. [Connected evidence](connected-crossplay-current-2.0-results.md).
 Existing ff83e66a Linux/ARM packages predate that one-file repair; final affected
 artifact refresh belongs to F10. Older production-equivalence text below is
 historical to its accepted snapshot.

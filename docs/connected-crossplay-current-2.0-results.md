@@ -56,3 +56,35 @@ cases. Voice, full avatars/equipment, gesture melee, hardware and performance
 are not established by this probe. Native packaged artifacts still contain
 ff83e66a production; required final input refresh belongs to F10 after fixes
 settle. Main/reference/assets/user-owned migration document remain untouched.
+
+## Mixed unchanged public desktop / private XR
+
+The existing unchanged vkQuake desktop baseline at4bc898f2 also joined the
+current server alongside the migrated private XR client. Natural public
+FTE/PREDINFO negotiation used extensions40, dialect0/legacy0 and native owner
+PMove-type0; the private XR client retained every selected-prediction assertion.
+Both observed two named peers at signon4. No negotiation/command/position/ammo
+state was assigned. The scratch orchestration variant uses the existing
+UPSTREAM mode, disabling only explicitly private-specific desktop assertions.
+[Before-run plan](public-private-crossplay-final-2.0-plan.md).
+
+The first run failed the desktop settled-distance threshold after successful
+signon, ACK progress and shell consumption. That probe omits origin vectors
+from its final JSON, so the cause is not established; do not claim this failure
+was repaired. A private diagnostic copy retains those already-observed vectors
+and final keyboard state, without changing inputs, assertions or timing. Two
+successive diagnostic runs then passed both complete probes/markers and runner
+exit0: public desktop displacement683.868 and266.981units, shells25→21 in each,
+and advancing ACKs69→277 /69→281 bounded by commands sent. XR passed focused
+stereo, native action/private transport/firing and rendered prediction in both.
+
+Private evidence: connected-current-public-private (initial failure),
+public-private-probe (exact original variant), public-private-diagnostic-probe
+(exact added observation), connected-current-public-private-diagnostic and
+connected-current-public-private-repeat (both passing). All retain desktop/VR
+JSON, logs and aggregate statuses. This establishes successful actual mixed
+peer gameplay at these bounded runs; the inconsistent first movement outcome
+remains an F01 follow-up, not a new feature or a silently discarded failure.
+Map/slot/loss/IPv6/remaining metadata boundaries are still open. No production
+source edits or rebuilds were needed for this peer test. KWrite remains open
+on the frozen final checklist.

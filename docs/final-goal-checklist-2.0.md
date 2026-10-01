@@ -66,7 +66,9 @@ receipts. These overlap intentionally; test shared boundaries once.
 - F01: actual simultaneous private desktop/simulated-XR gameplay passes, after
   repairing early name/color readiness under this owner;
   [exact current result/limits](connected-crossplay-current-2.0-results.md).
-  Public/native peers and the remaining transport/metadata lifecycles stay open.
+  Two successive unchanged public vkQuake desktop/private XR runs also pass.
+  The first mixed run's inconsistent movement distance remains a bounded F01
+  follow-up; map/slot/transport/metadata lifecycles stay open.
 - F10: production482cd9f5 changes cl_main.c; existing ff83e66a packages remain
   accepted only for their earlier input. Refresh affected final artifacts once
   required source fixes settle; do not claim current package acceptance yet.
