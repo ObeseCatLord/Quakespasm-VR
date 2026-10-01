@@ -2474,27 +2474,27 @@ void CL_RelinkEntities (void)
 			AngleVectors (ent->angles, axis[0], axis[1], axis[2]);
 			PScript_ParticleTrail (oldorg, ent->origin, ent->model->traileffect, frametime, i, axis, &ent->trailstate);
 		}
-		else if (ent->model->flags & EF_GIB)
+		else if (modelflags & EF_GIB)
 		{
 			if (PScript_EntParticleTrail (oldorg, ent, "TR_BLOOD"))
 				CL_RocketTrail (ent, 2);
 		}
-		else if (ent->model->flags & EF_ZOMGIB)
+		else if (modelflags & EF_ZOMGIB)
 		{
 			if (PScript_EntParticleTrail (oldorg, ent, "TR_SLIGHTBLOOD"))
 				CL_RocketTrail (ent, 4);
 		}
-		else if (ent->model->flags & EF_TRACER)
+		else if (modelflags & EF_TRACER)
 		{
 			if (PScript_EntParticleTrail (oldorg, ent, "TR_WIZSPIKE"))
 				CL_RocketTrail (ent, 3);
 		}
-		else if (ent->model->flags & EF_TRACER2)
+		else if (modelflags & EF_TRACER2)
 		{
 			if (PScript_EntParticleTrail (oldorg, ent, "TR_KNIGHTSPIKE"))
 				CL_RocketTrail (ent, 5);
 		}
-		else if (ent->model->flags & EF_ROCKET)
+		else if (modelflags & EF_ROCKET)
 		{
 			if (PScript_EntParticleTrail (oldorg, ent, "TR_ROCKET"))
 				CL_RocketTrail (ent, 0);
@@ -2503,12 +2503,12 @@ void CL_RelinkEntities (void)
 			dl->radius = 200;
 			dl->die = cl.time + 0.01;
 		}
-		else if (ent->model->flags & EF_GRENADE)
+		else if (modelflags & EF_GRENADE)
 		{
 			if (PScript_EntParticleTrail (oldorg, ent, "TR_GRENADE"))
 				CL_RocketTrail (ent, 1);
 		}
-		else if (ent->model->flags & EF_TRACER3)
+		else if (modelflags & EF_TRACER3)
 		{
 			if (PScript_EntParticleTrail (oldorg, ent, "TR_VORESPIKE"))
 				CL_RocketTrail (ent, 6);

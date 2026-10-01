@@ -1990,8 +1990,8 @@ static void PF_cl_makestatic (void)
 	stat->effects = stat->baseline.effects;
 	stat->alpha = stat->baseline.alpha; // johnfitz -- alpha
 
-	VectorCopy (ent->baseline.origin, stat->origin);
-	VectorCopy (ent->baseline.angles, stat->angles);
+	VectorCopy (stat->baseline.origin, stat->origin);
+	VectorCopy (stat->baseline.angles, stat->angles);
 	if (stat->model)
 		R_AddEfrags (stat);
 
