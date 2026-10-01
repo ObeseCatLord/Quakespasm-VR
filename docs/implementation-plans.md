@@ -9,6 +9,8 @@ These eight corrections are source-integrated in `ab1423fb` / `486d1b42` after
 main patch review; executable acceptance remains pending. C02 has a
 [metadata design review brief](metadata-publication-2.0-brief.md), not yet an
 implementation plan or authorization to add a new metadata owner.
+The [C02 senior disposition](metadata-publication-2.0-review.md) identifies the
+recipient-capacity question; independent checklist implementation continues.
 [C10/C11 tracked root and viewer gate](avatar-root-viewer-gate-2.0-plan.md)
 plans reuse of the existing frame-owned palette and observational transforms.
 
