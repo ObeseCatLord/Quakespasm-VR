@@ -8535,6 +8535,9 @@ static qboolean SV_PrivateWalkTrialQ30NeedsNative (edict_t *ent, client_t *clien
 	qboolean linked = ent->area.prev != NULL;
 	qboolean native;
 
+	/* Only q30 needs liquid lookahead; generic swimmers keep QC-authored forces. */
+	if (!SV_PrivateWalkTrialQ30Program ())
+		return false;
 	assert_always (qcvm == &sv.qcvm && !sv_vr_weapon_pose_scope);
 	VectorCopy (ent->v.origin, origin);
 	VectorCopy (ent->v.velocity, velocity);
@@ -8824,7 +8827,7 @@ static sv_private_move_state_t SV_PrivateWalkTrialClassifyOwner (client_t *clien
 	eval_t *customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
 	float ladder = 0;
 	if (ent->v.movetype != MOVETYPE_WALK || !SV_PrivateWalkTrialStockHull (ent) ||
-		ent->v.waterlevel != 0 || ((int)ent->v.flags & FL_WATERJUMP) ||
+		((int)ent->v.flags & FL_WATERJUMP) ||
 		(customphysics && customphysics->function) || qcvm->extfuncs.SV_RunClientCommand ||
 		SV_PrivateWalkTrialMotionHeld (client) ||
 		(SV_PrivateWalkTrialQ30Float (ent, "onladder", &ladder) && ladder != 0))
@@ -10540,6 +10543,14 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		ent->v.flags = (int)ent->v.flags & ~FL_WATERJUMP;
 		ent->v.teleport_time = premove_waterjump_secs > 0.0f ? 0.0f : premove_teleport_time;
 	}
+	if (shared_qc && result_waterjump_secs > 0.0f)
+	{
+		/* Native SV_WaterJump reads movedir next frame. Latch before callbacks so
+		 * canceling this boundary still retires private timers at the completed head. */
+		ent->v.movedir[0] = pmove.velocity[0];
+		ent->v.movedir[1] = pmove.velocity[1];
+		native_boundary_completed = true;
+	}
 	solver_flags = (int)ent->v.flags;
 	solver_deadline = ent->v.teleport_time;
 	solver_epoch = client->private_move_discontinuity_epoch;
@@ -10604,7 +10615,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	/* Movement, impacts, triggers and physical contacts have already run.
 	 * A death/freeze still receives this command's PostThink exactly once;
 	 * the fresh native frame starts on the next world tick. */
-	native_boundary_completed = SV_PrivateWalkTrialPostMoveNative (ent, client);
+	native_boundary_completed |= SV_PrivateWalkTrialPostMoveNative (ent, client);
 	if (native_boundary_completed)
 		client->private_move_native_frame = true;
 	if (!SV_PrivateWalkTrialStockProgram () &&
@@ -10613,14 +10624,6 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	if (!native_boundary_completed &&
 		(failure = SV_PrivateWalkTrialStateError (ent, client, &command)) != NULL)
 		goto cleanup;
-	/* A later roomscale head has not started. Close this head's existing
-	 * world tail before deferring it, so no QC input/impulse is lost. */
-	if (shared_qc && !native_boundary_completed && !last_reserved)
-	{
-		const usercmd_t *next = &client->private_cmd_queue[
-			(client->private_cmd_queue_head + queue_offset + 1) % SV_PRIVATE_CMD_QUEUE_SIZE];
-		defer_next_head = SV_PrivateWalkTrialQ30NeedsNative (ent, client, next);
-	}
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->frametime = shared_qc ? think_window->world_qc_frametime : seconds;
 	pr_global_struct->self = EDICT_TO_PROG (ent);
