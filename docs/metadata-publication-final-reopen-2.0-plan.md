@@ -60,6 +60,13 @@ move production work outside the bound. These limits include the prior846 lines.
    native name and decimal color nibbles instead. Inactive slots have empty native
    name/zero colors and no old custom data. Preserve all representable custom keys;
    do not discard fields to fit canonical replacements.
+   Put those authoritative fields in the wire projection too; retaining them only
+   in simulation makes every full snapshot temporarily zero client colors and
+   perform needless skin translations before binary restoration. A quoted native
+   name alone is omitted from quoted wire data and restored by the binary name
+   companion. Decimal colors always remain in the wire projection. Build complete
+   expected canonical data, derive representable wire data, then simulate ordered
+   companions. Both full and incremental reconstruction enumerate that wire data.
 4. Native Info_SetKey scratch plus exact Info_GetKey comparison can check each
    required insertion/removal; do not use growth as success proof for replacement.
    Build the expected canonical store, including quote-containing binary name;
@@ -107,6 +114,12 @@ move production work outside the bound. These limits include the prior846 lines.
     committed values including deletion, callback refusal, reverse underscore
     behavior/star rejection, individual tokens/text and local unchanged/retry
     diagnostics. No general rollback or eventual retry promise for live settings.
+    Retain the earlier Astra live-admission decision: Info_SetKey's prospective
+    resulting value is authoritative even when remove-first capacity/validation
+    refusal makes it empty. Do not add requested-equals-result refusal at these
+    client preparation helpers; a native cvar string may differ from its info-store
+    result. Empty-result commands transmit deletion. Exact retention is required
+    separately for server canonical projection and ordered receiver overlays.
 
 12. Main source review found a native desktop-demo boundary: cl_demo.c:813 sets
     demoplayback/connected, and cl_parse.c:3693 still invokes CL_SignonReply.
