@@ -123,11 +123,22 @@ material, transform, lighting and conditional BLAS readiness. Reuse bounded loca
 arrays; TLAS count and emission must agree. Optional consumer failure retains
 the valid selected body and emits neither prop. No new persistent consumer state.
 
-Revised estimate140–180 changed lines; reassess above180. With phase1's217,
-combined expected707–777; reopen above800, duplicate policy/cache, new upload/
-animation layer or unexpected adjacency. These bounds supersede earlier650/
-phase3 limits following the senior reopening. Coding delegates edit only precise
-current-phase files, no tests/builds/lint/probes/assets/docs/staging/commits.
+The returned259-line patch exceeded the revised180/800 bounds and was paused.
+The [consumer senior disposition](qbj3-equipment-consumers-reopen-2.0-review.md)
+requires removal of its duplicate local declaration, preserving the native
+per-record checker plus a small complete-pair wrapper, mirroring rolling skin0
+fallback, simplifying temporary count/boolean duplication, and removing TLAS
+scratch-to-scratch copies. Keep original shade before body transformation;
+all optional consumers still preflight the complete counted pair. TLAS count
+provides an allocation upper bound; body rejection can safely emit fewer, never
+more or a partial pair. No new public validation/render/resource owner.
+
+Revised estimate190–220 changed lines; reassess above240. Prior phases217+398
+yield expected805–835 combined; reopen above855, duplicate policy/cache, new
+upload/animation layer or unexpected adjacency. These bounds supersede180/800
+and earlier phase3/combined estimates following the source-verified senior
+reopening. Coding delegates edit only precise current-phase files, no tests/
+builds/lint/probes/assets/docs/staging/commits.
 
 ## Final consolidated acceptance
 
