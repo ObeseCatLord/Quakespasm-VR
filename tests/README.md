@@ -36,8 +36,15 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
 ```
 
 Require `OPENXR_SESSION_RECOVERY_PASSED` and `OPENXR_ENABLE_PASSED`.
+The enable fixture also calls actual runtime-foveation preparation/recovery:
+paired density offsets, off requests after failure/missing views, fresh input
+release before terminal-abort retirement, stop-reason/ineligible-binding refusal,
+and one ordinary attachment (including rejected attachment/desktop dimensions).
+External dispatch/resources are spies; no borrowed density image runs here.
 See the [plan and recorded review](../docs/openxr-session-recovery-2.0-plan.md)
 for retained-binding boundaries and broader recovery work.
+See [current F06 recovery evidence](../docs/foveation-recovery-current-qualification-2.0.md)
+for actual loaded-scene Vulkan retirement/reattachment and precise limitations.
 
 ## Local private movement and restored identities
 
@@ -3373,6 +3380,11 @@ three-sample eye stability, fresh centers, opt-out/focus/invalid flags and secon
 center rejection, partial setter recovery, failed off-restoration, array/two-chain
 ownership and active-policy retirement on unusable/copied frames. This submits
 no GPU work or real gaze/provider requests.
+It also executes production profile creation/cleanup: actual FB/META structure
+chains, dynamic-to-static eye-tracked retry, optional fixed/eye refusal,
+mandatory off and partial initial setter failure, negative-output ownership,
+and terminal loss-pending handle retirement. The unchanged build recipe below
+executes both subsets.
 
 ```sh
 c++ -std=c++14 -DUSE_SDL3 -Wall -Wextra -Werror \

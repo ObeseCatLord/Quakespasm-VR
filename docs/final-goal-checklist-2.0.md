@@ -79,6 +79,13 @@ receipts. These overlap intentionally; test shared boundaries once.
   [exact results and limits](foveation-current-qualification-2.0.md).
   Capability selection and renderer recovery distinctions remain open; actual
   eye/provider/device testing stays user-deferred.
+- F06: aa828629 repairs OFF restoration after optional-resource failures and
+  failed restoration recovery. Profile construction and prepared renderer
+  ordering/stop/retry checks pass; native live e1m1 recovers through actual
+  abort/retirement/ordinary reattachment with4xMSAA/SSAO1 retained.
+  [Exact recovery results and limits](foveation-recovery-current-qualification-2.0.md).
+  Capability/selection, protected GPU output and constructor-failure distinctions
+  remain open; no actual FB/META provider pass is claimed.
 - F04/F05: signed XYZ/yaw/pitch/roll, composed camera at nonzero game yaw and
   native live Vulkan eye-mirror parallax/rotation pass. Local Astra found paused
   body-owned horizontal freeze; repaired8071a46b. Actual-source query/reset/
@@ -88,6 +95,7 @@ receipts. These overlap intentionally; test shared boundaries once.
   [senior dispositions](sixdof-final-2.0-review.md). Other input/render owners remain open.
 - F10: production482cd9f5 changes cl_main.c and4ef67790 changes gl_rmisc.c;
   07f83e6e changes host_cmd.c;8071a46b changes gl_rmain.c/glquake.h/view.c.
+  aa828629 changes gl_vidsdl.c for foveation OFF/recovery.
   existing ff83e66a packages remain accepted only for their earlier input.
   Refresh affected final artifacts once required source fixes settle; do not
   claim current package acceptance yet.

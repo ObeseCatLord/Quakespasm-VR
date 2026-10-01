@@ -25,6 +25,15 @@ are recorded in [camera review](sixdof-final-2.0-review.md) with
 [exact evidence/limits](sixdof-current-qualification-2.0.md). This does not close
 the remaining finite F04/F05 owners or whole goal.
 
+F06 recovery repair aa828629 also requires final affected artifact refresh.
+Optional-resource failure now establishes runtime OFF before drawing, retaining
+the session when successful; failed restoration uses native input release/
+abort/retirement and one eligible ordinary attachment. Verified local Astra
+dispositions, prepared profile/renderer checks and actual loaded-scene Vulkan
+recovery pass at their stated boundaries; see
+[exact recovery evidence](foveation-recovery-current-qualification-2.0.md).
+F06 capability/selection/protected output and other frozen owners remain open.
+
 Full native Linux/ARM build obligation (group1) is complete for immutableff83e66a;
 all308 tracked production files matched that qualification snapshot. Both packages
 verify45 ELF/651 inventory entries/118 contributors. ARM retrieval was recovered

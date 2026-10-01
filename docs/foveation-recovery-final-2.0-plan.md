@@ -81,3 +81,10 @@ Official mutable-state and result owners checked2026-10-01:
 [xrUpdateSwapchainFB](https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrUpdateSwapchainFB.html)
 and [XrSwapchainStateFoveationFB](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrSwapchainStateFoveationFB.html).
 Changing application passes alone cannot establish the profile setter succeeded.
+
+Focused production follow-up review found no correctness blocker. Two fixture
+recommendations were adopted before final acceptance: missing-view state now
+starts from an active/valid eye request and requires a fresh off call plus
+negative rejection; every recovery checks its own fresh release at abort entry,
+and terminal abort consumes retirement so following detach cannot repeat it.
+Main reran the strengthened fixture0 and inspected native recovered eye output.

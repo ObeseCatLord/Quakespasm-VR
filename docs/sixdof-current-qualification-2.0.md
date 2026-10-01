@@ -61,6 +61,11 @@ attempt still entering demo, missing xwininfo capture tool (uses installed xprop
 and exact inferior PID ownership instead). Failed attempts are not passes.
 Only owned game/compositor windows captured; no user desktop/focus/key events.
 
+Additional main-owned input-accumulator recheck compiled with ASAN/UBSAN and
+ran0 (sixdof-current/pause-input-main-build.log and -run.log). A premature run
+before compilation finished returned127/missing executable; its separate
+-premature-run.log is retained as a recipe failure, not a production finding.
+
 Astra found an additional source-derived paused-private counterexample: latched
 body ownership zeroed horizontal view movement while the prepared player base
 was frozen. Before-code source fixture failed134 with fresh delta0 instead of

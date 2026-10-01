@@ -2,7 +2,8 @@
 
 **Subsequent freshness update:** production482cd9f5 changes cl_main.c and
 4ef67790 changes gl_rmisc.c,07f83e6e changes host_cmd.c,8071a46b changes
-gl_rmain.c/glquake.h/view.c. The ff83e66a packages below remain qualified for
+gl_rmain.c/glquake.h/view.c;aa828629 changes gl_vidsdl.c for foveation recovery.
+The ff83e66a packages below remain qualified for
 that exact earlier input, not these repairs. Final affected artifact refresh belongs to F10 after
 source fixes settle. The308-file equality below was verified at its original
 qualification snapshot and no longer describes the latest production tree.

@@ -83,3 +83,12 @@ failure/recovery distinctions not covered here stay open. Real eye-driven GPU
 patterns and FB/META borrowed-image/provider/device compatibility remain
 user-deferred; existing stale-gaze policy checks are retained separately. Final
 Linux/ARM artifacts still need their affected production-input refresh under F10.
+
+Subsequent aa828629 adds mandatory OFF restoration and bounded ordinary-session
+recovery; [exact new profile/recovery results](foveation-recovery-current-qualification-2.0.md).
+The same live four-phase native GPU recipe was rerun after this production
+change: all phase/rate/upload results above repeat, native4xMSAA/SSAO1 retained,
+structured pass/marker and GDB/process0 normal quit, no VUID/validation/sync
+errors. Current log: logs/foveation-gpu-native-gameplay-after-recovery.log.
+This affected rerun does not establish the remaining FB/META/device-selection
+or protected-output boundaries.
