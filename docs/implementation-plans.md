@@ -313,4 +313,6 @@ records actual opening tracking-space/view-follow discrepancies and requested
 Astra disposition: reuse the full prepared renderer basis and existing grip
 calibration, capture raw opening pose only, calibrate live wheel pointer locally,
 and preserve existing layout/session/render ownership. Implementation and final
-actual-source acceptance are in progress; rendered qualification stays deferred.
+actual-source acceptance are complete for this slice: Luna's five-file adapter
+passed main and requested-Astra actual-diff source review without introduced
+P1/P2. Broader wheel/UI and rendered/Linux/ARM qualification stay deferred.

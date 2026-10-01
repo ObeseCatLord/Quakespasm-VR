@@ -94,3 +94,29 @@ in view.c/view.h; and wheel-only state/preparation in gl_screen.c. Keep unrelate
 menus, catalogs, foreground passes, draw/hit schemas and backend unchanged.
 Requested-Astra advice exposed a real pitch/roll inconsistency risk in the initial
 yaw-only reuse option; final actual-diff source review remains required.
+
+## Actual implementation source acceptance
+
+Production commit `6150cf39`: Luna xhigh implemented the accepted five-file adapter,
+including reusable full-basis pose
+conversion with an unchanged raw controller wrapper; one existing view-owned
+finite calibration getter; raw opening grip/angle snapshot; current calibrated
+wheel-only ray; and per-preparation view-mode head follow with wheel-local roll.
+The frozen world-basis state was removed. Existing catalog/layout/selection,
+occlusion, foreground passes, general menu/HUD rays and backend remain.
+
+Main reviewed the complete actual diff and source callers; scoped whitespace
+check passed. Requested local Astra xhigh independently inspected that actual
+five-file patch and found no introduced P1/P2 in the bounded scope. It verified
+the inverse neutral coordinate mapping, same full basis for translation and
+calibrated axes, distinct captured/current calibration, raw wrapper/output
+validation, snapshot cancellation and the shared draw/hit matrix. The patch
+adds123/deletes56 lines; most are existing transform extraction and local wheel
+preparation changes, not a parallel renderer/input owner.
+
+The earlier opening tracking-space and view-follow source omissions are closed.
+This is source acceptance only: no tests/builds/compiler/runtime/comfort or
+performance qualification has run. First-valid-preparation calibration capture,
+current native view panel geometry and existing cancel-without-head-fallback
+remain the explicit limits recorded above. Broader wheel/UI and final Linux/
+ARM software acceptance are still pending; the whole goal is not complete.
