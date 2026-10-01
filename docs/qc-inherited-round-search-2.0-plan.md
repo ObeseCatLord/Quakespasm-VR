@@ -33,8 +33,9 @@ the primary's checked self/enemy conversion to be copied unchanged.
 [Verified: native host.c:Host_ClearMemory and sv_main.c:SV_SpawnServer.] Server
 spawn calls Host_ClearMemory before progs load; it clears the whole sv structure
 after freeing the previous VM. [Verified: primary predicate.] Its result latch
-is instead a function-static integer, reset by a rounds query or a find on a
-different active map. [Unknown: execution.] Whether a direct same-map restart/
+is instead a function-static integer, reset by a rounds query or a find whenever
+its active-SSQC-map predicate fails (including an inactive server).
+[Unknown: execution.] Whether a direct same-map restart/
 save load always makes such a query before a result cannot be inferred from
 the predicate. Do not claim executable round/lifecycle parity.
 
@@ -70,3 +71,24 @@ for win/loss ordering, repeated matching queries, rounds reset, late opposite
 clearer, supported targetname fields, matching/nonmatching monster and cleanup
 enemy identity, non-target fields, other maps/programs, CSQC, same-map restart,
 server replacement and save load. Return counters alone are not gameplay proof.
+
+## Before-code requested-Astra disposition
+
+Main spot-checked the exact predicate ordering/latch assignment, declared field
+APIs, and native fastload-versus-spawning load dispatch. The reviewer challenged
+the proposed server-member lifetime: an available reset owner is not evidence
+that the inherited lifetime must change.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Retain the donor function-static latch | Adopt. Delete the proposed server_t member from the implementation scope. Additional map/spawning-load reset would change reference behavior without demonstrated incompatibility, and differ from fastload. Lifetime behavior stays an explicit final software acceptance question. |
+| Preserve result predicate before cleanup predicate before enumeration | Adopt. Query itself can latch a result even if no entity is later found. Opposite suppression precedes reassignment; repeated same result remains allowed. |
+| Copy exact context/target/enemy predicates | Adopt. No generic monster-cleanup rule or expansion to other maps/search builtins. |
+| Reuse the declared field-access composition | Adapt. GetEdictFieldValueByName exists but lacks a public declaration; locally use declared GetEdictFieldValue(ent, ED_FindFieldOffset(name)), its exact native composition, without another header change. Missing fields return NULL; do not claim general bounds validation. |
+| Preserve first matching field-definition alias semantics | Adopt. Copy the donor's offset-to-name scan rather than independently comparing named offsets. |
+| Remove legacy trigger-debug logging only | Adopt. Keep all behavior surrounding log statements and checked positive/aligned/in-range/non-free self/enemy conversion. |
+
+Final production ownership is **pr_cmds.c only**, copying the minimal helper/
+predicate closure and two early world-return checks in PF_Find. Native error,
+registry, CSQC, extension searches and existing inactive-client filter remain.
+No server member, additional lifecycle owner, asset change or debug subsystem.
