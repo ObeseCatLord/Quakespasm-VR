@@ -66,8 +66,13 @@ free, failed/empty palette publication, tasks on/off and CPU/GPU lightmaps.
 Include forced/teleported/backwards-time relink without a flash while rendering
 is skipped, then a flash before any new preparation: the retired point must
 remain unavailable. Native bright/dim/rocket precedence and ordinary desktop
-fallback remain required. Native repeated multipass/debug pitch mutation has
-not been changed or certified by this adapter.
+fallback remain required. The subsequent
+[shared alias-player root repair](alias-player-root-2.0-plan.md) requires repeated
+MBOIT/wireframe/overlay and tracked body/prop TLAS consumers to leave the original
+alias entity angles unchanged and derive the same root. Cover copied versus
+message-angle branches, tagentity, EF_ROTATE, absent movement history, local and
+remote identities and viewmodels. Native non-alias dispatch and the non-tracked
+TLAS pitch convention stay unchanged. Rendered agreement remains unqualified.
 
 The inherited aim source repairs add focused cases to the VR movement and
 presentation row: deadzone 0/70/out-of-range/nonfinite and unchanged valid

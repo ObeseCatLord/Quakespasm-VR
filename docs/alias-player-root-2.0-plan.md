@@ -107,3 +107,20 @@ or full-goal signoff is claimed.
 
 No human choice is needed in this bounded repair. Three production files,
 unchanged signatures and fewer than 50 added lines remain the coding contract.
+
+## Source integration
+
+Implemented `259df95f` after plan/disposition commit `226eafc4`: 19 added,
+10 removed production lines in the three owned files. Main reviewed the full
+delegated patch and source branches/callers. Copied-angle results apply native
+local alias pitch once; message-angle interpolation is unchanged. Ordinary
+and wireframe dispatch retain the original entity angle writes only for
+non-alias models. Muzzle preparation deletes its entity copy and shares the
+original-identity transform helper, with the documented read-only matrix cast.
+
+No additional palette/root cache, entity owner, task edge, model load, lock,
+signature or protocol was introduced. Scoped diff hygiene passes. No compiler,
+build, test, fixture, game or benchmark ran. Runtime agreement remains pending;
+the native non-tracked shadow convention is unchanged. The previous muzzle
+plan's repeated alias-player pitch limitation is now source-repaired rather
+than deferred. This is not the complete goal's final review or qualification.

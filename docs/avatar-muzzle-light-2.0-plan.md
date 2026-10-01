@@ -133,3 +133,10 @@ game or headset test was run. Preparation-driven eligibility, first ordinary
 color-pass root and unchanged native repeated multipass/debug pitch behavior
 remain explicit limits. The linked consolidated qualification adds actual
 publication/relink cases; helper-only evidence cannot close this consumer.
+
+Later source correction: `259df95f`, planned and reviewed in
+[shared alias-player root policy](alias-player-root-2.0-plan.md), removes repeated
+alias-player draw pitch writes and the private muzzle entity copy. Existing
+native interpolation now supplies that presentation once across alias consumers.
+Historical first-color-pass-only root limitations above describe the original
+consumer patch; runtime root/shadow agreement still awaits final qualification.
