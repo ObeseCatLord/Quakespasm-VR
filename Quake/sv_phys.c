@@ -7053,14 +7053,14 @@ static qboolean SV_VRDwellPhysicalOutcomeContextValid (client_t *client,
 qboolean SV_VRDwellBerserkPhysicalOutcome (client_t *client, edict_t *ent,
 	const usercmd_t *cmd, int anatomical_hand, const trace_t *contact)
 {
-	globalvars_t saved_globals, *saved_global_struct;
+	globalvars_t saved_globals = {0}, *saved_global_struct;
 	float saved_call_globals[OFS_PARM7 + 3 - OFS_RETURN];
 	qcvm_t *saved_vm;
 	dprograms_t *saved_progs;
 	float *saved_vm_globals;
 	eval_t *customflags, *cooldown;
 	trace_t accepted_contact;
-	vec3_t accepted_angles, saved_angles, body_origin;
+	vec3_t accepted_angles, saved_angles = {0}, body_origin;
 	float qctime, haste_value = 0, new_cooldown;
 	int saved_argc, axis, cursor_sequence;
 	qboolean has_contact = contact != NULL;
@@ -7345,7 +7345,7 @@ static qboolean SV_VRDirectMeleeOutcome
 	float *saved_vm_globals;
 	eval_t *cooldown, *hostile, *berserk_sound = NULL, *switchblock = NULL;
 	trace_t accepted_contact;
-	vec3_t accepted_angles, saved_angles, body_origin, org, dir;
+	vec3_t accepted_angles, saved_angles = {0}, body_origin, org, dir;
 	float qctime, new_cooldown, new_hostile;
 	int axis, saved_argc, cursor_sequence, subtype;
 	qboolean berserk, enyo, cursor_valid, context_saved = false;
@@ -10638,7 +10638,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	{
 		sv_vr_weapon_pose_scope_t weapon_scope;
 		usercmd_t movement_input;
-		vec3_t movement_v_angle, movement_angles;
+		vec3_t movement_v_angle = {0}, movement_angles = {0};
 		const qboolean restore_qc_angles = shared_qc && !ent->v.fixangle &&
 			think_window->qc_epoch == client->private_move_discontinuity_epoch;
 		if (shared_qc)
