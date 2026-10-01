@@ -18,11 +18,12 @@ another renderer, VM, networking stack or movement solver.
 
 ## Confirmed implementation work
 
-The table below preserves the audit's 22 implementation findings. Eleven items
+The table below preserves the audit's 22 implementation findings. Thirteen items
 were subsequently source-integrated in the commits below, following committed
 before-code plans and main review of the Luna patches. Their executable
-acceptance remains pending. **11 implementation items remain**: C02, C07,
-C10–C14 and C18–C21, plus the Q01 rendering correction assessed below.
+acceptance remains pending. **Nine implementation items remain**: C02, C07,
+C12–C14 and C18–C21. The shared Q01 rendering correction is also source-integrated;
+its rendered acceptance remains pending.
 No tests or builds have run since the audit.
 Each remaining slice needs a committed before-code plan, implementation/source
 review, then observable acceptance in the single end-of-implementation Linux/ARM
@@ -35,6 +36,8 @@ qualification phase.
 | C01/C03/C05 — late-model helper, ordinary QC metadata lookup, truthful protocol offers | [Networking plan](precache-infokey-protocol-2.0-plan.md); source commit `ab1423fb`. Final remote precache/QC/negotiation qualification pending. C02 publication is still separate. |
 | C15/C16/C17 — shared loop pause, reduced loop room send, inherited wet-monitor default | [Audio plan](spatial-loop-monitor-2.0-plan.md); source commit `ab1423fb`. Callback code/sample identity/generation/offset and independent mic permissions retained. Final software audio qualification pending. |
 | C04/C06 — loading nop and missing-model cancellation | [Loading/reconnect plan](loading-keepalive-reconnect-2.0-plan.md); source commit `486d1b42`. Main checked independent nop buffer preserves parser/reliable state and current true-to-abort cleanup. Final peer/loading/reconnect qualification pending. |
+| C10/C11 — sampled avatar root yaw and viewer eligibility | [Avatar plan](avatar-root-viewer-gate-2.0-plan.md); source commit `73bd354b`. Main checked immutable published yaw, preparation-time muzzle override and shared viewer/sender eligibility. Ordinary selected-avatar animation remains available without tracking. Final body/prop/muzzle/shadow and toggle acceptance pending. |
+| Q01 — per-eye alpha categories at liquid boundaries | [Stereo transparency plan](stereo-water-transparency-2.0-plan.md); source commit `a7d06c01`. Main reviewed the Luna six-file adapter, serialized exceptional recording, context resets and local non-alias angles. Shared sorting, native passes and opaque single-pass stereo remain. Final rendered boundary/OIT/context acceptance pending. |
 
 | Item | Feature IDs | Missing behavior and smallest implementation seam | Source evidence / eventual observable acceptance |
 | --- | --- | --- | --- |
@@ -61,25 +64,25 @@ qualification phase.
 | C21 | PERF-F001 | Reconcile native frame/AO GPU diagnostic presentation: label shared stereo work and distinguish unavailable/invalid samples from a measured zero. | gl_vidsdl.c:4456/4509/4523; gl_rmain.c:2784. Retain native queries/counters, no invented per-eye times or duplicate profiler. Disabled/failed/wrapped queries never masquerade as valid samples. |
 | C22 | MOD-010 | Restore bounded classic-particle capacity and use 32-bit indices in the existing static quad index buffer. | r_part.c:163/204/215/238/1021; primary26/30. Validate parameter presence/count before conversion/allocation, retain 512 minimum / 65,536 maximum and restore 32,768 default. More than 16,384 active quads render their own vertices; native quad/triangle appearance and FTE pool stay unchanged. |
 
-## One remaining design task
+## Reviewed rendering correction awaiting qualification
 
-**Q01 — XR-011/PERF-021:** implement the senior-assessed minimal non-OIT stereo
-transparency/water-boundary correction after committing its before-code plan.
-Current gl_rmain.c:2345–2465 sorts from one origin and partitions water from the
-center leaf; gl_rmisc.c:114 bypasses sorting under OIT, but OIT-off remains
-allowed. Primary deliberately shares alpha-sort origin, so shared sorting alone
-is not a demonstrated regression. Compare native/primary behavior before
-planning a narrow per-eye exception. Preserve opaque single-pass stereo; do not
-force OIT or create another sorter simply to close the row.
+**Q01 — XR-011/PERF-021:** the minimal non-OIT stereo transparency/water-boundary
+correction is source-integrated in `a7d06c01` following its committed before-code
+plan. The audited renderer sorted from one origin and partitioned water from
+the center leaf; OIT bypasses this sorting, but OIT-off remains allowed. Primary
+deliberately shares alpha-sort origin, so shared sorting alone was not a
+demonstrated regression. The adapter retains that shared sorting and partitions
+the existing alpha stages using each eye's wet/dry category. It preserves opaque
+single-pass stereo, without forcing OIT or adding another sorter.
 
 The subsequent [Astra design disposition](stereo-water-transparency-2.0-review.md)
 adopts per-eye category participation in the existing alpha stages, retaining
 the 160-byte stereo uniform layout, shared sorting and opaque single-pass stereo.
 Exceptional recording must be serialized to avoid duplicate entity cache writes;
 repeated local-pitch mutation and persistent context reset must be addressed at
-their existing owners. This is a reviewed design, not implemented or rendered
-acceptance. The original crosswalk Q classifications remain the frozen audit
-snapshot, not a claim that the design is still undecided.
+their existing owners. These changes are implemented and main-source-reviewed,
+but rendered acceptance remains pending. The original crosswalk Q classifications
+remain the frozen audit snapshot, not a claim that the design is still undecided.
 
 All input, weapon, tracker, UI, base, co-op and platform rows now have explicit
 source dispositions. Their software qualification remains required. No separate
@@ -161,10 +164,9 @@ research; they were not blanket-approved implementation.
   interface, preservation and history inventories plus legacy/native/research
   dispositions. Names and routes alone do not certify runtime semantics.
 
-Resolve Q01 first. Implement C10–C14 as coordinated avatar/root/equipment slices;
-C01–C07 as native precache/metadata/reconnect/presentation adapters; C08–C09 as
-physics corrections; C22/C20/C21 at existing render boundaries; C15–C17 through
-existing audio publication; C18–C19 through native packaging. Reuse reference
+Q01 and C10–C11 are source-integrated. Finish C12–C14 as coordinated avatar/
+equipment slices; C02/C07 as native metadata/presentation adapters; C20/C21 at
+existing render boundaries; C18–C19 through native packaging. Reuse reference
 code and write a bounded plan before each major slice. Then perform the one
 consolidated Linux/ARM qualification phase above and review its final fixes.
 Source-present features should not be ported again.

@@ -12,7 +12,9 @@ implementation plan or authorization to add a new metadata owner.
 The [C02 senior disposition](metadata-publication-2.0-review.md) identifies the
 recipient-capacity question; independent checklist implementation continues.
 [C10/C11 tracked root and viewer gate](avatar-root-viewer-gate-2.0-plan.md)
-plans reuse of the existing frame-owned palette and observational transforms.
+reuses the existing frame-owned palette and observational transforms. The Luna
+five-file adapter is source-integrated in `73bd354b` after main review; final
+rendered body/prop/muzzle/shadow and toggle qualification remains pending.
 
 Final-checklist correction slices planned before implementation:
 [Toss/elevator C08–C09](toss-support-elevator-2.0-plan.md) and
@@ -20,6 +22,9 @@ Final-checklist correction slices planned before implementation:
 These three items are source-integrated in `0d2c182c`; final qualification is
 pending. The [Q01 senior design disposition](stereo-water-transparency-2.0-review.md)
 now has a [before-code implementation plan](stereo-water-transparency-2.0-plan.md).
+The Luna six-file adapter is source-integrated in `a7d06c01` after main review,
+retaining native render passes, shared sorting and opaque single-pass stereo.
+Per-eye liquid-boundary and OIT/context rendered acceptance remains pending.
 
 The [final senior-reviewed checklist](final-checklist-2.0.md) enumerates the
 remaining implementation and design work. Plan each major slice before coding,
