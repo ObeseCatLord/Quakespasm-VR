@@ -117,3 +117,23 @@ findings were the missing Enyo baseline and the listen-host transport split.
 If a mod cannot align its barrel and shot under one calibration, correct its
 QuakeC source expression at the narrow firing boundary rather than adding a
 mode-dependent muzzle again.
+
+## Current source-owner reconciliation (2026-09-30)
+
+Main rechecked WPN-008 at the actual current consumers, without relying on
+the historical fixture/build claims above. LookupHeld/LookupMuzzle in
+vr_weapon_calibration.c select classic or enhanced geometry values with finite
+validation and no player-count/transport branch. r_alias.c calls LookupHeld
+for calibrated viewmodel placement; CurrentMuzzle calls LookupMuzzle, and
+view.c/vr_input.c project that shared value through the existing locomotion
+transform for presentation and the accepted private command pose.
+
+vradjustweapon/vradjustmuzzle remain the controller editor commands;
+vrweaponsave/vrweaponsaveglobal remain the shared persistence commands.
+vr_weapon_schema.c validates and discards legacy per-weapon/global MP values.
+The existing shared global schema fields and writer are retained. The user
+does not require old MP commands or other setting aliases, so their literal
+absence does not warrant another calibration owner. No production change or
+test/build/runtime execution occurred in this checkpoint. Broader source
+placement, save/reload and final Linux/ARM qualification remain pending;
+physical shot alignment remains the user's later testing.
