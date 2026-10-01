@@ -6034,12 +6034,10 @@ void VID_Shutdown (void)
 		}
 		if (vulkan_globals.device)
 		{
-			R_VRIKRenderShutdown ();
 			if (render_resources_created)
-			{
-				R_DestroyPipelines ();
-				render_resources_created = false;
-			}
+				GL_DestroyRenderResources ();
+			else
+				R_VRIKRenderShutdown ();
 			R_DestroyPipelineCache ();
 			R_DestroyStereoUIPipelineLayouts ();
 		}
