@@ -1,0 +1,42 @@
+{
+  "architecture": {
+    "x86_64": {
+      "machine": "Advanced Micro Devices X86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2"
+    },
+    "aarch64": {
+      "machine": "AArch64",
+      "interpreter": "/lib/ld-linux-aarch64.so.1"
+    }
+  },
+  "glibc_max": "2.39",
+  "glibc_abi_dt_relr": "2.36",
+  "openxr_loader": "libopenxr_loader.so.1",
+  "runpath": {
+    "bin": "$ORIGIN/../lib",
+    "lib": "$ORIGIN",
+    "openxr": "$ORIGIN:$ORIGIN/../lib"
+  },
+  "host_sonames": [
+    "libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1",
+    "libresolv.so.2", "libutil.so.1", "libgcc_s.so.1", "libstdc++.so.6",
+    "libX11.so.6", "libX11-xcb.so.1", "libxcb.so.1", "libXext.so.6",
+    "libXcursor.so.1", "libXrandr.so.2", "libXfixes.so.3", "libXi.so.6",
+    "libXss.so.1", "libXrender.so.1", "libXinerama.so.1", "libwayland-client.so.0",
+    "libwayland-server.so.0", "libwayland-cursor.so.0", "libwayland-egl.so.1",
+    "libxkbcommon.so.0", "libdecor-0.so.0", "libEGL.so.1", "libGL.so.1",
+    "libGLX.so.0", "libOpenGL.so.0", "libGLESv2.so.2", "libdrm.so.2",
+    "libgbm.so.1", "libudev.so.1", "libdbus-1.so.3", "libsystemd.so.0",
+    "libusb-1.0.so.0", "libasound.so.2", "libpulse.so.0", "libpulse-simple.so.0",
+    "libpipewire-0.3.so.0", "libjack.so.0", "libsndio.so.7.0"
+  ],
+  "host_prerequisites": [
+    "Native glibc, ELF interpreter, libgcc_s and libstdc++ meeting recorded version needs",
+    "Host Vulkan ICDs and graphics drivers",
+    "A working OpenXR runtime and its user/system runtime discovery configuration",
+    "Host X11 or Wayland display service and applicable runtime libraries",
+    "Host audio service and applicable ALSA, PulseAudio, PipeWire, JACK or sndio configuration",
+    "Host CA trust store for network access",
+    "Host SDL dlopen modules and configuration required by selected optional services"
+  ]
+}
