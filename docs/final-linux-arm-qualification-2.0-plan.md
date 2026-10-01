@@ -93,9 +93,9 @@ This is explicit contextual selection, not automatic mesh/family recognition.
 
 Native diagnostic fields/bboxes and optional controls also need actual
 collector/VM/GUI consumers, local/multiplayer gating, line/string bounds and
-desktop/stereo rendered output. MOD-014's field overlay currently uses the
-native screen-space canvas outside an explicit tracked panel; source presence
-alone does not establish primary panel placement or readable stereo output.
+desktop/stereo rendered output. MOD-014's explicit tracked panel is now
+source-integrated in a42de70f; source presence alone does not establish readable
+stereo output or validate the canvas/viewport inversion at actual resolutions.
 
 The [inherited controller-axis adapters](controller-axis-parity-2.0-plan.md)
 require backend-sample-to-Key_Event-to-Cbuf/native command coverage: gameplay
@@ -136,6 +136,37 @@ explicit/default ports, bracketed literals, invalid names, unavailable IPv6,
 `-noudp6`, cancel/reconnect and native socket cleanup. Merely inspecting the
 driver table or testing loopback does not qualify these paths. Windows checks
 remain deferred.
+
+The [final C02 publication plan](metadata-publication-integration-2.0-plan.md)
+adds complete native signon and metadata consumer cases. Existing
+local_load_native_fixture.c prepares renderer signon and clears the peer's
+reliable bytes before issuing spawn/begin; initial_state_native_fixture.c also
+prepares initial transport/signon. Their later movement results cannot certify
+the new pre-signon2/serverinfo or pre-signon3/all-slot drain. Reuse their engine/
+loopback bootstrap, but exercise actual native sender, queued-byte draining,
+client parser and CL_SignonReply/CL_SendCmd without manually skipping those
+phases. Include empty and updates-only initialization; initial client aggregate
+above1024; individual token/text and logical NQ/Fitz/RMQ limits; reconnect/map
+downgrade; all16 slots across reliable sends; both profiles; mid-signon mutation;
+spawn/fastload clears; retired/reused occupants; private/star/quote-invalid fields;
+ordered near-full name/color overlays and actual movement/skin/scoreboard state.
+The existing serverinfo_command_smoke.gdb isolates server command readers and
+does not qualify this sender/lifecycle contract. Inspect live cvar/control
+publication too; any connected unhandled failure remains a C02 finding.
+
+The [C19 refinement plan](portable-linux-staging-refinement-2.0-plan.md) adds
+artifact cases on both native architectures from the same committed snapshot.
+Stage/verify the actual final dependency closure, then relocate into a disposable
+path and exercise the executable plus executable-side OpenXR alias. Both loader
+load contexts must resolve the same bundled descendants using only their own
+RUNPATHs, without a global LD_LIBRARY_PATH. Verify original receipts, native
+inputs, source versions, exact deb payload/notice ownership, matching source
+access, aliases, architecture and GLIBC<=2.39. Negative disposable copies must
+refuse removed installed notices/ELFs even when their manifest entries are also
+removed, altered original bytes/receipts, escaping aliases, host-SONAME filenames,
+provider conflicts and unresolved dependencies. Package metadata inspection
+alone does not qualify relocated execution or runtime/driver discovery. Retain
+host OpenXR runtime/driver dependencies as explicit external prerequisites.
 
 The [avatar muzzle-light adapter](avatar-muzzle-light-2.0-plan.md) additionally
 requires real previous-render publication followed by native entity relink:
