@@ -4922,7 +4922,8 @@ static void Host_Startdemos_f (void)
 	if (!sv.active && cls.demonum != -1 && !cls.demoplayback)
 	{
 		cls.demonum = 0;
-		if (!cl_startdemos.value)
+		// VR demos are unsupported; use the native menu startup branch in XR.
+		if (!cl_startdemos.value || V_TrackedSessionActive ())
 		{ /* QuakeSpasm customization: */
 			/* go straight to menu, no CL_NextDemo */
 			cls.demonum = -1;
