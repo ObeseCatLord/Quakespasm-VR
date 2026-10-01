@@ -179,6 +179,23 @@ fresh restore. Repeated ordinary frames must not reapply defaults. Reuse current
 startup missing-only policy for a deferred first sample; script text alone is
 not packaged-control behavior or native key-release/neutral proof.
 
+The [deliberate paused impulse adapter](paused-impulse-adapter-2.0-plan.md)
+requires real console/mod alias projection through CSQC, private recording and
+native server-QC consumption. Cover explicit pause and local console-only
+suspension, console closure before the next server tick, an opening never
+observed by the server, and an already-due native arrival gap after a prior
+marker. Existing server phase/terminal/gap policy must remain authoritative.
+Exercise positive versus zero markers, reserved seq0/1, current versus delayed
+epochs, ordinary native authority without prediction permission, and successive
+suspensions. Pre-pause ordinary input still retires; deliberate unrecorded
+intent remains until admission, replacement, explicit zero or map/disconnect.
+Preview/final sampling must not duplicate or prematurely consume it. CSQC zero/
+replacement consumes the projected request once at eligible recording; replay
+uses native command history, without post-filter injection or ACK-owned copies.
+Cover reciprocal live loopback identity, disconnected/nonloopback peers and
+remote/public native behavior; preserve held controls and ACK/reliable drainage.
+No read-only predicate/helper fixture alone establishes eventual mod QC effects.
+
 Read game assets only from the existing quakespasm_straight installation. Native
 runners may link/copy needed data into disposable writable profiles; saves,
 configs and generated QC programs belong there. The map/mod matrix includes
