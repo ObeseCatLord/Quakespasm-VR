@@ -175,6 +175,22 @@ each ordered overlay; permanent incompatibility must use the recipient failure
 path. No default-profile exclusion or reachable scratch overflow is established
 merely by the reviewed source guard omissions.
 
+Main source integration review adds three precise cases within the same C02
+scope. First, native desktop demo signon must progress with locally unrepresentable
+name/userinfo without invoking live reply serialization or disconnect; preserve
+once-only CSQC loading and native loading completion. Second, the real prespawn
+sender must publish initial serverinfo before2 while retaining player-slot
+obligations for the post-spawn/QC table before3, avoiding duplicate initial tables.
+Third, full and reconstructed wire userinfo must contain canonical decimal colors
+and representable names, preserving custom fields. Actual parser/skin consumers
+must never observe a spurious zero color caused by custom-only snapshots; a
+quoted native name is restored by the binary companion. Existing native
+companions are retained, so this is not an assertion of zero skin-handler calls.
+Cover native remove-first live store refusal too: serialize the actual prospective
+empty/deleted value while preserving native cvar assignment semantics, rather than
+requiring requested and stored values to match. These are software correctness/
+ordering cases, not performance measurements or added demo features.
+
 The [C19 refinement plan](portable-linux-staging-refinement-2.0-plan.md) adds
 artifact cases on both native architectures from the same committed snapshot.
 Stage/verify the actual final dependency closure, then relocate into a disposable
