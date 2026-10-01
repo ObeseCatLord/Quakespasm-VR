@@ -876,7 +876,9 @@ void Spatial_ClearMusic(void)
 		SA_ClearMusic(spatial_renderer);
 		SNDDMA_Submit();
 	}
-	Spatial_ClearStream(music_converter);
+	Spatial_FreeStream(music_converter);
+	music_converter = NULL;
+	music_rate = music_width = music_channels = 0;
 	s_rawend = paintedtime;
 	music_rejection_reported = 0;
 }
