@@ -108,3 +108,28 @@ helper may be called at client free as well as admission reset. No model loads,
 wire fields or retained palette-memory accesses enter the light getter. Relevant
 final cases additionally include head-only tracking, valid new pose sequences,
 dominant-hand changes, backwards time and local-player first color-pass pitch.
+
+## Source integration
+
+Implemented in `c025acbc` after plan/disposition commit `76b63a8f`: 142 added
+and 7 removed production lines across the three planned files. The bounded
+local coding delegate implemented the slice; main reviewed the full diff and
+native caller/transform/reset boundaries. Final requested local Astra source
+review found no remaining P1/P2 blocker against the revised module contract.
+Effective reviewer model metadata is unavailable; this is source advice, not
+certified model or runtime evidence and not the full goal's final signoff.
+
+The complete frame record owns origin, original-model/avatar/generation/flags
+identity and timestamp; no forward cache, second solve, entity-side state or
+additional task was added. Selected tracked canonical Gun attachment uses the
+existing prop transform. Native custom gear, Axe, inactive/expired/changed
+presentations and pending model reload fall back to native placement. Admission
+reset and client free invalidate publication. Player discontinuity retirement
+occurs even without muzzleflash; lookup work is restricted to relevant player
+discontinuities and the existing flash consumer, not every map entity each frame.
+
+Main scoped `git diff --check` passes. No build, compiler, fixture, benchmark,
+game or headset test was run. Preparation-driven eligibility, first ordinary
+color-pass root and unchanged native repeated multipass/debug pitch behavior
+remain explicit limits. The linked consolidated qualification adds actual
+publication/relink cases; helper-only evidence cannot close this consumer.

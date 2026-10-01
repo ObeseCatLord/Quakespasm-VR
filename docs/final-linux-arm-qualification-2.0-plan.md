@@ -56,6 +56,19 @@ explicit/default ports, bracketed literals, invalid names, unavailable IPv6,
 driver table or testing loopback does not qualify these paths. Windows checks
 remain deferred.
 
+The [avatar muzzle-light adapter](avatar-muzzle-light-2.0-plan.md) additionally
+requires real previous-render publication followed by native entity relink:
+two independent tracked players, canonical and attached Gun versus Axe/native
+custom gear, head-only tracking, dominant-hand and identity/generation changes,
+new valid pose sequences, strict 0.25-second socket expiry and invalid/backwards
+time. Exercise local first-color-pass pitch, scaled/rotated entities, map/client
+free, failed/empty palette publication, tasks on/off and CPU/GPU lightmaps.
+Include forced/teleported/backwards-time relink without a flash while rendering
+is skipped, then a flash before any new preparation: the retired point must
+remain unavailable. Native bright/dim/rocket precedence and ordinary desktop
+fallback remain required. Native repeated multipass/debug pitch mutation has
+not been changed or certified by this adapter.
+
 The inherited aim source repairs add focused cases to the VR movement and
 presentation row: deadzone 0/70/out-of-range/nonfinite and unchanged valid
 fractional values; controller-to-head/mouse/blended history with unavailable
