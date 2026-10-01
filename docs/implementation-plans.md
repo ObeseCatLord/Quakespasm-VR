@@ -1,5 +1,9 @@
 # Major-feature implementation plans
 
+Final-checklist correction slices planned before implementation:
+[Toss/elevator C08–C09](toss-support-elevator-2.0-plan.md) and
+[classic-particle capacity C22](classic-particle-capacity-2.0-plan.md).
+
 The [final senior-reviewed checklist](final-checklist-2.0.md) enumerates the
 remaining implementation and design work. Plan each major slice before coding,
 reuse its native/reference owners, and run consolidated qualification after all
