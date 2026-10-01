@@ -3452,6 +3452,7 @@ void SV_SendServerinfo (client_t *client)
 		client->sendsignon = PRESPAWN_FLUSH;
 		return;
 	}
+	SV_MetadataRearmClient (client);
 
 	// now we know their protocol, pick some real defaults that match the limits of the engine that most defines that protocol's limits.
 	switch (client->protocol_pext2 ? PROTOCOL_FTE_PEXT2 : sv.protocol)
@@ -3865,6 +3866,7 @@ void SV_ConnectClient (int clientnum)
 		}
 	}
 
+	SV_MetadataUserinfoChanged (clientnum);
 	SV_SendServerinfo (client);
 }
 
@@ -5296,6 +5298,327 @@ static void SV_AppendInstantStopProtocol (client_t *client)
 		client->vr_instant_stop_offered = true;
 }
 
+typedef struct
+{
+	char *text;
+	size_t size;
+	qboolean userinfo, failed;
+} sv_metadata_projection_t;
+
+typedef struct
+{
+	sizebuf_t *unit;
+	char *store;
+	size_t store_size, token_limit, text_limit;
+	int slot;
+	qboolean userinfo, failed;
+} sv_metadata_increment_t;
+
+static qboolean SV_MetadataClient (const client_t *client)
+{
+	return client && client->active &&
+		(client->offered_metadata == QSVR_METADATA_VERSION ||
+		 (client->protocol_pext2 & PEXT2_PREDINFO) != 0);
+}
+
+static unsigned int SV_MetadataSlotMask (void)
+{
+	int count = q_min (svs.maxclients, MAX_SCOREBOARD);
+	return count >= 32 ? ~0u : count > 0 ? (1u << count) - 1 : 0;
+}
+
+void SV_MetadataRearmClient (client_t *client)
+{
+	if (!client)
+		return;
+	client->metadata_serverinfo_pending = SV_MetadataClient (client);
+	client->metadata_userinfo_dirty = client->metadata_serverinfo_pending ?
+		SV_MetadataSlotMask () : 0;
+}
+
+void SV_MetadataServerinfoChanged (void)
+{
+	for (int i = 0; i < svs.maxclients; ++i)
+		if (SV_MetadataClient (&svs.clients[i]))
+			svs.clients[i].metadata_serverinfo_pending = true;
+}
+
+void SV_MetadataUserinfoChanged (int slot)
+{
+	if (slot < 0 || slot >= svs.maxclients || slot >= MAX_SCOREBOARD)
+		return;
+	for (int i = 0; i < svs.maxclients; ++i)
+		if (SV_MetadataClient (&svs.clients[i]))
+			svs.clients[i].metadata_userinfo_dirty |= 1u << slot;
+}
+
+void SV_MetadataRetireSlot (int slot)
+{
+	if (slot < 0 || slot >= svs.maxclients || slot >= MAX_SCOREBOARD)
+		return;
+	svs.clients[slot].userinfo[0] = 0;
+	svs.clients[slot].name[0] = 0;
+	svs.clients[slot].colors = 0;
+	SV_MetadataUserinfoChanged (slot);
+}
+
+static void SV_MetadataProjectField (void *opaque, const char *key,
+	const char *value)
+{
+	sv_metadata_projection_t *projection = opaque;
+	size_t keylen = strlen (key), vallen = strlen (value);
+	if (key[0] == '_' || strchr (key, '"') || strchr (value, '"') ||
+		(projection->userinfo && (!strcmp (key, "name") ||
+		 !strcmp (key, "topcolor") || !strcmp (key, "bottomcolor"))))
+		return;
+	if (keylen + vallen + 2 >= projection->size - strlen (projection->text))
+	{
+		projection->failed = true;
+		return;
+	}
+	char *tail = projection->text + strlen (projection->text);
+	*tail++ = '\\';
+	memcpy (tail, key, keylen); tail += keylen;
+	*tail++ = '\\';
+	memcpy (tail, value, vallen + 1);
+}
+
+static qboolean SV_MetadataStoreKey (char *store, size_t store_size,
+	const char *key, const char *value)
+{
+	char actual[SERVER_INFO_STRING_SIZE];
+	Info_SetKey (store, store_size, key, value);
+	Info_GetKey (store, key, actual, sizeof (actual));
+	return !strcmp (actual, value);
+}
+
+static qboolean SV_MetadataOverlayUserinfo (char *store, const char *name,
+	int colors)
+{
+	char top[4], bottom[4];
+	q_snprintf (top, sizeof (top), "%u", ((unsigned int)colors >> 4) & 15);
+	q_snprintf (bottom, sizeof (bottom), "%u", (unsigned int)colors & 15);
+	return SV_MetadataStoreKey (store, CLIENT_USER_INFO_STRING_SIZE, "name", name) &&
+		SV_MetadataStoreKey (store, CLIENT_USER_INFO_STRING_SIZE, "topcolor", top) &&
+		SV_MetadataStoreKey (store, CLIENT_USER_INFO_STRING_SIZE, "bottomcolor", bottom);
+}
+
+static qboolean SV_MetadataWriteCommand (sizebuf_t *unit, const char *command,
+	size_t text_limit)
+{
+	size_t length = strlen (command), required = length + 2;
+	if (length > text_limit || unit->cursize < 0 || unit->maxsize < unit->cursize ||
+		required > (size_t)(unit->maxsize - unit->cursize))
+		return false;
+	MSG_WriteByte (unit, svc_stufftext);
+	MSG_WriteString (unit, command);
+	return !unit->overflowed;
+}
+
+static qboolean SV_MetadataWriteUserinfoCompanions (sizebuf_t *unit, int slot,
+	const char *name, int colors)
+{
+	size_t required = strlen (name) + 6;
+	if (unit->cursize < 0 || unit->maxsize < unit->cursize ||
+		required > (size_t)(unit->maxsize - unit->cursize))
+		return false;
+	MSG_WriteByte (unit, svc_updatename);
+	MSG_WriteByte (unit, slot);
+	SZ_Write (unit, name, (int)strlen (name) + 1);
+	MSG_WriteByte (unit, svc_updatecolors);
+	MSG_WriteByte (unit, slot);
+	MSG_WriteByte (unit, colors);
+	return !unit->overflowed;
+}
+
+static qboolean SV_MetadataWriteUserinfo (sizebuf_t *unit, int slot,
+	const char *userinfo, const char *name, int colors, size_t text_limit)
+{
+	char command[NET_MAXMESSAGE];
+	int length = q_snprintf (command, sizeof (command), "//fui %i \"%s\"\n",
+		slot, userinfo);
+	if (length < 0 || length >= (int)sizeof (command) ||
+		(size_t)length > text_limit || unit->cursize < 0 ||
+		unit->maxsize < unit->cursize ||
+		(size_t)length + 2 + strlen (name) + 6 >
+		(size_t)(unit->maxsize - unit->cursize))
+		return false;
+	return SV_MetadataWriteCommand (unit, command, text_limit) &&
+		SV_MetadataWriteUserinfoCompanions (unit, slot, name, colors);
+}
+
+static void SV_MetadataIncrementField (void *opaque, const char *key,
+	const char *value)
+{
+	sv_metadata_increment_t *increment = opaque;
+	char command[NET_MAXMESSAGE];
+	int length;
+	if (increment->failed || key[0] == '_' || strchr (key, '"') ||
+		strchr (value, '"') || strlen (key) > increment->token_limit ||
+		strlen (value) > increment->token_limit)
+	{
+		if (key[0] != '_' && !strchr (key, '"') && !strchr (value, '"'))
+			increment->failed = true;
+		return;
+	}
+	length = increment->userinfo ?
+		q_snprintf (command, sizeof (command), "//ui %i \"%s\" \"%s\"\n",
+			increment->slot, key, value) :
+		q_snprintf (command, sizeof (command), "//svi \"%s\" \"%s\"\n", key, value);
+	if (length < 0 || length >= (int)sizeof (command) ||
+		!SV_MetadataWriteCommand (increment->unit, command, increment->text_limit))
+	{
+		increment->failed = true;
+		return;
+	}
+	if (!SV_MetadataStoreKey (increment->store, increment->store_size, key, value))
+		increment->failed = true;
+}
+
+static int SV_MetadataEnvelope (const client_t *client, size_t *token,
+	size_t *full_text, size_t *increment_text)
+{
+	qboolean known = client->offered_metadata == QSVR_METADATA_VERSION;
+	*token = known ? SERVER_INFO_STRING_SIZE - 1 : 1023;
+	*full_text = known ? 8211 : 2046;
+	*increment_text = known ? 2047 : 2046;
+	return known;
+}
+
+static qboolean SV_MetadataServerUnit (client_t *client, sizebuf_t *unit,
+	char *reason, size_t reason_size)
+{
+	char projected[SERVER_INFO_STRING_SIZE], simulated[SERVER_INFO_STRING_SIZE];
+	char command[NET_MAXMESSAGE];
+	size_t token, full_text, increment_text;
+	sv_metadata_projection_t projection = { projected, sizeof (projected), false, false };
+	sv_metadata_increment_t increment;
+	int length;
+	SV_MetadataEnvelope (client, &token, &full_text, &increment_text);
+	projected[0] = 0;
+	Info_Enumerate (svs.serverinfo, SV_MetadataProjectField, &projection);
+	unit->allowoverflow = false; unit->overflowed = false;
+	length = q_snprintf (command, sizeof (command), "//fullserverinfo \"%s\"\n", projected);
+	if (!projection.failed && strlen (projected) <= token &&
+		q_strlcpy (simulated, projected, sizeof (simulated)) == strlen (projected) &&
+		!strcmp (simulated, projected) && length >= 0 &&
+		length < (int)sizeof (command) && (size_t)length <= full_text &&
+		SV_MetadataWriteCommand (unit, command, full_text))
+		return true;
+	if (projection.failed)
+		goto impossible;
+	SZ_Clear (unit);
+	if (!SV_MetadataWriteCommand (unit, "//fullserverinfo \"\"\n", full_text))
+		goto impossible;
+	memset (&increment, 0, sizeof (increment));
+	increment.unit = unit; increment.store = simulated; simulated[0] = 0;
+	increment.store_size = SERVER_INFO_STRING_SIZE; increment.token_limit = 1023;
+	increment.text_limit = increment_text;
+	Info_Enumerate (projected, SV_MetadataIncrementField, &increment);
+	if (!increment.failed && !strcmp (simulated, projected))
+		return true;
+impossible:
+	q_strlcpy (reason, "serverinfo cannot fit a complete metadata envelope", reason_size);
+	return false;
+}
+
+static qboolean SV_MetadataUserinfoUnit (client_t *recipient, int slot,
+	client_t *source, sizebuf_t *unit, char *reason, size_t reason_size)
+{
+	char projected[CLIENT_USER_INFO_STRING_SIZE], wire[CLIENT_USER_INFO_STRING_SIZE];
+	char canonical[CLIENT_USER_INFO_STRING_SIZE];
+	char expected[CLIENT_USER_INFO_STRING_SIZE];
+	char command[NET_MAXMESSAGE];
+	char *source_info = source && source->active ? source->userinfo : "";
+	const char *name = source && source->active ? source->name : "";
+	int colors = source && source->active ? source->colors : 0;
+	size_t token, full_text, increment_text;
+	sv_metadata_projection_t projection = { projected, sizeof (projected), true, false };
+	sv_metadata_projection_t wire_projection = { wire, sizeof (wire), false, false };
+	sv_metadata_increment_t increment;
+	int length;
+	qboolean expected_valid;
+	SV_MetadataEnvelope (recipient, &token, &full_text, &increment_text);
+	projected[0] = 0;
+	Info_Enumerate (source_info, SV_MetadataProjectField, &projection);
+	expected_valid = !projection.failed &&
+		q_strlcpy (expected, projected, sizeof (expected)) == strlen (projected) &&
+		SV_MetadataOverlayUserinfo (expected, name, colors);
+	wire[0] = 0;
+	if (expected_valid)
+		Info_Enumerate (expected, SV_MetadataProjectField, &wire_projection);
+	unit->allowoverflow = false; unit->overflowed = false;
+	length = q_snprintf (command, sizeof (command), "//fui %i \"%s\"\n", slot, wire);
+	if (!projection.failed && !wire_projection.failed && expected_valid &&
+		strlen (wire) <= token && length >= 0 &&
+		length < (int)sizeof (command) && (size_t)length <= full_text &&
+		q_strlcpy (canonical, wire, sizeof (canonical)) == strlen (wire) &&
+		!strcmp (canonical, wire) &&
+		SV_MetadataOverlayUserinfo (canonical, name, colors) &&
+		!strcmp (canonical, expected) &&
+		SV_MetadataWriteUserinfo (unit, slot, wire, name, colors, full_text))
+		return true;
+	if (projection.failed || wire_projection.failed || !expected_valid)
+		goto impossible;
+	SZ_Clear (unit);
+	length = q_snprintf (command, sizeof (command), "//fui %i \"\"\n", slot);
+	if (length < 0 || length >= (int)sizeof (command) ||
+		!SV_MetadataWriteCommand (unit, command, full_text))
+		goto impossible;
+	memset (&increment, 0, sizeof (increment));
+	increment.unit = unit; increment.store = canonical; canonical[0] = 0;
+	increment.store_size = sizeof (canonical); increment.token_limit = 1023;
+	increment.text_limit = increment_text; increment.slot = slot; increment.userinfo = true;
+	Info_Enumerate (wire, SV_MetadataIncrementField, &increment);
+	if (increment.failed || !SV_MetadataOverlayUserinfo (canonical, name, colors) ||
+		strcmp (canonical, expected))
+		goto impossible;
+	if (!SV_MetadataWriteUserinfoCompanions (unit, slot, name, colors))
+		goto impossible;
+	return true;
+impossible:
+	q_snprintf (reason, reason_size, "userinfo slot %i cannot fit a complete metadata envelope", slot);
+	return false;
+}
+
+/* Returns 1 when drained, 0 under ordinary message pressure, -1 if impossible. */
+static int SV_MetadataDrain (client_t *client, qboolean include_userinfo,
+	char *reason, size_t reason_size)
+{
+	byte bytes[NET_MAXMESSAGE];
+	sizebuf_t unit = { false, false, bytes, sizeof (bytes), 0 };
+	if (!SV_MetadataClient (client))
+		return 1;
+	for (int kind = 0; kind <= (include_userinfo ? MAX_SCOREBOARD : 0); ++kind)
+	{
+		int slot = kind - 1, built, required;
+		if (kind == 0 ? !client->metadata_serverinfo_pending :
+			!(client->metadata_userinfo_dirty & (1u << slot)))
+			continue;
+		SZ_Clear (&unit);
+		built = kind == 0 ? SV_MetadataServerUnit (client, &unit, reason, reason_size) :
+			SV_MetadataUserinfoUnit (client, slot, &svs.clients[slot], &unit, reason, reason_size);
+		if (!built)
+			return -1;
+		required = unit.cursize;
+		if (client->message.overflowed || client->message.cursize < 0 ||
+			client->message.maxsize < required ||
+			client->message.cursize > client->message.maxsize)
+		{
+			q_strlcpy (reason, "recipient reliable limit is smaller than metadata unit", reason_size);
+			return -1;
+		}
+		if (required > client->message.maxsize - client->message.cursize)
+			return 0;
+		SZ_Write (&client->message, unit.data, required);
+		if (kind == 0)
+			client->metadata_serverinfo_pending = false;
+		else
+			client->metadata_userinfo_dirty &= ~(1u << slot);
+	}
+	return 1;
+}
+
 void SV_SendClientMessages (void)
 {
 	int i;
@@ -5333,6 +5656,18 @@ void SV_SendClientMessages (void)
 		SV_AppendAkimboProtocol (host_client);
 		SV_AppendGorillaProtocol (host_client);
 		SV_AppendInstantStopProtocol (host_client);
+		if (host_client->spawned)
+		{
+			char reason[128] = "metadata envelope cannot be published";
+			if (SV_MetadataDrain (host_client, true, reason, sizeof (reason)) < 0)
+			{
+				Con_Warning ("Disconnecting %s: metadata publication failed: %s\n",
+					host_client->name, reason);
+				SZ_Clear (&host_client->message);
+				SV_DropClient (false);
+				continue;
+			}
+		}
 		if (!host_client->spawned)
 		{
 			// the player isn't totally in the game yet
@@ -5400,11 +5735,48 @@ void SV_SendClientMessages (void)
 			}
 			if (host_client->sendsignon == PRESPAWN_SIGNONMSG)
 			{
-				if (host_client->message.cursize + sv.signon.cursize + 2 < host_client->message.maxsize)
+				char reason[128] = "metadata envelope cannot be published";
+				int drained = SV_MetadataDrain (host_client, false, reason, sizeof (reason));
+				if (drained >= 0 && (sv.signon.cursize < 0 ||
+					host_client->message.maxsize < 2 ||
+					sv.signon.cursize > host_client->message.maxsize - 2))
+				{
+					q_strlcpy (reason, "native signon exceeds the recipient reliable limit", sizeof (reason));
+					drained = -1;
+				}
+				if (drained < 0)
+				{
+					Con_Warning ("Disconnecting %s: metadata publication failed: %s\n",
+						host_client->name, reason);
+					SZ_Clear (&host_client->message);
+					SV_DropClient (false);
+					continue;
+				}
+				if (drained > 0 && sv.signon.cursize + 2 <=
+					host_client->message.maxsize - host_client->message.cursize)
 				{
 					SZ_Write (&host_client->message, sv.signon.data, sv.signon.cursize);
 					MSG_WriteByte (&host_client->message, svc_signonnum);
 					MSG_WriteByte (&host_client->message, 2);
+					host_client->sendsignon = PRESPAWN_FLUSH;
+				}
+			}
+			if (host_client->sendsignon == PRESPAWN_SPAWN_METADATA)
+			{
+				char reason[128] = "metadata envelope cannot be published";
+				int drained = SV_MetadataDrain (host_client, true, reason, sizeof (reason));
+				if (drained < 0)
+				{
+					Con_Warning ("Disconnecting %s: metadata publication failed: %s\n",
+						host_client->name, reason);
+					SZ_Clear (&host_client->message);
+					SV_DropClient (false);
+					continue;
+				}
+				if (drained > 0 && host_client->message.maxsize - host_client->message.cursize >= 2)
+				{
+					MSG_WriteByte (&host_client->message, svc_signonnum);
+					MSG_WriteByte (&host_client->message, 3);
 					host_client->sendsignon = PRESPAWN_FLUSH;
 				}
 			}

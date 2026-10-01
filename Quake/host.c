@@ -639,6 +639,9 @@ void SV_DropClient (qboolean crash)
 	host_client->active = false;
 	host_client->name[0] = 0;
 	host_client->old_frags = -999999;
+	host_client->metadata_serverinfo_pending = false;
+	host_client->metadata_userinfo_dirty = 0;
+	SV_MetadataRetireSlot (retired_slot);
 	SV_CoopSharedResetClientSlot (retired_slot);
 	SV_CoopRespawnInventoryResetClientSlot (retired_slot);
 	net_activeconnections--;
@@ -1187,13 +1190,11 @@ static void _Host_Frame (double time)
 
 	NET_Poll ();
 
-	if (cl.sendprespawn)
+	if (cl.sendprespawn && cls.signon_reply_pending != CL_SIGNON_REPLY_NAME)
 	{
-		CL_LoadCSProgs ();
-
 		cl.sendprespawn = false;
-		MSG_WriteByte (&cls.message, clc_stringcmd);
-		MSG_WriteString (&cls.message, "prespawn");
+		CL_LoadCSProgs ();
+		CL_RequestPrespawn ();
 		vid.recalc_refdef = true;
 	}
 

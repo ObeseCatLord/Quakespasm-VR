@@ -171,6 +171,7 @@ typedef struct
 	// Explicit legacy layout selection survives map clears, not disconnects.
 	unsigned int legacy_qsvr;
 	unsigned int offered_qsvr; // profile offered on this connection; survives map signon clears
+	int signon_reply_pending;
 
 	// connection information
 	int				  signon; // 0 to SIGNONS
@@ -405,6 +406,7 @@ typedef struct
 
 	float zoom;
 	float zoomdir;
+	qboolean serverinfo_received;
 
 	char serverinfo[SERVER_INFO_STRING_SIZE]; // \key\value infostring data.
 } client_state_t;
@@ -614,6 +616,21 @@ void V_SetContentsColor (int contents);
 //
 void  CL_InitTEnts (void);
 void  CL_SignonReply (void);
+enum { CL_SIGNON_REPLY_NONE, CL_SIGNON_REPLY_NAME, CL_SIGNON_REPLY_SPAWN,
+	CL_SIGNON_REPLY_PRESPAWN, CL_SIGNON_REPLY_BEGIN };
+void CL_RequestPrespawn (void);
+enum { CL_USERINFO_TAIL_NONE, CL_USERINFO_TAIL_NAME, CL_USERINFO_TAIL_COLOR };
+qboolean CL_PrepareUserinfoCvar (cvar_t *var, const char *value,
+	char *userinfo, size_t userinfo_size, char *command, size_t command_size,
+	char *reason, size_t reason_size);
+qboolean CL_PrepareSetinfo (const char *key, const char *value,
+	char *userinfo, size_t userinfo_size, char *command, size_t command_size,
+	char *reason, size_t reason_size);
+qboolean CL_PreflightUserinfoBatch (cvar_t **vars, const char **values,
+	int count, int tail_kind, char *tail, size_t tail_size,
+	char *reason, size_t reason_size);
+void CL_CommitUserinfoStore (const char *userinfo);
+void CL_AppendUserinfoCommand (const char *command);
 float CL_TraceLine (vec3_t start, vec3_t end, vec3_t impact, vec3_t normal, int *ent);
 /* Read-only world hull trace for game-thread work that must not prepare the
  * particle system's shared brush-entity list. */

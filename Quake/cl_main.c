@@ -449,6 +449,8 @@ void CL_ClearState (void)
 	cl.vr_gorilla_state_sequence = -1;
 
 	SZ_Clear (&cls.message);
+	cls.message.maxsize = 1024;
+	cls.signon_reply_pending = 0;
 
 	// clear other arrays
 	memset (cl_dlights, 0, sizeof (cl_dlights));
@@ -537,6 +539,9 @@ void CL_Disconnect (void)
 	cls.demopaused = false;
 	cls.signon = 0;
 	cls.netcon = NULL;
+	cls.message.maxsize = 1024;
+	cls.signon_reply_pending = 0;
+	cl.serverinfo_received = false;
 	cl.intermission = 0;
 	cl.worldmodel = NULL;
 	cl.sendprespawn = false;
@@ -623,6 +628,10 @@ static void CL_AttachConnection (const char *host, unsigned int legacy_qsvr,
 	cls.demonum = -1;
 	cls.state = ca_connected;
 	cls.signon = 0;
+	cls.message.maxsize = 1024;
+	cls.signon_reply_pending = 0;
+	cl.serverinfo_received = false;
+	cl.serverinfo[0] = 0;
 	SZ_Clear (&cls.message);
 	MSG_WriteByte (&cls.message, clc_nop); // NAT Fix from ProQuake
 
@@ -1252,14 +1261,388 @@ void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr)
 		Host_Error ("CL_Connect: connect failed");
 }
 
-void CL_SendInitialUserinfo (void *ctx, const char *key, const char *val)
+#define CL_REVERSE_TOKEN_MAX 1023
+#define CL_REVERSE_TEXT_MAX 2046
+
+static void CL_UserinfoReason (char *reason, size_t size, const char *text)
 {
-	if (*key == '*')
-		return; // servers don't like that sort of userinfo key
-	if (!strcmp (key, "name"))
-		return; // already unconditionally sent earlier.
+	if (reason && size)
+		q_strlcpy (reason, text, size);
+}
+
+static qboolean CL_UserinfoFieldFits (const char *key, const char *value)
+{
+	return key && value && strlen (key) <= CL_REVERSE_TOKEN_MAX &&
+		strlen (value) <= CL_REVERSE_TOKEN_MAX && !strchr (key, '"') &&
+		!strchr (value, '"');
+}
+
+static qboolean CL_UserinfoCommandFits (const char *command, char *reason,
+	size_t reason_size)
+{
+	size_t length = command ? strlen (command) : SIZE_MAX;
+	if (!command || length > CL_REVERSE_TEXT_MAX || !cls.message.data ||
+		cls.message.overflowed || cls.message.cursize < 0 ||
+		cls.message.maxsize < 0 || cls.message.cursize > cls.message.maxsize)
+	{
+		CL_UserinfoReason (reason, reason_size,
+			"userinfo command exceeds the server's receive limit");
+		return false;
+	}
+	if (length + 2 > (size_t)(cls.message.maxsize - cls.message.cursize))
+	{
+		CL_UserinfoReason (reason, reason_size,
+			"reliable message is full; unchanged, retry the setting");
+		return false;
+	}
+	return true;
+}
+
+static qboolean CL_UserinfoAccumulateCommand (size_t *total, const char *command,
+	char *reason, size_t reason_size)
+{
+	size_t length;
+	if (!total || !command)
+	{
+		CL_UserinfoReason (reason, reason_size, "invalid userinfo command batch");
+		return false;
+	}
+	length = strlen (command);
+	if (length > CL_REVERSE_TEXT_MAX || length > SIZE_MAX - 2 ||
+		*total > SIZE_MAX - length - 2)
+	{
+		CL_UserinfoReason (reason, reason_size, "userinfo command batch is too large");
+		return false;
+	}
+	*total += length + 2;
+	return true;
+}
+
+static qboolean CL_FormatUserinfoCommand (const char *key, const char *value,
+	const char *userinfo, char *command, size_t command_size,
+	char *reason, size_t reason_size)
+{
+	char actual[CLIENT_USER_INFO_STRING_SIZE];
+	char top[CLIENT_USER_INFO_STRING_SIZE], bottom[CLIENT_USER_INFO_STRING_SIZE];
+	int written;
+
+	if (!key || !value || strlen (key) > CL_REVERSE_TOKEN_MAX ||
+		strchr (key, '"'))
+	{
+		CL_UserinfoReason (reason, reason_size,
+			"userinfo key cannot be represented by the server command");
+		return false;
+	}
+	Info_GetKey (userinfo, key, actual, sizeof (actual));
+	if (!CL_UserinfoFieldFits (key, actual))
+	{
+		CL_UserinfoReason (reason, reason_size,
+			"committed userinfo value cannot be represented by the server command");
+		return false;
+	}
+	if (!strcmp (key, "_cl_name"))
+		written = q_snprintf (command, command_size, "name \"%s\"\n", actual);
+	else if (!strcmp (key, "topcolor") || !strcmp (key, "bottomcolor"))
+	{
+		Info_GetKey (userinfo, "topcolor", top, sizeof (top));
+		Info_GetKey (userinfo, "bottomcolor", bottom, sizeof (bottom));
+		if (!CL_UserinfoFieldFits ("topcolor", top) ||
+			!CL_UserinfoFieldFits ("bottomcolor", bottom))
+		{
+			CL_UserinfoReason (reason, reason_size,
+				"committed colors cannot be represented by the server command");
+			return false;
+		}
+		written = q_snprintf (command, command_size, "color \"%s\" \"%s\"\n",
+			top, bottom);
+	}
+	else
+		written = q_snprintf (command, command_size, "setinfo \"%s\" \"%s\"\n",
+			key, actual);
+	if (written < 0 || (size_t)written >= command_size ||
+		!CL_UserinfoCommandFits (command, reason, reason_size))
+	{
+		if (written < 0 || (size_t)written >= command_size)
+			CL_UserinfoReason (reason, reason_size, "userinfo command is too long");
+		return false;
+	}
+	return true;
+}
+
+qboolean CL_PrepareUserinfoCvar (cvar_t *var, const char *value,
+	char *userinfo, size_t userinfo_size, char *command, size_t command_size,
+	char *reason, size_t reason_size)
+{
+	if (!var || !value || !userinfo || userinfo_size < sizeof (cls.userinfo) ||
+		!command || !command_size || !var->name[0] || var->name[0] == '*' ||
+		strchr (var->name, '\\') || !CL_UserinfoFieldFits (var->name, ""))
+	{
+		CL_UserinfoReason (reason, reason_size, "invalid live userinfo key");
+		return false;
+	}
+	Info_SetKey (userinfo, userinfo_size, var->name, value);
+	return CL_FormatUserinfoCommand (var->name, value, userinfo,
+		command, command_size, reason, reason_size);
+}
+
+qboolean CL_PrepareSetinfo (const char *key, const char *value,
+	char *userinfo, size_t userinfo_size, char *command, size_t command_size,
+	char *reason, size_t reason_size)
+{
+	if (!key || !*key || !value || key[0] == '*' || strchr (key, '\\') ||
+		!CL_UserinfoFieldFits (key, "") || !userinfo ||
+		userinfo_size < sizeof (cls.userinfo) || !command || !command_size)
+	{
+		CL_UserinfoReason (reason, reason_size, "invalid live userinfo key");
+		return false;
+	}
+	Info_SetKey (userinfo, userinfo_size, key, value);
+	return CL_FormatUserinfoCommand (key, value, userinfo,
+		command, command_size, reason, reason_size);
+}
+
+static qboolean CL_UserinfoBatchCommand (char *userinfo, cvar_t *var,
+	const char *value, size_t *total, char *reason, size_t reason_size)
+{
+	char command[CL_REVERSE_TEXT_MAX + 1];
+	if (!var || !value || (var->flags & (CVAR_ROM | CVAR_LOCKED)) ||
+		!(var->flags & CVAR_REGISTERED) || (var->string && !strcmp (var->string, value)))
+		return true;
+	if (var->callback)
+	{
+		CL_UserinfoReason (reason, reason_size,
+			"live userinfo cvars with callbacks cannot be changed safely");
+		return false;
+	}
+	if (!CL_PrepareUserinfoCvar (var, value, userinfo, CLIENT_USER_INFO_STRING_SIZE,
+		command, sizeof (command), reason, reason_size))
+		return false;
+	return CL_UserinfoAccumulateCommand (total, command, reason, reason_size);
+}
+
+qboolean CL_PreflightUserinfoBatch (cvar_t **vars, const char **values,
+	int count, int tail_kind, char *tail, size_t tail_size,
+	char *reason, size_t reason_size)
+{
+	char userinfo[CLIENT_USER_INFO_STRING_SIZE];
+	size_t total = 0;
+	int written;
+	if (!vars || !values || count < 0 || !tail || !tail_size)
+	{
+		CL_UserinfoReason (reason, reason_size, "invalid userinfo command batch");
+		return false;
+	}
+	if (!cls.message.data)
+	{
+		CL_UserinfoReason (reason, reason_size, "reliable userinfo buffer is unavailable");
+		return false;
+	}
+	if (q_strlcpy (userinfo, cls.userinfo, sizeof (userinfo)) >= sizeof (userinfo))
+	{
+		CL_UserinfoReason (reason, reason_size, "current userinfo store is too large");
+		return false;
+	}
+	for (int i = 0; i < count; ++i)
+		if (!CL_UserinfoBatchCommand (userinfo, vars[i], values[i], &total,
+			reason, reason_size))
+			return false;
+	tail[0] = 0;
+	if (tail_kind == CL_USERINFO_TAIL_NAME)
+	{
+		char name[CLIENT_USER_INFO_STRING_SIZE];
+		Info_GetKey (userinfo, "_cl_name", name, sizeof (name));
+		if (!CL_UserinfoFieldFits ("_cl_name", name))
+		{
+			CL_UserinfoReason (reason, reason_size,
+				"committed player name cannot be represented by the server command");
+			return false;
+		}
+		written = q_snprintf (tail, tail_size, "name \"%s\"\n", name);
+		if (written < 0 || (size_t)written >= tail_size)
+		{
+			CL_UserinfoReason (reason, reason_size, "player name command is too long");
+			return false;
+		}
+	}
+	else if (tail_kind == CL_USERINFO_TAIL_COLOR)
+	{
+		char top[CLIENT_USER_INFO_STRING_SIZE], bottom[CLIENT_USER_INFO_STRING_SIZE];
+		Info_GetKey (userinfo, "topcolor", top, sizeof (top));
+		Info_GetKey (userinfo, "bottomcolor", bottom, sizeof (bottom));
+		if (!CL_UserinfoFieldFits ("topcolor", top) ||
+			!CL_UserinfoFieldFits ("bottomcolor", bottom))
+		{
+			CL_UserinfoReason (reason, reason_size,
+				"committed colors cannot be represented by the server command");
+			return false;
+		}
+		written = q_snprintf (tail, tail_size, "color \"%s\" \"%s\"\n",
+			top, bottom);
+		if (written < 0 || (size_t)written >= tail_size)
+		{
+			CL_UserinfoReason (reason, reason_size, "color command is too long");
+			return false;
+		}
+	}
+	else if (tail_kind != CL_USERINFO_TAIL_NONE)
+		return false;
+	if (tail[0])
+	{
+		if (!CL_UserinfoAccumulateCommand (&total, tail, reason, reason_size))
+			return false;
+	}
+	if (cls.message.overflowed || cls.message.cursize < 0 ||
+		cls.message.maxsize < 0 || cls.message.cursize > cls.message.maxsize ||
+		total > (size_t)(cls.message.maxsize - cls.message.cursize))
+	{
+		CL_UserinfoReason (reason, reason_size,
+			"reliable message is full; unchanged, retry the setting");
+		return false;
+	}
+	return true;
+}
+
+void CL_CommitUserinfoStore (const char *userinfo)
+{
+	if (userinfo)
+		q_strlcpy (cls.userinfo, userinfo, sizeof (cls.userinfo));
+}
+
+void CL_AppendUserinfoCommand (const char *command)
+{
 	MSG_WriteByte (&cls.message, clc_stringcmd);
-	MSG_WriteString (&cls.message, va ("setinfo \"%s\" \"%s\"\n", key, val));
+	MSG_WriteString (&cls.message, command);
+}
+
+typedef struct
+{
+	byte data[NET_MAXMESSAGE];
+	size_t size;
+	qboolean failed;
+	char reason[128];
+} cl_signon_bundle_t;
+
+static void CL_SignonBundleCommand (cl_signon_bundle_t *bundle, const char *command)
+{
+	size_t length = strlen (command);
+	if (length > CL_REVERSE_TEXT_MAX || length + 2 > sizeof (bundle->data) - bundle->size)
+	{
+		bundle->failed = true;
+		q_strlcpy (bundle->reason, "initial command exceeds the peer receive limit",
+			sizeof (bundle->reason));
+		return;
+	}
+	bundle->data[bundle->size++] = clc_stringcmd;
+	memcpy (bundle->data + bundle->size, command, length + 1);
+	bundle->size += length + 1;
+}
+
+static void CL_SendInitialUserinfo (void *ctx, const char *key, const char *val)
+{
+	cl_signon_bundle_t *bundle = (cl_signon_bundle_t *)ctx;
+	char command[CL_REVERSE_TEXT_MAX + 1];
+	if (bundle->failed || key[0] == '*' || !strcmp (key, "name"))
+		return;
+	if (!CL_UserinfoFieldFits (key, val))
+	{
+		bundle->failed = true;
+		q_strlcpy (bundle->reason, "initial userinfo contains an unrepresentable field",
+			sizeof (bundle->reason));
+		return;
+	}
+	if (q_snprintf (command, sizeof (command), "setinfo \"%s\" \"%s\"\n",
+		key, val) >= (int)sizeof (command))
+	{
+		bundle->failed = true;
+		q_strlcpy (bundle->reason, "initial userinfo command is too long",
+			sizeof (bundle->reason));
+		return;
+	}
+	CL_SignonBundleCommand (bundle, command);
+}
+
+static qboolean CL_BuildSignonReply (int reply, cl_signon_bundle_t *bundle)
+{
+	char command[CL_REVERSE_TEXT_MAX + 1];
+	int written;
+	memset (bundle, 0, sizeof (*bundle));
+	if (reply == CL_SIGNON_REPLY_NAME)
+	{
+		if (!CL_UserinfoFieldFits ("name", cl_name.string))
+		{
+			q_strlcpy (bundle->reason, "player name exceeds the server receive limit",
+				sizeof (bundle->reason));
+			return false;
+		}
+		written = q_snprintf (command, sizeof (command), "name \"%s\"\n", cl_name.string);
+		if (written < 0 || (size_t)written >= sizeof (command))
+			return false;
+		CL_SignonBundleCommand (bundle, command);
+	}
+	else if (reply == CL_SIGNON_REPLY_SPAWN)
+	{
+		written = q_snprintf (command, sizeof (command), "color %i %i\n",
+			(int)cl_topcolor.value, (int)cl_bottomcolor.value);
+		if (written < 0 || (size_t)written >= sizeof (command))
+			return false;
+		CL_SignonBundleCommand (bundle, command);
+		if (cl.serverinfo_received || *cl.serverinfo)
+			Info_Enumerate (cls.userinfo, CL_SendInitialUserinfo, bundle);
+		if (bundle->failed)
+			return false;
+		written = q_snprintf (command, sizeof (command), "spawn %s", cls.spawnparms);
+		if (written < 0 || (size_t)written >= sizeof (command) ||
+			(size_t)written > CL_REVERSE_TEXT_MAX)
+		{
+			q_strlcpy (bundle->reason, "spawn command exceeds the server receive limit",
+				sizeof (bundle->reason));
+			return false;
+		}
+		CL_SignonBundleCommand (bundle, command);
+	}
+	else if (reply == CL_SIGNON_REPLY_PRESPAWN)
+		CL_SignonBundleCommand (bundle, "prespawn");
+	else if (reply == CL_SIGNON_REPLY_BEGIN)
+		CL_SignonBundleCommand (bundle, "begin");
+	else
+		return false;
+	return !bundle->failed;
+}
+
+static void CL_TryAppendSignonReply (void)
+{
+	cl_signon_bundle_t bundle;
+	if (!cls.signon_reply_pending)
+		return;
+	if (cls.demoplayback)
+	{
+		cls.signon_reply_pending = CL_SIGNON_REPLY_NONE;
+		return;
+	}
+	if (!CL_BuildSignonReply (cls.signon_reply_pending, &bundle) ||
+		bundle.size > (size_t)cls.message.maxsize)
+	{
+		Con_Warning ("Cannot complete signon reply: %s. Disconnecting.\n",
+			bundle.reason[0] ? bundle.reason : "logical reliable envelope is too small");
+		cls.signon_reply_pending = 0;
+		CL_Disconnect ();
+		return;
+	}
+	if (!cls.message.data || cls.message.overflowed || cls.message.cursize < 0 ||
+		cls.message.maxsize < 0 || cls.message.cursize > cls.message.maxsize ||
+		bundle.size > (size_t)(cls.message.maxsize - cls.message.cursize))
+		return;
+	SZ_Write (&cls.message, bundle.data, bundle.size);
+	cls.signon_reply_pending = 0;
+}
+
+void CL_RequestPrespawn (void)
+{
+	if (cls.state != ca_connected || cls.demoplayback || cls.signon != 1 ||
+		cls.signon_reply_pending)
+		return;
+	cls.signon_reply_pending = CL_SIGNON_REPLY_PRESPAWN;
+	CL_TryAppendSignonReply ();
 }
 /*
 =====================
@@ -1270,34 +1653,32 @@ An svc_signonnum has been received, perform a client side setup
 */
 void CL_SignonReply (void)
 {
-	char str[8192];
-
 	Con_DPrintf ("CL_SignonReply: %i\n", cls.signon);
 
 	switch (cls.signon)
 	{
 	case 1:
-		MSG_WriteByte (&cls.message, clc_stringcmd);
-		MSG_WriteString (&cls.message, va ("name \"%s\"\n", cl_name.string));
-
+		if (cl.protocol_pext2)
+			cls.message.maxsize = NET_MAXMESSAGE;
+		else if (cl.protocol == PROTOCOL_RMQ)
+			cls.message.maxsize = 64000;
+		else if (cl.protocol == PROTOCOL_FITZQUAKE)
+			cls.message.maxsize = 32000;
+		else
+			cls.message.maxsize = 8192;
+		cls.signon_reply_pending = CL_SIGNON_REPLY_NAME;
 		cl.sendprespawn = true;
+		CL_TryAppendSignonReply ();
 		break;
 
 	case 2:
-		MSG_WriteByte (&cls.message, clc_stringcmd);
-		MSG_WriteString (&cls.message, va ("color %i %i\n", (int)cl_topcolor.value, (int)cl_bottomcolor.value));
-
-		if (*cl.serverinfo)
-			Info_Enumerate (cls.userinfo, CL_SendInitialUserinfo, NULL);
-
-		MSG_WriteByte (&cls.message, clc_stringcmd);
-		q_snprintf (str, sizeof (str), "spawn %s", cls.spawnparms);
-		MSG_WriteString (&cls.message, str);
+		cls.signon_reply_pending = CL_SIGNON_REPLY_SPAWN;
+		CL_TryAppendSignonReply ();
 		break;
 
 	case 3:
-		MSG_WriteByte (&cls.message, clc_stringcmd);
-		MSG_WriteString (&cls.message, "begin");
+		cls.signon_reply_pending = CL_SIGNON_REPLY_BEGIN;
+		CL_TryAppendSignonReply ();
 		break;
 
 	case 4:
@@ -2972,6 +3353,7 @@ void CL_AccumulateCmd (void)
 void CL_TryEnableCSQCEntities (void)
 {
 	if (!cl.csqc_enable_pending || cls.state != ca_connected || cls.demoplayback ||
+		cls.signon_reply_pending == CL_SIGNON_REPLY_PRESPAWN ||
 		!cl.qcvm.progs || !cl.qcvm.edicts || !cl.qcvm.extfuncs.CSQC_Ent_Update ||
 		!(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS) ||
 		!(cl.protocol_qsvr == QSVR_PROTOCOL_PINNED ||
@@ -3054,6 +3436,9 @@ void CL_SendCmd (void)
 		SZ_Clear (&cls.message);
 		return;
 	}
+	CL_TryAppendSignonReply ();
+	if (cls.state != ca_connected)
+		return;
 	CL_TryEnableCSQCEntities ();
 	// send the reliable message
 	if (!cls.message.cursize)
@@ -3171,6 +3556,7 @@ static void CL_ServerExtension_FullServerinfo_f (void)
 		return;
 	const char *newserverinfo = Cmd_Argv (1);
 	q_strlcpy (cl.serverinfo, newserverinfo, sizeof (cl.serverinfo));
+	cl.serverinfo_received = true;
 	PMCL_ServerinfoUpdated ();
 }
 static void CL_ServerExtension_ServerinfoUpdate_f (void)
@@ -3180,6 +3566,7 @@ static void CL_ServerExtension_ServerinfoUpdate_f (void)
 	const char *newserverkey = Cmd_Argv (1);
 	const char *newservervalue = Cmd_Argv (2);
 	Info_SetKey (cl.serverinfo, sizeof (cl.serverinfo), newserverkey, newservervalue);
+	cl.serverinfo_received = true;
 	PMCL_ServerinfoUpdated ();
 }
 
@@ -3268,11 +3655,9 @@ static void SV_DecodeUserInfo (client_t *client)
 void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 {
 	char oldvalue[SERVER_INFO_STRING_SIZE];
-	char prestr[64];
 
 	char	   *info;
 	size_t		infosize;
-	const char *pre;
 	client_t   *infoplayer = NULL;
 
 	if (!edict)
@@ -3285,7 +3670,6 @@ void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 		}
 		info = svs.serverinfo;
 		infosize = sizeof (svs.serverinfo);
-		pre = "//svi ";
 	}
 	else if (edict <= svs.maxclients)
 	{
@@ -3293,8 +3677,6 @@ void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 		infoplayer = &svs.clients[edict];
 		info = infoplayer->userinfo;
 		infosize = sizeof (infoplayer->userinfo);
-		q_snprintf (prestr, sizeof (prestr), "//ui %i", edict);
-		pre = prestr;
 	}
 	else
 		return;
@@ -3307,7 +3689,13 @@ void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 		Info_SetKey (info, infosize, keyname, value);
 
 		if (infoplayer)
+		{
 			SV_DecodeUserInfo (infoplayer);
+			if (*keyname != '_')
+				SV_MetadataUserinfoChanged (edict);
+		}
+		else if (*keyname != '_')
+			SV_MetadataServerinfoChanged ();
 
 		if (*keyname == '_' || !sv.active)
 			return; // underscore means private (user) keys. these are not networked to clients.
@@ -3317,14 +3705,11 @@ void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 
 		for (client_t *current_client = svs.clients; current_client < svs.clients + svs.maxclients; current_client++)
 		{
-			if (current_client->active)
+			if (current_client->active &&
+				current_client->offered_metadata != QSVR_METADATA_VERSION &&
+				!(current_client->protocol_pext2 & PEXT2_PREDINFO))
 			{
-				if (current_client->protocol_pext2 & PEXT2_PREDINFO)
-				{
-					MSG_WriteByte (&current_client->message, svc_stufftext);
-					MSG_WriteString (&current_client->message, va ("%s \"%s\" \"%s\"\n", pre, keyname, value));
-				}
-				else if (infoplayer && !strcmp (keyname, "name"))
+				if (infoplayer && !strcmp (keyname, "name"))
 				{
 					MSG_WriteByte (&current_client->message, svc_updatename);
 					MSG_WriteByte (&current_client->message, edict);
@@ -3540,6 +3925,18 @@ static void CL_LegacyColor_f (void)
 {
 	// spike -- code to handle the legacy _cl_color cvar (we now use separate qw-style topcolor/bottomcolor userinfo cvars)
 	int col = atoi (Cmd_Argv (1));
+	if (cls.state == ca_connected && !cls.demoplayback)
+	{
+		cvar_t *vars[] = { &cl_topcolor, &cl_bottomcolor };
+		const char *values[] = { va ("%i", (col >> 4) & 0xf), va ("%i", col & 0xf) };
+		char tail[1], reason[160] = "legacy color update could not be admitted";
+		if (!CL_PreflightUserinfoBatch (vars, values, 2, CL_USERINFO_TAIL_NONE,
+			tail, sizeof (tail), reason, sizeof (reason)))
+		{
+			Con_Warning ("Colors unchanged: %s.\n", reason);
+			return;
+		}
+	}
 	Cvar_SetValue ("topcolor", (col >> 4) & 0xf);
 	Cvar_SetValue ("bottomcolor", (col >> 0) & 0xf);
 }
@@ -3551,7 +3948,8 @@ CL_Init
 */
 void CL_Init (void)
 {
-	SZ_Alloc (&cls.message, 1024);
+	SZ_Alloc (&cls.message, NET_MAXMESSAGE);
+	cls.message.maxsize = 1024;
 
 	CL_InitInput ();
 	CL_InitTEnts ();

@@ -3208,6 +3208,7 @@ static void Host_Loadgame_f (void)
 		SCR_CenterPrintClear ();
 
 		Send_Spawn_Info (svs.clients, true);
+		SV_MetadataRearmClient (svs.clients);
 	}
 
 	Mem_Free (start);
@@ -3257,9 +3258,22 @@ static void Host_Name_f (void)
 	{
 		if (strcmp (cl_name.string, newName) == 0)
 			return;
+		if (cls.state == ca_connected && !cls.demoplayback)
+		{
+			cvar_t *vars[] = { &cl_name };
+			const char *values[] = { newName };
+			char tail[2048], reason[160] = "name update could not be admitted";
+			if (!CL_PreflightUserinfoBatch (vars, values, 1,
+				CL_USERINFO_TAIL_NAME, tail, sizeof (tail), reason, sizeof (reason)))
+			{
+				Con_Warning ("Name unchanged: %s.\n", reason);
+				return;
+			}
+			Cvar_Set ("_cl_name", newName);
+			CL_AppendUserinfoCommand (tail);
+			return;
+		}
 		Cvar_Set ("_cl_name", newName);
-		if (cls.state == ca_connected)
-			Cmd_ForwardToServer ();
 		return;
 	}
 
@@ -3444,11 +3458,24 @@ static void Host_Color_f (void)
 
 	if (cmd_source != src_client)
 	{
+		if (cls.state == ca_connected && !cls.demoplayback)
+		{
+			cvar_t *vars[] = { &cl_topcolor, &cl_bottomcolor };
+			const char *values[] = { top, bottom };
+			char tail[2048], reason[160] = "color update could not be admitted";
+			if (!CL_PreflightUserinfoBatch (vars, values, 2,
+				CL_USERINFO_TAIL_COLOR, tail, sizeof (tail), reason, sizeof (reason)))
+			{
+				Con_Warning ("Colors unchanged: %s.\n", reason);
+				return;
+			}
+			Cvar_Set ("topcolor", top);
+			Cvar_Set ("bottomcolor", bottom);
+			CL_AppendUserinfoCommand (tail);
+			return;
+		}
 		Cvar_Set ("topcolor", top);
 		Cvar_Set ("bottomcolor", bottom);
-
-		if (cls.state == ca_connected)
-			Cmd_ForwardToServer ();
 		return;
 	}
 
@@ -3721,10 +3748,8 @@ static void Host_Spawn_f (void)
 	}
 
 	Send_Spawn_Info (host_client, inherited_spawn ? restored_living : sv.loadgame);
-
-	MSG_WriteByte (&host_client->message, svc_signonnum);
-	MSG_WriteByte (&host_client->message, 3);
-	host_client->sendsignon = true;
+	SV_MetadataRearmClient (host_client);
+	host_client->sendsignon = PRESPAWN_SPAWN_METADATA;
 }
 
 // Readiness is explicit; advertising an extension alone never activates it.
@@ -5026,11 +5051,23 @@ static void Host_Setinfo_f (void)
 			cvar_t *var = Cvar_FindVar (key);
 			if (var && var->flags & CVAR_USERINFO)
 				Cvar_Set (key, val);
+			else if (cls.state == ca_connected && !cls.demoplayback)
+			{
+				char prospective[CLIENT_USER_INFO_STRING_SIZE];
+				char command[2048], reason[160] = "setinfo update could not be admitted";
+				q_strlcpy (prospective, cls.userinfo, sizeof (prospective));
+				if (!CL_PrepareSetinfo (key, val, prospective, sizeof (prospective),
+					command, sizeof (command), reason, sizeof (reason)))
+				{
+					Con_Warning ("Userinfo unchanged: %s.\n", reason);
+					return;
+				}
+				CL_AppendUserinfoCommand (command);
+				CL_CommitUserinfoStore (prospective);
+			}
 			else
 			{
 				Info_SetKey (cls.userinfo, sizeof (cls.userinfo), key, val);
-				if (cls.state == ca_connected)
-					Cmd_ForwardToServer ();
 			}
 		}
 	}

@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 static cvar_t *cvar_vars;
 static char	   cvar_null_string[] = "";
+static qboolean Cvar_SetQuickResult (cvar_t *var, const char *value);
 
 //==============================================================================
 //
@@ -153,8 +154,9 @@ void Cvar_Set_f (void)
 		return;
 	}
 	var = Cvar_Create (varname, varvalue);
+	if (!Cvar_SetQuickResult (var, varvalue))
+		return;
 	var->flags |= fl;
-	Cvar_SetQuick (var, varvalue);
 
 	if (!strcmp (Cmd_Argv (0), "seta"))
 		var->flags |= CVAR_ARCHIVE | CVAR_SETA;
@@ -475,10 +477,40 @@ void Cvar_Reset (const char *name)
 
 void Cvar_SetQuick (cvar_t *var, const char *value)
 {
+	(void)Cvar_SetQuickResult (var, value);
+}
+
+static qboolean Cvar_SetQuickResult (cvar_t *var, const char *value)
+{
+	qboolean live_userinfo;
+	char prospective_userinfo[CLIENT_USER_INFO_STRING_SIZE];
+	char userinfo_command[2048];
+	char refusal[160] = "live userinfo update was refused";
+
 	if (var->flags & (CVAR_ROM | CVAR_LOCKED))
-		return;
+		return true;
 	if (!(var->flags & CVAR_REGISTERED))
-		return;
+		return true;
+	if (var->string && !strcmp (var->string, value))
+		return true;
+	live_userinfo = (var->flags & CVAR_USERINFO) &&
+		cls.state == ca_connected && !cls.demoplayback;
+	if (live_userinfo)
+	{
+		if (var->callback)
+			q_strlcpy (refusal, "live userinfo cvar has a callback", sizeof (refusal));
+		else
+		{
+			q_strlcpy (prospective_userinfo, cls.userinfo, sizeof (prospective_userinfo));
+			if (!CL_PrepareUserinfoCvar (var, value, prospective_userinfo,
+				sizeof (prospective_userinfo), userinfo_command,
+				sizeof (userinfo_command), refusal, sizeof (refusal)))
+				goto refuse_userinfo;
+			CL_AppendUserinfoCommand (userinfo_command);
+		}
+		if (var->callback)
+			goto refuse_userinfo;
+	}
 
 	if (!var->string)
 		var->string = q_strdup (value);
@@ -487,7 +519,7 @@ void Cvar_SetQuick (cvar_t *var, const char *value)
 		int len;
 
 		if (!strcmp (var->string, value))
-			return; // no change
+			return true; // no change
 
 		var->flags |= CVAR_CHANGED;
 		len = strlen (value);
@@ -521,35 +553,22 @@ void Cvar_SetQuick (cvar_t *var, const char *value)
 
 	if (var->flags & CVAR_SERVERINFO)
 	{
-		// replicate the cvar change into the serverinfo string and let clients know.
+		// The native store remains authoritative; recipient senders project it.
 		Info_SetKey (svs.serverinfo, sizeof (svs.serverinfo), var->name, var->string);
-
-		for (client_t *current_client = svs.clients; current_client < svs.clients + svs.maxclients; current_client++)
-		{
-			if (current_client->active)
-			{
-				MSG_WriteByte (&current_client->message, svc_stufftext);
-				MSG_WriteString (&current_client->message, va ("%s \"%s\" \"%s\"\n", "//svi", var->name, var->string));
-			}
-		}
+		SV_MetadataServerinfoChanged ();
 	}
 	if (var->flags & CVAR_USERINFO)
 	{
-		// replicate the cvar change into the userinfo.
-		Info_SetKey (cls.userinfo, sizeof (cls.userinfo), var->name, var->string);
-
-		// let the server know.
-		if (cls.state == ca_connected)
-		{
-			MSG_WriteByte (&cls.message, clc_stringcmd);
-			if (var == &cl_name) // some hacks for legacy settings.
-				MSG_WriteString (&cls.message, va ("name \"%s\"\n", var->string));
-			else if (var == &cl_topcolor || var == &cl_bottomcolor)
-				MSG_WriteString (&cls.message, va ("color \"%s\" \"%s\"\n", cl_topcolor.string, cl_bottomcolor.string));
-			else
-				MSG_WriteString (&cls.message, va ("setinfo \"%s\" \"%s\"\n", var->name, var->string));
-		}
+		if (live_userinfo)
+			CL_CommitUserinfoStore (prospective_userinfo);
+		else
+			Info_SetKey (cls.userinfo, sizeof (cls.userinfo), var->name, var->string);
 	}
+	return true;
+
+refuse_userinfo:
+	Con_Warning ("Cvar %s unchanged: %s.\n", var->name, refusal);
+	return false;
 }
 
 void Cvar_SetValueQuick (cvar_t *var, const float value)

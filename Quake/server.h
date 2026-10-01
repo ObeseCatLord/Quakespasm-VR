@@ -204,6 +204,7 @@ typedef struct client_s
 		PRESPAWN_STATICS,
 		PRESPAWN_AMBIENTS,
 		PRESPAWN_SIGNONMSG,
+		PRESPAWN_SPAWN_METADATA,
 	} sendsignon; // only valid before spawned
 	int			 signonidx;
 	unsigned int signon_sounds; //
@@ -244,6 +245,8 @@ typedef struct client_s
 	qboolean	 pextknown;
 	unsigned int offered_qsvr; // capability received under PROTOCOL_QSVR_PROFILE
 	unsigned int offered_metadata; // server-to-client metadata reader version
+	qboolean metadata_serverinfo_pending;
+	unsigned int metadata_userinfo_dirty;
 	unsigned int offered_pmove_policies; // consumers offered with the private profile
 	unsigned int offered_pext1; // original public CSQC offer, retained across sign-ons
 	unsigned int offered_pext2; // original public FTE offer, retained across map sign-ons
@@ -557,6 +560,10 @@ void SV_StartSound (edict_t *entity, float *origin, int channel, const char *sam
 void SV_LocalSound (client_t *client, const char *sample); // for 2021 rerelease
 
 void SV_DropClient (qboolean crash);
+void SV_MetadataRearmClient (client_t *client);
+void SV_MetadataServerinfoChanged (void);
+void SV_MetadataUserinfoChanged (int slot);
+void SV_MetadataRetireSlot (int slot);
 void SV_AppendVRIKRetirement (client_t *client, int slot, unsigned int generation);
 
 void SV_CoopRespawnRefreshClientInventory (edict_t *ent);
