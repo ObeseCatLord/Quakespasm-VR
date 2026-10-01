@@ -42,6 +42,7 @@ typedef SDL_atomic_t voice_atomic_t;
 #define VOICE_PCM_RING_FRAMES 16384
 #define VOICE_CAPTURE_BACKLOG_FRAMES 10
 #define VOICE_CAPTURE_FRAME_BYTES (VOICE_FRAME_SAMPLES * (int)sizeof(int16_t))
+#define VOICE_CAPTURE_RAW_DISCARDED (-2) /* Distinct from SDL's -1 failure. */
 #define VOICE_PLAYBACK_GAIN 2.0f
 #define VOICE_DEVICE_POLL_SECONDS 1.0
 #define VOICE_CONFIRM_SECONDS 15.0
@@ -203,10 +204,30 @@ static qboolean Voice_HUDShouldDisplay(void)
 		Voice_MultiplayerSessionActive();
 }
 
-static void Voice_ClearNetworkQueue(void)
+static void Voice_ClearNetworkQueue(qboolean preserve_end)
 {
-	cl.voice_outgoing_head = 0;
-	cl.voice_outgoing_count = 0;
+	unsigned int i, count = 0;
+
+	if (preserve_end)
+	{
+		/* Compact terminal markers in circular order without re-enqueueing. */
+		for (i = 0; i < cl.voice_outgoing_count; ++i)
+		{
+			unsigned int index = (cl.voice_outgoing_head + i) %
+				VOICE_CLIENT_QUEUE_CAPACITY;
+			const voice_packet_t *packet = &cl.voice_outgoing[index];
+			unsigned int tail;
+			if (packet->payload_bytes || !(packet->flags & VOICE_FLAG_END))
+				continue;
+			tail = (cl.voice_outgoing_head + count) %
+				VOICE_CLIENT_QUEUE_CAPACITY;
+			cl.voice_outgoing[tail] = *packet;
+			count++;
+		}
+	}
+	if (!count)
+		cl.voice_outgoing_head = 0;
+	cl.voice_outgoing_count = count;
 }
 
 static qboolean Voice_QueuePacket(const int16_t *samples, unsigned int flags)
@@ -237,21 +258,27 @@ static void Voice_ClearPTT(void)
 	memset(voice_ptt_keys, 0, sizeof(voice_ptt_keys));
 }
 
-static void Voice_StopTransmit(void)
+static void Voice_ResetTransmit(qboolean release_ptt)
 {
 	qboolean was_sending = voice_sending;
 
-	Voice_ClearNetworkQueue();
+	Voice_ClearNetworkQueue(!release_ptt && !was_sending);
 	voice_sending = false;
 	Voice_AtomicSet(&voice_transmitting, 0);
 	Voice_AtomicSet(&voice_input_level, 0);
-	Voice_ClearPTT();
+	if (release_ptt)
+		Voice_ClearPTT();
 	voice_preroll_write = voice_preroll_count = 0;
 	Voice_VADReset(&voice_vad);
 	if (voice_encoder)
 		opus_encoder_ctl(voice_encoder, OPUS_RESET_STATE);
 	if (was_sending && Voice_MultiplayerSessionActive())
 		Voice_QueuePacket(NULL, VOICE_FLAG_END);
+}
+
+static void Voice_StopTransmit(void)
+{
+	Voice_ResetTransmit(true);
 }
 
 #ifdef USE_SDL3
@@ -420,25 +447,25 @@ static int Voice_CaptureAvailable(void)
 	{
 		SDL_ClearQueuedAudio(voice_capture_device);
 		SDL_AudioStreamClear(voice_capture_convert);
-		return 0;
+		return VOICE_CAPTURE_RAW_DISCARDED;
 	}
 	while (queued > 0)
 	{
 		Uint32 amount = q_min((Uint32)sizeof(voice_raw_capture), queued);
 		Uint32 got;
+		int put;
 		if (frame_bytes <= 0)
 			break;
 		amount -= amount % (Uint32)frame_bytes;
 		if (!amount)
 			break;
 		got = SDL_DequeueAudio(voice_capture_device, voice_raw_capture, amount);
-		if (!got || SDL_AudioStreamPut(voice_capture_convert,
-			voice_raw_capture, (int)got) < 0)
-		{
-			SDL_ClearQueuedAudio(voice_capture_device);
-			SDL_AudioStreamClear(voice_capture_convert);
-			return 0;
-		}
+		if (!got)
+			break;
+		put = SDL_AudioStreamPut(voice_capture_convert,
+			voice_raw_capture, (int)got);
+		if (put < 0)
+			return put;
 		queued -= got;
 	}
 	return SDL_AudioStreamAvailable(voice_capture_convert);
@@ -457,6 +484,19 @@ static void Voice_CaptureClear(void)
 		SDL_AudioStreamClear(voice_capture_convert);
 }
 #endif
+
+static void Voice_CaptureDiscontinuity(qboolean failed)
+{
+	Voice_CaptureClear();
+	Voice_ResetTransmit(false);
+	if (failed)
+	{
+		Voice_CloseCapture();
+		voice_next_device_check = realtime + 10.0;
+	}
+	else
+		Spatial_ResetSelf();
+}
 
 static void Voice_SyncProfile(void)
 {
@@ -1076,24 +1116,37 @@ static void Voice_ProcessCapture(void)
 	if (!voice_capture_device)
 		return;
 	available = Voice_CaptureAvailable();
+	if (available == VOICE_CAPTURE_RAW_DISCARDED)
+	{
+		Voice_CaptureDiscontinuity(false);
+		return;
+	}
 	if (available < 0)
 	{
-		Voice_CaptureClear();
-		Voice_AtomicSet(&voice_input_level, 0);
+		Voice_CaptureDiscontinuity(true);
 		return;
 	}
 	if (available > backlog_limit)
 	{
-		Voice_CaptureClear();
-		Voice_AtomicSet(&voice_input_level, 0);
+		Voice_CaptureDiscontinuity(false);
 		return;
 	}
 	while (available >= VOICE_CAPTURE_FRAME_BYTES &&
 		processed < VOICE_CAPTURE_BACKLOG_FRAMES)
 	{
 		int got = Voice_CaptureRead(frame, VOICE_CAPTURE_FRAME_BYTES);
-		if (got != VOICE_CAPTURE_FRAME_BYTES)
+		if (got < 0)
+		{
+			Voice_CaptureDiscontinuity(true);
+			return;
+		}
+		if (!got)
 			break;
+		if (got != VOICE_CAPTURE_FRAME_BYTES)
+		{
+			Voice_CaptureDiscontinuity(false);
+			return;
+		}
 		Voice_EncodeCaptureFrame(frame);
 		available -= got;
 		processed++;
@@ -1305,7 +1358,7 @@ void Voice_Shutdown(void)
 		return;
 	CL_SetVoiceReceiveCallback(NULL, NULL);
 	Voice_StopTransmit();
-	Voice_ClearNetworkQueue();
+	Voice_ClearNetworkQueue(false);
 	Voice_CloseCapture();
 	if (shm)
 		SNDDMA_LockBuffer();
