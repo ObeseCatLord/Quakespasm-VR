@@ -289,6 +289,7 @@ void CL_ClearState (void)
 	 * serverinfo tears down the old client state, including same-map restarts. */
 	VR_WeaponMenu_ClientReset ();
 	SpatialWorld_Clear ();
+	Voice_ResetConnection ();
 	V_ResetTrackedAim ();
 	if (!sv.active)
 		Host_ClearMemory ();
