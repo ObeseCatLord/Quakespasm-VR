@@ -206,7 +206,7 @@ static short ReadShortUnaligned (byte *ptr)
 ReadLongUnaligned
 ===============
 */
-static int ReadLongUnaligned (byte *ptr)
+static int ReadLongUnaligned (const byte *ptr)
 {
 	int temp;
 	memcpy (&temp, ptr, sizeof (int));
