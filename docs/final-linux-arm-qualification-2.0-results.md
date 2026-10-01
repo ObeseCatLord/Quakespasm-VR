@@ -141,9 +141,12 @@ repairs. Builders are running; no staging/relocation or artifact acceptance yet.
 
 A substantive upstream merge rehearsal was executed in a disposable shared clone
 at `a1df3ffd`, merging pinned official `0d812138` (36 upstream commits since
-baseline). Fourteen files conflict. Actual hunk/adapter disposition documentation
-is unfinished, so maintainability acceptance remains open. No production branch
-or history was merged/rewritten.
+baseline). Fourteen files/35 blocks conflict. Main inspected the actual blocks
+and documented native changes, adapter owners and coupled risks in the
+[rehearsal receipt](upstream-merge-rehearsal-final-2.0.md). Enumeration/documentation
+is complete; conflict resolution and merged-build/behavior evidence are not,
+so maintainability acceptance remains open. No production branch or history
+was merged/rewritten.
 
 All results are partial acceptance within their named boundaries. The full
 eight-group final checklist remains open; feature source presence alone does
