@@ -76,6 +76,11 @@ receipts. These overlap intentionally; test shared boundaries once.
   aborts at baseline shutdown, retained separately from its earlier clean run.
   Transport/metadata boundaries and intermittent original movement-distance
   evidence remain open.
+- F08: controlled PCM through actual native offer/capability, Opus, queued
+  sender/server relay/full parser, jitter/decode/PCM mix, numeric-slot mute and
+  reset/shutdown passes with dummy capture and captured transport;
+  [exact results/limits](voice-pcm-current-2.0-results.md). Distinct live delivery,
+  routing/profile/loss/gain/generation/spatial/music boundaries remain open.
 - F03: actual loaded SSQC/CSQC core numeric/name binding, permission discovery,
   simultaneous VM preservation and toggle/reload subset passes;
   [exact results and limits](qc-binding-current-qualification-2.0.md).

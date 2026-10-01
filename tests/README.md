@@ -3498,3 +3498,39 @@ Compositor remapping may therefore undo rotations. These images and checks are
 not hardware/runtime sensor or full private roomscale gameplay certification.
 [Plan](../docs/sixdof-final-2.0-plan.md) and
 [exact current results/limits](../docs/sixdof-current-qualification-2.0.md).
+
+## Controlled voice PCM and native relay
+
+`voice_pcm_native_fixture.c` reuses the existing stock/QC mixed bootstrap and
+actual voice capture-frame producer, Opus, negotiated queues/writers/relay, full
+client parser, jitter decoder and PCM mixer. It checks nonzero output, native
+mute and ring consumption, reset and shutdown. Transport is captured and native
+client resources/signon are prepared; DMA and input PCM are controlled. SDL
+recording uses **only dummy**, verified before/after audio initialization. It
+does not record a microphone or prove connected audio, VR device policy, full
+VAD/loss/routing, Steam Audio or human listening quality.
+
+Use a DEBUG voice-enabled SDL3 Meson build with generated shaders and Opus.
+The voice-specific builder retains its exact compiler flags/native object graph
+and replaces only the five owners included by the fixture, using the existing
+transport/skin wrappers. All output belongs in a disposable directory.
+
+```sh
+VOICE_TEST_ROOT=$(mktemp -d /tmp/qsvr-voice.XXXXXX)
+mkdir -p "$VOICE_TEST_ROOT/game/id1" "$VOICE_TEST_ROOT/config" \
+  "$VOICE_TEST_ROOT/data" "$VOICE_TEST_ROOT/runtime"
+chmod 700 "$VOICE_TEST_ROOT/runtime"
+ln -s /path/to/licensed/id1/pak0.pak "$VOICE_TEST_ROOT/game/id1/pak0.pak"
+python3 tests/build_voice_pcm_native.py --build-dir /path/to/meson-debug-build \
+  --output-dir "$VOICE_TEST_ROOT/build"
+(cd "$VOICE_TEST_ROOT/game" && env SDL_AUDIODRIVER=dummy \
+  XDG_CONFIG_HOME="$VOICE_TEST_ROOT/config" XDG_DATA_HOME="$VOICE_TEST_ROOT/data" \
+  XDG_RUNTIME_DIR="$VOICE_TEST_ROOT/runtime" timeout --signal=TERM 35s \
+  "$VOICE_TEST_ROOT/build/voice-pcm" -dedicated 3 -noudp -nosound \
+  -basedir . -userdir .)
+```
+
+Require native exit0 and `VOICE_PCM_NATIVE_PASSED`. Driverless fixture qsocket
+retirement precedes normal native client/host shutdown; this cannot certify real
+socket teardown. [Plan and integration boundaries](../docs/voice-pcm-final-2.0-plan.md)
+and [current results/limits](../docs/voice-pcm-current-2.0-results.md).
