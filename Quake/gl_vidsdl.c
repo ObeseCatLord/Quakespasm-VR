@@ -214,7 +214,9 @@ static qboolean			frame_submitted[DOUBLE_BUFFERED];
 static VkQueryPool		timestamp_query_pool;
 static uint32_t			timestamp_valid_bits;
 static qboolean			timestamps_written[DOUBLE_BUFFERED];
+static qboolean			timestamps_stereo[DOUBLE_BUFFERED];
 static qboolean			ssao_timestamps_written[DOUBLE_BUFFERED];
+static qboolean			ssao_timestamps_stereo[DOUBLE_BUFFERED];
 static qboolean			frame_timing_enabled;
 static VkSemaphore		image_aquired_semaphores[DOUBLE_BUFFERED];
 static VkSemaphore		draw_complete_semaphores[MAX_SWAP_CHAIN_IMAGES];
@@ -4521,15 +4523,22 @@ void GL_BeginRenderingTask (void *unused)
 
 	// The fence wait above guarantees this slot's previous timestamps are available.
 	rs_gputime_us = 0;
+	rs_gputime_valid = false;
+	rs_gputime_stereo = false;
 	rs_ssaotime_us = 0;
 	rs_ssaotime_valid = false;
+	rs_ssaotime_stereo = false;
 	if (frame_timing_enabled && timestamps_written[current_cb_index])
 	{
 		uint64_t timestamps[2];
 		if (vkGetQueryPoolResults (
 				vulkan_globals.device, timestamp_query_pool, current_cb_index * 4, 2, sizeof (timestamps), timestamps, sizeof (uint64_t),
 				VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
-			GL_TimestampElapsedUs (timestamps[0], timestamps[1], &rs_gputime_us);
+		{
+			rs_gputime_valid = GL_TimestampElapsedUs (timestamps[0], timestamps[1], &rs_gputime_us);
+			if (rs_gputime_valid)
+				rs_gputime_stereo = timestamps_stereo[current_cb_index];
+		}
 	}
 	if (frame_timing_enabled && ssao_timestamps_written[current_cb_index])
 	{
@@ -4537,10 +4546,16 @@ void GL_BeginRenderingTask (void *unused)
 		if (vkGetQueryPoolResults (
 				vulkan_globals.device, timestamp_query_pool, current_cb_index * 4 + 2, 2, sizeof (timestamps), timestamps, sizeof (uint64_t),
 				VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+		{
 			rs_ssaotime_valid = GL_TimestampElapsedUs (timestamps[0], timestamps[1], &rs_ssaotime_us);
+			if (rs_ssaotime_valid)
+				rs_ssaotime_stereo = ssao_timestamps_stereo[current_cb_index];
+		}
 	}
 	timestamps_written[current_cb_index] = false;
+	timestamps_stereo[current_cb_index] = false;
 	ssao_timestamps_written[current_cb_index] = false;
+	ssao_timestamps_stereo[current_cb_index] = false;
 
 	R_CollectDynamicBufferGarbage ();
 	R_CollectMeshBufferGarbage ();
@@ -5752,6 +5767,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 			submit_cbs, countof (submit_cbs), take_screenshot && swapchain_acquired ? GL_RecordFrameReadback : NULL, &readback,
 			frame_timing_enabled ? timestamp_query_pool : VK_NULL_HANDLE, cb_index * 4 + 2, &ssao_written);
 	ssao_timestamps_written[cb_index] = ssao_written;
+	ssao_timestamps_stereo[cb_index] = ssao_written && vulkan_globals.stereo_active;
 	openxr_mirror_copy_ready = GL_RecordXRMirrorSnapshot (render_passes_cb, cb_index);
 	if (openxr_mirror_copy_ready)
 		openxr_mirror_frame_slot = cb_index;
@@ -5761,6 +5777,7 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 		vkCmdWriteTimestamp (render_passes_cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamp_query_pool, (cb_index * 4) + 1);
 		timestamps_written[cb_index] = true;
 	}
+	timestamps_stereo[cb_index] = timestamps_written[cb_index] && vulkan_globals.stereo_active;
 
 	{
 		for (int pcbx_index = 0; pcbx_index < PCBX_NUM; ++pcbx_index)

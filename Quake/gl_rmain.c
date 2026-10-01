@@ -50,8 +50,9 @@ atomic_uint32_t rs_brushpolys, rs_aliaspolys, rs_skypolys, rs_particles, rs_fogp
 atomic_uint32_t rs_dynamiclightmaps, rs_brushpasses, rs_aliaspasses;
 atomic_uint32_t rs_blas_builds, rs_blas_refits, rs_blas_pose_reuses;
 uint32_t		rs_cputime_us, rs_gputime_us;
+qboolean		rs_gputime_valid, rs_gputime_stereo;
 uint32_t		rs_ssaotime_us;
-qboolean		rs_ssaotime_valid;
+qboolean		rs_ssaotime_valid, rs_ssaotime_stereo;
 uint32_t		rs_avatarprep_us;
 double			rs_avatarretarget_us;
 uint32_t		rs_avatarretarget_count;
@@ -2877,17 +2878,30 @@ static void R_PrintStats (qboolean draw_stats_ready)
 			(int)cl.entities[cl.viewentity].origin[2], (int)cl.viewangles[PITCH], (int)cl.viewangles[YAW], (int)cl.viewangles[ROLL]);
 	else if (scr_speeds.value)
 	{
-		q_snprintf (rs_display_lines[0], sizeof (rs_display_lines[0]), "cpu%6.2f gpu%6.2f wait%6.2f ms", cpu_ms, gpu_ms, gpu_wait_ms);
+		if (rs_gputime_valid && rs_gputime_stereo)
+			q_snprintf (rs_display_lines[0], sizeof (rs_display_lines[0]),
+				"cpu%5.1f gpu shared%5.1f wait%5.1f ms", cpu_ms, gpu_ms, gpu_wait_ms);
+		else if (!rs_gputime_valid)
+			q_snprintf (rs_display_lines[0], sizeof (rs_display_lines[0]),
+				"cpu%6.2f gpu   n/a wait%6.2f ms", cpu_ms, gpu_wait_ms);
+		else
+			q_snprintf (rs_display_lines[0], sizeof (rs_display_lines[0]), "cpu%6.2f gpu%6.2f wait%6.2f ms", cpu_ms, gpu_ms, gpu_wait_ms);
 		if (scr_speeds.value == 3 || !draw_stats_ready)
 		{
 			rs_display_numlines = 1;
-			if (scr_speeds.value == 3 && rs_ssaotime_valid)
-			{
-				q_snprintf (rs_display_lines[1], sizeof (rs_display_lines[1]), "ssao compute gpu%6.2f ms", (double)rs_ssaotime_us / 1000.0);
-				rs_display_numlines = 2;
-			}
 			if (scr_speeds.value == 3)
 			{
+				if (rs_ssaotime_valid && rs_ssaotime_stereo)
+					q_snprintf (rs_display_lines[rs_display_numlines], sizeof (rs_display_lines[0]),
+						"ssao shared gpu%6.2f ms", (double)rs_ssaotime_us / 1000.0);
+				else if (rs_ssaotime_valid)
+					q_snprintf (rs_display_lines[rs_display_numlines], sizeof (rs_display_lines[0]),
+						"ssao compute gpu%6.2f ms", (double)rs_ssaotime_us / 1000.0);
+				else if (!R_SSAOEnabled ())
+					q_snprintf (rs_display_lines[rs_display_numlines], sizeof (rs_display_lines[0]), "ssao disabled");
+				else
+					q_snprintf (rs_display_lines[rs_display_numlines], sizeof (rs_display_lines[0]), "ssao compute gpu n/a");
+				++rs_display_numlines;
 				q_snprintf (rs_display_lines[rs_display_numlines], sizeof (rs_display_lines[0]),
 					"avatar prep cpu%6.2f ms", (double)rs_avatarprep_us / 1000.0);
 				++rs_display_numlines;
