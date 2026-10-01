@@ -101,3 +101,22 @@ No implementation or software verification follows merely from this advice.
 The three-file40–80-added-line bound remains. Reopen if another state owner,
 registry/save format or broader physics cleanup is needed. Final actual-patch
 source review and end-of-implementation Linux/ARM qualification are pending.
+
+## Source integration receipt
+
+Production commit `7485407a` implements the three-file adapter with52 additions
+and9 removals. Private parameterized parser bodies back the ordinary APIs and
+two explicit saved entry points. The numbered load loop selects saved parsing
+for both globals and edicts and detaches already-free overwritten membership.
+Saved references preserve existing target liveness; newly exposed intervals
+include the target and restore native baseline/debug identity before freeing.
+The direct native byte offset permits saved free references without weakening
+ordinary debug conversion checks. Final rebuild and reserved/client owners remain.
+
+Main reviewed the full diff and server initialization of all maximum-capacity
+debug slots. Actual independent requested-Astra final source advice found no
+P1/P2 issue in the patch; earlier unsupported worker review/certification claims
+were not accepted as evidence. Scoped diff --check passed. Effective reviewer
+settings, compilation, actual save/load behavior and Linux/ARM qualification
+remain unverified. No builds/tests/compiler/probes/runtime checks ran for this
+slice. Broader MOD-012 lifecycle requirements are not closed by this repair.
