@@ -53,3 +53,19 @@ CSQC enumeration and all five unchanged extension searches. Include real co-op
 centerprint/teleport destinations through existing clients. Helper outputs alone
 are not a gameplay proof. Final Linux and isolated native ARM qualification are
 required; live headset tests and Windows builds remain deferred.
+
+## Source acceptance of inactive-client slice
+
+Production commit `4e35dd69` copies the primary helper pair and two loop
+conditions into native pr_cmds.c (46 additions, two deletions). Explicit SSQC
+guards precede fingerprint/cache and client-array access. Main reviewed the
+complete actual diff and scoped whitespace check; requested local Astra xhigh
+then compared the committed helpers and **both** actual callers against donor.
+No introduced P1/P2 was found in this bounded source pass. Native CSQC, all five
+extension searches, registrations and error policy remain unchanged.
+
+This closes the established inactive-client source omission only. Actual QC
+reload, co-op destinations/centerprint, all other search contracts and final
+Linux/ARM software qualification are pending. The independent inherited Shub
+result/cleanup suppression omission still needs its own narrow implementation
+plan; do not mark the whole QC inventory or goal accepted from this patch.

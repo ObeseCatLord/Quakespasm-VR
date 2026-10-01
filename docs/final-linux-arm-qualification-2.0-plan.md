@@ -35,6 +35,24 @@ runtime, packet counter or helper test must keep its proof limitations explicit.
 
 ## Full surviving scope matrix
 
+The [native entity-search adapter](qc-entity-search-2.0-plan.md) needs actual
+server QC find/nextent with all four program fingerprint functions and with one
+missing: disconnected non-free player holes, later active players, ordinary
+entities, exhaustion, program changes and real co-op centerprint/teleport use.
+Check native CSQC/disconnected-body enumeration and all five extension search
+handlers remain unchanged. The separately established Shub suppression omission
+must close before entry to this qualification pass; this narrow patch is not a
+whole-VM or malformed-field proof.
+
+The [wheel tracking-anchor adapter](migration-wheel-tracking-anchor-2.0-plan.md)
+needs actual shared draw/hit/release behavior through opening, body translation,
+snap/smooth turns, camera pitch/roll/kick residuals, physical hand/head movement,
+scale/floor/reference changes, both handedness and ring changes. Captured grip
+calibration stays fixed while the live wheel pointer uses current calibration;
+view mode follows the current full headset view. Verify world model/action
+occlusion, foreground native MSAA resolution and desktop/no-runtime selection.
+Live headset comfort and performance remain the user's later validation.
+
 The [generic liquid adapter](predictive-generic-liquid-2.0-plan.md) requires
 actual nonstock loaded QC through the existing shared command owner: ordinary
 swimming with QC-authored velocity followed by shared PMove, positive pending

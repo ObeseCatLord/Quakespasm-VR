@@ -299,3 +299,18 @@ reconciles stale XR-005/007 labels against native selection, rate-map upload,
 material protection, runtime profile update/query, offset and full-rate recovery
 consumers. The accepted FB/META interoperability decision remains authoritative;
 this is source evidence, not a rendered/runtime or performance pass.
+
+The [native entity-search adapter](qc-entity-search-2.0-plan.md) reconciles the
+actual core and five extension handlers against primary/QSS-M/vkQuake. Inherited
+four-function inactive-client filtering is source-integrated in4e35dd69 at both
+find/nextent, with SSQC guards and main/final requested-Astra source acceptance.
+Native extension/CSQC/error policy is retained. The separate inherited Shub
+suppression omission remains open; full QC and final Linux/ARM qualification
+are not closed by this bounded source patch.
+
+The [wheel tracking-anchor plan](migration-wheel-tracking-anchor-2.0-plan.md)
+records actual opening tracking-space/view-follow discrepancies and requested
+Astra disposition: reuse the full prepared renderer basis and existing grip
+calibration, capture raw opening pose only, calibrate live wheel pointer locally,
+and preserve existing layout/session/render ownership. Implementation and final
+actual-source acceptance are in progress; rendered qualification stays deferred.
