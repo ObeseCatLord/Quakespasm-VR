@@ -1007,6 +1007,7 @@ float R_AnisotropyLevel (void);
 void R_CreatePipelineLayouts ();
 void R_CreatePipelines ();
 void R_DestroyPipelines ();
+void R_DestroyPipelineCache (void);
 void R_DestroyStereoUIPipelineLayouts ();
 
 #define MAX_PUSH_CONSTANT_SIZE 128 // Vulkan guaranteed minimum maxPushConstantsSize

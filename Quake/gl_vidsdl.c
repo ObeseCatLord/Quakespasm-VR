@@ -6019,6 +6019,7 @@ void VID_Shutdown (void)
 				R_DestroyPipelines ();
 				render_resources_created = false;
 			}
+			R_DestroyPipelineCache ();
 			R_DestroyStereoUIPipelineLayouts ();
 		}
 		if (openxr_vulkan_binding)

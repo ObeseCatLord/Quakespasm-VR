@@ -28,6 +28,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "gl_heap.h"
 #include "r_vrik_render.h"
 #include <float.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 cvar_t r_lodbias = {"r_lodbias", "1", CVAR_ARCHIVE};
 cvar_t gl_lodbias = {"gl_lodbias", "0", CVAR_ARCHIVE};
@@ -3144,6 +3149,238 @@ static VkShaderModule R_StereoVertexShaderModule (VkShaderModule module)
 	return module;
 }
 
+/* Private cache helpers translated from retained XR vk_renderer.cpp:358-526,
+ * revision 3080841333fa94000df7e1fb9e549c7158685dd6 (GPL-2.0-or-later).
+ * Original attribution: Id Software, Inc. (1996-2001), Axel Gneiting (2016).
+ * Native creation is serialized; resource rebuilds retain this device's cache. */
+#define PIPELINE_CACHE_LIMIT            (64u * 1024u * 1024u)
+#define PIPELINE_CACHE_HEADER_SIZE      32u
+#define PIPELINE_CACHE_FILE_HEADER_SIZE 16u
+#define PIPELINE_CACHE_FILE_MAGIC       0x43504b56u // "VKPC" in little-endian bytes
+#define PIPELINE_CACHE_FILE_VERSION     1u
+
+static VkPipelineCache pipeline_cache;
+static qboolean        pipeline_cache_attempted;
+static char            pipeline_cache_path[MAX_OSPATH];
+
+static uint32_t R_PipelineCacheLE32 (const byte *data, size_t offset)
+{
+	uint32_t value;
+	memcpy (&value, data + offset, sizeof (value));
+#ifdef USE_SDL3
+	return SDL_Swap32LE (value);
+#else
+	return SDL_SwapLE32 (value);
+#endif
+}
+
+static void R_PipelineCacheWriteLE32 (byte *data, size_t offset, uint32_t value)
+{
+#ifdef USE_SDL3
+	value = SDL_Swap32LE (value);
+#else
+	value = SDL_SwapLE32 (value);
+#endif
+	memcpy (data + offset, &value, sizeof (value));
+}
+
+static qboolean R_PipelineCacheDataValid (const byte *data, size_t size)
+{
+	const VkPhysicalDeviceProperties *properties = &vulkan_globals.device_properties;
+	return size >= PIPELINE_CACHE_HEADER_SIZE && size <= PIPELINE_CACHE_LIMIT &&
+		R_PipelineCacheLE32 (data, 0) == PIPELINE_CACHE_HEADER_SIZE &&
+		R_PipelineCacheLE32 (data, 4) == VK_PIPELINE_CACHE_HEADER_VERSION_ONE &&
+		R_PipelineCacheLE32 (data, 8) == properties->vendorID && R_PipelineCacheLE32 (data, 12) == properties->deviceID &&
+		!memcmp (data + 16, properties->pipelineCacheUUID, VK_UUID_SIZE);
+}
+
+static byte *R_ReadPipelineCache (size_t *size)
+{
+	*size = 0;
+	if (!pipeline_cache_path[0])
+		return NULL;
+#ifdef _WIN32
+	wchar_t path[MAX_OSPATH];
+	if (!MultiByteToWideChar (CP_UTF8, MB_ERR_INVALID_CHARS, pipeline_cache_path, -1, path, (int)countof (path)))
+		return NULL;
+	FILE *file = _wfopen (path, L"rb");
+#else
+	FILE *file = Sys_fopen (pipeline_cache_path, "rb");
+#endif
+	if (!file)
+		return NULL;
+	byte envelope[PIPELINE_CACHE_FILE_HEADER_SIZE];
+	byte *data = NULL;
+	size_t payload_size = 0;
+	long length;
+	if (fseek (file, 0, SEEK_END) != 0 || (length = ftell (file)) < (long)(sizeof (envelope) + PIPELINE_CACHE_HEADER_SIZE) ||
+		length > (long)(sizeof (envelope) + PIPELINE_CACHE_LIMIT) || fseek (file, 0, SEEK_SET) != 0 ||
+		fread (envelope, 1, sizeof (envelope), file) != sizeof (envelope))
+		goto done;
+	payload_size = R_PipelineCacheLE32 (envelope, 8);
+	if (R_PipelineCacheLE32 (envelope, 0) != PIPELINE_CACHE_FILE_MAGIC ||
+		R_PipelineCacheLE32 (envelope, 4) != PIPELINE_CACHE_FILE_VERSION || payload_size != (size_t)length - sizeof (envelope))
+		goto done;
+	data = Mem_AllocNonZero (payload_size);
+	if (data && (fread (data, 1, payload_size, file) != payload_size || fgetc (file) != EOF || ferror (file) ||
+		!R_PipelineCacheDataValid (data, payload_size) || R_PipelineCacheLE32 (envelope, 12) != (uint32_t)CRC_Block (data, (int)payload_size)))
+	{
+		Mem_Free (data);
+		data = NULL;
+	}
+done:
+	if (fclose (file) != 0)
+	{
+		Mem_Free (data);
+		data = NULL;
+	}
+	if (data)
+		*size = payload_size;
+	return data;
+}
+
+static void R_InitPipelineCache (void)
+{
+	if (pipeline_cache_attempted)
+		return;
+	pipeline_cache_attempted = true;
+	const int length = q_snprintf (pipeline_cache_path, sizeof (pipeline_cache_path), "%s/vk_pipeline_cache.bin", COM_GetWriteRoot ());
+	if (length < 0 || (size_t)length >= sizeof (pipeline_cache_path))
+		pipeline_cache_path[0] = '\0';
+	size_t size;
+	byte *data = R_ReadPipelineCache (&size);
+	ZEROED_STRUCT (VkPipelineCacheCreateInfo, info);
+	info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+	info.initialDataSize = size;
+	info.pInitialData = data;
+	VkResult result = vkCreatePipelineCache (vulkan_globals.device, &info, NULL, &pipeline_cache);
+	if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST && data)
+	{
+		info.initialDataSize = 0;
+		info.pInitialData = NULL;
+		result = vkCreatePipelineCache (vulkan_globals.device, &info, NULL, &pipeline_cache);
+	}
+	Mem_Free (data);
+	if (result == VK_SUCCESS)
+		return;
+	pipeline_cache = VK_NULL_HANDLE;
+	if (result == VK_ERROR_DEVICE_LOST)
+		Sys_Error ("Vulkan pipeline cache failed: device lost");
+	Con_SafePrintf ("Vulkan: pipeline cache unavailable (%d); continuing without one\n", (int)result);
+}
+
+static qboolean R_CreatePipelineCacheTemporary (char *temporary, size_t capacity, FILE **file)
+{
+	char parent[MAX_OSPATH];
+	const char *slash = strrchr (pipeline_cache_path, '/');
+	const char *backslash = strrchr (pipeline_cache_path, '\\');
+	if (!slash || (backslash && backslash > slash))
+		slash = backslash;
+	if (!slash || (size_t)(slash - pipeline_cache_path) + 2 > sizeof (parent))
+		return false;
+	const size_t length = (size_t)(slash - pipeline_cache_path) + 1;
+	memcpy (parent, pipeline_cache_path, length);
+	parent[length] = '\0';
+#ifdef _WIN32
+	wchar_t wparent[MAX_OSPATH], wtemporary[MAX_OSPATH];
+	if (!MultiByteToWideChar (CP_UTF8, MB_ERR_INVALID_CHARS, parent, -1, wparent, (int)countof (wparent)) ||
+		!GetTempFileNameW (wparent, L"vpc", 0, wtemporary))
+		return false;
+	if (!WideCharToMultiByte (CP_UTF8, 0, wtemporary, -1, temporary, (int)capacity, NULL, NULL))
+	{
+		DeleteFileW (wtemporary);
+		return false;
+	}
+	*file = _wfopen (wtemporary, L"wb");
+	if (!*file)
+		DeleteFileW (wtemporary);
+#else
+	const int written = q_snprintf (temporary, capacity, "%s.vkpc.XXXXXX", parent);
+	if (written < 0 || (size_t)written >= capacity)
+		return false;
+	const int descriptor = mkstemp (temporary);
+	if (descriptor < 0)
+		return false;
+	*file = fdopen (descriptor, "wb");
+	if (!*file)
+	{
+		close (descriptor);
+		remove (temporary);
+	}
+#endif
+	return *file != NULL;
+}
+
+static void R_RemovePipelineCacheTemporary (const char *temporary)
+{
+#ifdef _WIN32
+	wchar_t source[MAX_OSPATH];
+	if (MultiByteToWideChar (CP_UTF8, MB_ERR_INVALID_CHARS, temporary, -1, source, (int)countof (source)))
+		DeleteFileW (source);
+#else
+	remove (temporary);
+#endif
+}
+
+static qboolean R_ReplacePipelineCache (const char *temporary)
+{
+#ifdef _WIN32
+	wchar_t source[MAX_OSPATH], destination[MAX_OSPATH];
+	return MultiByteToWideChar (CP_UTF8, MB_ERR_INVALID_CHARS, temporary, -1, source, (int)countof (source)) &&
+		MultiByteToWideChar (CP_UTF8, MB_ERR_INVALID_CHARS, pipeline_cache_path, -1, destination, (int)countof (destination)) &&
+		MoveFileExW (source, destination, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+	return rename (temporary, pipeline_cache_path) == 0;
+#endif
+}
+
+static void R_SavePipelineCache (void)
+{
+	if (!pipeline_cache || !pipeline_cache_path[0])
+		return;
+	size_t size = 0;
+	byte *data = NULL;
+	VkResult result = vkGetPipelineCacheData (vulkan_globals.device, pipeline_cache, &size, NULL);
+	if (result != VK_SUCCESS || size < PIPELINE_CACHE_HEADER_SIZE || size > PIPELINE_CACHE_LIMIT)
+		goto done;
+	data = Mem_AllocNonZero (size);
+	if (!data)
+		return;
+	const size_t capacity = size;
+	result = vkGetPipelineCacheData (vulkan_globals.device, pipeline_cache, &size, data);
+	if (result != VK_SUCCESS || size > capacity || !R_PipelineCacheDataValid (data, size))
+		goto done;
+	byte envelope[PIPELINE_CACHE_FILE_HEADER_SIZE];
+	R_PipelineCacheWriteLE32 (envelope, 0, PIPELINE_CACHE_FILE_MAGIC);
+	R_PipelineCacheWriteLE32 (envelope, 4, PIPELINE_CACHE_FILE_VERSION);
+	R_PipelineCacheWriteLE32 (envelope, 8, (uint32_t)size);
+	// Retained XR format: CRC_Block is 16-bit, stored in a 32-bit envelope slot.
+	R_PipelineCacheWriteLE32 (envelope, 12, (uint32_t)CRC_Block (data, (int)size));
+	char temporary[MAX_OSPATH];
+	FILE *file = NULL;
+	if (!R_CreatePipelineCacheTemporary (temporary, sizeof (temporary), &file))
+		goto done;
+	qboolean written = fwrite (envelope, 1, sizeof (envelope), file) == sizeof (envelope) && fwrite (data, 1, size, file) == size;
+	if (written)
+		written = fflush (file) == 0;
+	written = fclose (file) == 0 && written;
+	if (!written || !R_ReplacePipelineCache (temporary))
+		R_RemovePipelineCacheTemporary (temporary);
+done:
+	Mem_Free (data);
+	if (result == VK_ERROR_DEVICE_LOST)
+		Sys_Error ("Vulkan pipeline cache snapshot failed: device lost");
+}
+
+void R_DestroyPipelineCache (void)
+{
+	if (pipeline_cache)
+		vkDestroyPipelineCache (vulkan_globals.device, pipeline_cache, NULL);
+	pipeline_cache = VK_NULL_HANDLE;
+	pipeline_cache_attempted = false;
+	pipeline_cache_path[0] = '\0';
+}
+
 /*
 ===============
 R_CreateGraphicsPipeline
@@ -3185,7 +3422,7 @@ static void R_CreateGraphicsPipeline (vulkan_pipeline_t *pipeline, pipeline_crea
 		depth_stencil.back = depth_stencil.front;
 	}
 	infos->graphics_pipeline.pDepthStencilState = &depth_stencil;
-	const VkResult err = vkCreateGraphicsPipelines (vulkan_globals.device, VK_NULL_HANDLE, 1, &infos->graphics_pipeline, NULL, &pipeline->handle);
+	const VkResult err = vkCreateGraphicsPipelines (vulkan_globals.device, pipeline_cache, 1, &infos->graphics_pipeline, NULL, &pipeline->handle);
 	if (err != VK_SUCCESS)
 		Sys_Error ("vkCreateGraphicsPipelines failed (%s) with code %i", name, (int)err);
 	pipeline->layout = layout;
@@ -3204,7 +3441,7 @@ static void R_CreateGraphicsPipeline (vulkan_pipeline_t *pipeline, pipeline_crea
 		VkGraphicsPipelineCreateInfo create_info = infos->graphics_pipeline;
 		create_info.renderPass = binding->render_pass[MAIN_RENDER_PASS_STENCIL_CLEAR];
 		create_info.subpass = binding->subpass;
-		const VkResult instance_err = vkCreateGraphicsPipelines (vulkan_globals.device, VK_NULL_HANDLE, 1, &create_info, NULL, &instance->handle);
+		const VkResult instance_err = vkCreateGraphicsPipelines (vulkan_globals.device, pipeline_cache, 1, &create_info, NULL, &instance->handle);
 		if (instance_err != VK_SUCCESS)
 			Sys_Error ("vkCreateGraphicsPipelines failed (%s instance) with code %i", name, (int)instance_err);
 		instance->binding = *binding;
@@ -3242,7 +3479,7 @@ static void R_CreateComputePipeline (
 	create_info.stage.pSpecializationInfo = specialization_info;
 	create_info.layout = pipeline->layout.handle;
 
-	const VkResult err = vkCreateComputePipelines (vulkan_globals.device, VK_NULL_HANDLE, 1, &create_info, NULL, &pipeline->handle);
+	const VkResult err = vkCreateComputePipelines (vulkan_globals.device, pipeline_cache, 1, &create_info, NULL, &pipeline->handle);
 	if (err != VK_SUCCESS)
 		Sys_Error ("vkCreateComputePipelines failed (%s) with code %i", name, (int)err);
 	GL_SetObjectName ((uint64_t)pipeline->handle, VK_OBJECT_TYPE_PIPELINE, name);
@@ -4834,6 +5071,7 @@ R_CreatePipelines
 */
 void R_CreatePipelines ()
 {
+	R_InitPipelineCache ();
 	Sys_Printf ("Creating pipelines\n");
 
 	R_CreateShaderModules ();
@@ -4857,6 +5095,7 @@ void R_CreatePipelines ()
 	R_CreateAnimComputePipelines ();
 
 	R_DestroyShaderModules ();
+	R_SavePipelineCache ();
 }
 
 /*
