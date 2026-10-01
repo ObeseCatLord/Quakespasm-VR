@@ -76,3 +76,16 @@ of180. BEFORE20 changed test lines, mixed_native_fixture.c only; rerun the
 previously failing existing gap profile. Do not disable the policy or change
 production to satisfy the former wait. This is an existing test timing repair,
 not complete co-op delay/inventory/placement qualification.
+
+The corrected deadline reaches actual respawn. A second native trace establishes
+that the former shells<25 assertion confuses stock starting ammunition with the
+current co-op inventory/world pickups:25 at respawn becomes45 after the attack
+window. A diagnostic real impulse2/neutral packet and native world/parser pass
+settles that pickup and records46 shells, then the unchanged20 attack frames
+consume one shell (45), actor healthy/RUNNING. No gun/physics production failure
+is established. BEFORE30 changed respawn-test lines total: select shotgun through
+that same native input path, assert actual IT_SHOTGUN and positive ammunition,
+capture its current ammunition after native processing, then require an actual
+decrease after the existing attack window. Preserve all phase/health/ACK/death
+assertions. Do not assign weapon/ammunition, suppress pickups or force policy.
+This replaces an obsolete constant with the actual producer/consumer invariant.
