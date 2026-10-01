@@ -28,3 +28,15 @@ exact failure instead of disabling a check. No hardware/performance/audio claim.
 Public profile, reconnect/loss/metadata/voice cases remain separate existing
 network-owner obligations; this runner closes only simultaneous private
 desktop/VR software gameplay at real transport/render/input boundaries.
+
+## Render/send cadence correction
+
+The repaired actual connected trial reaches both named peers at signon4,
+selected replay permission,117successful replay calls and25→21shells. It fails
+the between-send presentation assertion with zero stable sent/ACK pairs. The
+original README recipe explicitly disables vsync and raises host_maxfps to144;
+the new runner omitted those diagnostic startup controls. BEFORE8 changed
+runner lines: supply existing +vid_vsync0/+host_maxfps144 to both clients,
+retaining native command/send cadence and every probe assertion. No prediction
+field or packet timing injection. Rerun the same simultaneous case with fresh
+output; observed replay calls alone remain insufficient acceptance.
