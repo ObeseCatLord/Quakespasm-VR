@@ -1,5 +1,9 @@
 # Major-feature implementation plans
 
+[C18 combined-build/component notices](license-install-2.0-plan.md) restores the
+inherited notices through native Meson installation and the Nix source closure.
+Portable artifact bundling remains the separate C19 slice.
+
 [C12 QBJ3 live-avatar admission](qbj3-live-avatar-2.0-plan.md) reuses the inherited
 strict frame/selection contract at the native staged palette, raster and BLAS
 boundaries. C13 corpse and C14 optional equipment remain separate planned slices.
