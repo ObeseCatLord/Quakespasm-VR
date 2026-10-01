@@ -166,6 +166,14 @@ and saved microphone consent/default-device choices remain unchanged. Include
 actual local wet-only/spatial reset and no-Opus coverage. This does not require a
 new silent-device timeout or certify audible/headset quality.
 
+The [explicit defaults adapter](vr-default-restoration-2.0-plan.md) requires
+actual built-in pak/default-script and menu-reset execution, mod-provided script
+completion, attached/unfocused/desktop-to-XR cases, nonempty native/custom
+bindings, and deliberate later unbind/custom assignment after missing-only
+filling. Repeated ordinary frames must not reapply defaults. Reuse current
+startup missing-only policy for a deferred first sample; script text alone is
+not packaged-control behavior or native key-release/neutral proof.
+
 Read game assets only from the existing quakespasm_straight installation. Native
 runners may link/copy needed data into disposable writable profiles; saves,
 configs and generated QC programs belong there. The map/mod matrix includes

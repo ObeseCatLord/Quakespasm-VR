@@ -105,3 +105,25 @@ healthy-self-reset versus failure-close/cooldown, avoiding duplicated branch
 policy. SDL2 raw-backlog sentinel is checked before generic negative errors.
 Production remains voice.c only. Final exact-patch source review and full
 Linux/ARM capture/HUD software qualification remain after implementation.
+
+## Source integration receipt
+
+Production commit `47df36e6` changes voice.c only:73 additions and20 removals.
+The existing reset body has an explicit PTT-release parameter; full-stop callers
+retain their old wrapper. Detected capture drops/errors use the shared discard
+helper. Inactive repeated drops preserve exact pending END markers by native
+four-slot circular compaction; successful recovery uses existing START/talkspurt
+behavior. SDL2 deliberately dropped raw input is distinct from true errors;
+ordinary zero data is unchanged. Genuine failures close and retain the existing
+route/preferences with the explicit10-second retry gate; healthy drops retain
+capture and reset native wet-only self-feed.
+
+Main reviewed the complete patch and actual queue/drainage/spatial owners.
+Independent requested-Astra final source advice found no P1/P2 issue within
+scope, including wrapped compaction, PTT/terminal-marker lifecycle, SDL branches,
+callback exclusion and cooldown. Main also checked the official SDL2
+[conversion-put failure contract](https://wiki.libsdl.org/SDL2/SDL_AudioStreamPut)
+and [unsigned dequeue result](https://wiki.libsdl.org/SDL2/SDL_DequeueAudio).
+Scoped diff --check passed. No builds/tests/compiler/probes/runtime/audio checks
+ran. Effective reviewer metadata and final Linux/ARM software qualification
+remain unverified. No no-data freshness timeout or audible benefit is claimed.
