@@ -136,6 +136,17 @@ move production work outside the bound. These limits include the prior846 lines.
     stays native. This is preservation of built-in desktop demos, not VR/extra
     demo functionality; include it in the unchanged aggregate bound.
 
+13. Final main integration: the inherited prespawn signon comparison is strict
+    less-than although signon_buf reserves exactly two bytes for signon2. Accept
+    exact fit using remaining-space comparison. If native signon plus those two
+    bytes cannot fit even an empty recipient buffer, route the bounded diagnostic
+    through the same native per-recipient failure/drop branch rather than waiting
+    forever. Preserve native signon storage; no upstream split-buffer/QC rewrite
+    is added. This is a capacity-boundary correction within step6 and the existing
+    aggregate bound. Also validate live key length/quoting through the existing
+    field-fit helper before invoking Info_SetKey on prospective scratch, as required
+    by step11; native actual-result value/deletion semantics remain unchanged.
+
 ## Handoff, main review and final acceptance
 
 Report scope_done, exact changed files/aggregate counts, source/diff verification,
