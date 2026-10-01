@@ -145,3 +145,27 @@ Review provenance: requested gpt-6-astra at xhigh, read-only source advice.
 Effective runtime settings metadata remains unavailable, so the required
 certified senior-review routing cannot be verified here. This is not final-goal
 signoff or execution qualification. Main owns the adopted architecture.
+
+## Production integration and final source receipt
+
+Commit6aff7371 implements the adopted five-file adapter (71 additions,
+13 removals). The existing boolean becomes one three-state phase; the existing
+eleven-entry table drives missing-only filling and temporary exclusions. No
+second table, binding store, saved mask or periodic restoration is introduced.
+Detached startup retains its previous policy; a later explicit request arms
+one restore. Validated key assignments notify before the equality fast path;
+unbindall and menu action clearing include currently absent defaults. A new
+explicit request clears earlier exclusions. Consumption marks applied and
+clears the mask before generated Key_SetBinding notifications, including when
+all defaults were excluded. Nonempty native/custom bindings remain authoritative.
+
+Main reviewed the complete actual five-file diff and the command insertion,
+sample, session and key/menu boundaries. A separate final requested-Astra xhigh
+source review found no scoped P1/P2 issue and checked startup registration and
+input-before-render callers. Its load-bearing command ordering was spot-checked
+at Cmd_Exec_f/Cbuf_InsertText. Scoped git diff --check passed. Review runtime
+metadata remains unavailable; source acceptance is not certified routing,
+formal final-goal signoff or execution proof. No builds/tests/compiler/lint/
+probes/game/headset/packaging checks ran. The final qualification matrix records
+the required software cases; broader VR-009/controller and MOD-013 pause/impulse
+work is not closed by this explicit-defaults repair.
