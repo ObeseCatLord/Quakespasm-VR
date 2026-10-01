@@ -92,6 +92,11 @@ receipts. These overlap intentionally; test shared boundaries once.
   simultaneous VM preservation and toggle/reload subset passes;
   [exact results and limits](qc-binding-current-qualification-2.0.md).
   Remaining resource, callback and authored-consumer families stay open.
+- F07: repeated native mj4m1 loads observe actual indexed worker entries; all
+  427881 surfaces match native serial extent recalculation on both loads, with
+  clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).
+  No screenshot artifact was produced, so inspected output remains open.
+  mfxsp17 is not installed; its available public repack is not tested yet.
 - F06: prepared META setter/center transitions and actual KHR fixed/menu/
   unavailable-eye/off GPU phases pass, preserving native4xMSAA and SSAO1.
   Actual submission found and repaired static depth-replay shading-rate state;

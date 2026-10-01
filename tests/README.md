@@ -1,5 +1,24 @@
 # Migration boundary fixtures
 
+## Native large-map extent equivalence
+
+`large_map_extents_native_fixture.c` includes the native loader and adds a
+post-load comparison entry point. Compile with the existing assertion-enabled
+Meson gl_model.c arguments, substituting this source; replace only the original
+gl_model object in the normal client link. Retain main, Vulkan, tasks and shaders.
+Run `large_map_extents_native.gdb` with that client from a disposable licensed
+Mjolnir profile, `-novr -game mjolnir +map mj4m1`; set `QSVR_EXTENTS_RESULT` to a
+writable private JSON path. The probe uses normal command-queue map replacement
+and observes actual extent worker entry, then compares every surface with the
+native serial calculation after CPU draw join. No copied arithmetic or loader.
+
+Require exit0, two worker/serial/phase markers, final
+`LARGE_MAP_EXTENTS_NATIVE_PASSED`, matching JSON, clean validation and normal
+exit. Extent equivalence does not establish texture equivalence, all-map output
+or performance. Screenshot requests alone are not image acceptance.
+[Before-code plan](../docs/large-map-extents-final-2.0-plan.md) and
+[current results/precise limits](../docs/large-map-extents-current-2.0-results.md).
+
 ## Explicit OpenXR session recovery
 
 `openxr_session_recovery_fixture.cpp` reuses the Vulkan boundary fixture's
