@@ -2858,7 +2858,7 @@ const char *VR_WeaponCalibrationPresetName(void)
 {
 	static const char *const names[] = {
 		"Vanilla", "Enhanced", "Authentic", "Plague", "Block-Quake",
-		"Arcane Dimensions"
+		"AD"
 	};
 	return names[vr_weapon_preset_accepted];
 }

@@ -51,7 +51,7 @@ authored schema precedence on game reload and the existing live preset rule
 (explicit live selection replaces targeted classic fields, preserving other
 fields). Do not claim automatic family recognition for arbitrary renamed mods.
 
-Add a sixth **Arcane Dimensions** contextual preference to the same archived selector and
+Add a sixth **AD** (Arcane Dimensions) contextual preference to the same archived selector and
 Weapon Setup row. A user can explicitly apply the copied AD table to an
 otherwise generic AD-based mod. Known AD contexts retain their existing
 baseline; selecting AD on an additional AD-root context must also retain that
@@ -121,3 +121,9 @@ source advice, not certified skill/final-goal signoff.
 
 No human decision is needed for this bounded contextual-preference contract.
 Review and main source inspection performed no execution or tests/builds.
+
+Main's actual menu-consumer review found that the full display name exceeds
+the native value column: MENU_VALUE_X=27*8=216, leaving13 glyphs in320 units,
+while Arcane Dimensions uses17. Use the concise existing-family name **AD**;
+do not widen or rescale the native menu. This local display correction leaves
+the selector/table/context policy unchanged and belongs in final menu coverage.
