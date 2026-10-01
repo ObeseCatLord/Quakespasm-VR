@@ -132,6 +132,11 @@ fixture, rendered image, headset or runtime check ran in this reconciliation.
 
 ## Native diagnostics and compatibility controls (2026-09-30)
 
+Historical checkpoint: the physical field-table placement gap described below
+was subsequently source-integrated as C20 in `a42de70f`. The
+[final checklist](final-checklist-2.0.md) is authoritative; two-eye readability
+and lifecycle qualification remain pending, not a new implementation item.
+
 MOD-014 uses native vkQuake owners rather than the primary's smaller debug-text
 implementation. gl_rmisc.c registers r_showfields/align and related bbox
 controls; gl_rmain.c:R_PrepareDebugEntityInfo collects entity/link state before

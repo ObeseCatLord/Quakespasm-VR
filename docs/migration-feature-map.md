@@ -1,7 +1,7 @@
 # Complete-scope feature map for the 2.0 migration
 
 The [final senior-reviewed checklist](final-checklist-2.0.md) and
-[185-row current crosswalk](final-scope-enumeration-2.0-worksheet.csv) are the
+[185-row original audit crosswalk](final-scope-enumeration-2.0-worksheet.csv) are the
 current remaining-work authority. They supersede historical pending labels;
 source integration still needs end-of-implementation Linux/ARM qualification.
 
@@ -143,8 +143,10 @@ reattachment. Explicit re-enable after session-only loss or EXITING now
 requalifies the original system/API/GPU; failed session destruction abandons
 backend eligibility. The [recovery plan](openxr-session-recovery-2.0-plan.md)
 records passing bounded software checks and their dispatch/input/camera limits.
-Desktop-to-XR hot-connect without the startup binding and full instance/device
-recovery remain open; see the [session-toggle boundary](migration-openxr-session-toggle.md).
+Compatible desktop-to-XR late attachment and bounded instance recovery are now
+source-integrated at the existing Vulkan binding; see the
+[current session-toggle boundary](migration-openxr-session-toggle.md).
+General incompatible-device/device-loss reconstruction remains excluded.
 Live headset testing remains user-deferred and outside the implementation goal.
 
 For VR-010, weapon-wheel hover, menu navigation, and weapon-contact pulses

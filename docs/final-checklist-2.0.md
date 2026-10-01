@@ -1,9 +1,11 @@
 # Final 2.0 migration checklist
 
 **Reviewed final scope checklist. The migration itself remains incomplete.**
-2026-10-01. Audited production snapshot: `2b420380`. Audit commits change
-documentation only. No implementation, builds or tests occurred during this
-review. The user-owned changes to migration-2.0.md remain untouched.
+2026-10-01. Original audited production snapshot: `2b420380`; refreshed against
+source integrations through `99eea1f0` and paused uncommitted C07/C14 patches.
+Both enumeration reviews changed documentation only; intervening source commits
+are listed below. No final-tree builds or tests have run. The user-owned changes
+to migration-2.0.md remain untouched.
 
 Local Astra xhigh reviewed all 185 inventory rows: 153 source-integrated/native
 (S), 18 missing (M), two unresolved (Q, one shared rendering question), 11
@@ -11,12 +13,89 @@ excluded/deferred (X), one reference experiment (R). These overlapping rows are
 not completion percentages. The missing rows produce the 22 distinct items
 below; no row remains unreviewed.
 
+The [current local Astra xhigh refresh](final-checklist-refresh-2.0-review.md)
+accounts for all185 IDs using the original review and current receipts, verifies
+challenged consumers, and confirms **four remaining implementation areas**.
+It found necessary C07/C14 refinements, not a fifth independent missing feature.
+Source integration and software acceptance remain separate.
+
 The checklist preserves vkQuake's engine, renderer, resource owners and desktop
 baseline. Each missing behavior below belongs at an existing boundary, using
 the pinned primary/QSS-M reference where applicable. It is not a request for
 another renderer, VM, networking stack or movement solver.
 
-## Confirmed implementation work
+## Final remaining implementation checklist
+
+**C02 / NET-021 — server and player metadata publication**
+
+- [ ] Settle stock-QSS-M interoperability/recipient command limits and an explicit
+  permanent-oversize outcome; the existing optional user question is unanswered.
+- [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
+  slots before signon3 using current stores and native reliable-buffer retry.
+- [ ] Preserve publication across mid-signon changes, map changes and spawn/
+  fastload buffer clears; deliver retired/empty or reused-current slot metadata.
+- [ ] Retire only after disconnect QC sees old state; keep current native name/
+  colors after custom snapshots and retain native frags.
+- [ ] Share full/incremental public projection including the cvar path, exclude
+  private underscore keys, retain star keys and clear unrepresentable old values
+  without silent1024-byte truncation or changes to local stores.
+- [ ] Repair full/update receiver argc, bounded nonnegative slots, string
+  termination and quoted-command validation; extend only the explicit required
+  full-userinfo reader allowance. No new metadata protocol or copied queue.
+
+**C07 / NET-014 — coherent optional reconciliation presentation smoothing**
+
+- [ ] Source-review and finish the paused renderer phase; committed native
+  replay/ACK/camera phase alone does not close C07.
+- [ ] Apply one captured frame offset to local desktop and VR held-weapon draw
+  matrices, retaining native bob/FOV, identity, dispatch and winding. The paused
+  wrapper currently excludes desktop weapons while the camera is corrected.
+- [ ] Correct applicable mode2 beam near endpoints after authoritative tracing,
+  including controller and paired rays; impacts/gameplay origins remain native.
+  The paused beam adapter currently excludes controller aiming.
+- [ ] Keep non-controller HUD offset and camera-derived controller HUD coherent
+  without double correction; use consistent foreground/diagnostic draw consumers.
+- [ ] Preserve default-off finite bounded smoothing, exact command/ACK history,
+  semantic resets, and unchanged gameplay/collision/transmitted tracking/muzzles.
+
+**C14 / AV-006 — inherited QBJ3 shotgun and back-wrench attachments**
+
+- [ ] Reopen/source-review the paused extraction phase (216 changed lines versus
+  210-line threshold), fix the unfinished helper rename and finish optional pair
+  extraction through existing model-owned slots/upload/free owners.
+- [ ] Separate verified source key/digest/geometry admission from selected target
+  ATTACH_HAND policy; the paused extraction wrongly requires that policy on the
+  source package, whose native QBJ admission permits RANGER policy.
+- [ ] Stage source identity/readiness and publish two immutable attachment records
+  at the existing frame owner: dominant-hand shotgun and upper-spine wrench,
+  correct source presentation/socket mapping, skin/glow and independent bounds.
+- [ ] Extend native raster, co-op overlays, ShowTris and matching TLAS count/
+  emission to both records, with all masks before outlines and consistent shadows.
+- [ ] Keep the selected body on optional pair failure, publish neither equipment
+  nor derived muzzle, avoid Ranger substitution and preserve ordinary Ranger plus
+  independent C13 death/corpse presentation and lifetime rules.
+
+**C19 / PLAT-003 — portable Linux x86-64 and native ARM64 release artifacts**
+
+- [ ] Finish exact SDK/tool/dependency pins and flags, portable ISA, OpenXR
+  JsonCpp/system configuration-prefix choices and explicit host/bundled SONAME
+  policy; commit bounded before-code slices after the existing senior disposition.
+- [ ] Implement shared native builder using Meson installation and reused
+  Steam Audio4.8.1 recipe with required SDL3, shaders, codecs and CURL enabled.
+- [ ] Stage complete dependency closure, explicitly seed executable-side OpenXR
+  loader, normalize each ELF RUNPATH and preserve internal SONAME aliases;
+  reject unresolved/conflicting/escaping dependencies and retain GLIBC<=2.39.
+- [ ] Include matching dependency notices, header/static contributions,
+  versions/hashes/patches and source-access artifacts through existing owners.
+- [ ] Implement artifact verification and isolated source-in/results-out Foundry
+  transport for one immutable snapshot, without modifying the deployed server.
+  Execute builders/verifiers only in final qualification after implementation.
+
+The sole unresolved product choice is C02's stock-QSS-M peer contract. C07/C14
+refinements and C19 policy choices are technical work, already within scope.
+The detailed plans and review evidence below define their native integration seams.
+
+## Original audit findings and source integrations
 
 The table below preserves the audit's 22 implementation findings. Eighteen items
 were subsequently source-integrated in the commits below, following committed
@@ -45,7 +124,7 @@ qualification phase.
 | C18 — inherited combined-build/component notices | [Notice installation plan](license-install-2.0-plan.md); source commits `fb0f41d9` / `3adf25fb`. Copied primary GPL3 text and unmodified official Valve4.8.1 notices through Meson/Nix source/install owners, including vendored Monado ABI provenance. Source-copy hashes checked; installed/artifact notice qualification pending. C19 remains separate. |
 | C21 — valid GPU samples and shared stereo diagnostics | [Diagnostic plan](gpu-diagnostic-validity-2.0-plan.md); source commit `d659894c`. Main reviewed per-slot sampled modes, successful-query/conversion validity and measured-zero distinction; existing queries retained. Final software timing/status/mode-change acceptance pending. |
 
-| Item | Feature IDs | Missing behavior and smallest implementation seam | Source evidence / eventual observable acceptance |
+| Item | Feature IDs | Original audit gap and smallest implementation seam | Source evidence / eventual observable acceptance |
 | --- | --- | --- | --- |
 | C01 | NET-007 | Fix late QC model precaches: call the existing correct SV_Precache_Model helper instead of duplicating its logic with a sound tag. | pr_cmds.c:1497/1540; cl_parse.c:2977/3002. QSS-M pr_cmds.c:1206/1239. A late model reaches the model cache and renders, without corrupting sound slots. |
 | C02 | NET-021 | Publish full initial serverinfo/userinfo and clear retired-slot custom metadata through existing signon/spawn/drop message owners. | sv_main.c:3578; host_cmd.c:2423; host.c:646. QSS-M sv_main.c:2276/host_cmd.c:9802/host.c:1437. Joining and slot reuse yield current custom keys, with no stale occupant data. |
@@ -159,9 +238,12 @@ research; they were not blanket-approved implementation.
 
 ## Review evidence and execution order
 
-- [Complete 185-row crosswalk](final-scope-enumeration-2.0-worksheet.csv): final
-  classification and actual owner/evidence or exact open question for every row.
+- [Complete 185-row original audit crosswalk](final-scope-enumeration-2.0-worksheet.csv):
+  snapshot classification and actual owner/evidence or exact question for every row.
   Older status/route columns remain historical, explicitly not proof.
+- [Final current senior disposition](final-checklist-refresh-2.0-review.md):
+  exhaustive remaining implementation substeps, source-verified refinements and
+  current source-integrated versus qualification status.
 - [Senior-review dispositions](final-scope-senior-disposition-2.0.md): adopted,
   adapted and rejected recommendations, source spot-checks and scope rationale.
 - [Lead source returns](final-scope-lead-source-review.md) and
