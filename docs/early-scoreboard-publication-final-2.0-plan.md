@@ -23,7 +23,7 @@ stores/phase drain. Name/color mutation and QC visibility still happen immediate
 Native server spawn resets knowntoqc on map changes. No new queue, negotiation
 state, dropped-name store, client parser tolerance or forced signon is needed.
 
-Compare alternatives: gating pe​xtknown would exclude legitimate no-extension
+Compare alternatives: gating pextknown would exclude legitimate no-extension
 peers forever; client-only name deferral would not protect a joining client from
 another player's updates. Reordering the test would remove the observed trigger
 without repairing the native owner. A second publication state machine is larger

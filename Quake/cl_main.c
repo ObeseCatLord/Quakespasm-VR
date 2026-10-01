@@ -3705,7 +3705,8 @@ void SV_UpdateInfo (int edict, const char *keyname, const char *value)
 
 		for (client_t *current_client = svs.clients; current_client < svs.clients + svs.maxclients; current_client++)
 		{
-			if (current_client->active &&
+			// Defer fallback updates until this recipient is known to QC.
+			if (current_client->active && current_client->knowntoqc &&
 				current_client->offered_metadata != QSVR_METADATA_VERSION &&
 				!(current_client->protocol_pext2 & PEXT2_PREDINFO))
 			{
