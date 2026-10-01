@@ -110,3 +110,30 @@ button edges, tracking and paused duration must remain canceled. Held controls,
 reliable/ACK drainage and unpaused public/private behavior stay native. Map/
 disconnect resets and mixed desktop/VR remain required. Software checks run
 only after all implementation; user live/performance/Windows checks stay later.
+
+## Before-code source review disposition
+
+Main spot-checked the requested-Astra advice at SV_PrivateSyncPauseState:
+RUNNING/AWAIT_COMPLETION can publish recovery before consuming a newly arrived
+packet when lastmovetime is positive and its existing gap exceeds1second.
+Host client-before-server ordering confirms the P2 consumption counterexample.
+SV_PrivateWalkTrialTerminalState (sv_phys.c:8474) only reads the passed client/
+edict and finite scalar fields; it does not consult qcvm or execute QC. Its
+terminal guard can therefore remain in a shared read-only due predicate without
+switching VMs or changing terminal policy.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Phase-only local readiness misses an already-due arrival recovery. | Adopt: factor the exact existing phase/terminal/positive-lastmovetime/>1second predicate and reuse it in server synchronization and the read-only local query. No new timer, changed threshold, epoch or synchronization call. |
+| The due predicate must be callable outside server QC context. | Adopt, source-verified: retain the existing field-only terminal predicate; document the read-only/no-qcvm contract at the shared helper. Do not call broader state classification/QC helpers. |
+| Retain deliberate provenance plus per-final-command projection fact. | Adopt: clear projection at every finalization start as well as assignment/resume/reset; previews leave it untouched. Current filtered value/readiness recomputation cannot substitute for the projection fact. |
+| Preserve pre-CSQC projection and consume even filtered zero at eligible ring write. | Adopt unchanged. No post-filter injection, separate saved impulse or ACK retry. Queued PF_localcmd is not evidence of a synchronous assignment race. |
+| Keep authoritative local query with exact endpoint identity. | Adopt; adapt optional borrowed-pointer accessor to a boolean NET_QSocketIsLoopbackPeer(a,b). Validate both live driver0 endpoints and reciprocal driverdata, without exposing or retaining a peer pointer. Match active private clients rather than slot/address guessing. |
+| Keep existing accepted positive marker readiness. | Adopt unchanged: no prediction/completion gate and no client-created epoch. An ordinary sender may establish the marker on a zero-impulse command. |
+
+The initial borrowed-pointer proposal is superseded by the boolean predicate.
+Production ownership remains the same seven files. The shared arrival-due
+predicate is added to the bounded estimate; architecture expansion is not
+authorized. Main owns this disposition. The source review earned its cost by
+identifying a lost-intent path; it is not runtime/routing certification or final
+signoff. No builds/tests/compiler/probes/game checks ran.
