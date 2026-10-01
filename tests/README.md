@@ -3416,3 +3416,53 @@ Require exit 0 and `QC_BINDING_CORE_NATIVE_PASSED`.
 [Plan](../docs/qc-binding-final-2.0-plan.md) and
 [current evidence](../docs/qc-binding-current-qualification-2.0.md).
 The run writes only the disposable profile; keep licensed data outside git.
+
+## Six-axis native camera qualification
+
+The existing camera fixture now checks twelve signed XYZ/yaw/pitch/roll cases,
+rigid IPD, restored bases and controller/command aim separation. The existing
+direct projection fixture also includes pitch/composed rotation and rigid canted
+eyes. Use their earlier compile recipes. Prepared camera cases initially use
+protocol0; private paused-body behavior is a distinct boundary.
+
+The camera fixture also checks a composed XYZ/yaw/pitch/roll case at game yaw37,
+private paused horizontal movement, canonical-query agreement without advancing
+the rendered baseline, missing/reset/retired baselines, temporary unavailable
+poses/bases, predicted valid poses, direct client reset and resume/repause.
+The existing sanitized input-continuity fixture additionally verifies pause
+discards pending roomscale, resume seeds0, and only later fresh movement enters
+the command. Resuming restores the collision-resolved body view; paused visual
+displacement retires. Seamless positional continuity across resume is not added.
+
+`openxr-sixdof.gdb` runs an additional isolated native Vulkan/Monado check.
+It requires a current DEBUG binary, SDL X11, ImageMagick `import`, `xprop`,
+the existing private simulated Monado service and licensed stock assets. Begin
+at stock startup without `+map`: it verifies attached-XR startup reaches the
+menu without a demo, then uses native commands to load e1m1 after initialization.
+It sets explicit native MSAA4/SSAO1, controller mode7 and public camera-only
+admission. Eight phases check center/basis/both-eye origins and capture both
+the compositor and exact inferior-owned native left-eye mirror window.
+
+Supply an otherwise fresh private `-basedir`/`-userdir` profile, read-only pak0
+link and fresh `XR_SIXDOF_OUTPUT` directory. Inherit only the existing private
+XDG/runtime/validation environment described in the GPU recipe above:
+
+```sh
+XR_SIXDOF_OUTPUT=/tmp/qsvr-sixdof-result \
+timeout --signal=TERM --kill-after=10s 120s \
+gdb --return-child-result -q -batch -x tests/openxr-sixdof.gdb \
+  --args /path/to/debug/vkquake -validation 2 \
+  -basedir /tmp/qsvr-sixdof-game -userdir /tmp/qsvr-sixdof-user \
+  -window -width 640 -height 480 -nosound -nojoy -openxr
+```
+
+Require both explicit pass markers, JSON passed, clean validation and normal
+GDB/process exit0. Inspect native mirror geometry for differential near/far
+parallax and world rotation. The observer waits for completed camera/draw tasks
+at GL_EndXRFrame; GL_EndRendering entry precedes camera setup when tasks run.
+Tracking is deliberately injected consistently after location, including
+submitted projection poses; the runtime's simulated physical head is unchanged.
+Compositor remapping may therefore undo rotations. These images and checks are
+not hardware/runtime sensor or full private roomscale gameplay certification.
+[Plan](../docs/sixdof-final-2.0-plan.md) and
+[exact current results/limits](../docs/sixdof-current-qualification-2.0.md).

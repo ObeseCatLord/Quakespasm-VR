@@ -1,8 +1,9 @@
 # Current Linux and ARM candidate qualification
 
 **Subsequent freshness update:** production482cd9f5 changes cl_main.c and
-4ef67790 changes gl_rmisc.c. The ff83e66a packages below remain qualified for
-that exact earlier input, not the readiness/depth-state repairs. Final affected artifact refresh belongs to F10 after
+4ef67790 changes gl_rmisc.c,07f83e6e changes host_cmd.c,8071a46b changes
+gl_rmain.c/glquake.h/view.c. The ff83e66a packages below remain qualified for
+that exact earlier input, not these repairs. Final affected artifact refresh belongs to F10 after
 source fixes settle. The308-file equality below was verified at its original
 qualification snapshot and no longer describes the latest production tree.
 
@@ -10,7 +11,8 @@ qualification snapshot and no longer describes the latest production tree.
 ff83e66a59fb8d15113fca41a5ec35eeb350c3f6, archive SHA256
 72dc43196180279e56ad3ee0081818f22bcb14c8707abed522dbe7dc945c39f1.
 Main compared all308 tracked production C/C++/header/shader/make files against
-the current worktree: zero differences. Later commits change tests/docs only.
+the worktree at that qualification snapshot: zero differences. This comparison
+predates the subsequent production repairs listed above.
 Full pinned native dependencies, Steam Audio4.8.1, OpenXR, generated shaders,
 codecs, voice and CURL are enabled; no warning suppression or fallback build.
 

@@ -4,13 +4,38 @@
 #include <assert.h>
 #include <stdio.h>
 
-static void pose (float m[3][4], double yaw, double roll, double x, double y, double z)
+static void pose (float m[3][4], double yaw, double pitch, double roll,
+	double x, double y, double z)
 {
-	const double c = cos (yaw), s = sin (yaw), cr = cos (roll), sr = sin (roll);
-	const double values[3][4] = {{c * cr, -c * sr, s, x}, {sr, cr, 0, y}, {-s * cr, s * sr, c, z}};
+	const double cy = cos (yaw), sy = sin (yaw);
+	const double cp = cos (pitch), sp = sin (pitch);
+	const double cr = cos (roll), sr = sin (roll);
+	const double values[3][4] = {
+		{cy * cr + sy * sp * sr, -cy * sr + sy * sp * cr, sy * cp, x},
+		{cp * sr, cp * cr, -sp, y},
+		{-sy * cr + cy * sp * sr, sy * sr + cy * sp * cr, cy * cp, z}
+	};
 	for (int i = 0; i < 3; ++i)
 		for (int j = 0; j < 4; ++j)
 			m[i][j] = (float)values[i][j];
+}
+
+static void eye_pose (vrxr_view_t *view, const vrxr_device_t *head,
+	double local_yaw, double local_x)
+{
+	const double c = cos (local_yaw), s = sin (local_yaw);
+	const double cant[3][3] = {{c, 0, s}, {0, 1, 0}, {-s, 0, c}};
+	for (int row = 0; row < 3; ++row)
+	{
+		for (int column = 0; column < 3; ++column)
+		{
+			double value = 0;
+			for (int k = 0; k < 3; ++k)
+				value += head->matrix[row][k] * cant[k][column];
+			view->matrix[row][column] = (float)value;
+		}
+		view->matrix[row][3] = head->matrix[row][3] + head->matrix[row][0] * (float)local_x;
+	}
 }
 static void check (vrxr_frame_t *f)
 {
@@ -132,11 +157,12 @@ int main (void)
 	f.devices[0].valid = 1;
 	for (int config = 0; config < 4; ++config)
 	{
-		pose (f.devices[0].matrix, .17 * config, -.1 * config, 1.3, .9, -2.1);
+		pose (f.devices[0].matrix, .17 * config, -.11 * config, -.1 * config,
+			1.3 + .13 * config, .9 - .08 * config, -2.1 + .09 * config);
 		for (int eye = 0; eye < 2; ++eye)
 		{
 			vrxr_view_t *v = &f.views[eye];
-			pose (v->matrix, .17 * config + (eye ? .07 : -.09), -.1 * config, 1.3 + (eye ? .033 : -.031), .91, -2.11);
+			eye_pose (v, &f.devices[0], eye ? .07 : -.09, eye ? .032 : -.032);
 			v->left = -1.1 + .03 * eye;
 			v->right = .95 + .06 * eye;
 			v->down = -.8;

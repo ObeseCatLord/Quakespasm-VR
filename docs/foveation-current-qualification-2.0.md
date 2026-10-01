@@ -17,11 +17,27 @@ are observed at this prepared boundary. Dispatch/profile/frame handles are
 controlled; no borrowed runtime image or device support is proven by it.
 
 The actual-GPU native transition run passes its structured status/marker and
-GDB/process exit0 with natural native quit. Loaded e1m1 stereo, four consecutive
+GDB/process exit0 with natural native quit. Loaded stereo scene, four consecutive
 12-frame phases, native4xMSAA and SSAO1 preserved. Native cvar/command/frame/
 resource/render/upload owners run; no capabilities, gaze, positions or graphics
 outputs are assigned. Existing startup/device selection chooses supported KHR,
 with no FDM provider. Fixed is explicitly requested only by this private test.
+
+Subsequent F05 startup diagnosis found stock quake.rc started demo1 during the
+requested map's loading refresh. This run proves its actual foveation/render
+transitions, not live e1m1 gameplay or six-axis tracked aiming. Its original
+scene label is corrected here. Default attached-XR automatic demo startup is
+being repaired separately; desktop demos retain their native owner.
+
+After startup repair07f83e6e, the same four phases were repeated in actual live
+e1m1 loaded through the native command queue after the startup menu. The probe
+now rejects demos/intermissions and observes at GL_EndXRFrame after draw tasks.
+All four phase results and exact rate counts above repeat, upload equality holds,
+native4xMSAA/SSAO1 retained, explicit marker/JSON and GDB/process0 normal quit,
+no Vulkan validation errors/VUID/sync hazards. Private evidence:
+native-gameplay-transitions.gdb/native-gameplay-transitions-result.json and
+logs/foveation-gpu-native-gameplay-transitions.log. This refresh qualifies live
+rendering at these same bounded F06 transitions, without expanding scope.
 
 | Phase | Actual observed result |
 | --- | --- |

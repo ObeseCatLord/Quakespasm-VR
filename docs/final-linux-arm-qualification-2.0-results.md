@@ -17,8 +17,16 @@ Existing ff83e66a Linux/ARM packages predate both production repairs; final affe
 artifact refresh belongs to F10. Older production-equivalence text below is
 historical to its accepted snapshot.
 
+Subsequent07f83e6e native VR startup and8071a46b paused positional-camera
+repairs also require final affected artifact refresh. Signed/composed actual
+camera and inspected live GPU/public/private paused phases pass; input pause/
+resume accumulator passes ASAN/UBSAN. Verified local Astra bounded dispositions
+are recorded in [camera review](sixdof-final-2.0-review.md) with
+[exact evidence/limits](sixdof-current-qualification-2.0.md). This does not close
+the remaining finite F04/F05 owners or whole goal.
+
 Full native Linux/ARM build obligation (group1) is complete for immutableff83e66a;
-all308 tracked production files match the current worktree. Both current packages
+all308 tracked production files matched that qualification snapshot. Both packages
 verify45 ELF/651 inventory entries/118 contributors. ARM retrieval was recovered
 from the existing verified archive after the local storage failure; native ARM
 dedicated launch loads/exits successfully. Relocated packaged Linux desktop and
