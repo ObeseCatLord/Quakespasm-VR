@@ -7,6 +7,11 @@ Both enumeration reviews changed documentation only; intervening source commits
 are listed below. No final-tree builds or tests have run. The user-owned changes
 to migration-2.0.md remain untouched.
 
+Following that review, C07's draw phase was source-integrated in `1b5b2d84` and
+C14's optional extraction phase in `19e2c6b3`. **Three implementation areas now
+remain: C02, C14 and C19.** C14 still needs staging and consumers. None of these
+source receipts constitutes final executable acceptance.
+
 Local Astra xhigh reviewed all 185 inventory rows: 153 source-integrated/native
 (S), 18 missing (M), two unresolved (Q, one shared rendering question), 11
 excluded/deferred (X), one reference experiment (R). These overlapping rows are
@@ -43,29 +48,29 @@ another renderer, VM, networking stack or movement solver.
   termination and quoted-command validation; extend only the explicit required
   full-userinfo reader allowance. No new metadata protocol or copied queue.
 
-**C07 / NET-014 — coherent optional reconciliation presentation smoothing**
+**C07 / NET-014 — source-integrated; final qualification pending**
 
-- [ ] Source-review and finish the paused renderer phase; committed native
+- [x] Source-review and finish the renderer phase; committed native
   replay/ACK/camera phase alone does not close C07.
-- [ ] Apply one captured frame offset to local desktop and VR held-weapon draw
+- [x] Apply one captured frame offset to local desktop and VR held-weapon draw
   matrices, retaining native bob/FOV, identity, dispatch and winding. The paused
-  wrapper currently excludes desktop weapons while the camera is corrected.
-- [ ] Correct applicable mode2 beam near endpoints after authoritative tracing,
+  wrapper's desktop omission was corrected in `1b5b2d84`.
+- [x] Correct applicable mode2 beam near endpoints after authoritative tracing,
   including controller and paired rays; impacts/gameplay origins remain native.
-  The paused beam adapter currently excludes controller aiming.
-- [ ] Keep non-controller HUD offset and camera-derived controller HUD coherent
+  The reviewed controller omission was corrected in `1b5b2d84`.
+- [x] Keep non-controller HUD offset and camera-derived controller HUD coherent
   without double correction; use consistent foreground/diagnostic draw consumers.
-- [ ] Preserve default-off finite bounded smoothing, exact command/ACK history,
+- [x] Preserve default-off finite bounded smoothing, exact command/ACK history,
   semantic resets, and unchanged gameplay/collision/transmitted tracking/muzzles.
 
 **C14 / AV-006 — inherited QBJ3 shotgun and back-wrench attachments**
 
-- [ ] Reopen/source-review the paused extraction phase (216 changed lines versus
+- [x] Reopen/source-review the extraction phase (216 changed lines versus
   210-line threshold), fix the unfinished helper rename and finish optional pair
-  extraction through existing model-owned slots/upload/free owners.
-- [ ] Separate verified source key/digest/geometry admission from selected target
-  ATTACH_HAND policy; the paused extraction wrongly requires that policy on the
-  source package, whose native QBJ admission permits RANGER policy.
+  extraction through existing model-owned slots/upload/free owners; `19e2c6b3`.
+- [x] Separate verified source key/digest/geometry admission from selected target
+  ATTACH_HAND policy; `19e2c6b3` removed that erroneous source-policy gate.
+  Frame preparation still needs the selected-target attachment branch.
 - [ ] Stage source identity/readiness and publish two immutable attachment records
   at the existing frame owner: dominant-hand shotgun and upper-spine wrench,
   correct source presentation/socket mapping, skin/glow and independent bounds.
@@ -97,12 +102,13 @@ The detailed plans and review evidence below define their native integration sea
 
 ## Original audit findings and source integrations
 
-The table below preserves the audit's 22 implementation findings. Eighteen items
+The table below preserves the audit's 22 implementation findings. Nineteen items
 were subsequently source-integrated in the commits below, following committed
 before-code plans and main review of the Luna patches. Their executable
-acceptance remains pending. **Four implementation items remain**: C02, C07,
-C14 and C19. C07's native replay/camera phase is integrated in `3f8b398c`, but its
-renderer/HUD phase remains required. The shared Q01 rendering correction is also source-integrated;
+acceptance remains pending. **Three implementation items remain**: C02,
+C14 and C19. C07's native replay/camera phase is integrated in `3f8b398c` and its
+renderer/HUD phase in `1b5b2d84`. C14 phase1 is integrated in `19e2c6b3`, while
+staging/consumer phases remain required. The shared Q01 rendering correction is also source-integrated;
 its rendered acceptance remains pending.
 No tests or builds have run since the audit.
 Each remaining slice needs a committed before-code plan, implementation/source
@@ -111,6 +117,7 @@ qualification phase.
 
 | Source-integrated since the audit | Plan / remaining acceptance |
 | --- | --- |
+| C07 — optional native ACK presentation smoothing | [Smoothing plan](prediction-smoothing-2.0-plan.md); commits `3f8b398c` / `1b5b2d84`. Main checked native gameplay matrices retained, desktop bob/FOV and pointer/winding preserved, controller/paired beam near endpoints translated after trace with world impacts unchanged, controller HUD offset inherited once and non-controller target explicitly corrected. All final replay/rendered acceptance remains pending. |
 | C08/C09 — Toss support validity and elevator relink | [Physics plan](toss-support-elevator-2.0-plan.md); source commit `0d2c182c`. Final physics/content qualification pending. |
 | C22 — bounded classic-particle capacity and 32-bit quad indices | [Particle plan](classic-particle-capacity-2.0-plan.md); source commit `0d2c182c`. Final dense-particle rendered acceptance pending. |
 | C01/C03/C05 — late-model helper, ordinary QC metadata lookup, truthful protocol offers | [Networking plan](precache-infokey-protocol-2.0-plan.md); source commit `ab1423fb`. Final remote precache/QC/negotiation qualification pending. C02 publication is still separate. |
@@ -252,8 +259,8 @@ research; they were not blanket-approved implementation.
   interface, preservation and history inventories plus legacy/native/research
   dispositions. Names and routes alone do not certify runtime semantics.
 
-Q01, C10–C13, C18 and C21 are source-integrated. Finish C14 at the native
-equipment owner; C02/C07 as native metadata/presentation adapters; C19 through
+Q01, C07, C10–C13, C18 and C21 are source-integrated. Finish C14 staging/consumers
+at the native equipment owner; C02 at native metadata boundaries; C19 through
 native packaging. Reuse reference
 code and write a bounded plan before each major slice. Then perform the one
 consolidated Linux/ARM qualification phase above and review its final fixes.
