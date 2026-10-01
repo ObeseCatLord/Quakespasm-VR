@@ -198,7 +198,7 @@ static void V_RemovePredictionViewOffset (void)
 	if (!prediction_view_offset_applied)
 		return;
 	VectorSubtract (r_refdef.vieworg, prediction_view_offset, r_refdef.vieworg);
-	VectorClear (prediction_view_offset);
+	VectorCopy (vec3_origin, prediction_view_offset);
 	prediction_view_offset_applied = false;
 }
 

@@ -27,6 +27,12 @@ and initialize the local angle vector (the validated anchor branch still writes
 all three components before use). No cast, mutable saved snapshot, trace rewrite
 or warning suppression. Rebuild and retain actual co-op qualification as pending.
 
+View-offset cleanup used VectorClear, defined only in pmove.h and unavailable
+to the native view module. Use existing mathlib VectorCopy(vec3_origin, offset)
+at that one cleanup line; avoid adding a movement dependency or confusing the
+unrelated dynamic-vector Vec_Clear API. Smoothing lifecycle acceptance remains
+pending after the full rebuild.
+
 First build stopped at gl_model.c:4828/4829 under native warnings-as-errors:
 the inherited Copper axe cache passes const input to ReadLongUnaligned(byte*).
 The helper only memcpy-reads into a local int. Smallest correction: accept
