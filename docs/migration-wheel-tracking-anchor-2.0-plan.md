@@ -71,3 +71,26 @@ world-scale changes, both handedness, ring changes, invalid/focus/reference/map/
 mode transitions, model and action occlusion, and view mode head follow. Check
 draw and hit transforms agree and desktop/no-runtime wheel stays native. Live
 headset comfort/performance remain the user's later tests.
+
+## Before-code requested-Astra disposition
+
+Main spot-checked the actual prepared basis/inverse-head composition, preserved
+kick/idle in `V_ApplyTrackedView`, donor live-pointer composition at `vr.c:13158`,
+private view calibration and the menu helper's mode2/roll behavior.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Use full prepared tracking basis, not a reconstructed scalar yaw | Adopt. Calibration at zero mapping yaw through existing `VR_LocomotionHandAngles`; use `AngleVectors`, convert each Quake axis to XR `{-q.y, q.z, -q.x}`, then existing `R_XRVectorToWorld`. Translation uses unchanged current-head-relative conversion. |
+| Preserve the controller wrapper's raw-axis behavior | Adopt. Extract into a matrix helper with optional calibration; current controller basis/ray passes no calibration and retains physical-device identity/tracking validation. |
+| Calibrate captured anchor and live wheel pointer together | Adopt. Capture finite gun angle with raw opening grip matrix; current wheel ray uses current finite gun angle. General menu/HUD ray stays unchanged. |
+| Avoid another fallback/calibration owner | Adopt. Add a small `V_VRGunAngle` getter in view.c/view.h and reuse it in the existing hand-angle consumer. Five-file scope is a narrow access adapter, not a view/input rewrite. |
+| Delete frozen world basis; retain only opening raw session data | Adopt. World origin/basis are temporary prepared-frame outputs, with existing session cancellation and no ring-change recapture. |
+| View wheel follows head every preparation, including roll | Adapt. Existing mode2 helper supplies current origin/pitch/yaw; restore only wheel-local current roll after update. Retain current radius/scale/layout and unrelated menu policy. |
+| Exact event-time calibration capture versus first valid preparation | Explicit limit. Capture with the first valid opening pose in the existing preparation owner; do not add an input-event calibration snapshot solely for between-event-and-preparation cvar timing. |
+
+Luna xhigh coding ownership is limited to the pose helper/controller wrapper in
+gl_rmain.c and declaration in glquake.h; getter/one existing fallback consumer
+in view.c/view.h; and wheel-only state/preparation in gl_screen.c. Keep unrelated
+menus, catalogs, foreground passes, draw/hit schemas and backend unchanged.
+Requested-Astra advice exposed a real pitch/roll inconsistency risk in the initial
+yaw-only reuse option; final actual-diff source review remains required.
