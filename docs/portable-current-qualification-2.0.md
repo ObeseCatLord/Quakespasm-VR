@@ -1,5 +1,11 @@
 # Current Linux and ARM candidate qualification
 
+**Subsequent freshness update:** production482cd9f5 changes cl_main.c. The
+ff83e66a packages below remain qualified for that exact earlier input, not the
+new readiness repair. Final affected artifact refresh belongs to F10 after
+source fixes settle. The308-file equality below was verified at its original
+qualification snapshot and no longer describes the latest production tree.
+
 2026-10-01. Both native configurations use immutable source
 ff83e66a59fb8d15113fca41a5ec35eeb350c3f6, archive SHA256
 72dc43196180279e56ad3ee0081818f22bcb14c8707abed522dbe7dc945c39f1.

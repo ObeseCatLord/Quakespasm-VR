@@ -141,10 +141,10 @@ def main():
                 desktop = [str(args.desktop_binary), "-novr", "-nosound", "-window",
                            "-width", "640", "-height", "480", "-basedir",
                            desktop_profile.name, "-userdir", "desktop-user",
-                           "+connect", address, "+name", "Desktop"]
+                           "+connect", address, "+name", "Desktop", "+vid_vsync", "0", "+host_maxfps", "144"]
                 vr = [str(args.vr_binary), "-openxr", "-nosound", "-window", "-width", "640",
                       "-height", "480", "-basedir", vr_profile.name, "-userdir",
-                      "vr-user", "+connect", address, "+name", "VR"]
+                      "vr-user", "+connect", address, "+name", "VR", "+vid_vsync", "0", "+host_maxfps", "144", "+host_phys_max_ticrate", "10"]
                 for command in (server, desktop, vr):
                     command_limit(command)
                 def spawn(name, command, environment):

@@ -63,7 +63,13 @@ receipts. These overlap intentionally; test shared boundaries once.
   remaining distinct co-op/save/physics boundaries stay open.
 - **F09 complete:** all five independent semantic rejection cases pass;
   [exact results and limits](package-semantic-negatives-final-2.0-results.md).
-- F01: existing probes are being orchestrated for actual connected crossplay.
+- F01: actual simultaneous private desktop/simulated-XR gameplay passes, after
+  repairing early name/color readiness under this owner;
+  [exact current result/limits](connected-crossplay-current-2.0-results.md).
+  Public/native peers and the remaining transport/metadata lifecycles stay open.
+- F10: production482cd9f5 changes cl_main.c; existing ff83e66a packages remain
+  accepted only for their earlier input. Refresh affected final artifacts once
+  required source fixes settle; do not claim current package acceptance yet.
 - F03–F08 and F10 remain open at their finite boundaries above.
 
 ## Senior dispositions and independent main checks

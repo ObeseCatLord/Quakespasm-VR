@@ -2,6 +2,13 @@
 
 ## Current completed follow-up
 
+Final audit now freezes ten finite owners; F09semantic checks pass, and actual
+simultaneous private desktop/VR gameplay plus all six metadata regressions pass
+after production482cd9f5. [Connected evidence](connected-crossplay-current-2.0-results.md).
+Existing ff83e66a Linux/ARM packages predate that one-file repair; final affected
+artifact refresh belongs to F10. Older production-equivalence text below is
+historical to its accepted snapshot.
+
 Full native Linux/ARM build obligation (group1) is complete for immutableff83e66a;
 all308 tracked production files match the current worktree. Both current packages
 verify45 ELF/651 inventory entries/118 contributors. ARM retrieval was recovered

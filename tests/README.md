@@ -3337,7 +3337,10 @@ exist. The server binds to loopback, enables private transport and private WALK
 PMove before loading `e1m1`, and each native process gets separate `-basedir`
 and `-userdir` paths. Optional `--weapon-preset RELATIVE_DEST=SOURCE` links an
 explicit preset into every private `id1` profile. No installed configuration is
-copied or used.
+copied or used. Both clients use diagnostic vsync0/render-cap144; the heavy
+VR debugger uses native host_phys_max_ticrate10, while desktop retains native
+network cadence for the short jump-timer check. This is not default-VR-cadence
+or performance proof.
 
 ```sh
 python3 tests/run_connected_crossplay_native.py \
