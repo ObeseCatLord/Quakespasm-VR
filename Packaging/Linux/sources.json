@@ -1,0 +1,28 @@
+{
+  "ubuntu_image": "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+  "receipt_ownership": {
+    "build-native.sh": "Captures exact binary/source versions, repository URLs, .deb hashes, and matching source archives for direct apt_packages inputs; records installed-packages.tsv and installed-file-owners.tsv for the full image. These are inventory maps, not the incorporated-code closure.",
+    "package.py": "Slice 2 owns final staging and closure-derived distro attribution. Run it in this pinned image and consume install/, deps/, sources/, the installed package/file-owner maps, and enabled deb-src indexes. Resolve every shipped ELF runtime provider and installed *-dev header/static contributor; for each resolved Ubuntu package capture the exact matching .deb and source archives, identities, hashes, and installed copyright notice. Missing or ambiguous ownership/source/notice is a hard failure. The direct apt_packages list alone is not a complete contributor inventory. Slice 1 recipes currently contain sources.json, Dockerfile, build-native.sh, and the reused Steam Audio patch only; final staging must add package.py, host-policy.json, and any other production packaging inputs to its source-access artifact."
+  },
+  "apt_packages": [
+    "build-essential", "cmake", "ninja-build", "meson", "python3", "pkg-config", "git", "ca-certificates", "patch", "binutils", "patchelf", "dpkg-dev", "xz-utils",
+    "libx11-dev", "libx11-xcb-dev", "libxcb1-dev", "libxcb-randr0-dev", "libxext-dev", "libxcursor-dev", "libxrandr-dev", "libxfixes-dev", "libxi-dev", "libxss-dev", "libxrender-dev", "libxinerama-dev",
+    "libwayland-dev", "libwayland-bin", "wayland-protocols", "libxkbcommon-dev", "libdecor-0-dev",
+    "libegl-dev", "libgl-dev", "libgles-dev", "libdrm-dev", "libgbm-dev", "libudev-dev", "libdbus-1-dev", "libsystemd-dev", "libusb-1.0-0-dev",
+    "libasound2-dev", "libpulse-dev", "libpipewire-0.3-dev", "libjack-jackd2-dev", "libsndio-dev",
+    "libmpg123-dev", "libflac-dev", "libogg-dev", "libvorbis-dev", "libopus-dev", "libopusfile-dev", "libcurl4-openssl-dev", "libssl-dev",
+    "libmysofa-dev", "zlib1g-dev", "libjsoncpp-dev"
+  ],
+  "git_sources": [
+    {"name":"vulkan-headers","url":"https://github.com/KhronosGroup/Vulkan-Headers.git","commit":"b5c8f996196ba4aa6d8f97e52b5d3b6e70f7e4e2","notices":["LICENSE.md","LICENSES/Apache-2.0.txt","LICENSES/MIT.txt"]},
+    {"name":"vulkan-loader","url":"https://github.com/KhronosGroup/Vulkan-Loader.git","commit":"32fcb949e253cbeb40cda7ea76122b492db579ae","notices":["LICENSE.txt"]},
+    {"name":"spirv-headers","url":"https://github.com/KhronosGroup/SPIRV-Headers.git","commit":"04f10f650d514df88b76d25e83db360142c7b174","notices":["LICENSE"]},
+    {"name":"spirv-tools","url":"https://github.com/KhronosGroup/SPIRV-Tools.git","commit":"fbe4f3ad913c44fe8700545f8ffe35d1382b7093","notices":["LICENSE"]},
+    {"name":"glslang","url":"https://github.com/KhronosGroup/glslang.git","commit":"f0bd0257c308b9a26562c1a30c4748a0219cc951","notices":["LICENSE.txt"]},
+    {"name":"openxr-sdk","url":"https://github.com/KhronosGroup/OpenXR-SDK.git","commit":"64f2b37c8c6da3d83c9b4d11865ba1fb752cb8ec","notices":["LICENSE"]},
+    {"name":"steam-audio","url":"https://github.com/ValveSoftware/steam-audio.git","commit":"0da18255cca520771f363ee01f100572b39a308e","notices":["LICENSE.md","core/THIRDPARTY.md"]},
+    {"name":"sdl","url":"https://github.com/libsdl-org/SDL.git","commit":"f87239e71e42da91ca317a12eefb82cfbf3393eb","notices":["LICENSE.txt"]},
+    {"name":"flatbuffers","url":"https://github.com/google/flatbuffers.git","commit":"0100f6a5779831fa7a651e4b67ef389a8752bd9b","notices":["LICENSE"]},
+    {"name":"pffft","url":"https://github.com/marton78/pffft.git","commit":"d0db768f2898912cf7e84322124c5634aa961a41","notices":["LICENSE.txt"]}
+  ]
+}
