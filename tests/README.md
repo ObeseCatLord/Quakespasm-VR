@@ -19,6 +19,22 @@ or performance. Screenshot requests alone are not image acceptance.
 [Before-code plan](../docs/large-map-extents-final-2.0-plan.md) and
 [current results/precise limits](../docs/large-map-extents-current-2.0-results.md).
 
+## Loaded QC buffer/string consumers
+
+The existing `qc_binding_program.py` accepts `--resources` to append the finite
+resource entries while preserving licensed original sections. Use the same
+`--source-pack`, `--output` and `--csqc-output` recipe as core binding, in a private
+`-game binding` profile. Compile `qc_binding_native_fixture.c` using the existing
+native fixture link (normal default mode retained); run with `-resources -game
+binding -dedicated 3 -noudp -nosound`. Require exit0 and
+`QC_BINDING_RESOURCES_NATIVE_PASSED`; omit `-resources` for the earlier core pass.
+Assertions are required. Both loaded VMs call actual native handlers through
+the interpreter; no direct handler or fabricated result. Foreign/invalid buffer
+operations, opposite-VM clear, sparse sort/refill and cited string repairs are
+covered. Files/search/callback/entity/full resource lifecycles remain distinct.
+[Plan](../docs/qc-buffer-final-2.0-plan.md),
+[actual results/limits](../docs/qc-buffer-current-2.0-results.md).
+
 ## Explicit OpenXR session recovery
 
 `openxr_session_recovery_fixture.cpp` reuses the Vulkan boundary fixture's

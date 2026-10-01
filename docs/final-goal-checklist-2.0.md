@@ -92,6 +92,13 @@ receipts. These overlap intentionally; test shared boundaries once.
   simultaneous VM preservation and toggle/reload subset passes;
   [exact results and limits](qc-binding-current-qualification-2.0.md).
   Remaining resource, callback and authored-consumer families stay open.
+- F03: loaded SSQC/CSQC owned/foreign/invalid buffer operations, sparse sort,
+  known cvar refill/empty/delete and cited string repairs pass; native opposite
+  VM clear preserves live resources and subsequent SSQC reload retires its old
+  handle before allocation. Local Astra/xhigh oracle corrections adopted;
+  primed rejected returns/raw zero and unchanged core mode pass in final reruns.
+  [Exact results/limits](qc-buffer-current-2.0-results.md). Files/search/callback/
+  entity/error/full resource lifecycles remain distinct F03 boundaries.
 - F07: repeated native mj4m1 loads observe actual indexed worker entries; all
   427881 surfaces match native serial extent recalculation on both loads, with
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).

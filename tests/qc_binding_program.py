@@ -7,7 +7,7 @@ from pathlib import Path
 from cooperative_qc_program import source_program
 
 
-def assemble(program):
+def assemble(program, resources=False):
     header = list(struct.unpack_from("<15i", program))
     if header[0] != 6:
         raise ValueError("fixture requires classic version6 QC")
@@ -129,6 +129,186 @@ def assemble(program):
     add_ref("named_dprint_entry", dprint_entry("fixture_named_dprint_entry", "dprint_named", "dprint_named"))
     add_ref("dprint_277_entry", dprint_entry("fixture_dprint_277_entry", "dprint_277", "dprint_277"))
 
+    if resources:
+        for builtin, number in (("buf_create", 460), ("buf_del", 461), ("buf_getsize", 462),
+                                ("buf_copy", 463), ("buf_sort", 464),
+                                ("bufstr_get", 466), ("bufstr_set", 467), ("bufstr_add", 468),
+                                ("bufstr_free", 469), ("strncmp", 228), ("strncasecmp", 230),
+                                ("strreplace", 484), ("strireplace", 485), ("buf_cvarlist", 517),
+                                ("strlen", 114), ("strcat", 115)):
+            add_ref("resource_" + builtin, add_function(builtin, -number))
+
+        values = {}
+
+        def float_global(key, value=0.0):
+            values[key] = global_slot("fixture_resource_" + key, value=value)
+            return values[key]
+
+        def string_global(key, value):
+            values[key] = global_slot("fixture_resource_" + key, 1, name(value))
+            return values[key]
+
+        for key, value in (("server_seed", "SSQC_OWNER"), ("client_seed", "CSQC_OWNER"),
+                           ("set_text", "set-value"), ("append_text", "append-value"),
+                           ("target_text", "target-value"), ("sort_a", "alpha"),
+                           ("sort_b", "charlie"), ("sort_c", "delta"),
+                           ("corrupt_text", "foreign-corruption"),
+                           ("missing_pattern", "fixture_no_such_cvar_"),
+                           ("known_cvar", "pr_checkextension"),
+                           ("empty_string", ""),
+                           ("cmp_a", "abc"), ("cmp_b", "Xabc"), ("cmp_b_upper", "XABC"),
+                           ("replace_a", "a"), ("replace_b", "b"),
+                           ("replace_mixed", "Aa"), ("replace_long", "aaaaaa")):
+            string_global(key, value)
+        for key, value in (("zero", 0), ("one", 1), ("two", 2),
+                           ("order", 1), ("prefix_all", 0), ("limit", 3),
+                           ("negative", -1), ("huge", 1e30), ("nan", float("nan")),
+                           ("infinity", float("inf")), ("minus_infinity", -float("inf"))):
+            float_global(key, value)
+        for key in ("handle", "target", "sort_handle", "cvar_handle", "foreign_handle", "probe_handle"):
+            float_global(key)
+        float_global("cvar_populated")
+        float_global("cvar_empty")
+        float_global("foreign_size")
+        string_global("foreign_get", "")
+        float_global("live_size")
+        string_global("live_zero", "")
+        string_global("live_one", "")
+        float_global("probe_size")
+        string_global("probe_get", "")
+        checks = {}
+
+        def result(key, string=False):
+            checks[key] = global_slot("fixture_" + ("string" if string else "float") + "_resource_" + key,
+                                      1 if string else 2)
+            return checks[key]
+
+        def invoke(code, builtin, args=(), output=None, string_result=False):
+            for index, (slot, is_string) in enumerate(args):
+                code.append((store_string if is_string else store_float, slot, 4 + index * 3, 0))
+            code.append((call_function - 1 + len(args), ref_slots["resource_" + builtin], 0, 0))
+            if output is not None:
+                code.append((store_string if string_result else store_float, 1, output, 0))
+
+        def arg(key, string=False):
+            return values[key], string
+
+        def entry_ref(key, text, code):
+            add_ref("resource_" + key, entry("fixture_resource_" + text, code))
+
+        def prime(code, stem, string=False, retired=False):
+            builtin = ("strcat" if string else "strlen") if retired else ("bufstr_get" if string else "buf_getsize")
+            args = (arg("cmp_a", True),) if retired else ((arg("handle"), arg("zero")) if string else (arg("handle"),))
+            invoke(code, builtin, args, result("prime_" + stem, string), string)
+
+        for vm, seed in (("server", "server_seed"), ("client", "client_seed")):
+            code = []
+            invoke(code, "buf_create", output=values["handle"])
+            invoke(code, "bufstr_set", (arg("handle"), arg("zero"), arg(seed, True)))
+            entry_ref("setup_" + vm, "setup_" + vm, code)
+
+        code = []
+        invoke(code, "bufstr_set", (arg("handle"), arg("one"), arg("set_text", True)))
+        invoke(code, "bufstr_get", (arg("handle"), arg("one")), result("owned_set", True), True)
+        invoke(code, "bufstr_add", (arg("handle"), arg("append_text", True), arg("order")),
+               result("owned_add"))
+        invoke(code, "buf_getsize", (arg("handle"),), result("owned_size"))
+        invoke(code, "buf_create", output=values["target"])
+        invoke(code, "bufstr_set", (arg("target"), arg("zero"), arg("target_text", True)))
+        invoke(code, "buf_copy", (arg("handle"), arg("target")))
+        invoke(code, "buf_getsize", (arg("target"),), result("copy_size"))
+        invoke(code, "bufstr_get", (arg("target"), arg("one")), result("copy_get", True), True)
+        entry_ref("owned", "owned", code)
+
+        code = []
+        invoke(code, "buf_create", output=values["sort_handle"])
+        invoke(code, "bufstr_set", (arg("sort_handle"), arg("zero"), arg("sort_a", True)))
+        invoke(code, "bufstr_set", (arg("sort_handle"), arg("two"), arg("sort_b", True)))
+        invoke(code, "buf_sort", (arg("sort_handle"), arg("prefix_all"), arg("zero")))
+        invoke(code, "bufstr_add", (arg("sort_handle"), arg("sort_c", True), arg("order")),
+               result("sort_add"))
+        invoke(code, "bufstr_get", (arg("sort_handle"), arg("one")), result("sort_middle", True), True)
+        invoke(code, "bufstr_get", (arg("sort_handle"), arg("two")), result("sort_tail", True), True)
+        invoke(code, "bufstr_set", (arg("sort_handle"), arg("one"), arg("sort_c", True)))
+        invoke(code, "bufstr_free", (arg("sort_handle"), arg("zero")))
+        invoke(code, "bufstr_get", (arg("sort_handle"), arg("zero")), result("sort_freed", True), True)
+        invoke(code, "buf_del", (arg("sort_handle"),))
+        entry_ref("sort", "sort", code)
+
+        code = []
+        invoke(code, "buf_create", output=values["cvar_handle"])
+        invoke(code, "bufstr_set", (arg("cvar_handle"), arg("zero"), arg("set_text", True)))
+        invoke(code, "buf_cvarlist", (arg("cvar_handle"), arg("known_cvar", True)))
+        invoke(code, "buf_getsize", (arg("cvar_handle"),), values["cvar_populated"])
+        invoke(code, "bufstr_get", (arg("cvar_handle"), arg("zero")), result("cvar_name", True), True)
+        invoke(code, "buf_cvarlist", (arg("cvar_handle"), arg("missing_pattern", True)))
+        invoke(code, "buf_getsize", (arg("cvar_handle"),), values["cvar_empty"])
+        invoke(code, "buf_del", (arg("cvar_handle"),))
+        entry_ref("cvarlist", "cvarlist", code)
+
+        code = []
+        invoke(code, "strncmp", (arg("cmp_a", True), arg("cmp_b", True), arg("limit"), arg("zero"), arg("one")),
+               result("compare_offset"))
+        invoke(code, "strncasecmp", (arg("cmp_a", True), arg("cmp_b_upper", True), arg("limit"), arg("zero"), arg("one")),
+               result("compare_insensitive"))
+        invoke(code, "strncmp", (arg("cmp_a", True), arg("cmp_b", True), arg("limit"), arg("negative"), arg("one")),
+               result("compare_negative"))
+        invoke(code, "strncasecmp", (arg("cmp_a", True), arg("cmp_b_upper", True), arg("limit"), arg("zero"), arg("negative")),
+               result("compare_negative_second"))
+        invoke(code, "strreplace", (arg("replace_a", True), arg("replace_b", True), arg("replace_mixed", True)),
+               result("replace_case", True), True)
+        invoke(code, "strreplace", (arg("replace_a", True), arg("replace_b", True), arg("replace_long", True)),
+               result("replace_long", True), True)
+        invoke(code, "strireplace", (arg("replace_a", True), arg("replace_b", True), arg("replace_long", True)),
+               result("replace_insensitive", True), True)
+        invoke(code, "strireplace", (arg("replace_a", True), arg("replace_b", True), arg("replace_mixed", True)),
+               result("replace_case_insensitive", True), True)
+        entry_ref("strings", "strings", code)
+
+        code = []
+        prime(code, "foreign_size")
+        invoke(code, "buf_getsize", (arg("foreign_handle"),), values["foreign_size"])
+        prime(code, "foreign_get", True)
+        invoke(code, "bufstr_get", (arg("foreign_handle"), arg("zero")), values["foreign_get"], True)
+        invoke(code, "bufstr_set", (arg("foreign_handle"), arg("zero"), arg("corrupt_text", True)))
+        invoke(code, "buf_del", (arg("foreign_handle"),))
+        invoke(code, "buf_copy", (arg("foreign_handle"), arg("handle")))
+        invoke(code, "buf_copy", (arg("handle"), arg("foreign_handle")))
+        invoke(code, "buf_getsize", (arg("handle"),), values["live_size"])
+        invoke(code, "bufstr_get", (arg("handle"), arg("zero")), values["live_zero"], True)
+        invoke(code, "bufstr_get", (arg("handle"), arg("one")), values["live_one"], True)
+        entry_ref("foreign", "foreign", code)
+
+        code = []
+        invalids = (("nan", "nan"), ("infinity", "infinity"),
+                    ("minus_infinity", "minus_infinity"), ("negative", "negative"), ("huge", "huge"))
+        for key, invalid in invalids:
+            prime(code, "invalid_" + key + "_size")
+            invoke(code, "buf_getsize", (arg(invalid),), result("invalid_" + key + "_size"))
+            prime(code, "invalid_" + key + "_get", True)
+            invoke(code, "bufstr_get", (arg(invalid), arg("zero")), result("invalid_" + key + "_get", True), True)
+            invoke(code, "bufstr_set", (arg(invalid), arg("zero"), arg("corrupt_text", True)))
+            invoke(code, "buf_del", (arg(invalid),))
+            invoke(code, "buf_copy", (arg(invalid), arg("handle")))
+            invoke(code, "buf_copy", (arg("handle"), arg(invalid)))
+        invoke(code, "buf_getsize", (arg("handle"),), values["live_size"])
+        invoke(code, "bufstr_get", (arg("handle"), arg("zero")), values["live_zero"], True)
+        invoke(code, "bufstr_get", (arg("handle"), arg("one")), values["live_one"], True)
+        entry_ref("invalid", "invalid", code)
+
+        code = []
+        prime(code, "probe_size", retired=True)
+        invoke(code, "buf_getsize", (arg("probe_handle"),), values["probe_size"])
+        prime(code, "probe_get", True, retired=True)
+        invoke(code, "bufstr_get", (arg("probe_handle"), arg("zero")), values["probe_get"], True)
+        entry_ref("probe", "probe", code)
+
+        code = []
+        invoke(code, "buf_getsize", (arg("handle"),), values["live_size"])
+        invoke(code, "bufstr_get", (arg("handle"), arg("zero")), values["live_zero"], True)
+        invoke(code, "bufstr_get", (arg("handle"), arg("one")), values["live_one"], True)
+        entry_ref("assert_owner", "assert_owner", code)
+
     strings.extend(b"\0" * (-len(strings) % 4))
     output = bytearray(60)
     for section, (slot, width) in zip(sections, ((2, 8), (4, 8), (6, 8),
@@ -144,8 +324,9 @@ def main():
     parser.add_argument("--source-pack", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True, help="SSQC progs.dat path")
     parser.add_argument("--csqc-output", type=Path, required=True)
+    parser.add_argument("--resources", action="store_true", help="append the finite loaded buffer/string cases")
     args = parser.parse_args()
-    result = assemble(source_program(args.source_pack))
+    result = assemble(source_program(args.source_pack), args.resources)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)
