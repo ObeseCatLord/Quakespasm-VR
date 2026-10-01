@@ -137,7 +137,15 @@ fixes, preserving native renderer/lifetime owners.
 
 Third complete portable build attempt: same immutable `48e026e0` archive on
 local amd64 and isolated native Foundry arm64, including all prior source/recipe
-repairs. Builders are running; no staging/relocation or artifact acceptance yet.
+repairs. The amd64 SDK/dependency phase completed, then GCC13 -O3 warnings-as-errors
+stopped engine compilation: gl_rmain.c:939/943/955 effective_view may be
+uninitialized after R_StereoSceneView, and gl_vidsdl.c:1600/1631 cached format
+result may be uninitialized. Native ARM also ended with the same effective_view
+failure; no cached-result warning is recorded there. These are confirmed
+portable build failures, not established runtime failures; source contracts
+must be checked before narrow initialization/guard repairs. No warnings disable,
+feature fallback or native owner rewrite is justified. Final artifact acceptance
+remains pending.
 
 A substantive upstream merge rehearsal was executed in a disposable shared clone
 at `a1df3ffd`, merging pinned official `0d812138` (36 upstream commits since
@@ -150,5 +158,7 @@ was merged/rewritten.
 
 All results are partial acceptance within their named boundaries. The full
 eight-group final checklist remains open; feature source presence alone does
-not establish behavior. The refreshed senior checklist will reconcile these
-results without narrowing scope.
+not establish behavior. The [final exhaustive senior reconciliation](final-checklist-qualification-2.0-review.md)
+records source closure, these defects and all remaining groups without narrowing
+scope. No additional missing source feature was established; software/delivery
+acceptance and final integration review remain open.

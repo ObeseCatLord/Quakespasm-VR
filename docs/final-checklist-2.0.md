@@ -17,6 +17,26 @@ in `f3727a10`, following the final bounded reopening and main source review.
 None of these
 source receipts constitutes final executable acceptance.
 
+The [final exhaustive local Astra xhigh reconciliation](final-checklist-qualification-2.0-review.md)
+accounts for all185 unique matching IDs and independently checks C02's source
+closure. Exact unreviewed IDs: none. No additional missing source feature was
+established. Unchanged implementations retain prior source audits; this is not
+a fresh line-by-line audit or executable certification of every row.
+
+**Current concrete repair obligations:** desktop Vulkan synchronization hazards,
+ordinary desktop shutdown allocator abort (both reproduced in untouched vkQuake),
+and required GCC13 portable compilation failures in stereo-view initialization
+(amd64/ARM) and cached foveation-format result (amd64). Runtime reachability of
+the compiler warnings remains unproved. Broad controller-input fixture linkage
+is unfinished verification; equivalent native-input evidence may replace it.
+The complete remaining scope is the eight groups below, with exact cases in
+the qualification plan and partial results in the ledger.
+
+Already established bounded results: full preliminary host compilation,18 of19
+standalone fixtures, and actual simulated-OpenXR24-probe rendering with clean
+validation/normal exit. Host Steam Audio was disabled; no complete portable
+package is accepted. No additional features are added by this checklist.
+
 The [current local Astra xhigh review](final-checklist-current-2.0-review.md)
 reconciles all185 IDs and found C02 as the only established unfinished
 implementation area at its review snapshot. Exact unreviewed IDs: none.
@@ -383,6 +403,11 @@ research; they were not blanket-approved implementation.
 - [Final current senior disposition](final-checklist-current-2.0-review.md):
   all185 IDs reconciled, exhaustive C02 substeps at that review snapshot,
   source-verified refinements and the eight pending qualification/delivery groups.
+- [Final exhaustive qualification reconciliation](final-checklist-qualification-2.0-review.md):
+  all185 IDs accounted for, C02 source closure checked, confirmed desktop/build
+  defects classified, complete remaining scope and main dispositions recorded.
+- [Current software/delivery ledger](final-linux-arm-qualification-2.0-results.md):
+  bounded passes, failures, exact configurations and limits; goal acceptance open.
 - [Final metadata integration receipt](metadata-publication-final-integration-2.0.md):
   closes those C02 source obligations in `f3727a10`; all executable acceptance
   and final integration review remain open.
