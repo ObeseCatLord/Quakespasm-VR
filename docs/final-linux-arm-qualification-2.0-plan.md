@@ -35,6 +35,21 @@ runtime, packet counter or helper test must keep its proof limitations explicit.
 
 ## Full surviving scope matrix
 
+The [reusable AD preset](ad-weapon-preset-2.0-plan.md) requires actual native
+menu/console callback selection0–5 and reload in a generic/unknown AD context,
+known AD/additional-root contexts and existing fixed/enhanced contexts. Cover
+live15-row targeting versus reload Copper/conditional LimJam fallbacks,
+derived versus authored muzzles, independent enhanced/source/melee fields,
+invalid/range values, capacity refusal, saved selector and authored reload
+precedence. The concise AD label must remain inside the native menu column.
+This is explicit contextual selection, not automatic mesh/family recognition.
+
+Native diagnostic fields/bboxes and optional controls also need actual
+collector/VM/GUI consumers, local/multiplayer gating, line/string bounds and
+desktop/stereo rendered output. MOD-014's field overlay currently uses the
+native screen-space canvas outside an explicit tracked panel; source presence
+alone does not establish primary panel placement or readable stereo output.
+
 The [inherited controller-axis adapters](controller-axis-parity-2.0-plan.md)
 require backend-sample-to-Key_Event-to-Cbuf/native command coverage: gameplay
 weapon-hand horizontal bindings; Vive positive/negative/center rising clicks,

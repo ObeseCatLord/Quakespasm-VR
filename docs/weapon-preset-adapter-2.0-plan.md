@@ -144,3 +144,11 @@ no formal model/skill certification or runtime parity is claimed.
 
 Only source comparison and scoped whitespace checks were performed. Final
 Linux/ARM software qualification and broader WPN/profile acceptance remain open.
+
+The subsequent [reusable AD contextual preset](ad-weapon-preset-2.0-plan.md)
+extends the selector to0–5 through the same schema adapter and native menu row.
+It retains this plan's original choices, fixed-context and enhanced-directory
+precedence, implicit muzzle handling and live/reload distinction. The new
+explicit AD selection makes the existing table available in generic contexts;
+it is not automatic asset/family detection. Its own before-code disposition,
+production commits and final source-only review limits are recorded there.

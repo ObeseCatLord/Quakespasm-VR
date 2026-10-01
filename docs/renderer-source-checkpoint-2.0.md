@@ -129,3 +129,27 @@ proof of movement receipt, collision/camera agreement or complete VR-004 parity.
 Final Linux/ARM software checks still need actual independent asymmetric eye
 images, handedness/scale/IPD and pose/reference changes. No shader build, math
 fixture, rendered image, headset or runtime check ran in this reconciliation.
+
+## Native diagnostics and compatibility controls (2026-09-30)
+
+MOD-014 uses native vkQuake owners rather than the primary's smaller debug-text
+implementation. gl_rmisc.c registers r_showfields/align and related bbox
+controls; gl_rmain.c:R_PrepareDebugEntityInfo collects entity/link state before
+draw tasks under draw_qcvm_mutex and retains local-server/single-player gating.
+Its native 3D bbox pass and gl_screen.c:SCR_DrawEdictInfo consume that state.
+The GUI owner holds the same VM mutex, limits field lines to96 and bounds
+key/value copies; scr_infoscale and screen-clamped placement remain native.
+
+The field overlay uses CANVAS_DEFAULT outside an explicit tracked UIPanel.
+Shaders/basic.vert applies stereo clip correction for UI only with the panel
+flag enabled. Thus this checkpoint establishes native screen-space diagnostic
+ownership, not the primary's physical developer-info panel placement or proven
+stereo readability. Keep that distinction in final Linux/ARM rendered coverage;
+do not infer a need for another diagnostic collector or per-eye QC dispatch.
+
+scr_centerprintbg remains an archived opt-in cvar with native draw branches
+and default0. nomonsters is registered with its native warning callback,
+snapshotted at server creation and used during entity loading; it does not
+silently become a default mod policy. No overlay/VM/menu production code changed
+in this bounded source reconciliation. Final software/visible-stereo checks
+remain pending; no tests, builds, compiler, probes or rendering ran.

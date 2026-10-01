@@ -127,3 +127,21 @@ the native value column: MENU_VALUE_X=27*8=216, leaving13 glyphs in320 units,
 while Arcane Dimensions uses17. Use the concise existing-family name **AD**;
 do not widen or rescale the native menu. This local display correction leaves
 the selector/table/context policy unchanged and belongs in final menu coverage.
+
+## Actual production source receipt
+
+Luna implemented1feb7d9f in the two specified files (10 added lines/four removed).
+Main inspected the full diff, append/seeding/refusal/reload owners and actual
+menu draw consumer. Main's label correction83599382 is one production string
+replacement, with its rationale recorded above. The requested-Astra actual-patch
+review found no P1/P2 in the selector/reload patch; its label-only follow-up
+confirmed the native fit correction and acknowledged the missed initial width
+issue. No additional P1/P2 finding remained in those bounded source reviews.
+
+All table values and classic/enhanced/private command consumers are reused.
+There is no new mod classifier, calibration owner or renderer code. Requested
+selector display retains the existing contextual-preference limitation; this
+does not certify every AD-derived mesh or fix an unobserved q30 alignment issue.
+Scoped whitespace inspection passed. No builds/tests/compiler/lint/probes,
+installed-game writes, rendered images or headset actions ran. Final Linux/ARM
+qualification, wider profile behavior and user physical alignment remain pending.
