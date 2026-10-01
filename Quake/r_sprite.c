@@ -63,7 +63,9 @@ static mspriteframe_t *R_GetSpriteFrame (entity_t *currentent)
 	{
 		// erysdren - angled sprites code backported from FTEQW
 		vec3_t axis[3];
-		AngleVectors (currentent->angles, axis[0], axis[1], axis[2]);
+		vec3_t entity_angles;
+		R_GetEntityAngles (currentent, entity_angles);
+		AngleVectors (entity_angles, axis[0], axis[1], axis[2]);
 		{
 			float f = DotProduct (vpn, axis[0]);
 			float r = DotProduct (vright, axis[0]);
@@ -109,6 +111,8 @@ static void R_CreateSpriteVertices (entity_t *e, mspriteframe_t *frame, basicver
 	float	  *s_up, *s_right;
 	float	   angle, sr, cr;
 	float	   scale = ENTSCALE_DECODE (e->netstate.scale);
+	vec3_t    entity_angles;
+	R_GetEntityAngles (e, entity_angles);
 
 	psprite = (msprite_t *)Mod_Extradata (e->model);
 
@@ -141,12 +145,12 @@ static void R_CreateSpriteVertices (entity_t *e, mspriteframe_t *frame, basicver
 		s_right = vright;
 		break;
 	case SPR_ORIENTED: // pitch yaw roll are independent of camera
-		AngleVectors (e->angles, v_forward, v_right, v_up);
+		AngleVectors (entity_angles, v_forward, v_right, v_up);
 		s_up = v_up;
 		s_right = v_right;
 		break;
 	case SPR_VP_PARALLEL_ORIENTED: // faces view plane, but obeys roll value
-		angle = e->angles[ROLL] * M_PI_DIV_180;
+		angle = entity_angles[ROLL] * M_PI_DIV_180;
 		sr = sin (angle);
 		cr = cos (angle);
 		v_right[0] = vright[0] * cr + vup[0] * sr;

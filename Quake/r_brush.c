@@ -821,6 +821,8 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 		return;
 
 	clmodel = e->model;
+	vec3_t entity_angles;
+	R_GetEntityAngles (e, entity_angles);
 
 	if (!water_opaque_only && !water_transparent_only && R_IndirectBrush (e))
 	{
@@ -830,7 +832,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 			bmodel_instance_t *instance = bmodel_instances_buffer_mapped + ((size_t)bmodel_instances_index * MAX_MODELS) + submodel;
 
 			vec3_t e_angles;
-			VectorCopy (e->angles, e_angles);
+			VectorCopy (entity_angles, e_angles);
 			e_angles[0] = -e_angles[0]; // stupid quake bug
 			float model_matrix[16];
 			IdentityMatrix (model_matrix);
@@ -841,13 +843,13 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 
 			// same backface culling origin as the per-entity path below: rotated into model space, unscaled
 			VectorSubtract (r_refdef.vieworg, e->origin, modelorg);
-			if (e->angles[0] || e->angles[1] || e->angles[2])
+			if (entity_angles[0] || entity_angles[1] || entity_angles[2])
 			{
 				vec3_t temp;
 				vec3_t forward, right, up;
 
 				VectorCopy (modelorg, temp);
-				AngleVectors (e->angles, forward, right, up);
+				AngleVectors (entity_angles, forward, right, up);
 				modelorg[0] = DotProduct (temp, forward);
 				modelorg[1] = -DotProduct (temp, right);
 				modelorg[2] = DotProduct (temp, up);
@@ -878,13 +880,13 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 	}
 
 	VectorSubtract (r_refdef.vieworg, e->origin, modelorg);
-	if (e->angles[0] || e->angles[1] || e->angles[2])
+	if (entity_angles[0] || entity_angles[1] || entity_angles[2])
 	{
 		vec3_t temp;
 		vec3_t forward, right, up;
 
 		VectorCopy (modelorg, temp);
-		AngleVectors (e->angles, forward, right, up);
+		AngleVectors (entity_angles, forward, right, up);
 		modelorg[0] = DotProduct (temp, forward);
 		modelorg[1] = -DotProduct (temp, right);
 		modelorg[2] = DotProduct (temp, up);
@@ -905,13 +907,13 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 			// transform the light into entity space, the surfaces and nodes of moved brush models are in model space
 			dlight_t local_light = cl_dlights[k];
 			VectorSubtract (local_light.origin, e->origin, local_light.origin);
-			if (e->angles[0] || e->angles[1] || e->angles[2])
+			if (entity_angles[0] || entity_angles[1] || entity_angles[2])
 			{
 				vec3_t temp;
 				vec3_t forward, right, up;
 
 				VectorCopy (local_light.origin, temp);
-				AngleVectors (e->angles, forward, right, up);
+				AngleVectors (entity_angles, forward, right, up);
 				local_light.origin[0] = DotProduct (temp, forward);
 				local_light.origin[1] = -DotProduct (temp, right);
 				local_light.origin[2] = DotProduct (temp, up);
@@ -922,7 +924,7 @@ void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpoly
 	}
 
 	vec3_t e_angles;
-	VectorCopy (e->angles, e_angles);
+	VectorCopy (entity_angles, e_angles);
 	e_angles[0] = -e_angles[0]; // stupid quake bug
 	float model_matrix[16];
 	IdentityMatrix (model_matrix);
@@ -995,15 +997,17 @@ void R_DrawBrushModel_ShowTris (cb_context_t *cbx, entity_t *e)
 		return;
 
 	clmodel = e->model;
+	vec3_t entity_angles;
+	R_GetEntityAngles (e, entity_angles);
 
 	VectorSubtract (r_refdef.vieworg, e->origin, modelorg);
-	if (e->angles[0] || e->angles[1] || e->angles[2])
+	if (entity_angles[0] || entity_angles[1] || entity_angles[2])
 	{
 		vec3_t temp;
 		vec3_t forward, right, up;
 
 		VectorCopy (modelorg, temp);
-		AngleVectors (e->angles, forward, right, up);
+		AngleVectors (entity_angles, forward, right, up);
 		modelorg[0] = DotProduct (temp, forward);
 		modelorg[1] = -DotProduct (temp, right);
 		modelorg[2] = DotProduct (temp, up);
@@ -1012,11 +1016,12 @@ void R_DrawBrushModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	const float eye_radius = R_BrushEyeRadius (e, modelorg);
 	psurf = &clmodel->surfaces[clmodel->firstmodelsurface];
 
-	e->angles[0] = -e->angles[0]; // stupid quake bug
+	vec3_t model_angles;
+	VectorCopy (entity_angles, model_angles);
+	model_angles[0] = -model_angles[0]; // stupid quake bug
 	float model_matrix[16];
 	IdentityMatrix (model_matrix);
-	R_RotateForEntity (model_matrix, e->origin, e->angles, e->netstate.scale);
-	e->angles[0] = -e->angles[0]; // stupid quake bug
+	R_RotateForEntity (model_matrix, e->origin, model_angles, e->netstate.scale);
 
 	float mvp[16];
 	memcpy (mvp, vulkan_globals.view_projection_matrix, 16 * sizeof (float));

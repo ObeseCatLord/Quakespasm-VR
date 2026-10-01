@@ -4554,6 +4554,8 @@ void GL_BeginRenderingTask (void *unused)
 		cbx->current_canvas = CANVAS_INVALID;
 		cbx->ui_panel_active = false;
 		cbx->ui_panel_mvp_valid = false;
+		cbx->scene_descriptor_override = VK_NULL_HANDLE;
+		cbx->scene_uniform_offset_override = 0;
 		memset (&cbx->current_pipeline, 0, sizeof (cbx->current_pipeline));
 
 		ZEROED_STRUCT (VkCommandBufferBeginInfo, command_buffer_begin_info);
@@ -4583,6 +4585,8 @@ void GL_BeginRenderingTask (void *unused)
 			cbx->current_canvas = CANVAS_INVALID;
 			cbx->ui_panel_active = false;
 			cbx->ui_panel_mvp_valid = false;
+			cbx->scene_descriptor_override = VK_NULL_HANDLE;
+			cbx->scene_uniform_offset_override = 0;
 			cbx->depth_only = false;
 			cbx->hidden_area_masked_world = false;
 			memset (&cbx->current_pipeline, 0, sizeof (cbx->current_pipeline));

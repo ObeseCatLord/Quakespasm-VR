@@ -452,6 +452,11 @@ static qboolean stereo_have_reference;
 static vec3_t stereo_reference_position;
 static vec3_t stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up;
 static qboolean stereo_tracking_basis_valid;
+static qboolean stereo_liquid_categories_valid;
+static unsigned int stereo_wet_eye_mask;
+static qboolean stereo_alpha_exceptional;
+static VkDescriptorSet stereo_alpha_eye_descriptor_set[2];
+static uint32_t stereo_alpha_eye_uniform_offset[2];
 
 static void R_SetupMatrices (void);
 static qboolean R_VectorIsFinite (const vec3_t vector);
@@ -814,6 +819,14 @@ void R_PrepareStereoFrame (void)
 	float scene_clip[2][16];
 	stereo_scene_scale[0] = stereo_scene_scale[1] = 1.0f;
 	vulkan_globals.stereo_scene_descriptor_set = VK_NULL_HANDLE;
+	stereo_liquid_categories_valid = false;
+	stereo_wet_eye_mask = 0;
+	stereo_alpha_exceptional = false;
+	for (int eye = 0; eye < 2; ++eye)
+	{
+		stereo_alpha_eye_descriptor_set[eye] = VK_NULL_HANDLE;
+		stereo_alpha_eye_uniform_offset[eye] = 0;
+	}
 	stereo_tracking_basis_valid = false;
 	if (!frame)
 	{
@@ -953,6 +966,18 @@ void R_PrepareStereoFrame (void)
 			}
 		}
 	}
+	if (R_UseAlphaSort () && vulkan_globals.stereo_active && frame->should_render && !con_forcedup && cl.worldmodel &&
+		!cl.worldmodel->needload && stereo_tracking_basis_valid &&
+		R_VectorIsFinite (r_stereo_origins[0]) && R_VectorIsFinite (r_stereo_origins[1]))
+	{
+		for (int eye = 0; eye < 2; ++eye)
+		{
+			const int contents = Mod_PointInLeaf (r_stereo_origins[eye], cl.worldmodel)->contents;
+			if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA)
+				stereo_wet_eye_mask |= 1u << eye;
+		}
+		stereo_liquid_categories_valid = true;
+	}
 	struct { float clip[2][16]; float offset[2][4]; } uniform;
 	memcpy (uniform.clip, vulkan_globals.stereo_clip_from_center, sizeof (uniform.clip));
 	memcpy (uniform.offset, vulkan_globals.stereo_eye_offset, sizeof (uniform.offset));
@@ -967,6 +992,20 @@ void R_PrepareStereoFrame (void)
 		data = R_UniformAllocate (sizeof (uniform), &buffer, &vulkan_globals.stereo_scene_uniform_offset,
 			&vulkan_globals.stereo_scene_descriptor_set);
 		memcpy (data, &uniform, sizeof (uniform));
+	}
+	if (stereo_liquid_categories_valid &&
+		(stereo_wet_eye_mask == 1u || stereo_wet_eye_mask == 2u) && R_UseAlphaSort ())
+	{
+		for (int eye = 0; eye < 2; ++eye)
+		{
+			struct { float clip[2][16]; float offset[2][4]; } eye_uniform;
+			memcpy (&eye_uniform, &uniform, sizeof (eye_uniform));
+			eye_uniform.offset[1 - eye][3] = 1.0f;
+			data = R_UniformAllocate (sizeof (eye_uniform), &buffer,
+				&stereo_alpha_eye_uniform_offset[eye], &stereo_alpha_eye_descriptor_set[eye]);
+			memcpy (data, &eye_uniform, sizeof (eye_uniform));
+		}
+		stereo_alpha_exceptional = true;
 	}
 
 	// Worldless stereo frames skip R_SetupViewBeforeMark, which normally prepares these.
@@ -1053,6 +1092,8 @@ static void R_SceneViewport (cb_context_t *cbx, float min_depth)
 
 static void R_SetupContext (cb_context_t *cbx)
 {
+	cbx->scene_descriptor_override = VK_NULL_HANDLE;
+	cbx->scene_uniform_offset_override = 0;
 	R_SceneViewport (cbx, 0.0f);
 	R_BindGraphicsPipeline (cbx, PIPELINE_BASIC_BLEND);
 	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), vulkan_globals.view_projection_matrix);
@@ -1188,6 +1229,14 @@ static qboolean R_IsEntityTransparent (entity_t *e, qboolean *opaque_with_transp
 	return transparent;
 }
 
+void R_GetEntityAngles (const entity_t *e, vec3_t angles)
+{
+	VectorCopy (e->angles, angles);
+	if (e->model && e->model->type != mod_alias && cl.entities && cl.viewentity >= 0 &&
+		cl.viewentity < cl.num_entities && e == &cl.entities[cl.viewentity])
+		angles[PITCH] *= 0.3f;
+}
+
 /*
 =============
 R_DrawEntitiesOnList
@@ -1236,12 +1285,6 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, int alphapass, int chain, qboolean
 		// if alphapass is false, draw only nonalpha entities this time
 		if (transparent != !!alphapass && !opaque_with_transparent_water)
 			continue;
-
-		// johnfitz -- chasecam (aliases use the shared transform)
-		if (currententity->model->type != mod_alias &&
-			currententity == &cl.entities[cl.viewentity])
-			currententity->angles[0] *= 0.3;
-		// johnfitz
 
 		// spike -- this would be more efficient elsewhere, but its more correct here.
 		if (currententity->eflags & EFLAGS_EXTERIORMODEL)
@@ -2188,10 +2231,6 @@ void R_ShowTris (cb_context_t *cbx)
 		{
 			entity_t *currententity = cl_visedicts[i];
 
-			if (currententity->model->type != mod_alias &&
-				currententity == &cl.entities[cl.viewentity]) // chasecam
-				currententity->angles[0] *= 0.3;
-
 			switch (currententity->model->type)
 			{
 			case mod_brush:
@@ -2455,6 +2494,35 @@ static void R_DrawEntitiesTask (int index, void *use_tasks)
 	R_DrawEntitiesOnList (cbx, false, index + chain_model_0, use_tasks ? true : false);
 }
 
+static void R_DrawAlphaEntitiesWithEyeMask (cb_context_t *cbx, int alphapass, int chain, unsigned int eye_mask)
+{
+	if (!eye_mask)
+		return;
+	R_SetupContext (cbx);
+	Fog_EnableGFog (cbx);
+	if (eye_mask != 3u)
+	{
+		const int eye = eye_mask == 1u ? 0 : 1;
+		cbx->scene_descriptor_override = stereo_alpha_eye_descriptor_set[eye];
+		cbx->scene_uniform_offset_override = stereo_alpha_eye_uniform_offset[eye];
+	}
+	R_DrawEntitiesOnList (cbx, alphapass, chain, false);
+	/* R_DrawEntitiesOnList ends its native batch before this selector is cleared. */
+	cbx->scene_descriptor_override = VK_NULL_HANDLE;
+	cbx->scene_uniform_offset_override = 0;
+}
+
+static void R_DrawStereoAlphaListAtStage (int stage, int alphapass, unsigned int eye_mask)
+{
+	const int chain = stage ? chain_alpha_model : chain_alpha_model_across_water;
+	cb_context_t *cbx;
+	if (!eye_mask)
+		return;
+	cbx = vulkan_globals.secondary_cb_contexts[
+		stage ? SCBX_ALPHA_ENTITIES : SCBX_ALPHA_ENTITIES_ACROSS_WATER];
+	R_DrawAlphaEntitiesWithEyeMask (cbx, alphapass, chain, eye_mask);
+}
+
 /*
 ================
 R_DrawAlphaEntitiesTask
@@ -2462,6 +2530,22 @@ R_DrawAlphaEntitiesTask
 */
 static void R_DrawAlphaEntitiesTask (int index, void *use_tasks)
 {
+	if (stereo_liquid_categories_valid && R_UseAlphaSort ())
+	{
+		if (stereo_alpha_exceptional && index != 0)
+			return;
+		for (int stage = stereo_alpha_exceptional ? 0 : (use_tasks ? index : 0);
+			stage <= (stereo_alpha_exceptional ? 1 : (use_tasks ? index : 1)); ++stage)
+		{
+			const unsigned int other_eye_mask = 3u ^ stereo_wet_eye_mask;
+			const unsigned int overwater_mask = stage ? other_eye_mask : stereo_wet_eye_mask;
+			const unsigned int underwater_mask = stage ? stereo_wet_eye_mask : other_eye_mask;
+			R_DrawStereoAlphaListAtStage (stage, 1, overwater_mask);
+			R_DrawStereoAlphaListAtStage (stage, 2, underwater_mask);
+		}
+		return;
+	}
+
 	const int	   contents = r_viewleaf->contents;
 	const qboolean underwater = R_UseAlphaSort () && (contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA);
 	for (int i = use_tasks ? index : 0; i <= (use_tasks ? index : 1); ++i)

@@ -377,6 +377,8 @@ typedef struct cb_context_s
 	main_render_pass_variant_t pipeline_variant;
 	qboolean				   depth_only;
 	qboolean				   hidden_area_masked_world;
+	VkDescriptorSet		   scene_descriptor_override;
+	uint32_t			   scene_uniform_offset_override;
 	int						   subpass;
 	vulkan_pipeline_t		   current_pipeline;
 	uint32_t				   vbo_indices[MAX_BATCH_SIZE];
@@ -928,6 +930,7 @@ extern cvar_t r_aliasbatch;
 void R_DrawPreparedWheelAliasModel (
 	cb_context_t *cbx, entity_t *e, aliashdr_t *selected_geometry, const vec3_t tint, float mesh_scale, int *aliaspolys);
 void R_DrawBrushModel (cb_context_t *cbx, entity_t *e, int chain, int *brushpolys, qboolean sort, qboolean water_opaque_only, qboolean water_transparent_only);
+void R_GetEntityAngles (const entity_t *e, vec3_t angles);
 void R_DrawSpriteModel (cb_context_t *cbx, entity_t *e);
 void R_DrawIndirectBrushes (cb_context_t *cbx, qboolean draw_water, qboolean transparent_water, qboolean draw_sky, int index);
 void R_DrawIndirectBrushesFiltered (
@@ -1044,9 +1047,14 @@ static inline void R_BindPipeline (cb_context_t *cbx, VkPipelineBindPoint bind_p
 	{
 		/* HUD/menu/wheel panels use the ordinary display projection. Scene
 		 * deformation must not move those panels or their interaction rays. */
-		const qboolean scene = cbx->subpass_type != SUBPASS_UI && vulkan_globals.stereo_scene_descriptor_set;
-		const VkDescriptorSet descriptor = scene ? vulkan_globals.stereo_scene_descriptor_set : vulkan_globals.stereo_descriptor_set;
-		const uint32_t offset = scene ? vulkan_globals.stereo_scene_uniform_offset : vulkan_globals.stereo_uniform_offset;
+		const qboolean scene = cbx->subpass_type != SUBPASS_UI &&
+			(cbx->scene_descriptor_override || vulkan_globals.stereo_scene_descriptor_set);
+		const VkDescriptorSet descriptor = scene ?
+			(cbx->scene_descriptor_override ? cbx->scene_descriptor_override : vulkan_globals.stereo_scene_descriptor_set) :
+			vulkan_globals.stereo_descriptor_set;
+		const uint32_t offset = scene ?
+			(cbx->scene_descriptor_override ? cbx->scene_uniform_offset_override : vulkan_globals.stereo_scene_uniform_offset) :
+			vulkan_globals.stereo_uniform_offset;
 		vulkan_globals.vk_cmd_bind_descriptor_sets (
 			cbx->cb, bind_point, pipeline.layout.handle, 5, 1, &descriptor, 1, &offset);
 	}

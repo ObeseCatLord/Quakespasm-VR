@@ -11,7 +11,8 @@ layout (std140, set = 5, binding = 0) uniform StereoViews
 }
 stereo_views;
 
-#define STEREO_APPLY_CLIP_CORRECTION() gl_Position = stereo_views.clip_from_center[gl_ViewIndex] * gl_Position
+/* eye_offset.w == 1 excludes this view from an eye-specific scene draw. */
+#define STEREO_APPLY_CLIP_CORRECTION() gl_Position = stereo_views.eye_offset[gl_ViewIndex].w != 0.0 ? vec4 (2.0, 0.0, 0.0, 1.0) : stereo_views.clip_from_center[gl_ViewIndex] * gl_Position
 #define STEREO_EYE_OFFSET() stereo_views.eye_offset[gl_ViewIndex].xyz
 #else
 #define STEREO_APPLY_CLIP_CORRECTION()
