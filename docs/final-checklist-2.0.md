@@ -73,8 +73,12 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   is resolved by the [live Astra disposition](metadata-live-admission-2.0-review.md)
   and updated coupled plan in `85db34e7`: complete control-sequence preflight,
   prospective committed values, visible pre-mutation refusal and no extra queue.
-  Fresh Luna coding is active in the seven-file region, target550–750/reopen
-  BEFORE800/new owner. No sender source receipt yet.
+  The seven-file Luna draft is stopped and unaccepted: the final handoff contains
+  846 added/deleted lines, beyond the BEFORE800 reopening boundary (the initial
+  interruption snapshot was819). No worker remains active. Main source review
+  found missing ordered native overlay/companion preflight and connection dirty
+  coverage; the current final-checklist Astra review will verify the full remaining
+  enumeration before coding resumes. No sender source receipt yet.
 - [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
   slots before signon3 using current stores and native reliable-buffer retry.
 - [ ] Preserve publication across mid-signon changes, map changes and spawn/
@@ -179,8 +183,9 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
 
 C02's reader-selection and complete sender design are now reviewed technical
 decisions; the optional stock-peer question is not a prerequisite. C02 publication
-is the remaining implementation slice. Its live-admission decision is resolved
-and fresh Luna coding is active; C19 source integration awaits final qualification.
+is the remaining implementation slice. Its live-admission decision is resolved,
+but the oversized draft remains stopped for source/design review; C19 source
+integration awaits final qualification.
 The detailed plans and review evidence below define their native integration seams.
 
 ## Original audit findings and source integrations
