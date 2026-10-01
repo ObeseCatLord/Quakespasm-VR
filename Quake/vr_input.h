@@ -104,6 +104,8 @@ unsigned int VR_InputMergeMeleeAttack (unsigned int buttons, qboolean isfinal);
 void VR_InputInvalidateMotion (void);
 void VR_InputResetMotionContinuity (void);
 void VR_InputClear (void);
+/* Shared sender/renderer gate for tracked-pose production and consumption. */
+qboolean VR_InputVRIKAllowed (void);
 qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose);
 
 /* Read-only snapshot for the renderer's per-frame debug copy.

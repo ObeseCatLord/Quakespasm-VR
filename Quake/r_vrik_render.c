@@ -4,6 +4,7 @@
 #include "custom_avatar.h"
 #include "r_vrik.h"
 #include "r_vrik_render.h"
+#include "vr_input.h"
 
 #include <float.h>
 #include <limits.h>
@@ -28,6 +29,8 @@ typedef struct r_vrik_candidate_s
 	vrik_pose_t pose;
 	uint32_t joint_count;
 	qboolean muzzleflash;
+	float tracked_root_yaw;
+	qboolean tracked_root_valid;
 	double tracked_cull_local_bound;
 	vec3_t tracked_cull_origin;
 	qboolean tracked_cull_valid;
@@ -693,6 +696,8 @@ static void R_VRIKRenderMuzzleCandidate (const entity_t *entity, const aliashdr_
 		pose_age < 0.0 || pose_age > VRIK_POSE_STALE_TIME)
 		return;
 	R_GetEntityLerpedTransform (entity, lerpdata.origin, lerpdata.angles);
+	if (candidate->tracked_root_valid && isfinite (candidate->tracked_root_yaw))
+		lerpdata.angles[YAW] = candidate->tracked_root_yaw;
 	/* R_AliasModelMatrix only reads the entity; its existing API is non-const. */
 	if (R_AliasModelMatrix ((entity_t *)entity, geometry, &lerpdata, matrix) < 0)
 		return;
@@ -823,7 +828,9 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 	if (!entity || !candidate || !palette)
 		return false;
 	memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
-	if (!R_VRIKSampleEntityPose (entity, &candidate->pose))
+	candidate->tracked_root_yaw = 0.0f;
+	candidate->tracked_root_valid = false;
+	if (!VR_InputVRIKAllowed () || !R_VRIKSampleEntityPose (entity, &candidate->pose))
 		return false;
 	if (!entity->model || entity->model->needload || entity->model->type != mod_alias)
 		return false;
@@ -847,6 +854,11 @@ static qboolean R_VRIKRenderCandidate (const entity_t *entity, r_vrik_candidate_
 			lower_input, candidate->muzzleflash, &output) != R_VRIK_PALETTE_OK ||
 		output.joint_count > UINT32_MAX)
 		return false;
+	if (isfinite (candidate->pose.body_yaw))
+	{
+		candidate->tracked_root_yaw = candidate->pose.body_yaw;
+		candidate->tracked_root_valid = true;
+	}
 	if (output.muzzle_valid)
 		R_VRIKRenderMuzzleCandidate (entity, header, output.muzzle_origin, candidate);
 
@@ -1028,6 +1040,8 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	qboolean tracked;
 
 	memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
+	candidate->tracked_root_yaw = 0.0f;
+	candidate->tracked_root_valid = false;
 	if (!selection)
 		return false;
 	source_skeleton = &selection->source_skeleton;
@@ -1098,7 +1112,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	ranger.matrices = source_palette;
 	ranger.capacity = R_VRIK_RENDER_MAX_JOINTS;
 	ranger.joint_count = 0;
-	tracked = R_VRIKSampleEntityPose (entity, &pose);
+	tracked = VR_InputVRIKAllowed () && R_VRIKSampleEntityPose (entity, &pose);
 	if (tracked)
 	{
 		if (R_VRIKSampleEntityLowerTargets (entity, &lower_targets))
@@ -1111,6 +1125,11 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	if (result != R_VRIK_PALETTE_OK ||
 		ranger.joint_count != source_skeleton->joint_count)
 		return false;
+	if (tracked && isfinite (pose.body_yaw))
+	{
+		candidate->tracked_root_yaw = pose.body_yaw;
+		candidate->tracked_root_valid = true;
+	}
 	const qboolean profile_retarget = scr_speeds.value == 3;
 	const double retarget_start = profile_retarget ? Sys_DoubleTime () : 0.0;
 	const qboolean retarget_failed = selection->humanoid ?
@@ -1339,6 +1358,8 @@ void R_VRIKRenderPrepareFrame (uint32_t frame_slot)
 		record->joint_offset = (uint32_t)joint_cursor;
 		record->joint_count = candidate->joint_count;
 		record->palette_address = vulkan_globals.ray_query ? allocation_address + joint_cursor * sizeof (float[12]) : 0;
+		record->tracked_root_yaw = candidate->tracked_root_yaw;
+		record->tracked_root_valid = candidate->tracked_root_valid;
 		record->tracked_cull_local_bound = candidate->tracked_cull_local_bound;
 		VectorCopy (candidate->tracked_cull_origin, record->tracked_cull_origin);
 		record->tracked_cull_valid = candidate->tracked_cull_valid;

@@ -39,6 +39,9 @@ typedef struct r_vrik_prepared_palette_s
 	uint32_t joint_count;
 	/* Exact start of this palette in the same allocation; already includes joint_offset. */
 	VkDeviceAddress palette_address;
+	/* Yaw from the accepted tracked pose that solved this palette. */
+	float tracked_root_yaw;
+	qboolean tracked_root_valid;
 	/* Origin-centered bound from the solved palette and selected surface chain;
 	 * alternates include the target-to-canonical affine. */
 	double tracked_cull_local_bound;

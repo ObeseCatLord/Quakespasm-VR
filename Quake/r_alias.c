@@ -625,6 +625,11 @@ void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t ou
 		cl.viewentity < cl.num_entities && e == &cl.entities[cl.viewentity] &&
 		e->model && e->model->type == mod_alias)
 		out_angles[0] *= 0.3;
+
+	const r_vrik_prepared_palette_t *tracked_palette = R_VRIKRenderLookup (e);
+	if (tracked_palette && tracked_palette->tracked_root_valid &&
+		isfinite (tracked_palette->tracked_root_yaw))
+		out_angles[YAW] = tracked_palette->tracked_root_yaw;
 }
 
 static float R_VRIKLerpAngle (float from, float to, float blend)
@@ -849,7 +854,12 @@ static void R_SetupAliasLighting (entity_t *e, vec3_t *shadevector, vec3_t *ligh
 	if (add < 1.0f)
 		VectorScale ((*lightcolor), add, (*lightcolor));
 
-	quantizedangle = ((int)(e->angles[1] * (SHADEDOT_QUANT / 360.0))) & (SHADEDOT_QUANT - 1);
+	float shade_yaw = e->angles[YAW];
+	const r_vrik_prepared_palette_t *tracked_palette = R_VRIKRenderLookup (e);
+	if (tracked_palette && tracked_palette->tracked_root_valid &&
+		isfinite (tracked_palette->tracked_root_yaw))
+		shade_yaw = tracked_palette->tracked_root_yaw;
+	quantizedangle = ((int)(shade_yaw * (SHADEDOT_QUANT / 360.0))) & (SHADEDOT_QUANT - 1);
 
 	// ericw -- shadevector is passed to the shader to compute shadedots inside the
 	// shader, see GLAlias_CreateShaders()

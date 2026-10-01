@@ -88,6 +88,12 @@ static cvar_t vr_immersive_melee = {"vr_immersive_melee", "1", CVAR_ARCHIVE};
 cvar_t vr_fbt_enabled = {"vr_fbt_enabled", "0", CVAR_ARCHIVE};
 cvar_t vr_weapon_collision = {"vr_weapon_collision", "1", CVAR_ARCHIVE};
 
+qboolean VR_InputVRIKAllowed (void)
+{
+	const char *game = COM_SkipPath (com_gamedir);
+	return vr_vrik.value != 0.0f && (!game || q_strcasecmp (game, "enyo"));
+}
+
 qboolean VR_WeaponCollisionAuthorized (void)
 {
 	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
@@ -3446,7 +3452,7 @@ qboolean VR_InputBuildVRIKPose (vrik_codec_pose_t *pose)
 		return false;
 
 	/* A disabled sender emits one inactive sample after its last active pose. */
-	if (vr_vrik.value == 0.0f)
+	if (!VR_InputVRIKAllowed ())
 		return true;
 
 	body_yaw = player->angles[YAW];
