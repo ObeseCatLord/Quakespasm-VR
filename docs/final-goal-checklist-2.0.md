@@ -57,6 +57,15 @@ COOP-009 and renderer PERF; F06 XR-004–007; F07 BASE/UI/ASSET and loading PERF
 F08 AUDIO-001–011/NET-027; F09 PLAT-001–006; F10 PLAT-007/008 and cross-cutting
 receipts. These overlap intentionally; test shared boundaries once.
 
+## Execution progress
+
+- F02:9stock/5cooperative local-load and7cooperative-QC current profiles pass;
+  remaining distinct co-op/save/physics boundaries stay open.
+- **F09 complete:** all five independent semantic rejection cases pass;
+  [exact results and limits](package-semantic-negatives-final-2.0-results.md).
+- F01: existing probes are being orchestrated for actual connected crossplay.
+- F03–F08 and F10 remain open at their finite boundaries above.
+
 ## Senior dispositions and independent main checks
 
 | Recommendation | Disposition / evidence |
