@@ -570,10 +570,15 @@ cl.time. Does not modify the entity.
 
 Attached entities (tagentity) use their post-attachment origin/angles, which
 only exist on the entity itself.
+
+Local alias-player pitch matches the first color pass only when angles were
+copied from the entity; message-angle interpolation keeps its native result.
 =================
 */
 void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t out_angles)
 {
+	qboolean copied_angles = true;
+
 	if (r_lerpmove.value && e != &cl.viewent && V_AkimboViewmodelHand (e) < 0 &&
 		!V_HeldMeleeRenderEntity (e) &&
 		e->lerp.movestep && !e->netstate.tagentity && e->lerp.move_change_time > 0)
@@ -603,6 +608,7 @@ void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t ou
 			out_angles[0] = e->lerp.prev_angles[0] + d[0] * blend;
 			out_angles[1] = e->lerp.prev_angles[1] + d[1] * blend;
 			out_angles[2] = e->lerp.prev_angles[2] + d[2] * blend;
+			copied_angles = false;
 		}
 		else
 		{
@@ -614,6 +620,11 @@ void R_GetEntityLerpedTransform (const entity_t *e, vec3_t out_origin, vec3_t ou
 		VectorCopy (e->origin, out_origin);
 		VectorCopy (e->angles, out_angles);
 	}
+
+	if (copied_angles && cl.entities && cl.viewentity >= 0 &&
+		cl.viewentity < cl.num_entities && e == &cl.entities[cl.viewentity] &&
+		e->model && e->model->type == mod_alias)
+		out_angles[0] *= 0.3;
 }
 
 static float R_VRIKLerpAngle (float from, float to, float blend)

@@ -686,19 +686,15 @@ static qboolean R_VRIKRenderValidatePropView (const qmodel_t *source, int prop,
 static void R_VRIKRenderMuzzleCandidate (const entity_t *entity, const aliashdr_t *geometry,
 	const vec3_t point, r_vrik_candidate_t *candidate)
 {
-	entity_t render_entity = *entity;
 	lerpdata_t lerpdata = {0};
 	float matrix[16];
 	const double pose_age = realtime - entity->vrik_pose_times[0];
 	if (entity->vrik_slot_retired || !isfinite (pose_age) ||
 		pose_age < 0.0 || pose_age > VRIK_POSE_STALE_TIME)
 		return;
-	/* Match the first ordinary color pass without mutating the original entity
-	 * or multiplying an already interpolated pitch. */
-	if (entity == &cl.entities[cl.viewentity])
-		render_entity.angles[0] *= 0.3;
-	R_GetEntityLerpedTransform (&render_entity, lerpdata.origin, lerpdata.angles);
-	if (R_AliasModelMatrix (&render_entity, geometry, &lerpdata, matrix) < 0)
+	R_GetEntityLerpedTransform (entity, lerpdata.origin, lerpdata.angles);
+	/* R_AliasModelMatrix only reads the entity; its existing API is non-const. */
+	if (R_AliasModelMatrix ((entity_t *)entity, geometry, &lerpdata, matrix) < 0)
 		return;
 	for (int axis = 0; axis < 3; ++axis)
 	{

@@ -1189,8 +1189,9 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, int alphapass, int chain, qboolean
 		if (transparent != !!alphapass && !opaque_with_transparent_water)
 			continue;
 
-		// johnfitz -- chasecam
-		if (currententity == &cl.entities[cl.viewentity])
+		// johnfitz -- chasecam (aliases use the shared transform)
+		if (currententity->model->type != mod_alias &&
+			currententity == &cl.entities[cl.viewentity])
 			currententity->angles[0] *= 0.3;
 		// johnfitz
 
@@ -2139,7 +2140,8 @@ void R_ShowTris (cb_context_t *cbx)
 		{
 			entity_t *currententity = cl_visedicts[i];
 
-			if (currententity == &cl.entities[cl.viewentity]) // chasecam
+			if (currententity->model->type != mod_alias &&
+				currententity == &cl.entities[cl.viewentity]) // chasecam
 				currententity->angles[0] *= 0.3;
 
 			switch (currententity->model->type)
