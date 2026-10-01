@@ -8,7 +8,7 @@
 #include <strings.h>
 
 #define CALIBRATION_CVAR_COUNT \
-	(VR_WEAPON_CALIBRATION_MAX_SLOTS * \
+	(1 + VR_WEAPON_CALIBRATION_MAX_SLOTS * \
 	 (VR_WEAPON_CALIBRATION_VARS_PER_WEAPON + \
 	  VR_WEAPON_CALIBRATION_VARS_PER_MUZZLE))
 
@@ -99,6 +99,20 @@ void Cvar_SetValueQuick(cvar_t *variable, const float value)
 	char text[64];
 	snprintf(text, sizeof(text), "%.7g", value);
 	Cvar_SetQuick(variable, text);
+}
+
+void Cvar_SetCallback(cvar_t *variable, cvarcallback_t callback)
+{
+	variable->callback = callback;
+	if (callback)
+		variable->flags |= CVAR_CALLBACK;
+	else
+		variable->flags &= ~CVAR_CALLBACK;
+}
+
+void Con_Warning(const char *format, ...)
+{
+	assert(format);
 }
 
 static void AssertVector(const vec3_t actual, float x, float y, float z)

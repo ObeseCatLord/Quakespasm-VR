@@ -43,6 +43,10 @@ void Sys_Error (const char *format, ...)
 	abort ();
 }
 
+void Con_Printf (const char *format, ...) { (void)format; }
+VKAPI_ATTR void VKAPI_CALL vkCmdWriteTimestamp (VkCommandBuffer command_buffer, VkPipelineStageFlagBits stage,
+	VkQueryPool query_pool, uint32_t query) { assert (query_pool != VK_NULL_HANDLE); }
+
 qboolean Sky_NeedStencil (void)
 {
 	return false;
@@ -167,8 +171,11 @@ static void check_variant (main_render_pass_variant_t variant, bool ssao, bool a
 		.render_height = 240,
 	};
 	VkCommandBuffer commands[PCBX_NUM];
-	const uint32_t	count = R_RecordFrame (&parms, acquired, acquired ? 1 : UINT32_MAX, commands, countof (commands), readback, &readbacks);
+	bool ssao_timestamps_written = true;
+	const uint32_t	count = R_RecordFrame (&parms, acquired, acquired ? 1 : UINT32_MAX, commands, countof (commands),
+		readback, &readbacks, VK_NULL_HANDLE, 0, &ssao_timestamps_written);
 	assert (count == 4); // Three prepared buffers plus the scene/UI recorder.
+	assert (!ssao_timestamps_written); // This command-spy fixture supplies no query pool.
 	assert (commands[0] == vulkan_globals.primary_cb_contexts[PCBX_BUILD_ACCELERATION_STRUCTURES].cb);
 	assert (commands[1] == vulkan_globals.primary_cb_contexts[PCBX_UPDATE_LIGHTMAPS].cb);
 	assert (commands[2] == vulkan_globals.primary_cb_contexts[PCBX_UPDATE_WARP].cb);

@@ -7,7 +7,7 @@
 #include <string.h>
 
 #define CALIBRATION_CVAR_COUNT \
-	(VR_WEAPON_CALIBRATION_MAX_SLOTS * \
+	(1 + VR_WEAPON_CALIBRATION_MAX_SLOTS * \
 	 (VR_WEAPON_CALIBRATION_VARS_PER_WEAPON + \
 	  VR_WEAPON_CALIBRATION_VARS_PER_MUZZLE))
 
@@ -62,6 +62,20 @@ void Cvar_SetValueQuick(cvar_t *variable, const float value)
 	char text[64];
 	snprintf(text, sizeof(text), "%.7g", value);
 	Cvar_SetQuick(variable, text);
+}
+
+void Cvar_SetCallback(cvar_t *variable, cvarcallback_t callback)
+{
+	variable->callback = callback;
+	if (callback)
+		variable->flags |= CVAR_CALLBACK;
+	else
+		variable->flags &= ~CVAR_CALLBACK;
+}
+
+void Con_Warning(const char *format, ...)
+{
+	assert(format);
 }
 
 byte *__wrap_COM_LoadFile(const char *path, unsigned int *path_id)
@@ -351,7 +365,7 @@ int main(void)
 	AssertFallbackMuzzles();
 	AssertStockClassicProfiles();
 
-	/* Enyo defaults remain usable when a legacy MP overlay is present. */
+	/* Enyo defaults remain usable with identity-only schema entries. */
 	strcpy(com_gamedir, "/fixtures/enyo");
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
@@ -359,7 +373,6 @@ int main(void)
 	AssertEnyoFallbacks();
 
 	fixture_file_contents =
-		"global_mp_muzzle_offset 1 2 3 "
 		"{ bitmask 4096 viewmodel progs/ee_v_sword.mdl } "
 		"{ bitmask 1 viewmodel progs/ee_v_pistol.mdl "
 		"held_offset 1 2 3 held_scale 0.5 muzzle_offset 9 10 11 }";

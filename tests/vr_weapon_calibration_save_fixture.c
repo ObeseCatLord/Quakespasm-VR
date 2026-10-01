@@ -29,12 +29,18 @@ static void FixtureRewrite(const char *source, qboolean enhanced,
 	vr_weapon_schema_entry_t *entry)
 {
 	vr_calibration_textbuf_t output = {0};
+	vr_weapon_schema_entry_t original[VR_WEAPON_SCHEMA_MAX_ENTRIES];
+	vr_weapon_schema_metadata_t metadata;
+	size_t original_count = 0;
+	assert(VR_WeaponSchemaParseWithMetadata(source, original,
+		VR_WEAPON_SCHEMA_MAX_ENTRIES, &original_count, &metadata));
+	assert(original_count == 1);
 	assert(VR_CalibrationWriteUpdatedBlock(&output, source,
-		strlen(source), 0, enhanced));
+		strlen(source), 0, enhanced, false));
 	assert(!strstr(output.data, "mp_held_offset"));
 	assert(!strstr(output.data, "mp_muzzle_offset"));
 	assert(VR_CalibrationSavedValuesMatch(output.data,
-		"progs/v_shot.mdl", 0, enhanced, 1));
+		"progs/v_shot.mdl", 0, enhanced, original_count, &metadata));
 	*entry = FixtureParseOne(output.data);
 	free(output.data);
 }
@@ -81,7 +87,7 @@ int main(void)
 
 	assert(VR_CalibrationAppendNewBlock(&output, model, 0, false));
 	assert(VR_CalibrationTextAppend(&output,
-		"global_mp_held_offset 1 2 3\n"
+		"global_held_offset 1 2 3\n"
 		"{ viewmodel progs/v_nail.mdl held_offset 2 3 4 }\n"));
 	assert(VR_WeaponSchemaParse(output.data, entries,
 		VR_WEAPON_SCHEMA_MAX_ENTRIES, &count));

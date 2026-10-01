@@ -27,6 +27,8 @@ int VRXR_AdoptVulkan (void (*log)(const char *), VkInstance instance, VkPhysical
 int VRXR_SetVulkanQueueCallbacks (void (*lock)(void *), void (*unlock)(void *), void *owner)
 { assert (lock == GL_OpenXRLockQueue && unlock == GL_OpenXRUnlockQueue && owner == vulkan_globals.queue_mutex); ++registrations; return 1; }
 int VRXR_VulkanFoveationSupported (void) { return runtime_fb_supported; }
+int VRXR_VulkanFoveationEyeSupported (void) { return 0; }
+int VRXR_VulkanSwapchainImageFlagsSupported (void) { return 0; }
 int VRXR_AttachVulkan (uint32_t family, uint32_t index, VkImageUsageFlags usage,
  uint32_t layers, void (*retire)(void *), void *owner, int density, VkImageCreateFlags flags)
 {

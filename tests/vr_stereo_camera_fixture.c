@@ -14,6 +14,7 @@ qboolean noclip_anglehack;
 qboolean con_forcedup;
 int r_trace_line_cache_counter;
 cvar_t lookspring;
+cvar_t r_waterwarp;
 static int chase_traces;
 /* Camera-owner fixture: controller assembly is covered by the native input
  * probe. Observe invalidation without introducing a duplicate input policy. */
@@ -27,6 +28,18 @@ void VR_WeaponCalibrationAdjustCancel (void) {}
 int VR_InputDominantPhysicalHand (void) { return 1; }
 qboolean VR_WeaponCalibrationAdjustPresentation (vec3_t origin, vec3_t angles)
 { (void)origin; (void)angles; return false; }
+qboolean VR_WeaponMenu_IsOpenVR (void) { return false; }
+qboolean R_UseAlphaSort (void) { return false; }
+void CL_ResetPredictionSmoothing (void) {}
+qboolean CL_EvaluatePredictionViewOffset (vec3_t offset, qboolean camera_eligible)
+{ (void)camera_eligible; VectorCopy (vec3_origin, offset); return false; }
+mleaf_t *Mod_PointInLeaf (float *point, qmodel_t *model)
+{
+	static mleaf_t dry_leaf;
+	assert (point && model);
+	dry_leaf.contents = CONTENTS_EMPTY;
+	return &dry_leaf;
+}
 qboolean SV_RecursiveHullCheck (hull_t *hull, vec3_t p1, vec3_t p2, trace_t *trace, unsigned int hitcontents)
 {
 	// Run the real chase calculation with a known collision point, followed
