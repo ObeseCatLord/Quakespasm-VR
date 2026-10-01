@@ -14,8 +14,8 @@ equipment remains separate.
 [C21 native GPU diagnostic availability](gpu-diagnostic-validity-2.0-plan.md)
 retains existing queries and adds truthful validity and sampled stereo labels.
 Source-integrated in `d659894c` after main review; timing/status qualification
-remains pending. C07 has a [native ACK smoothing review brief](prediction-smoothing-2.0-brief.md),
-not an implementation plan yet; review is checking coherent draw-only VR output.
+remains pending. C07 now has a [senior-assessed native ACK smoothing plan](prediction-smoothing-2.0-plan.md),
+including separate native sample/view and renderer-only coherence stages.
 
 Committed correction plans:
 [C01/C03/C05 native networking](precache-infokey-protocol-2.0-plan.md) and
