@@ -55,7 +55,11 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   `c42cc32d`, resolves reader selection technically without an answer to the
   optional stock-peer question. The [capability slice](metadata-capability-2.0-plan.md)
   is source-integrated; unknown peers retain token1023/text2046 limits. Arbitrary stock
-  large-field parity is not claimed; compatible bundle policy remains to be specified.
+  large-field parity is not claimed. The [coupled Astra disposition](metadata-publication-integration-2.0-review.md)
+  and [resolved before-code plan](metadata-publication-integration-2.0-plan.md),
+  `c89e7eb7`, specify whole compatible bundles, ordered native overlay checks,
+  dirty obligations and the native spawn-drain phase. Luna implementation is
+  active in the seven-file region; no sender source receipt yet.
 - [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
   slots before signon3 using current stores and native reliable-buffer retry.
 - [ ] Preserve publication across mid-signon changes, map changes and spawn/
@@ -65,6 +69,13 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
 - [ ] Share full/incremental public projection including the cvar path, exclude
   private underscore keys, retain star keys and clear unrepresentable old values
   without silent1024-byte truncation or changes to local stores.
+- [ ] Complete initial client publication with one persistent native reliable
+  allocation, protocol-selected logical envelopes, complete command/reply
+  preflight and native pending-reply retry. Reset logical limits on map/new
+  connection/disconnect; retain empty-full and updates-only initialization.
+  Larger staging does not enlarge reverse tokens or stock-QSS-M's userinfo store.
+  Connected live cvar/control framing gaps must be resolved or explicitly retained
+  as C02 findings before closing implementation.
 - [x] Repair full/update receiver argc, bounded nonnegative slots and full-string
   termination; `2a43c96b` (source integration, final qualification pending).
 - [x] Finish quoted-command validation and extend only the explicit required
@@ -148,9 +159,9 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   retrieval preserves aliases; depends on the unfinished staging/verifier slice.
   Execute builders/wrapper/verifiers only in final qualification after implementation.
 
-C02's reader-selection contract is now a reviewed technical decision; the optional
-stock-peer question is not a prerequisite to its capability slice. Complete sender
-policy and C19's staging consolidation still require their specified implementation.
+C02's reader-selection and complete sender design are now reviewed technical
+decisions; the optional stock-peer question is not a prerequisite. C02 publication
+and C19 staging are the two active, disjoint Luna implementation slices.
 The detailed plans and review evidence below define their native integration seams.
 
 ## Original audit findings and source integrations
