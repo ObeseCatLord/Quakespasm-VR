@@ -156,6 +156,14 @@ extern edict_t **bbox_linked;
 extern float	 r_fovx;
 extern float	 r_fovy;
 
+typedef struct
+{
+	qboolean valid;
+	vec3_t target, right, down, normal;
+} scr_vr_field_panel_pose_t;
+
+static scr_vr_field_panel_pose_t vr_field_panel_pose;
+
 qboolean scr_initialized; // ready to draw
 
 qpic_t *scr_net;
@@ -1097,9 +1105,11 @@ static void SCR_InfoFieldLines (scr_info_line_t *lines, int *numlines, const cha
 	}
 }
 
-static void SCR_DrawInfoPanel (cb_context_t *cbx, float x, float y, const scr_info_line_t *lines, int numlines, const vec3_t bgcolor)
+static void SCR_DrawInfoPanel (cb_context_t *cbx, float x, float y,
+	const scr_info_line_t *lines, int numlines, const vec3_t bgcolor, qboolean physical_table)
 {
 	float scale, charw, charh, keyw, valuew, width, height;
+	const qboolean use_physical_panel = physical_table && vulkan_globals.stereo_active;
 
 	if (numlines <= 0)
 		return;
@@ -1120,6 +1130,39 @@ static void SCR_DrawInfoPanel (cb_context_t *cbx, float x, float y, const scr_in
 	x = CLAMP (0.0f, x, q_max (0.0f, glwidth - width));
 	y = CLAMP (0.0f, y, q_max (0.0f, glheight - height));
 
+	if (use_physical_panel)
+	{
+		float world_from_ndc[16] = {0};
+		const float hud_scale = vr_hud_scale.value;
+		float center_x, bottom_y;
+
+		if (!vr_field_panel_pose.valid || !isfinite (x) || !isfinite (y) ||
+			!isfinite (width) || !isfinite (height) || width <= 0.0f || height <= 0.0f ||
+			!isfinite (hud_scale) || hud_scale <= 0.0f ||
+			vid.width <= 0 || vid.height <= 0 || glwidth <= 0 || glheight <= 0)
+			return;
+		center_x = 2.0f * (x + width * 0.5f) / vid.width - 1.0f;
+		bottom_y = 2.0f * (vid.height - glheight + y + height) / vid.height - 1.0f;
+		if (!isfinite (center_x) || !isfinite (bottom_y))
+			return;
+
+		/* CANVAS_DEFAULT NDC advances by 2/vid.width and 2/vid.height per
+		 * source pixel; its viewport begins at vid.height-glheight vertically. */
+		for (int i = 0; i < 3; ++i)
+		{
+			world_from_ndc[i] = vr_field_panel_pose.right[i] * (hud_scale * vid.width * 0.5f);
+			world_from_ndc[4 + i] = vr_field_panel_pose.down[i] * (hud_scale * vid.height * 0.5f);
+			world_from_ndc[8 + i] = vr_field_panel_pose.normal[i] * hud_scale;
+			world_from_ndc[12 + i] = vr_field_panel_pose.target[i] -
+				world_from_ndc[i] * center_x - world_from_ndc[4 + i] * bottom_y;
+			if (!isfinite (world_from_ndc[i]) || !isfinite (world_from_ndc[4 + i]) ||
+				!isfinite (world_from_ndc[8 + i]) || !isfinite (world_from_ndc[12 + i]))
+				return;
+		}
+		world_from_ndc[15] = 1.0f;
+		GL_BeginUIPanel (cbx, world_from_ndc);
+	}
+
 	GL_SetCanvas (cbx, CANVAS_DEFAULT);
 	Draw_Fill (cbx, x, y, width, height, 0, 0.65f);
 
@@ -1131,6 +1174,9 @@ static void SCR_DrawInfoPanel (cb_context_t *cbx, float x, float y, const scr_in
 		GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 		Draw_String_Scaled (cbx, x + keyw + 1.5f * charw, liney, lines[i].value, scale);
 	}
+	if (use_physical_panel)
+		GL_EndUIPanel (cbx);
+	GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 static void SCR_DrawEdictInfo (cb_context_t *cbx)
@@ -1148,7 +1194,7 @@ static void SCR_DrawEdictInfo (cb_context_t *cbx)
 		numlines = 0;
 		SCR_InfoLine (lines, &numlines, "", "Leak");
 		SCR_SetInfoColor (bgcolor, 0.25f, 0.0f, 0.0f);
-		SCR_DrawInfoPanel (cbx, x, y, lines, numlines, bgcolor);
+		SCR_DrawInfoPanel (cbx, x, y, lines, numlines, bgcolor, false);
 	}
 
 	if (VEC_SIZE (bbox_linked) == 0)
@@ -1189,7 +1235,7 @@ static void SCR_DrawEdictInfo (cb_context_t *cbx)
 			break;
 		}
 
-		SCR_DrawInfoPanel (cbx, x, y, lines, numlines, bgcolor);
+		SCR_DrawInfoPanel (cbx, x, y, lines, numlines, bgcolor, false);
 	}
 
 	if (r_showfields.value)
@@ -1216,7 +1262,7 @@ static void SCR_DrawEdictInfo (cb_context_t *cbx)
 		}
 
 		SCR_SetInfoColor (bgcolor, 0.0f, 0.0f, 0.0f);
-		SCR_DrawInfoPanel (cbx, x, y, lines, numlines, bgcolor);
+		SCR_DrawInfoPanel (cbx, x, y, lines, numlines, bgcolor, true);
 	}
 
 	PR_SwitchQCVM (NULL);
@@ -2143,6 +2189,26 @@ static qboolean SCR_VRHUDPose (vec3_t target, vec3_t right, vec3_t down, vec3_t 
 	return true;
 }
 
+static void SCR_VRFieldPanelPrepare (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	vec3_t target, right, down, normal;
+
+	vr_field_panel_pose.valid = false;
+	if (!r_showfields.value || VEC_SIZE (bbox_linked) == 0 ||
+		!SCR_VRHUDFrameEligible (frame) || scr_drawdialog || scr_drawloading ||
+		(vr_menu_panel_mode == VR_PANEL_MENU && vr_menu_panel.valid) ||
+		vid.width <= 0 || vid.height <= 0 || glwidth <= 0 || glheight <= 0)
+		return;
+	if (!SCR_VRHUDPose (target, right, down, normal))
+		return;
+	VectorCopy (target, vr_field_panel_pose.target);
+	VectorCopy (right, vr_field_panel_pose.right);
+	VectorCopy (down, vr_field_panel_pose.down);
+	VectorCopy (normal, vr_field_panel_pose.normal);
+	vr_field_panel_pose.valid = true;
+}
+
 /* Map the classic 320x48 CANVAS_SBAR coordinates through the same viewport
  * and ortho math as GL_SetCanvas. Inverting that affine keeps each canvas
  * unit at vr_hud_scale world units regardless of render or bar scale. */
@@ -2487,6 +2553,7 @@ typedef struct
 static void SCR_SetupFrame (void *unused)
 {
 	const scr_setup_frame_t *setup = (const scr_setup_frame_t *)unused;
+	vr_field_panel_pose.valid = false;
 	if (!vulkan_globals.stereo_active)
 	{
 		SCR_SetUpToDrawConsole ();
@@ -2504,6 +2571,7 @@ static void SCR_SetupFrame (void *unused)
 	SCR_VRWeaponMenuPrepare ();
 	SCR_VRClassicSbarPrepare ();
 	SCR_VRModernSbarPrepare ();
+	SCR_VRFieldPanelPrepare ();
 }
 
 /*
