@@ -41,3 +41,24 @@ policy. If the necessary seam surface exceeds that, return the concrete evidence
 for a different native-engine test design. No production writes. Strict build and
 ASan/UBSan run are the verification targets; sanitizer failure needs diagnosis,
 not suppression. Main reviews the complete return and owns integration/receipts.
+
+## Native mixed-network current-frame seam
+
+The strict current-object mixed fixture build fails at three direct writer sites:
+SVFTE_WriteStats now takes a deltaframe pointer, and SVFTE_WriteEntitiesToClient
+takes the same pointer as its fifth argument. Main inspected the actual native
+SV_SendClientDatagram owner: it calls SVFTE_BeginFrame once, then passes that
+packet's frame to both writers. Reuse exactly that operation at the two direct
+stats/entity snapshot sites and the direct entity-only demo-writer site in
+tests/negotiation_native_fixture.c and tests/mixed_native_fixture.c. Preserve the
+existing admitted/setup client, captured socket sequence and all assertions.
+No synthetic frame allocation, null pointer workaround, ACK/sequence policy or
+new snapshot framework. Existing full-datagram Q30 path remains unchanged.
+
+Bound: BEFORE50 changed test lines, precisely those two test files only. Build
+using the existing negotiation-native.make and current isolated engine objects.
+Run four existing profiles (native, selected+velocityseeds, selected+arrivalgap+
+earlypause, defaultselection) in disposable pak0-only roots, with real native
+sender/receiver/QC/physics/parser owners and explicit captured-transport/prepared-
+signon boundary. Any additional failure needs evidence before a new repair;
+do not loosen assertions or change production. Main owns receipts/integration.
