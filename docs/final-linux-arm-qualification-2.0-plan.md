@@ -95,6 +95,16 @@ scripted entity/model precedence, pause/teleport/reset and native rocket light.
 No renderer replacement or new general drawflags behavior is implied by these
 bounded repairs; broader alpha/OIT/effects remain their native qualifications.
 
+The [native pipeline-cache adapter](native-pipeline-cache-2.0-plan.md) requires
+actual base/alternative/compute creation and rendered output across desktop/
+stereo, MSAA/AO/OIT/foveation variants and same-device restarts. Use disposable
+write roots for missing/valid/wrong-device-or-UUID/corrupt/truncated/oversized
+cache files, allocation/file/cache/snapshot/replace failures where meaningful
+facilities exist, and shutdown with render resources absent but cache alive.
+Incomplete data must not replace a valid file; failed initialization must not
+retry each frame/rebuild. Driver pipeline identity and shared native camera
+descriptors stay intact; no new timing measurement or async compiler gate.
+
 The inherited aim source repairs add focused cases to the VR movement and
 presentation row: deadzone 0/70/out-of-range/nonfinite and unchanged valid
 fractional values; controller-to-head/mouse/blended history with unavailable
