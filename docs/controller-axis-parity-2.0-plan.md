@@ -86,3 +86,22 @@ is unavailable, so this is source advice, not certified final-goal signoff.
 | Claim same-sample queued wheel-open execution exclusion | Reject: preserve inherited native queue ordering; no binding parser/new dispatcher. |
 
 Review was source-only, with no tests/builds/compiler/probes or device execution.
+
+## Actual production source receipt
+
+Commit786ca872 changes only vr_input.c (23 added lines/one replacement).
+Luna implemented the specified adapter. Main inspected the entire diff and
+relevant producer/consumer gates, retaining native qboolean for the local
+snapshot. Requested local Astra xhigh rechecked the actual committed patch
+with git show and reported no P1/P2 findings, recommending bounded acceptance.
+Effective routing remains unverified; this is source advice, not formal final
+goal certification.
+
+The entry snapshot precedes calibration cancellation/completion. Accepted-hand
+desired/previous ownership selects at most one per-call candidate; centered or
+consumed clicks still record ownership. Successful EmitDesired and current
+dispatch/context/live-consumption checks govern the native queue append.
+Existing trigger-release cleanup still runs even when emission fails. The
+horizontal mapping shares native desired-key release and binding semantics.
+Scoped whitespace checks passed; no software/runtime tests or builds ran.
+All deferred qualification above remains pending.

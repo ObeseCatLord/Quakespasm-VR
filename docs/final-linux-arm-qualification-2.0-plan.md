@@ -35,6 +35,18 @@ runtime, packet counter or helper test must keep its proof limitations explicit.
 
 ## Full surviving scope matrix
 
+The [inherited controller-axis adapters](controller-axis-parity-2.0-plan.md)
+require backend-sample-to-Key_Event-to-Cbuf/native command coverage: gameplay
+weapon-hand horizontal bindings; Vive positive/negative/center rising clicks,
+held sector changes, repeated samples and logical hand swaps. Exercise profile/
+focus/role/context neutral rearm and callback dispatch aborts. Suppressed clicks
+must still become owned so closing an already-active wheel/calibration or moving
+from center to a sector while held cannot inject a delayed cycle. Include
+calibration ending/canceling inside Commands and native same-sample queued
+wheel-open ordering; do not claim execution-time exclusion. Other profiles,
+menu offhand navigation, vertical wheel input and paused private impulses retain
+their existing owners. Physical controller qualification stays user-side.
+
 The [music format-transition repair](music-format-transition-2.0-plan.md)
 requires actual native track replacement across rates, mono/stereo and8/16-bit
 input, including replacement after EOF with no live decoder, repeated stop,
