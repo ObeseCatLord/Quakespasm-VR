@@ -451,6 +451,9 @@ static qboolean stereo_view_adjusted;
 static vec3_t stereo_base_origin, stereo_base_angles;
 static qboolean stereo_have_reference;
 static vec3_t stereo_reference_position;
+/* Last rendered body-owned head, distinct from the initial playspace origin. */
+static float stereo_body_horizontal_position[2];
+static qboolean stereo_body_horizontal_valid;
 static vec3_t stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up;
 static qboolean stereo_tracking_basis_valid;
 static qboolean stereo_liquid_categories_valid;
@@ -539,12 +542,54 @@ static void R_InitializeStereoReference (const vrxr_frame_t *frame)
 	}
 }
 
+void R_ResetTrackedBodyCamera (void)
+{
+	stereo_body_horizontal_valid = false;
+}
+
 void R_InvalidateStereoReference (void)
 {
 	// Keep invalidation across skipped frames until a valid rendered pose.
 	stereo_have_reference = false;
 	stereo_tracking_basis_valid = false;
+	R_ResetTrackedBodyCamera ();
 	V_RebaseTrackedAim ();
+}
+
+static qboolean R_XRPoseIsFinite (const float matrix[3][4]);
+
+static void R_TrackedBodyHorizontalOffset (const vrxr_frame_t *frame,
+	float units_per_metre, vec3_t local, qboolean preparing_camera)
+{
+	/* Retirement is distinct from a temporary unavailable player/pose base. */
+	if (cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || cls.demoplayback || cl.intermission)
+	{
+		R_ResetTrackedBodyCamera ();
+		return;
+	}
+	if (!V_TrackedBodyOwnsRoomscale ())
+		return;
+	const vrxr_device_t *head = &frame->devices[0];
+	/* A valid predicted render pose need not be actively sensor-tracked. */
+	const qboolean valid = frame->should_render && head->valid &&
+		head->kind == VRXR_DEVICE_HEAD && head->hand == -1 && R_XRPoseIsFinite (head->matrix);
+	if ((!cl.paused && preparing_camera) || (cl.paused && !stereo_body_horizontal_valid))
+	{
+		if (valid)
+		{
+			stereo_body_horizontal_position[0] = head->matrix[0][3];
+			stereo_body_horizontal_position[1] = head->matrix[2][3];
+			stereo_body_horizontal_valid = true;
+		}
+	}
+	if (cl.paused && stereo_body_horizontal_valid && valid)
+	{
+		local[0] = (head->matrix[0][3] - stereo_body_horizontal_position[0]) * units_per_metre;
+		local[2] = (head->matrix[2][3] - stereo_body_horizontal_position[1]) * units_per_metre;
+	}
+	else
+		/* Gameplay follows the collision-resolved body; never add its step twice. */
+		local[0] = local[2] = 0.0f;
 }
 
 void R_RestoreStereoView (void)
@@ -782,8 +827,7 @@ qboolean R_TrackedHeadBodyOffset (vec3_t world_offset)
 	matrix = head->matrix;
 	for (int axis = 0; axis < 3; ++axis)
 		local[axis] = (matrix[axis][3] - stereo_reference_position[axis]) * units_per_metre;
-	if (V_TrackedBodyOwnsRoomscale ())
-		local[0] = local[2] = 0.0f;
+	R_TrackedBodyHorizontalOffset (frame, units_per_metre, local, false);
 
 	{
 		vec3_t yaw_angles = {0.0f, presentation_yaw, 0.0f};
@@ -833,6 +877,7 @@ void R_PrepareStereoFrame (void)
 	{
 		memset (&vr_fbt_visual_frame, 0, sizeof (vr_fbt_visual_frame));
 		stereo_have_reference = false;
+		R_ResetTrackedBodyCamera ();
 		r_stereo_radius = 0;
 		return;
 	}
@@ -872,13 +917,7 @@ void R_PrepareStereoFrame (void)
 	R_InitializeStereoReference (frame);
 	for (int i = 0; i < 3; ++i)
 		local[i] = (head[i][3] - stereo_reference_position[i]) * units_per_metre;
-	if (V_TrackedBodyOwnsRoomscale ())
-	{
-		/* The command/prediction path now moves the player by this HMD step.
-		 * Keep the inherited player eye at that collision-resolved body origin,
-		 * including when a wall prevents the requested roomscale move. */
-		local[0] = local[2] = 0;
-	}
+	R_TrackedBodyHorizontalOffset (frame, units_per_metre, local, true);
 	float viewheight;
 	if (V_TrackedPlayerBase (&viewheight))
 	{

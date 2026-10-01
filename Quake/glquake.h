@@ -50,6 +50,7 @@ qboolean GL_OpenXRHiddenAreaWorldEligible (const struct cb_context_s *cbx);
 void GL_InvalidateXRInput (void);
 void GL_EndXRFrame (void);
 void R_PrepareStereoFrame (void);
+void R_ResetTrackedBodyCamera (void);
 qboolean R_StereoSceneView (int eye, vrxr_view_t *out);
 qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction);
 qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t right, vec3_t up, vec3_t forward);

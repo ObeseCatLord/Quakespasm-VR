@@ -233,6 +233,8 @@ void V_ResetTrackedAim (void)
 	VR_WeaponCalibrationAdjustCancel ();
 	tracked_local_yaw = 0;
 	tracked_body_anchor = false;
+	/* A new client/map identity cannot inherit a previous paused camera base. */
+	R_ResetTrackedBodyCamera ();
 	tracked_viewmodel_active = false;
 	tracked_viewmodel_pose_applied = false;
 	view_stair_delta = 0;
