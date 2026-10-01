@@ -1,5 +1,9 @@
 # Major-feature implementation plans
 
+Next committed correction plans:
+[C01/C03/C05 native networking](precache-infokey-protocol-2.0-plan.md) and
+[C15/C16/C17 audio publication](spatial-loop-monitor-2.0-plan.md).
+
 Final-checklist correction slices planned before implementation:
 [Toss/elevator C08–C09](toss-support-elevator-2.0-plan.md) and
 [classic-particle capacity C22](classic-particle-capacity-2.0-plan.md).
