@@ -40,3 +40,14 @@ runner lines: supply existing +vid_vsync0/+host_maxfps144 to both clients,
 retaining native command/send cadence and every probe assertion. No prediction
 field or packet timing injection. Rerun the same simultaneous case with fresh
 output; observed replay calls alone remain insufficient acceptance.
+
+The separated-render-cap attempt still reports no unchanged ACK/sent/authority
+frames, while actual VR admission and90successful replay returns are observed.
+Heavy GDB controller injection can make every rendered frame reach the default
+network interval. BEFORE8 further runner lines: use existing native
+host_phys_max_ticrate10 in this diagnostic profile so it can observe render
+frames between native command sends. The native option, command sampling,
+transport/server/ACK and all replay/output assertions remain unchanged. Record
+the10Hz diagnostic limit explicitly; this is not default-cadence or performance
+proof. A failure after actual stable frames is a different finding requiring
+diagnosis, not another assertion relaxation.
