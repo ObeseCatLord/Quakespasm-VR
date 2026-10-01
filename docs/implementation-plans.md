@@ -1,5 +1,11 @@
 # Major-feature implementation plans
 
+[C12 QBJ3 live-avatar admission](qbj3-live-avatar-2.0-plan.md) reuses the inherited
+strict frame/selection contract at the native staged palette, raster and BLAS
+boundaries. C13 corpse and C14 optional equipment remain separate planned slices.
+[C21 native GPU diagnostic availability](gpu-diagnostic-validity-2.0-plan.md)
+retains existing queries and adds truthful validity and sampled stereo labels.
+
 Committed correction plans:
 [C01/C03/C05 native networking](precache-infokey-protocol-2.0-plan.md) and
 [C15/C16/C17 audio publication](spatial-loop-monitor-2.0-plan.md).
