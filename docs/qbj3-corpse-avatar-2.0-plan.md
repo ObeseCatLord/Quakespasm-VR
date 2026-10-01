@@ -66,6 +66,35 @@ Quake/r_brush.c. About180–280 changed lines expected; report/reopen if materia
 larger or another owner is introduced. No avatar assets, network/QC state,
 animation/rig algorithms or other checkouts may change.
 
+## Estimate reopening before integration
+
+The worker paused at381 changed lines (290 added,91 removed), exceeding the
+350-line escalation threshold. Main read the full five-file diff: storage
+conversion, shared admission/identity and reuse of native BLAS account for the
+growth. There is still one frame owner, one admission builder and one upload;
+no adjacent renderer/rig/network owner is being replaced. Retaining a second
+corpse vector would duplicate publication/accounting. The unified design remains
+the smaller end-to-end adapter. Revised working bound is approximately400
+changed lines, subject to source review; do not compress code to meet it.
+
+Before further implementation, main identified these concrete corrections:
+
+- Clamp requested entry capacity to the CPU budget and preserve usable old
+  capacity after failed growth. Fill players first up to capacity, then corpses;
+  overflow entries retain original art instead of discarding all players.
+- Remove the added ordinary death branch in the native tracked candidate.
+  The original renderer already owns native death art; return before sampling
+  for QBJ3 deaths/unsupported models, and bypass fallback for staged deaths and
+  corpses. Only explicit selected alternates need a prepared death palette.
+- Revalidate the reserved player pointer/owner and corpse colormap/occupied
+  slot/current explicit selection before candidate publication. Reject native
+  or changed owner choices without deriving another identity.
+- Guard stage entry before dereference; require valid native player bounds
+  before dynamic corpse enumeration. Initialize the ordinary pose argument.
+
+These changes complete the previously documented capacity/identity/track gates,
+and delete unnecessary fallback code. They do not authorize a broader rewrite.
+
 ## Consolidated acceptance
 
 At final Linux/ARM qualification, show actual supported player-slot deaths and
