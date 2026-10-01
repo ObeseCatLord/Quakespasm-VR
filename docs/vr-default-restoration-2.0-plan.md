@@ -117,3 +117,31 @@ additional code. Request local Astra source design advice to verify/critique the
 pending-versus-startup distinction, NULL/equality/unbindall cases and delete
 unnecessary state. Main synthesizes a disposition before delegated correction.
 Do not re-review controller motion, voice, full config IO or prediction here.
+
+### Revised design disposition before correction
+
+Main spot-checked the requested-Astra advice against Key_SetBinding,
+Key_Unbindall_f and M_UnbindCommand. The menu only visits existing matching
+bindings, so action-level clearing otherwise misses a currently absent VR key.
+This source review changes the adapter; no additional settings owner is needed.
+
+| Recommendation | Disposition |
+| --- | --- |
+| Menu command clearing must include currently missing keys. | Adopt: one VR-owned command-clear notification from M_UnbindCommand, matching the existing eleven-entry table. Individual removed-key notifications remain. |
+| Replace the existing boolean with three phases. | Adopt: startup pending, applied, explicit restoration pending. One bounded exclusion mask remains temporary; no second pending boolean. |
+| Observe validated key assignments before the equality fast path. | Adopt: notifications only exclude entries during explicit pending restoration. They do not fill or create pending work. |
+| Unbindall must cover already-NULL keys. | Adopt: a completion notification excludes the entire existing table while pending. |
+| Consume exactly once before generated bindings notify the key owner. | Adopt: snapshot mask, mark applied, clear mask, then use the existing missing-only filler; an entirely excluded restoration is still consumed. |
+| Preserve startup policy and native desktop controller behavior. | Adopt: detached explicit commands only become explicit pending after a prior initial fill, or while already explicit pending. Startup configuration remains startup pending. |
+
+Correction ownership remains the five production files named above. The menu
+notification joins the existing menu write scope. No saved mask, second table,
+periodic refill, generic binding-mutation service or command registry is added.
+The earlier two-boolean lean is superseded. Review the complete actual patch,
+including later NULL/empty assignment, action clearing and unbindall after a
+detached restore, before committing production.
+
+Review provenance: requested gpt-6-astra at xhigh, read-only source advice.
+Effective runtime settings metadata remains unavailable, so the required
+certified senior-review routing cannot be verified here. This is not final-goal
+signoff or execution qualification. Main owns the adopted architecture.
