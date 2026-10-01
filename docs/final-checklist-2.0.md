@@ -14,6 +14,14 @@ consumers in `4179ef1e`. C19 staging/verification is source-integrated in
 None of these
 source receipts constitutes final executable acceptance.
 
+The [current local Astra xhigh review](final-checklist-current-2.0-review.md)
+reconciles all185 IDs and confirms that C02 is the only established unfinished
+implementation area. Exact unreviewed IDs: none. It independently checked recent
+source closures and the unaccepted846-line C02 draft, finding additional signon
+control-pressure and console persistence-flag gaps within C02. The full remaining
+subchecklist and main dispositions are in that review. All eight final software/
+delivery groups remain open; no final-tree executable acceptance is claimed.
+
 Read-only reference revalidation found one newer primary commit after canonical
 51b452c0:7acafa8b adds generic model-path trailing-whitespace fallback. That
 bounded C06/NET-007 follow-up is source-integrated in `c034a2f5`, following the
@@ -27,7 +35,7 @@ excluded/deferred (X), one reference experiment (R). These overlapping rows are
 not completion percentages. The missing rows produce the 22 distinct items
 below; no row remains unreviewed.
 
-The [current local Astra xhigh refresh](final-checklist-refresh-2.0-review.md)
+The [earlier local Astra xhigh refresh](final-checklist-refresh-2.0-review.md)
 accounts for all185 IDs using the original review and current receipts, verifies
 challenged consumers, and confirmed **four remaining implementation areas at
 that review snapshot**. C07, C14 and C19 have since been source-integrated,
@@ -77,17 +85,27 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   846 added/deleted lines, beyond the BEFORE800 reopening boundary (the initial
   interruption snapshot was819). No worker remains active. Main source review
   found missing ordered native overlay/companion preflight and connection dirty
-  coverage; the current final-checklist Astra review will verify the full remaining
-  enumeration before coding resumes. No sender source receipt yet.
+  coverage. The current Astra review confirms those gaps and adds complete
+  prespawn/begin pressure handling and refusal-through-seta flags. Reopen the
+  bounded plan with these dispositions before coding resumes. No sender receipt yet.
+- [ ] Honor explicit directional metadata support independently of PREDINFO,
+  retaining the conservative legacy eligibility path. Ordinary public/private
+  defaults already include PREDINFO; no default-profile exclusion is established.
 - [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
   slots before signon3 using current stores and native reliable-buffer retry.
 - [ ] Preserve publication across mid-signon changes, map changes and spawn/
   fastload buffer clears; deliver retired/empty or reused-current slot metadata.
 - [ ] Retire only after disconnect QC sees old state; keep current native name/
-  colors after custom snapshots and retain native frags.
-- [ ] Share full/incremental public projection including the cvar path, exclude
+  colors after custom snapshots and retain native frags. Notify new/reused slot
+  occupation even when QC intercepts ordinary name commands. Preflight canonical
+  userinfo plus actual ordered name/topcolor/bottomcolor overlays, including
+  intermediate stores, quoted binary names and complete companion byte counts.
+- [ ] Share public projection for full publication and compatible incremental
+  reconstruction, including the cvar path; exclude
   private underscore keys, retain star keys and clear unrepresentable old values
   without silent1024-byte truncation or changes to local stores.
+  The current Astra adaptation permits full current-store live publication;
+  a separate incremental fast path or persistent change queue is unnecessary.
 - [ ] Complete initial client publication with one persistent native reliable
   allocation, protocol-selected logical envelopes, complete command/reply
   preflight and native pending-reply retry. Reset logical limits on map/new
@@ -95,6 +113,11 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   Larger staging does not enlarge reverse tokens or stock-QSS-M's userinfo store.
   Connected live cvar/control framing gaps must be resolved or explicitly retained
   as C02 findings before closing implementation.
+- [ ] Include prespawn and begin in complete client control admission/retry,
+  preserving loading/name order without unchecked reliable-buffer appends.
+- [ ] Preserve the complete no-effects live-refusal guarantee through console
+  wrappers, including seta archive/persistence flags, as well as cvar/default/
+  VM/store/emitted-byte effects. Keep successful native behavior.
 - [x] Repair full/update receiver argc, bounded nonnegative slots and full-string
   termination; `2a43c96b` (source integration, final qualification pending).
 - [x] Finish quoted-command validation and extend only the explicit required
@@ -338,9 +361,11 @@ research; they were not blanket-approved implementation.
 - [Complete 185-row original audit crosswalk](final-scope-enumeration-2.0-worksheet.csv):
   snapshot classification and actual owner/evidence or exact question for every row.
   Older status/route columns remain historical, explicitly not proof.
-- [Final current senior disposition](final-checklist-refresh-2.0-review.md):
-  exhaustive remaining implementation substeps, source-verified refinements and
-  current source-integrated versus qualification status.
+- [Final current senior disposition](final-checklist-current-2.0-review.md):
+  all185 IDs reconciled, exhaustive remaining C02 substeps, source-verified
+  refinements and the eight pending qualification/delivery groups.
+- [Earlier senior refresh](final-checklist-refresh-2.0-review.md):
+  historical four-area snapshot and source findings before their integrations.
 - [Senior-review dispositions](final-scope-senior-disposition-2.0.md): adopted,
   adapted and rejected recommendations, source spot-checks and scope rationale.
 - [Lead source returns](final-scope-lead-source-review.md) and

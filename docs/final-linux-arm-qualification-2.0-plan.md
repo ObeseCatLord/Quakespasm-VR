@@ -161,6 +161,20 @@ The existing serverinfo_command_smoke.gdb isolates server command readers and
 does not qualify this sender/lifecycle contract. Inspect live cvar/control
 publication too; any connected unhandled failure remains a C02 finding.
 
+The [current final-checklist Astra review](final-checklist-current-2.0-review.md)
+adds explicit native control/wrapper cases within that same C02 family:
+blocked reliable sends where the name reply fits but leaves fewer than ten bytes
+for prespawn, and full-buffer begin; preserve CSQC loading/name/control order and
+eventual complete admission without duplicate loading or partial commands.
+Exercise refused live seta on a non-archived USERINFO cvar: string, flags, default,
+VM/store and queued bytes must remain unchanged. Include declared metadata support
+without PREDINFO, ordinary public/private defaults, and slot occupation with QC
+intercepting normal name commands. Actual near-full canonical userinfo must retain
+all representable custom fields and agree with native scoreboard name/colors after
+each ordered overlay; permanent incompatibility must use the recipient failure
+path. No default-profile exclusion or reachable scratch overflow is established
+merely by the reviewed source guard omissions.
+
 The [C19 refinement plan](portable-linux-staging-refinement-2.0-plan.md) adds
 artifact cases on both native architectures from the same committed snapshot.
 Stage/verify the actual final dependency closure, then relocate into a disposable
