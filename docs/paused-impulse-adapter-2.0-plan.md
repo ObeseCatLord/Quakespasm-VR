@@ -137,3 +137,34 @@ predicate is added to the bounded estimate; architecture expansion is not
 authorized. Main owns this disposition. The source review earned its cost by
 identifying a lost-intent path; it is not runtime/routing certification or final
 signoff. No builds/tests/compiler/probes/game checks ran.
+
+## Production integration and exact-patch review receipt
+
+Commitc8d5545a supplies99 additions/8 removals in the seven planned production
+files. The direct gpt-6-luna xhigh delegation was accepted; main reviewed the
+full actual patch and production finalization/send/protocol/lifecycle callers.
+The independent final requested-Astra source review found no scoped P1/P2 and
+confirmed that the before-code arrival-gap finding is addressed. Effective
+runtime routing metadata remains unavailable; requested parameters and source
+advice are not formal certification. Scoped git diff --check passed.
+
+The existing pending impulse remains the only value. Deferred/projection flags
+retain only observed deliberate intent; previews and blocked final commands do
+not consume it. Normal CSQC filtering stays between projection and private
+recording; eligible recording consumes the request even for filtered zero or
+replacement. Reset/assignment/resume boundaries invalidate projection and map/
+disconnect clear all pending intent. Ordinary pre-pause edges and tracking keep
+their original cleanup. Existing command redundancy owns delivery afterward.
+
+The read-only local query uses reciprocal live native loopback identity and
+shares the existing global and arrival-recovery predicates with synchronization.
+It never switches QC, publishes epochs, changes a timeout, copies a peer pointer
+or mutates the server. Selected readiness keeps accepted positive marker rules
+without a prediction/recovery-completion gate. Remote pause/recovery behavior
+remains bounded by client-observable metadata and the native transport; no new
+guarantee against every unobserved remote suspension or packet loss is claimed.
+
+No builds/tests/compiler/lint/probes/fixtures/game/server/runtime checks ran.
+The consolidated final Linux/ARM plan records the actual owner round trips still
+required. Source integration closes the demonstrated paused-impulse coding gap,
+not broad MOD-013/mod/controller qualification or the full migration goal.

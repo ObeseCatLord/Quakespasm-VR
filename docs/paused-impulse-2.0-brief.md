@@ -90,3 +90,15 @@ not a claim that MOD-013 is closed. A narrower mostly-worked design and bounded
 source review must resolve them before any production edit. Requested Astra
 xhigh source advice has no available effective-runtime settings certification;
 no execution or formal final-goal signoff is claimed.
+
+## Subsequent implementation disposition
+
+The [mostly-worked adapter plan](paused-impulse-adapter-2.0-plan.md) resolved
+console observation through exact loopback identity and the read-only existing
+server phase. Requested-Astra caught an additional already-due arrival-gap case;
+the adopted shared predicate preserves the original terminal/timeout owner.
+Commitc8d5545a implements that bounded input adapter with main complete-diff
+review and final independent requested-Astra source review finding no P1/P2.
+This supersedes the earlier open console/projection design questions, not the
+final software/QC qualification or broader migration requirements. No execution
+checks or additional impulse protocol/queue/recovery owner were introduced.
