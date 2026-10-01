@@ -5658,14 +5658,53 @@ static qboolean MD5_FilterAvatarBodyIndexes (unsigned short *indexes,
 	return true;
 }
 
-/* The private Ranger's Gun and Axe are leaf-joint, single-weight meshes.
- * Preserve only triangles wholly owned by one prop, compacting their vertices
- * before the MD5 parser releases source weights and texture coordinates. */
-static qboolean MD5_CaptureRangerPropSurface (
+static qboolean MD5_AvatarBuildEquipmentRoot (const jointinfo_t *joints,
+	size_t count, const char *root_name, const char *anchor_name,
+	int *root_index, byte *root_mask, float root_inverse[12])
+{
+	const int root = MD5_AvatarFindJoint (joints, count, root_name, false);
+	const int anchor = MD5_AvatarFindJoint (joints, count, anchor_name, false);
+	if (root < 0 || anchor < 0 || joints[root].parent != anchor)
+		return false;
+	for (size_t joint = 0; joint < count; ++joint)
+		root_mask[joint] = MD5_AvatarJointDescendsFrom (joints, count, joint, root);
+	for (int element = 0; element < 12; ++element)
+	{
+		root_inverse[element] = joints[root].inverse.mat[element];
+		if (!isfinite (root_inverse[element]))
+			return false;
+	}
+	*root_index = root;
+	return true;
+}
+
+static qboolean MD5_AvatarVertexOwnedBy (const md5vertinfo_t *vinfo,
+	const md5weightinfo_t *weights, size_t numweights, int vertex,
+	const byte *root_mask)
+{
+	const md5vertinfo_t *info = &vinfo[vertex];
+	float ownership = 0.0f;
+	if (info->firstweight > numweights || info->count > numweights - info->firstweight)
+		return false;
+	for (size_t influence = 0; influence < info->count; ++influence)
+	{
+		const md5weightinfo_t *weight = &weights[info->firstweight + influence];
+		if (weight->joint_index >= R_AVATAR_MAX_JOINTS || !isfinite (weight->pos[3]))
+			return false;
+		if (root_mask[weight->joint_index])
+			ownership += weight->pos[3];
+	}
+	return isfinite (ownership) && ownership >= 0.999999f;
+}
+
+/* Keep Ranger's verified leaf/single-weight path intact while allowing the
+ * exact QBJ3 pair to reuse its baked bind points and descendant ownership. */
+static qboolean MD5_CaptureAvatarPropSurface (
 	const md5vertinfo_t *vinfo, const md5weightinfo_t *weights,
 	size_t numweights, const unsigned short *indexes, int numverts,
 	int numindexes, const md5_avatar_bind_surface_t *bind, int joint,
-	int prop, int source_surface_index, size_t *total_bytes,
+	const byte *root_mask, const float *root_inverse, int prop,
+	int source_surface_index, size_t *total_bytes,
 	md5_avatar_prop_surface_t **result)
 {
 	int *vertex_map = NULL;
@@ -5674,7 +5713,8 @@ static qboolean MD5_CaptureRangerPropSurface (
 	size_t map_bytes, vertex_bytes, index_bytes, allocation_bytes, new_total;
 
 	*result = NULL;
-	if (!bind || joint < 0 || numverts <= 0 || numindexes < 0 ||
+	if (!bind || (!root_mask && joint < 0) || (root_mask && !root_inverse) ||
+		numverts <= 0 || numindexes < 0 ||
 		(numindexes % 3) || bind->numverts != numverts ||
 		bind->numindexes != numindexes ||
 		!Mod_CheckedSizeMul ((size_t)numverts, sizeof (*vertex_map), &map_bytes))
@@ -5693,9 +5733,13 @@ static qboolean MD5_CaptureRangerPropSurface (
 			const unsigned short vertex = indexes[index + corner];
 			if (vertex >= numverts)
 				goto invalid;
-			selected &= prop == MD5_AVATAR_PROP_GUN ?
-				bind->vertices[vertex].ranger_gun_owned :
-				bind->vertices[vertex].ranger_axe_owned;
+			if (root_mask)
+				selected &= MD5_AvatarVertexOwnedBy (vinfo, weights,
+					numweights, vertex, root_mask);
+			else
+				selected &= prop == MD5_AVATAR_PROP_GUN ?
+					bind->vertices[vertex].ranger_gun_owned :
+					bind->vertices[vertex].ranger_axe_owned;
 		}
 		if (!selected)
 			continue;
@@ -5737,18 +5781,34 @@ static qboolean MD5_CaptureRangerPropSurface (
 		if (vertex_map[vertex] < 0)
 			continue;
 		info = &vinfo[vertex];
-		if (info->count != 1 || info->firstweight >= numweights)
-			goto invalid;
-		weight = &weights[info->firstweight];
-		/* Do not approximate a deforming mesh as a rigid prop. */
-		if (weight->joint_index != (size_t)joint || weight->pos[3] != 1.0f)
-			goto invalid;
 		out = &surface->vertices[vertex_map[vertex]];
-		for (int axis = 0; axis < 3; ++axis)
+		if (root_mask)
 		{
-			if (!isfinite (weight->pos[axis]))
+			const float *point = bind->vertices[vertex].xyz;
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				out->xyz[axis] = root_inverse[axis * 4] * point[0] +
+					root_inverse[axis * 4 + 1] * point[1] +
+					root_inverse[axis * 4 + 2] * point[2] +
+					root_inverse[axis * 4 + 3];
+				if (!isfinite (out->xyz[axis]))
+					goto invalid;
+			}
+		}
+		else
+		{
+			if (info->count != 1 || info->firstweight >= numweights)
 				goto invalid;
-			out->xyz[axis] = weight->pos[axis];
+			weight = &weights[info->firstweight];
+			/* Do not approximate a deforming mesh as a rigid prop. */
+			if (weight->joint_index != (size_t)joint || weight->pos[3] != 1.0f)
+				goto invalid;
+			for (int axis = 0; axis < 3; ++axis)
+			{
+				if (!isfinite (weight->pos[axis]))
+					goto invalid;
+				out->xyz[axis] = weight->pos[axis];
+			}
 		}
 		for (int axis = 0; axis < 2; ++axis)
 		{
@@ -5763,9 +5823,11 @@ static qboolean MD5_CaptureRangerPropSurface (
 		for (int corner = 0; corner < 3; ++corner)
 		{
 			const unsigned short vertex = indexes[index + corner];
-			selected &= prop == MD5_AVATAR_PROP_GUN ?
-				bind->vertices[vertex].ranger_gun_owned :
-				bind->vertices[vertex].ranger_axe_owned;
+			selected &= root_mask ? MD5_AvatarVertexOwnedBy (vinfo,
+				weights, numweights, vertex, root_mask) :
+				(prop == MD5_AVATAR_PROP_GUN ?
+				 bind->vertices[vertex].ranger_gun_owned :
+				 bind->vertices[vertex].ranger_axe_owned);
 		}
 		if (!selected)
 			continue;
@@ -5806,11 +5868,9 @@ invalid:
 	return false;
 }
 
-/* Upload only the byte-verified Ranger's rigid equipment. Each view borrows
- * the source surface's textures, but owns its one-joint mesh buffers. The
- * identity pose leaves vertices in Gun/Axe bone-local space for the later
- * per-player attachment transform. */
-static qboolean MD5_UploadRangerPropViews (
+/* Each static view borrows the source surface's textures and owns its mesh
+ * buffers; the identity pose preserves the captured source-root-local points. */
+static qboolean MD5_UploadAvatarPropViews (
 	qmodel_t *mod, aliashdr_t *source_head, size_t source_count,
 	const md5_avatar_prop_t props[MD5_AVATAR_PROP_COUNT],
 	aliashdr_t *views[MD5_AVATAR_PROP_COUNT])
@@ -5891,6 +5951,19 @@ static qboolean MD5_UploadRangerPropViews (
 		}
 	}
 	return true;
+}
+
+static void MD5_ClearOptionalAvatarProps (
+	md5_avatar_prop_t props[MD5_AVATAR_PROP_COUNT],
+	aliashdr_t *views[MD5_AVATAR_PROP_COUNT],
+	md5_avatar_prop_surface_t **tails[MD5_AVATAR_PROP_COUNT],
+	size_t *total_bytes)
+{
+	Mod_FreeAvatarPropGPU (views);
+	Mod_FreeAvatarProps (props);
+	for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+		tails[prop] = &props[prop].surfaces;
+	*total_bytes = 0;
 }
 
 typedef struct md5animjoint_s
@@ -6896,6 +6969,12 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	const void *anim_override, qfilesize_t anim_override_size,
 	qfilesize_t mesh_size)
 {
+	static const char qbj3_equipment_digest[] =
+		"ef98e3b1df7cf03715dbd54963329c84f91abf490a19f9faafd7e694c693dc42";
+	static const char *const qbj3_prop_roots[MD5_AVATAR_PROP_COUNT] = {
+		"QBJ3_Shotgun", "QBJ3_BackWrench"};
+	static const char *const qbj3_prop_anchors[MD5_AVATAR_PROP_COUNT] = {
+		"HAND_R", "SPINE2"};
 	const char *fname = mod->name;
 	const r_avatar_profile_t *avatar_bind_profile = mod_custom_avatar ?
 		&mod_custom_avatar->profile : (anim_override ? R_AvatarProfileForModelPath (mod->name) : NULL);
@@ -6904,19 +6983,23 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	md5_skeleton_data_t *retained_skeleton = NULL;
 	md5_avatar_bind_surface_t *bind_surfaces = NULL;
 	md5_avatar_bind_surface_t **bind_tail = &bind_surfaces;
-	md5_avatar_prop_t ranger_props[MD5_AVATAR_PROP_COUNT] = {{0}};
-	aliashdr_t *ranger_prop_gpu[MD5_AVATAR_PROP_COUNT] = {NULL};
+	md5_avatar_prop_t avatar_props[MD5_AVATAR_PROP_COUNT] = {{0}};
+	aliashdr_t *avatar_prop_gpu[MD5_AVATAR_PROP_COUNT] = {NULL};
 	md5_avatar_prop_surface_t **prop_tails[MD5_AVATAR_PROP_COUNT] = {
-		&ranger_props[MD5_AVATAR_PROP_GUN].surfaces,
-		&ranger_props[MD5_AVATAR_PROP_AXE].surfaces};
+		&avatar_props[MD5_AVATAR_PROP_GUN].surfaces,
+		&avatar_props[MD5_AVATAR_PROP_AXE].surfaces};
 	size_t avatar_bind_bytes = 0;
 	size_t avatar_skin_bytes = 0;
-	size_t ranger_prop_bytes = 0;
+	size_t avatar_prop_bytes = 0;
 	byte contact_mask[R_AVATAR_MAX_JOINTS], equipment_mask[R_AVATAR_MAX_JOINTS];
 	byte gun_mask[R_AVATAR_MAX_JOINTS], axe_mask[R_AVATAR_MAX_JOINTS];
+	byte qbj3_prop_masks[MD5_AVATAR_PROP_COUNT][R_AVATAR_MAX_JOINTS] = {{0}};
+	float qbj3_prop_inverse[MD5_AVATAR_PROP_COUNT][12] = {{0}};
 	qboolean has_avatar_contact = false;
 	qboolean capture_ranger_props;
+	qboolean capture_qbj3_props;
 	int ranger_prop_joint[MD5_AVATAR_PROP_COUNT] = {-1, -1};
+	int qbj3_prop_joint[MD5_AVATAR_PROP_COUNT] = {-1, -1};
 	size_t		hdrsize = 0;
 	size_t		retained_joints_offset, retained_joint_bytes, retained_matrix_count;
 	size_t		retained_pose_bytes, retained_allocation_size;
@@ -6957,6 +7040,10 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	capture_ranger_props = anim_override && !mod_custom_avatar &&
 		verified_rerelease_mesh && avatar_bind_profile &&
 		avatar_bind_profile->id == PLAYER_AVATAR_RANGER;
+	capture_qbj3_props = mod_custom_avatar &&
+		!q_strcasecmp (COM_SkipPath (com_gamedir), "qbj3") &&
+		!strcmp (mod_custom_avatar->key, "qbj3") &&
+		!strcmp (mod_custom_avatar->digest, qbj3_equipment_digest);
 	buffer = COM_Parse (buffer);
 	if (numjoints > (size_t)INT_MAX / 2 || nummeshes > INT_MAX ||
 		anim.numposes > INT_MAX || anim.numjoints > INT_MAX ||
@@ -7100,6 +7187,16 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 					MD5ERROR ("%s: Ranger prop joint is not a leaf\n", fname);
 		}
 	}
+	if (capture_qbj3_props)
+		for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+			if (!MD5_AvatarBuildEquipmentRoot (joint_infos, numjoints,
+				qbj3_prop_roots[prop], qbj3_prop_anchors[prop],
+				&qbj3_prop_joint[prop], qbj3_prop_masks[prop],
+				qbj3_prop_inverse[prop]))
+			{
+				capture_qbj3_props = false;
+				break;
+			}
 	buffer = COM_Parse (buffer);
 
 	int num_skeleton_indexes = 0;
@@ -7421,16 +7518,39 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 				for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
 				{
 					md5_avatar_prop_surface_t *piece;
-					if (!MD5_CaptureRangerPropSurface (vinfo, weight, numweights,
+					if (!MD5_CaptureAvatarPropSurface (vinfo, weight, numweights,
 						poutindexes, surf->numverts, surf->numindexes, bind,
-						ranger_prop_joint[prop], prop, m, &ranger_prop_bytes, &piece))
+						ranger_prop_joint[prop], NULL, NULL, prop, m,
+						&avatar_prop_bytes, &piece))
 						MD5ERROR ("%s: invalid Ranger prop geometry\n", fname);
 					if (!piece)
 						continue;
 					*prop_tails[prop] = piece;
 					prop_tails[prop] = &piece->next;
-					ranger_props[prop].numverts += piece->numverts;
-					ranger_props[prop].numindexes += piece->numindexes;
+					avatar_props[prop].numverts += piece->numverts;
+					avatar_props[prop].numindexes += piece->numindexes;
+				}
+			if (capture_qbj3_props)
+				for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
+				{
+					md5_avatar_prop_surface_t *piece;
+					if (!MD5_CaptureAvatarPropSurface (vinfo, weight, numweights,
+						poutindexes, surf->numverts, surf->numindexes, bind,
+						qbj3_prop_joint[prop], qbj3_prop_masks[prop],
+						qbj3_prop_inverse[prop], prop, m, &avatar_prop_bytes,
+						&piece))
+					{
+						MD5_ClearOptionalAvatarProps (avatar_props,
+							avatar_prop_gpu, prop_tails, &avatar_prop_bytes);
+						capture_qbj3_props = false;
+						break;
+					}
+					if (!piece)
+						continue;
+					*prop_tails[prop] = piece;
+					prop_tails[prop] = &piece->next;
+					avatar_props[prop].numverts += piece->numverts;
+					avatar_props[prop].numindexes += piece->numindexes;
 				}
 			if (anim_override && !mod_custom_avatar &&
 				avatar_bind_profile->equipment_policy == R_AVATAR_EQUIPMENT_ATTACH_HAND)
@@ -7471,12 +7591,19 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 
 	} // end foreach mesh
 	if (capture_ranger_props &&
-		(!ranger_props[MD5_AVATAR_PROP_GUN].numindexes ||
-		 !ranger_props[MD5_AVATAR_PROP_AXE].numindexes))
+		(!avatar_props[MD5_AVATAR_PROP_GUN].numindexes ||
+		 !avatar_props[MD5_AVATAR_PROP_AXE].numindexes))
 		MD5ERROR ("%s: incomplete Ranger prop geometry\n", fname);
-	if (capture_ranger_props && !MD5_UploadRangerPropViews (
-		mod, outhdr, nummeshes, ranger_props, ranger_prop_gpu))
+	if (capture_ranger_props && !MD5_UploadAvatarPropViews (
+		mod, outhdr, nummeshes, avatar_props, avatar_prop_gpu))
 		MD5ERROR ("%s: couldn't prepare Ranger prop meshes\n", fname);
+	if (capture_qbj3_props &&
+		(!avatar_props[MD5_AVATAR_PROP_GUN].numindexes ||
+		 !avatar_props[MD5_AVATAR_PROP_AXE].numindexes ||
+		 !MD5_UploadAvatarPropViews (mod, outhdr, nummeshes,
+			avatar_props, avatar_prop_gpu)))
+		MD5_ClearOptionalAvatarProps (avatar_props, avatar_prop_gpu,
+			prop_tails, &avatar_prop_bytes);
 	if (mod_custom_avatar && com_token[0])
 		MD5ERROR ("%s: trailing custom avatar mesh data\n", fname);
 
@@ -7509,12 +7636,12 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	mod->extradata[PV_MD5] = (byte *)outhdr;
 	mod->md5_skeleton = retained_skeleton;
 	mod->avatar_bind_surfaces = bind_surfaces;
-	memcpy (mod->avatar_props, ranger_props, sizeof (ranger_props));
-	memcpy (mod->avatar_prop_gpu, ranger_prop_gpu, sizeof (ranger_prop_gpu));
+	memcpy (mod->avatar_props, avatar_props, sizeof (avatar_props));
+	memcpy (mod->avatar_prop_gpu, avatar_prop_gpu, sizeof (avatar_prop_gpu));
 	retained_skeleton = NULL;
 	bind_surfaces = NULL;
-	memset (ranger_props, 0, sizeof (ranger_props));
-	memset (ranger_prop_gpu, 0, sizeof (ranger_prop_gpu));
+	memset (avatar_props, 0, sizeof (avatar_props));
+	memset (avatar_prop_gpu, 0, sizeof (avatar_prop_gpu));
 
 	radius = sqrtf (radius);
 	mod->rmins[0] = mod->rmins[1] = mod->rmins[2] = -radius;
@@ -7539,8 +7666,8 @@ error:
 	// Recoverable replacement-model failures fall back to the MDL, so release
 	// any partial MD5 state that Sys_Error used to abandon by terminating.
 	Mod_FreeAvatarBindSurfaces (bind_surfaces);
-	Mod_FreeAvatarPropGPU (ranger_prop_gpu);
-	Mod_FreeAvatarProps (ranger_props);
+	Mod_FreeAvatarPropGPU (avatar_prop_gpu);
+	Mod_FreeAvatarProps (avatar_props);
 	TEMP_FREE (weight);
 	TEMP_FREE (vinfo);
 	TEMP_FREE (poutvertexes);
