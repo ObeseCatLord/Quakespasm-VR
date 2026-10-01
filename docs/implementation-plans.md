@@ -1,10 +1,14 @@
 # Major-feature implementation plans
 
-Next committed correction plans:
+Committed correction plans:
 [C01/C03/C05 native networking](precache-infokey-protocol-2.0-plan.md) and
 [C15/C16/C17 audio publication](spatial-loop-monitor-2.0-plan.md).
 [C04/C06 loading keepalive and reconnect](loading-keepalive-reconnect-2.0-plan.md)
 adapts inherited boundaries to the existing parser and independent nop transport.
+These eight corrections are source-integrated in `ab1423fb` / `486d1b42` after
+main patch review; executable acceptance remains pending. C02 has a
+[metadata design review brief](metadata-publication-2.0-brief.md), not yet an
+implementation plan or authorization to add a new metadata owner.
 
 Final-checklist correction slices planned before implementation:
 [Toss/elevator C08–C09](toss-support-elevator-2.0-plan.md) and

@@ -18,11 +18,12 @@ another renderer, VM, networking stack or movement solver.
 
 ## Confirmed implementation work
 
-The table below preserves the audit's 22 implementation findings. C08, C09 and
-C22 were subsequently source-integrated in `0d2c182c`, following committed
+The table below preserves the audit's 22 implementation findings. Eleven items
+were subsequently source-integrated in the commits below, following committed
 before-code plans and main review of the Luna patches. Their executable
-acceptance remains pending. **19 implementation items remain**, plus the Q01
-rendering correction assessed below. No tests or builds have run since the audit.
+acceptance remains pending. **11 implementation items remain**: C02, C07,
+C10–C14 and C18–C21, plus the Q01 rendering correction assessed below.
+No tests or builds have run since the audit.
 Each remaining slice needs a committed before-code plan, implementation/source
 review, then observable acceptance in the single end-of-implementation Linux/ARM
 qualification phase.
@@ -31,6 +32,9 @@ qualification phase.
 | --- | --- |
 | C08/C09 — Toss support validity and elevator relink | [Physics plan](toss-support-elevator-2.0-plan.md); source commit `0d2c182c`. Final physics/content qualification pending. |
 | C22 — bounded classic-particle capacity and 32-bit quad indices | [Particle plan](classic-particle-capacity-2.0-plan.md); source commit `0d2c182c`. Final dense-particle rendered acceptance pending. |
+| C01/C03/C05 — late-model helper, ordinary QC metadata lookup, truthful protocol offers | [Networking plan](precache-infokey-protocol-2.0-plan.md); source commit `ab1423fb`. Final remote precache/QC/negotiation qualification pending. C02 publication is still separate. |
+| C15/C16/C17 — shared loop pause, reduced loop room send, inherited wet-monitor default | [Audio plan](spatial-loop-monitor-2.0-plan.md); source commit `ab1423fb`. Callback code/sample identity/generation/offset and independent mic permissions retained. Final software audio qualification pending. |
+| C04/C06 — loading nop and missing-model cancellation | [Loading/reconnect plan](loading-keepalive-reconnect-2.0-plan.md); source commit `486d1b42`. Main checked independent nop buffer preserves parser/reliable state and current true-to-abort cleanup. Final peer/loading/reconnect qualification pending. |
 
 | Item | Feature IDs | Missing behavior and smallest implementation seam | Source evidence / eventual observable acceptance |
 | --- | --- | --- | --- |
