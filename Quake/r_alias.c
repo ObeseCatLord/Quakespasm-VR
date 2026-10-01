@@ -216,25 +216,22 @@ static qboolean R_AliasAppendAvatarPresentation (float model_matrix[16], const r
 	return R_AliasAppendAffine (model_matrix, avatar->target_to_canonical);
 }
 
-/* A private Ranger prop uses its own identity joint palette. Validate the
+/* A private static prop uses its own identity joint palette. Validate the
  * whole surface chain before issuing any draws, so a partial upload cannot
  * leave half of the equipment visible. */
-static const aliashdr_t *R_AliasUsableAttachedProp (const r_vrik_prepared_palette_t *avatar, int skinnum)
+static const aliashdr_t *R_AliasUsableAttachment (
+	const r_vrik_attachment_t *attachment, int skinnum)
 {
-	const aliashdr_t *prop;
 	int surface_count = 0;
-	if (!avatar || !avatar->alternate_avatar || !avatar->attached_prop_valid ||
-		!(prop = avatar->attached_prop_geometry))
+	if (!attachment || !attachment->valid || !attachment->geometry)
 		return NULL;
-	for (int i = 0; i < 12; ++i)
-		if (!isfinite (avatar->attached_prop_to_canonical[i]))
+	for (int axis = 0; axis < 12; ++axis)
+		if (!isfinite (attachment->to_canonical[axis]))
 			return NULL;
-	for (const aliashdr_t *surface = prop; surface; surface = surface->nextsurface)
+	const int anim = (int)(cl.time * 10) & 3;
+	for (const aliashdr_t *surface = attachment->geometry; surface; surface = surface->nextsurface)
 	{
-		const int skin = skinnum >= 0 && skinnum < surface->numskins ? skinnum : 0;
-		const int anim = (int)(cl.time * 10) & 3;
-		gltexture_t *tx;
-		gltexture_t *fb;
+		gltexture_t *tx, *fb;
 		if (++surface_count > MAX_SURFACES || !surface->avatar_static_prop ||
 			surface->poseverttype != PV_MD5 || surface->numjoints != 1 ||
 			surface->numframes != 1 || surface->numposes != 1 ||
@@ -248,13 +245,30 @@ static const aliashdr_t *R_AliasUsableAttachedProp (const r_vrik_prepared_palett
 		for (int axis = 0; axis < 3; ++axis)
 			if (surface->scale[axis] != 1.0f || surface->scale_origin[axis] != 0.0f)
 				return NULL;
-		tx = surface->gltextures[skin][anim];
-		fb = surface->fbtextures[skin][anim];
+		if (skinnum < 0 || skinnum >= surface->numskins)
+			skinnum = 0;
+		tx = surface->gltextures[skinnum][anim];
+		fb = surface->fbtextures[skinnum][anim];
 		if ((tx && tx->descriptor_set == VK_NULL_HANDLE) ||
 			(fb && fb->descriptor_set == VK_NULL_HANDLE))
 			return NULL;
 	}
-	return prop;
+	return surface_count ? attachment->geometry : NULL;
+}
+
+static int R_AliasUsableAttachments (const r_vrik_prepared_palette_t *avatar,
+	int skinnum, const aliashdr_t *attachments[R_VRIK_RENDER_MAX_ATTACHMENTS])
+{
+	if (!avatar || !avatar->alternate_avatar ||
+		avatar->attachment_count > R_VRIK_RENDER_MAX_ATTACHMENTS)
+		return 0;
+	for (uint32_t i = 0; i < avatar->attachment_count; ++i)
+	{
+		attachments[i] = R_AliasUsableAttachment (&avatar->attachments[i], skinnum);
+		if (!attachments[i])
+			return 0;
+	}
+	return (int)avatar->attachment_count;
 }
 
 /* MD5 lighting dots skinned normals in geometry space. Express the ordinary
@@ -1068,12 +1082,12 @@ int R_AliasViewmodelHandMatrix (entity_t *e, const aliashdr_t *geometry,
 /* The private view has unit scale and zero scale origin. Start from the
  * player's ordinary entity transform, then place its bone-local vertices in
  * canonical Ranger space. Target-body presentation must not enter this path. */
-static int R_AliasAttachedPropMatrix (entity_t *e, const aliashdr_t *prop,
-	const r_vrik_prepared_palette_t *avatar, lerpdata_t *lerpdata, float model_matrix[16])
+static int R_AliasAttachmentMatrix (entity_t *e, const r_vrik_attachment_t *attachment,
+	lerpdata_t *lerpdata, float model_matrix[16])
 {
-	const int result = R_AliasModelMatrix (e, prop, lerpdata, model_matrix);
+	const int result = R_AliasModelMatrix (e, attachment->geometry, lerpdata, model_matrix);
 	if (result < 0 || !R_AliasMatrixIsFinite (model_matrix) ||
-		!R_AliasAppendAffine (model_matrix, avatar->attached_prop_to_canonical))
+		!R_AliasAppendAffine (model_matrix, attachment->to_canonical))
 		return -1;
 	return result;
 }
@@ -1196,7 +1210,7 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 {
 	aliashdr_t	*paliashdr;
 	aliashdr_t	*draw_geometry;
-	const aliashdr_t *prop_geometry;
+	const aliashdr_t *attachment_geometry[R_VRIK_RENDER_MAX_ATTACHMENTS] = {0};
 	int			 skinnum = e->skinnum;
 	lerpdata_t	 lerpdata;
 	const qboolean paired_half = V_AkimboViewmodelHand (e) >= 0;
@@ -1223,7 +1237,7 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
 		R_AliasUsablePalette (e, record->geometry) : NULL;
 	draw_geometry = avatar ? (aliashdr_t *)avatar->geometry : paliashdr;
-	prop_geometry = R_AliasUsableAttachedProp (avatar, skinnum);
+	int attachment_count = R_AliasUsableAttachments (avatar, skinnum, attachment_geometry);
 
 	qboolean alphatest = !!((avatar ? avatar->model : e->model)->flags & MF_HOLEY);
 
@@ -1240,11 +1254,18 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
 		return;
 	const qboolean opposite_front_face = matrix_result > 0;
-	float prop_matrix[16];
-	int prop_matrix_result = -1;
-	if (prop_geometry)
-		prop_matrix_result = R_AliasAttachedPropMatrix (e, prop_geometry, avatar,
-			&lerpdata, prop_matrix);
+	float attachment_matrices[R_VRIK_RENDER_MAX_ATTACHMENTS][16];
+	int attachment_matrix_results[R_VRIK_RENDER_MAX_ATTACHMENTS];
+	for (int i = 0; i < attachment_count; ++i)
+	{
+		attachment_matrix_results[i] = R_AliasAttachmentMatrix (e,
+			&avatar->attachments[i], &lerpdata, attachment_matrices[i]);
+		if (attachment_matrix_results[i] < 0)
+		{
+			attachment_count = 0;
+			break;
+		}
+	}
 
 	//
 	// set up for alpha blending
@@ -1262,24 +1283,29 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	//
 	vec3_t shadevector, lightcolor;
 	R_SetupAliasLighting (e, &shadevector, &lightcolor);
-	vec3_t prop_shadevector;
-	VectorCopy (shadevector, prop_shadevector);
+	vec3_t attachment_shadevectors[R_VRIK_RENDER_MAX_ATTACHMENTS];
+	for (int i = 0; i < attachment_count; ++i)
+	{
+		VectorCopy (shadevector, attachment_shadevectors[i]);
+		if (!R_AliasAffineShadeVector (avatar->attachments[i].to_canonical,
+			attachment_shadevectors[i]))
+		{
+			attachment_count = 0;
+			break;
+		}
+	}
 	if (avatar && !R_AliasAvatarShadeVector (avatar, shadevector))
 		return;
-	if (prop_matrix_result >= 0 &&
-		!R_AliasAffineShadeVector (avatar->attached_prop_to_canonical, prop_shadevector))
-		prop_matrix_result = -1;
 
 	R_DrawAliasSurfaces (
 		cbx, e, draw_geometry, draw_geometry, lerpdata, model_matrix, entalpha, alphatest, shadevector, lightcolor, false, true,
 		avatar != NULL,
 		opposite_front_face, aliaspolys);
-	if (prop_matrix_result >= 0)
-		R_DrawAliasSurfaces (cbx, e, (aliashdr_t *)prop_geometry, prop_geometry,
-			R_AliasAttachedPropLerp (lerpdata), prop_matrix, entalpha,
-			!!(e->model->flags & MF_HOLEY),
-			prop_shadevector, lightcolor, false, false, true,
-			prop_matrix_result > 0, aliaspolys);
+	for (int i = 0; i < attachment_count; ++i)
+		R_DrawAliasSurfaces (cbx, e, (aliashdr_t *)attachment_geometry[i], attachment_geometry[i],
+			R_AliasAttachedPropLerp (lerpdata), attachment_matrices[i], entalpha,
+			!!(e->model->flags & MF_HOLEY), attachment_shadevectors[i], lightcolor,
+			false, false, true, attachment_matrix_results[i] > 0, aliaspolys);
 }
 
 static qboolean R_AliasInflateMatrix (const aliashdr_t *geometry,
@@ -1325,7 +1351,8 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
 		R_AliasUsablePalette (e, record->geometry) : NULL;
 	aliashdr_t *draw_geometry = avatar ? (aliashdr_t *)avatar->geometry : geometry;
-	const aliashdr_t *prop_geometry = R_AliasUsableAttachedProp (avatar, e->skinnum);
+	const aliashdr_t *attachment_geometry[R_VRIK_RENDER_MAX_ATTACHMENTS] = {0};
+	int attachment_count = R_AliasUsableAttachments (avatar, e->skinnum, attachment_geometry);
 
 	lerpdata_t lerpdata;
 	R_SetupAliasFrame (e, geometry, &lerpdata);
@@ -1340,13 +1367,17 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 	float inflated_matrix[16];
 	if (!R_AliasInflateMatrix (draw_geometry, model_matrix, inflate, inflated_matrix))
 		return false;
-	float prop_matrix[16], prop_inflated_matrix[16];
-	if (prop_geometry &&
-		(R_AliasAttachedPropMatrix (e, prop_geometry, avatar, &lerpdata,
-			prop_matrix) < 0 ||
-		 !R_AliasInflateMatrix (prop_geometry, prop_matrix, inflate,
-			prop_inflated_matrix)))
-		prop_geometry = NULL;
+	float attachment_matrices[R_VRIK_RENDER_MAX_ATTACHMENTS][16];
+	float attachment_inflated_matrices[R_VRIK_RENDER_MAX_ATTACHMENTS][16];
+	for (int i = 0; i < attachment_count; ++i)
+		if (R_AliasAttachmentMatrix (e, &avatar->attachments[i], &lerpdata,
+			attachment_matrices[i]) < 0 ||
+			!R_AliasInflateMatrix (attachment_geometry[i], attachment_matrices[i],
+				inflate, attachment_inflated_matrices[i]))
+		{
+			attachment_count = 0;
+			break;
+		}
 	const lerpdata_t prop_lerpdata = R_AliasAttachedPropLerp (lerpdata);
 
 	vec3_t shadevector = {0.0f, 0.0f, 0.0f};
@@ -1358,22 +1389,24 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 		for (aliashdr_t *surface = draw_geometry; surface; surface = surface->nextsurface)
 			GL_DrawAliasFrame (cbx, e, surface, draw_geometry, lerpdata, nulltexture, NULL,
 				model_matrix, 1.0f, false, shadevector, mask_color, 0, false, true, true, COOP_OVERLAY_MASK);
-		for (const aliashdr_t *surface = prop_geometry; surface; surface = surface->nextsurface)
-			GL_DrawAliasFrame (cbx, e, (aliashdr_t *)surface, prop_geometry, prop_lerpdata,
-				nulltexture, NULL, prop_matrix, 1.0f, false, shadevector, mask_color,
-				0, false, true, false, COOP_OVERLAY_MASK);
+		for (int i = 0; i < attachment_count; ++i)
+			for (const aliashdr_t *surface = attachment_geometry[i]; surface; surface = surface->nextsurface)
+				GL_DrawAliasFrame (cbx, e, (aliashdr_t *)surface, attachment_geometry[i], prop_lerpdata,
+					nulltexture, NULL, attachment_matrices[i], 1.0f, false, shadevector, mask_color,
+					0, false, true, false, COOP_OVERLAY_MASK);
 	}
 	for (aliashdr_t *surface = draw_geometry; surface; surface = surface->nextsurface)
 		GL_DrawAliasFrame (cbx, e, surface, draw_geometry, lerpdata, nulltexture, NULL,
 			inflated_matrix, alpha, false, shadevector, overlay_color, 0, false, true, true,
 			ring ? COOP_OVERLAY_RING :
 			cbx->subpass_type == SUBPASS_MAIN ? COOP_OVERLAY_FILL_LATE : COOP_OVERLAY_FILL);
-	for (const aliashdr_t *surface = prop_geometry; surface; surface = surface->nextsurface)
-		GL_DrawAliasFrame (cbx, e, (aliashdr_t *)surface, prop_geometry, prop_lerpdata,
-			nulltexture, NULL, prop_inflated_matrix, alpha, false, shadevector,
-			overlay_color, 0, false, true, false,
-			ring ? COOP_OVERLAY_RING :
-			cbx->subpass_type == SUBPASS_MAIN ? COOP_OVERLAY_FILL_LATE : COOP_OVERLAY_FILL);
+	for (int i = 0; i < attachment_count; ++i)
+		for (const aliashdr_t *surface = attachment_geometry[i]; surface; surface = surface->nextsurface)
+			GL_DrawAliasFrame (cbx, e, (aliashdr_t *)surface, attachment_geometry[i], prop_lerpdata,
+				nulltexture, NULL, attachment_inflated_matrices[i], alpha, false, shadevector,
+				overlay_color, 0, false, true, false,
+				ring ? COOP_OVERLAY_RING :
+				cbx->subpass_type == SUBPASS_MAIN ? COOP_OVERLAY_FILL_LATE : COOP_OVERLAY_FILL);
 	return true;
 }
 
@@ -1461,9 +1494,12 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	const r_vrik_prepared_palette_t *avatar = record && record->alternate_avatar ?
 		R_AliasUsablePalette (e, record->geometry) : NULL;
 	draw_geometry = avatar ? (aliashdr_t *)avatar->geometry : paliashdr;
+	const aliashdr_t *attachment_geometry[R_VRIK_RENDER_MAX_ATTACHMENTS] = {0};
+	int attachment_count = R_AliasUsableAttachments (avatar, e->skinnum, attachment_geometry);
 
 	R_SetupAliasFrame (e, paliashdr, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
+	lerpdata_t attachment_lerpdata = R_AliasAttachedPropLerp (lerpdata);
 
 	//
 	// cull it
@@ -1481,6 +1517,18 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
 		return;
 	const qboolean opposite_front_face = matrix_result > 0;
+	float attachment_matrices[R_VRIK_RENDER_MAX_ATTACHMENTS][16];
+	int attachment_matrix_results[R_VRIK_RENDER_MAX_ATTACHMENTS];
+	for (int i = 0; i < attachment_count; ++i)
+	{
+		attachment_matrix_results[i] = R_AliasAttachmentMatrix (e,
+			&avatar->attachments[i], &attachment_lerpdata, attachment_matrices[i]);
+		if (attachment_matrix_results[i] < 0)
+		{
+			attachment_count = 0;
+			break;
+		}
+	}
 
 	vec3_t shadevector = {0.0f, 0.0f, 0.0f};
 	vec3_t lightcolor = {0.0f, 0.0f, 0.0f};
@@ -1490,6 +1538,14 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 		GL_DrawAliasFrame (
 			cbx, e, hdr, draw_geometry, lerpdata, nulltexture, nulltexture, model_matrix, 0.0f, false, shadevector, lightcolor, r_showtris.value,
 			opposite_front_face, false, true, -1);
+	}
+	for (int i = 0; i < attachment_count; ++i)
+	{
+		for (const aliashdr_t *surface = attachment_geometry[i]; surface; surface = surface->nextsurface)
+			GL_DrawAliasFrame (cbx, e, (aliashdr_t *)surface, attachment_geometry[i],
+				attachment_lerpdata, nulltexture, nulltexture, attachment_matrices[i],
+				0.0f, false, shadevector, lightcolor, r_showtris.value,
+				attachment_matrix_results[i] > 0, false, false, -1);
 	}
 }
 

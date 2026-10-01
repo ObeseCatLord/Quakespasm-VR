@@ -75,33 +75,38 @@ static qboolean R_TLASAppendAvatarPresentation (float model_matrix[16], const fl
 	return true;
 }
 
-/* The detached Ranger mesh is bone-local. Its frame transform is the same
- * entity transform and rigid attachment used by raster, never the alternate
+/* Each detached mesh is root-local. Its frame transform uses the same
+ * entity transform and prepared attachment as raster, never the alternate
  * body's scaled presentation matrix. Keep this predicate shared by the TLAS
  * count and emission passes. */
-static qboolean R_TLASPreparedAvatarProp (entity_t *e,
-	VkDeviceAddress *address, float model_matrix[16])
+static uint32_t R_TLASPreparedAvatarAttachments (entity_t *e,
+	VkDeviceAddress addresses[R_VRIK_RENDER_MAX_ATTACHMENTS],
+	float matrices[R_VRIK_RENDER_MAX_ATTACHMENTS][16])
 {
 	const r_vrik_prepared_palette_t *prepared = R_TLASVRIKPalette (e);
 	aliashdr_t *body;
 	lerpdata_t lerpdata;
 
-	if (!address || !model_matrix || !prepared || !prepared->alternate_avatar ||
-		!prepared->attached_prop_valid || !prepared->attached_prop_geometry ||
+	if (!addresses || !matrices || !prepared || !prepared->alternate_avatar ||
+		prepared->attachment_count == 0 ||
+		prepared->attachment_count > R_VRIK_RENDER_MAX_ATTACHMENTS ||
 		!e->blas_data || e->blas_data->needs_initial_build ||
 		e->blas_data->blas == VK_NULL_HANDLE)
-		return false;
-	*address = GLMesh_AvatarPropBLASAddress (prepared->attached_prop_geometry);
-	if (!*address)
-		return false;
+		return 0;
 	body = (aliashdr_t *)e->blas_data->geometry;
 	R_SetupAliasFrame (e, body, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
-	if (R_AliasModelMatrix (e, prepared->attached_prop_geometry, &lerpdata,
-		model_matrix) < 0)
-		return false;
-	return R_TLASAppendAvatarPresentation (model_matrix,
-		prepared->attached_prop_to_canonical);
+	for (uint32_t i = 0; i < prepared->attachment_count; ++i)
+	{
+		const r_vrik_attachment_t *attachment = &prepared->attachments[i];
+		if (!attachment->valid || !attachment->geometry ||
+			!(addresses[i] = GLMesh_AvatarPropBLASAddress (attachment->geometry)) ||
+			R_AliasModelMatrix (e, (aliashdr_t *)attachment->geometry, &lerpdata,
+				matrices[i]) < 0 ||
+			!R_TLASAppendAvatarPresentation (matrices[i], attachment->to_canonical))
+			return 0;
+	}
+	return prepared->attachment_count;
 }
 
 static void R_TLASWriteInstance (VkAccelerationStructureInstanceKHR *instance,
@@ -3141,11 +3146,11 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 			e->model->type == mod_alias && e->blas_data && e->blas_data->blas != VK_NULL_HANDLE && !e->blas_data->needs_initial_build &&
 			e->blas_data->model && e->blas_data->model == R_TLASAliasModel (e))
 		{
-			VkDeviceAddress prop_address;
-			float prop_matrix[16];
+			VkDeviceAddress attachment_addresses[R_VRIK_RENDER_MAX_ATTACHMENTS];
+			float attachment_matrices[R_VRIK_RENDER_MAX_ATTACHMENTS][16];
 			++num_instances;
-			if (R_TLASPreparedAvatarProp (e, &prop_address, prop_matrix))
-				++num_instances;
+			num_instances += R_TLASPreparedAvatarAttachments (e,
+				attachment_addresses, attachment_matrices);
 		}
 	}
 
@@ -3164,6 +3169,9 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 
 		VkDeviceAddress address = 0;
 		qboolean		is_alias = false;
+		VkDeviceAddress attachment_addresses[R_VRIK_RENDER_MAX_ATTACHMENTS];
+		float attachment_matrices[R_VRIK_RENDER_MAX_ATTACHMENTS][16];
+		uint32_t attachment_count = 0;
 
 		if (e->model->type == mod_brush && e->model->blas != VK_NULL_HANDLE)
 		{
@@ -3175,6 +3183,8 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 		{
 			address = e->blas_data->address;
 			is_alias = true;
+			attachment_count = R_TLASPreparedAvatarAttachments (e,
+				attachment_addresses, attachment_matrices);
 		}
 		else
 		{
@@ -3229,14 +3239,9 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 		}
 
 		R_TLASWriteInstance (&instances[num_instances++], model_matrix, address);
-		if (is_alias)
-		{
-			VkDeviceAddress prop_address;
-			float prop_matrix[16];
-			if (R_TLASPreparedAvatarProp (e, &prop_address, prop_matrix))
-				R_TLASWriteInstance (&instances[num_instances++], prop_matrix,
-					prop_address);
-		}
+		for (uint32_t i = 0; i < attachment_count; ++i)
+			R_TLASWriteInstance (&instances[num_instances++], attachment_matrices[i],
+				attachment_addresses[i]);
 	}
 
 	ZEROED_STRUCT (VkAccelerationStructureGeometryKHR, tlas_geometry);
