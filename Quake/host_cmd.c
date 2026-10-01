@@ -3041,13 +3041,15 @@ static void Host_Loadgame_f (void)
 
 		if (entnum == -1)
 		{ // parse the global vars
-			data = ED_ParseGlobals (data);
+			data = ED_ParseSavedGlobals (data);
 		}
 		else
 		{ // parse an edict
 			ent = EDICT_NUM (entnum);
 			if (entnum < qcvm->num_edicts)
 			{
+				if (ent->free)
+					ED_RemoveFromFreeList (ent);
 				ent->free = false;
 				memset (&ent->v, 0, qcvm->progs->entityfields * 4);
 			}
@@ -3067,7 +3069,7 @@ static void Host_Loadgame_f (void)
 				ent->edict_num = entnum;
 #endif
 			}
-			data = ED_ParseEdict (data, ent);
+			data = ED_ParseSavedEdict (data, ent);
 
 			// link it into the bsp tree
 			if (!ent->free)

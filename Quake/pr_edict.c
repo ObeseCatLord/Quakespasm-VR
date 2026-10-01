@@ -36,6 +36,7 @@ const int type_size[NUM_TYPE_SIZES] = {
 };
 
 static ddef_t	*ED_FieldAtOfs (int ofs);
+static qboolean ED_ParseEpairInternal (void *base, ddef_t *key, const char *s, qboolean zoned, bool saved_references);
 extern edict_t **bbox_linked;
 
 cvar_t nomonsters = {"nomonsters", "0", CVAR_NONE};
@@ -1218,7 +1219,7 @@ void ED_WriteGlobals (FILE *f)
 ED_ParseGlobals
 =============
 */
-const char *ED_ParseGlobals (const char *data)
+static const char *ED_ParseGlobalsInternal (const char *data, bool saved_references)
 {
 	char	keyname[64];
 	ddef_t *key;
@@ -1249,10 +1250,20 @@ const char *ED_ParseGlobals (const char *data)
 			continue;
 		}
 
-		if (!ED_ParseEpair ((void *)qcvm->globals, key, com_token, false))
+		if (!ED_ParseEpairInternal ((void *)qcvm->globals, key, com_token, false, saved_references))
 			Host_Error ("ED_ParseGlobals: parse error");
 	}
 	return data;
+}
+
+const char *ED_ParseGlobals (const char *data)
+{
+	return ED_ParseGlobalsInternal (data, false);
+}
+
+const char *ED_ParseSavedGlobals (const char *data)
+{
+	return ED_ParseGlobalsInternal (data, true);
 }
 
 //============================================================================
@@ -1332,7 +1343,7 @@ Can parse either fields or globals
 returns false if error
 =============
 */
-qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned)
+static qboolean ED_ParseEpairInternal (void *base, ddef_t *key, const char *s, qboolean zoned, bool saved_references)
 {
 	int			 i;
 	char		 string[128];
@@ -1403,6 +1414,8 @@ qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned)
 			s += 7;
 		const int loaded_ent_num = atoi (s);
 
+		if (loaded_ent_num < 0)
+			Host_Error ("ED_ParseEpair: ev_entity %d is negative", loaded_ent_num);
 		if (loaded_ent_num >= qcvm->max_edicts)
 			Host_Error ("ED_ParseEpair: ev_entity %d too large (max_edicts is %i)", loaded_ent_num, qcvm->max_edicts);
 
@@ -1413,14 +1426,17 @@ qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned)
 		// adjust first we need it for consistenecy checks in EDICT_NUM / ED_Free..etc.
 		qcvm->num_edicts = q_max (previous_num_edicts, loaded_ent_num + 1);
 
-		// properly initialize the free edicts in previous_num_edicts..loaded_ent_num - 1 range:
-		for (int j = previous_num_edicts; j < loaded_ent_num; j++)
+		// Saved references also initialize/free their target when newly exposed.
+		const int init_end = loaded_ent_num + (saved_references ? 1 : 0);
+		for (int j = previous_num_edicts; j < init_end; j++)
 		{
 			edict_t *new_edict = EDICT_NUM (j);
 
 			// proceed to the same init as new edicts in ED_Alloc: wipe all out, then deallocate it
 			// right away
 			memset (new_edict, 0, qcvm->edict_size);
+			if (saved_references)
+				new_edict->baseline = nullentitystate;
 #if defined(DEBUG) || defined(_DEBUG)
 			// fill debug fields, they were overwriten above:
 			new_edict->qcvm_owner = qcvm;
@@ -1433,6 +1449,14 @@ qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned)
 		}
 
 		edict_t *found_edict = EDICT_NUM (loaded_ent_num);
+
+		if (saved_references)
+		{
+			// Record the native byte offset without reviving a serialized free slot.
+			// Debug EDICT_TO_PROG rejects free targets.
+			*(int *)d = (int)((byte *)found_edict - (byte *)qcvm->edicts);
+			break;
+		}
 
 		// mark loaded_ent_num as allocated :
 		if (found_edict->free)
@@ -1473,6 +1497,11 @@ qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned)
 	return true;
 }
 
+qboolean ED_ParseEpair (void *base, ddef_t *key, const char *s, qboolean zoned)
+{
+	return ED_ParseEpairInternal (base, key, s, zoned, false);
+}
+
 /*
 ====================
 ED_ParseEdict
@@ -1482,7 +1511,7 @@ ed should be a properly initialized empty edict.
 Used for initial level load and for savegames.
 ====================
 */
-const char *ED_ParseEdict (const char *data, edict_t *ent)
+static const char *ED_ParseEdictInternal (const char *data, edict_t *ent, bool saved_references)
 {
 	ddef_t	*key;
 	char	 keyname[256];
@@ -1597,7 +1626,7 @@ const char *ED_ParseEdict (const char *data, edict_t *ent)
 			q_snprintf (com_token, sizeof (com_token), "0 %s 0", temp);
 		}
 
-		if (!ED_ParseEpair ((void *)&ent->v, key, com_token, qcvm != &sv.qcvm))
+		if (!ED_ParseEpairInternal ((void *)&ent->v, key, com_token, qcvm != &sv.qcvm, saved_references))
 			Host_Error ("ED_ParseEdict: parse error");
 	}
 
@@ -1605,6 +1634,16 @@ const char *ED_ParseEdict (const char *data, edict_t *ent)
 		ED_Free (ent);
 
 	return data;
+}
+
+const char *ED_ParseEdict (const char *data, edict_t *ent)
+{
+	return ED_ParseEdictInternal (data, ent, false);
+}
+
+const char *ED_ParseSavedEdict (const char *data, edict_t *ent)
+{
+	return ED_ParseEdictInternal (data, ent, true);
 }
 
 /*
