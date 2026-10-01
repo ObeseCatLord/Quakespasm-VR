@@ -1,118 +1,13 @@
 # Final 2.0 migration checklist
 
-**Reviewed final scope checklist. The migration itself remains incomplete.**
-2026-10-01. Original audited production snapshot: `2b420380`; refreshed against
-source integrations through `99eea1f0` and paused uncommitted C07/C14 patches.
-Both enumeration reviews changed documentation only; intervening source commits
-are listed below. Consolidated final qualification is now in progress; see the
-[results ledger](final-linux-arm-qualification-2.0-results.md). The user-owned
-changes to migration-2.0.md remain untouched.
-
-**Current qualification update:** full Linux/ARM native builds (group1) are now
-complete from immutableff83e66a, whose308 tracked production files match the
-current worktree. Both45-ELF packages pass verification; the packaged Linux
-desktop and24-probe actual simulated-XR cases pass, and the packaged ARM dedicated
-mode loads/exits successfully. See [current portable evidence](portable-current-qualification-2.0.md).
-The four native mixed-network profiles also pass after bounded test-only repairs;
-see [their receipt](mixed-network-current-qualification-2.0.md). Groups2–8 remain
-open at their full scope. Earlier eight-open snapshots below are historical;
-no additional missing source feature has been established.
-
-Following that review, C07's draw phase was source-integrated in `1b5b2d84` and
-C14's optional extraction phase in `19e2c6b3`, producer in `3b80ac1a` and native
-consumers in `4179ef1e`. C19 staging/verification is source-integrated in
-`adee8d98`. C02's complete sender/control refinement is now source-integrated
-in `f3727a10`, following the final bounded reopening and main source review.
-**No established feature implementation gap remains in the reviewed scope.**
-None of these
-source receipts constitutes final executable acceptance.
-
-The [final exhaustive local Astra xhigh reconciliation](final-checklist-qualification-2.0-review.md)
-accounts for all185 unique matching IDs and independently checks C02's source
-closure. Exact unreviewed IDs: none. No additional missing source feature was
-established. Unchanged implementations retain prior source audits; this is not
-a fresh line-by-line audit or executable certification of every row.
-
-**Current concrete findings and repairs:** guarded server-physics initialization
-is integrated in `c8de89f6` and passes the isolated GCC13 amd64 compile. Native
-resource-owner shutdown reuse (`d7ef88bf`) and unused-attachment compaction
-(`55eaa33b`) resolve the previously reproduced desktop hazards/allocator abort
-in tested native desktop and actual simulated-XR settings. Current bounded
-rendering results are in the GPU receipt; broader qualification remains open.
-Both complete portable builders printed successful native compilation/install
-through55eaa33b, but final artifact acceptance is pending (local command exited143;
-ARM candidate staged/verified/retrieved). Those archives predate the subsequently
-found generic mj4m1 two-edge face compatibility repairs in `92bc7775`/`56e592ce`/`29129513`.
-The affected native map load/render/screenshot/normal-exit run passed through29129513
-with clean validation and no heapsize workaround. A native metadata negative trial
-crash is localized to the fixture's unarmed host longjmp boundary; it requires a
-proper host-frame test, not a production drop rewrite (historical diagnosis;
-the follow-up below now supplies that bounded case). Broad controller-input fixture
-linkage was unfinished at this snapshot and is repaired in the follow-up below.
-The complete remaining scope is the eight groups below, with exact cases in
-the qualification plan and partial results in the ledger.
-
-Current follow-up: f074a570 arms the native host abort boundary and all six
-metadata cases pass, including real permanent-limit drop/disconnect/shutdown.
-9a2d2e18 repairs the last controller fixture; all19 standalone fixtures now pass
-within their recorded boundaries. Current native desktop shib1_drake, tavistock
-and ad_tears load/render/normal-exit runs passed alongside mj4m1; see the
-[large-map receipt](large-map-native-qualification-2.0.md). Full Linux enabled
-build from immutableff83e66a exited0 and staging is in progress; native ARM from
-the same archive is still building. Previous55eaa33b Linux candidate verification,
-two relocated OpenXR loader contexts and four integrity-negative refusals passed;
-those do not qualify the final newer artifact. All eight full groups remain open.
-
-Already established bounded results: full preliminary host compilation,18 of19
-standalone fixtures, and actual simulated-OpenXR24-probe rendering with clean
-validation/normal exit. Host Steam Audio was disabled; no complete portable
-package is accepted. Host rebuilds through the subsequent physics/pass/shutdown
-repairs passed, and the actual24-probe XR matrix passed again through55eaa33b.
-The five bounded native metadata cases passed with refreshed engine objects.
-No additional features are added by
-this checklist. The [focused unused-attachment review](unused-attachment-sync-2.0-review.md)
-records diagnostic evidence and bounded repair candidates, without declaring a
-renderer fix accepted or adding a performance-measurement gate.
-
-The [current local Astra xhigh review](final-checklist-current-2.0-review.md)
-reconciles all185 IDs and found C02 as the only established unfinished
-implementation area at its review snapshot. Exact unreviewed IDs: none.
-It independently checked recent
-source closures and the unaccepted846-line C02 draft, finding additional signon
-control-pressure and console persistence-flag gaps within C02. The full remaining
-subchecklist and main dispositions are in that historical review. Its remaining
-source obligations are now integrated; see the
-[final metadata integration receipt](metadata-publication-final-integration-2.0.md).
-All eight final software/delivery groups remain open in full scope. Some bounded
-current-tree executable cases now pass; no complete feature-group or artifact
-acceptance is claimed. Confirmed desktop validation/shutdown failures remain
-explicit, including their independently reproduced vkQuake baseline provenance.
-
-Read-only reference revalidation found one newer primary commit after canonical
-51b452c0:7acafa8b adds generic model-path trailing-whitespace fallback. That
-bounded C06/NET-007 follow-up is source-integrated in `c034a2f5`, following the
-[model-path plan](model-path-whitespace-2.0-plan.md), without another feature ID
-or a mod-specific branch. Exact virtual names still win; final filesystem/cache/
-client-server qualification remains pending. Primary remains read-only.
-
-Local Astra xhigh reviewed all 185 inventory rows: 153 source-integrated/native
-(S), 18 missing (M), two unresolved (Q, one shared rendering question), 11
-excluded/deferred (X), one reference experiment (R). These overlapping rows are
-not completion percentages. The missing rows produce the 22 distinct items
-below; no row remains unreviewed.
-
-The [earlier local Astra xhigh refresh](final-checklist-refresh-2.0-review.md)
-accounts for all185 IDs using the original review and current receipts, verifies
-challenged consumers, and confirmed **four remaining implementation areas at
-that review snapshot**. C07, C14 and C19 have since been source-integrated,
-leaving C02 at that snapshot; C02 is now source-integrated too.
-It found necessary C07/C14 refinements, not a fifth independent missing feature.
-Source integration and software acceptance remain separate.
-
-The checklist preserves vkQuake's engine, renderer, resource owners and desktop
-baseline. Each missing behavior below belongs at an existing boundary, using
-the pinned primary/QSS-M reference where applicable. It is not a request for
-another renderer, VM, networking stack or movement solver.
+The one final scope-setting audit and remaining list is now
+[Final goal checklist](final-goal-checklist-2.0.md), reviewed by verified local
+Astra/xhigh on2026-10-01. It supersedes the historical eight broad qualification
+groups below, credits current passes and defines ten finite remaining owners.
+All185feature IDs and supplemental inventories are reconciled; no additional
+production source omission was established. Final behavioral acceptance remains
+incomplete. The source receipts below are preserved historical evidence, not
+a second expanding work list. User-owned migration-2.0.md is untouched.
 
 ## Final source implementation checklist
 
@@ -370,9 +265,10 @@ source dispositions. Their software qualification remains required. No separate
 two-hand gripping solver or replacement projectile/movement subsystem was
 established as missing.
 
-## Consolidated final software and delivery work
+## Historical consolidated software and delivery groups (superseded)
 
-Only after all required implementation is finished:
+The final-goal-checklist-2.0.md now governs these obligations and accepted evidence.
+The earlier eight-group wording is preserved below for provenance only:
 
 1. Build the complete Linux x86-64 client/dedicated configuration and an isolated
    native Linux ARM64 client snapshot via ssh Foundry, with required OpenXR,

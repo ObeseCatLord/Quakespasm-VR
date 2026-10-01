@@ -18,7 +18,11 @@ test-only co-op timing/inventory/phase-order repairs; [network receipt](mixed-ne
 Native initial shib1_drake/tavistock/ad_tears load/render/normal-exit passes join
 mj4m1, without heapsize arguments; [large-map receipt](large-map-native-qualification-2.0.md).
 
-Groups2–8 remain open at full scope; no new source-feature gap established.
+The final senior audit replaces Groups2–8 with the ten finite owners in
+[the final goal checklist](final-goal-checklist-2.0.md). No new source-feature gap
+was established. Nine stock/five cooperative load and seven loaded-QC profiles
+now pass their documented current-fixture boundaries; see
+[the lifecycle receipt](local-qc-load-current-qualification-2.0.md).
 The chronological paragraphs below retain their historical failure/scope limits.
 
 2026-10-01. In progress; goal remains incomplete. Source entry snapshot
