@@ -283,3 +283,17 @@ remaining blocker in this slice. The linked checkpoint retains the failed
 native numerical comparison and exact prepared/captured proof limits. Broader
 wet/cooperative/local/load compatibility remains in the full goal. No new
 production boots code was needed for the actual AD/q30 lifecycle proof.
+
+The [generic liquid extension brief](predictive-generic-liquid-2.0-plan.md)
+reopens only ordinary nonstock swimming at those existing shared owners. The
+classifier, callback-free lookahead and timer/publication consumers must be
+considered together; a depth-gate removal alone is not a reviewed contract.
+Design advice and disposition precede coding, with all executable checks
+deferred until implementation ends. Cooperative replay is a separate unresolved
+QC/solver-compatibility question, not a missing hook or builtin implementation.
+
+The [current foveation source checkpoint](openxr-foveation-source-checkpoint-2.0.md)
+reconciles stale XR-005/007 labels against native selection, rate-map upload,
+material protection, runtime profile update/query, offset and full-rate recovery
+consumers. The accepted FB/META interoperability decision remains authoritative;
+this is source evidence, not a rendered/runtime or performance pass.
