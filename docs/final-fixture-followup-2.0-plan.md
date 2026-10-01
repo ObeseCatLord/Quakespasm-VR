@@ -62,3 +62,17 @@ earlypause, defaultselection) in disposable pak0-only roots, with real native
 sender/receiver/QC/physics/parser owners and explicit captured-transport/prepared-
 signon boundary. Any additional failure needs evidence before a new repair;
 do not loosen assertions or change production. Main owns receipts/integration.
+
+### Native respawn settling follow-up
+
+The gap run's original180 world frames at25ms wait4.5 seconds. Main's native
+debugger confirms attack received/completed, peer active/RUNNING, deadflag3 and
+health-99. Current native co-op policy defaults sv_coop_respawn_delay to10;
+SV_CoopRespawnPreparePostThink suppresses the borrowed QC input while that
+deadline has not elapsed. Preserve the native delay and every existing assertion.
+Derive the test's settling-frame count from max(4.5, configured delay plus50ms),
+assert finite reasonable duration/positive frame time, and use that count instead
+of180. BEFORE20 changed test lines, mixed_native_fixture.c only; rerun the
+previously failing existing gap profile. Do not disable the policy or change
+production to satisfy the former wait. This is an existing test timing repair,
+not complete co-op delay/inventory/placement qualification.
