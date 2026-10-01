@@ -41,6 +41,7 @@ qboolean V_UseTrackedView (void);
 qboolean V_TrackedSessionActive (void);
 float V_VRUnitsPerMetre (void);
 float V_VRFloorOffset (void);
+float V_VRGunAngle (void);
 qboolean V_TrackedPlayerBase (float *viewheight);
 void V_UpdateTrackedAim (void);
 void V_ResetTrackedAim (void);

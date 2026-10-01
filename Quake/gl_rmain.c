@@ -29,6 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "atomics.h"
 #include "vr_aim.h"
 #include "vr_input.h"
+#include "vr_locomotion.h"
 #include "vr_weapon_calibration.h"
 #include "r_vrik_render.h"
 #include "vr_weapon_menu.h"
@@ -588,13 +589,99 @@ static qboolean R_XRPoseIsFinite (const float matrix[3][4])
 	return true;
 }
 
+qboolean R_TrackedPoseBasis (const float matrix[3][4], const float *gun_angle,
+	vec3_t origin, vec3_t right, vec3_t up, vec3_t forward)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	const vrxr_device_t *head;
+	float units_per_metre;
+	vec3_t local, offset, pose_origin, pose_right, pose_up, pose_forward;
+
+	if (origin)
+		VectorCopy (vec3_origin, origin);
+	if (right)
+		VectorCopy (vec3_origin, right);
+	if (up)
+		VectorCopy (vec3_origin, up);
+	if (forward)
+		VectorCopy (vec3_origin, forward);
+	if (!origin || !right || !up || !forward || !matrix ||
+		!stereo_tracking_basis_valid || !stereo_view_adjusted || !frame || !frame->should_render)
+		return false;
+
+	head = &frame->devices[0];
+	if (!head->valid || !head->tracked || head->kind != VRXR_DEVICE_HEAD || head->hand != -1 ||
+		!R_XRPoseIsFinite (head->matrix) || !R_XRPoseIsFinite (matrix))
+		return false;
+
+	units_per_metre = V_VRUnitsPerMetre ();
+	if (!isfinite (units_per_metre) || units_per_metre <= 0)
+		return false;
+	for (int i = 0; i < 3; ++i)
+	{
+		const float head_position = head->matrix[i][3];
+		const float hand_position = matrix[i][3];
+		if (!isfinite (head_position) || !isfinite (hand_position) || !isfinite (r_refdef.vieworg[i]))
+			return false;
+		local[i] = (hand_position - head_position) * units_per_metre;
+		if (!isfinite (local[i]))
+			return false;
+	}
+	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, offset);
+	for (int i = 0; i < 3; ++i)
+	{
+		pose_origin[i] = r_refdef.vieworg[i] + offset[i];
+		if (!isfinite (offset[i]) || !isfinite (pose_origin[i]) || !isfinite (local[i]))
+			return false;
+	}
+	if (gun_angle)
+	{
+		vec3_t angles, quake_forward, quake_right, quake_up;
+		vec3_t xr_right, xr_up, xr_forward;
+		if (!isfinite (*gun_angle) || !VR_LocomotionHandAngles (matrix, 0.0f, *gun_angle, angles))
+			return false;
+		AngleVectors (angles, quake_forward, quake_right, quake_up);
+		/* Quake axes (x,y,z) become XR coordinates (-y,z,-x). */
+		xr_right[0] = -quake_right[1];
+		xr_right[1] = quake_right[2];
+		xr_right[2] = -quake_right[0];
+		xr_up[0] = -quake_up[1];
+		xr_up[1] = quake_up[2];
+		xr_up[2] = -quake_up[0];
+		xr_forward[0] = -quake_forward[1];
+		xr_forward[1] = quake_forward[2];
+		xr_forward[2] = -quake_forward[0];
+		R_XRVectorToWorld (xr_right, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_right);
+		R_XRVectorToWorld (xr_up, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_up);
+		R_XRVectorToWorld (xr_forward, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_forward);
+	}
+	else
+	{
+		for (int i = 0; i < 3; ++i)
+			local[i] = matrix[i][0];
+		R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_right);
+		for (int i = 0; i < 3; ++i)
+			local[i] = matrix[i][1];
+		R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_up);
+		for (int i = 0; i < 3; ++i)
+			local[i] = -matrix[i][2];
+		R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_forward);
+	}
+	if (!R_NormalizeFiniteVector (pose_right) || !R_NormalizeFiniteVector (pose_up) ||
+		!R_NormalizeFiniteVector (pose_forward))
+		return false;
+	VectorCopy (pose_origin, origin);
+	VectorCopy (pose_right, right);
+	VectorCopy (pose_up, up);
+	VectorCopy (pose_forward, forward);
+	return true;
+}
+
 qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t right,
 	vec3_t up, vec3_t forward)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	const vrxr_device_t *head, *hand;
-	float units_per_metre;
-	vec3_t local, offset, pose_origin, pose_right, pose_up, pose_forward;
+	const vrxr_device_t *hand;
 
 	if (origin)
 		VectorCopy (vec3_origin, origin);
@@ -608,49 +695,10 @@ qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t righ
 		!stereo_tracking_basis_valid || !stereo_view_adjusted || !frame || !frame->should_render)
 		return false;
 
-	head = &frame->devices[0];
 	hand = &frame->devices[physical_hand + 1];
-	if (!head->valid || !head->tracked || head->kind != VRXR_DEVICE_HEAD || head->hand != -1 ||
-		!hand->valid || !hand->tracked || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand ||
-		!R_XRPoseIsFinite (head->matrix) || !R_XRPoseIsFinite (hand->matrix))
+	if (!hand->valid || !hand->tracked || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
 		return false;
-
-	units_per_metre = V_VRUnitsPerMetre ();
-	if (!isfinite (units_per_metre) || units_per_metre <= 0)
-		return false;
-	for (int i = 0; i < 3; ++i)
-	{
-		const float head_position = head->matrix[i][3];
-		const float hand_position = hand->matrix[i][3];
-		if (!isfinite (head_position) || !isfinite (hand_position) || !isfinite (r_refdef.vieworg[i]))
-			return false;
-		local[i] = (hand_position - head_position) * units_per_metre;
-		if (!isfinite (local[i]))
-			return false;
-	}
-	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, offset);
-	for (int i = 0; i < 3; ++i)
-	{
-		pose_origin[i] = r_refdef.vieworg[i] + offset[i];
-		local[i] = hand->matrix[i][0];
-		if (!isfinite (offset[i]) || !isfinite (pose_origin[i]) || !isfinite (local[i]))
-			return false;
-	}
-	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_right);
-	for (int i = 0; i < 3; ++i)
-		local[i] = hand->matrix[i][1];
-	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_up);
-	for (int i = 0; i < 3; ++i)
-		local[i] = -hand->matrix[i][2];
-	R_XRVectorToWorld (local, stereo_tracking_forward, stereo_tracking_right, stereo_tracking_up, pose_forward);
-	if (!R_NormalizeFiniteVector (pose_right) || !R_NormalizeFiniteVector (pose_up) ||
-		!R_NormalizeFiniteVector (pose_forward))
-		return false;
-	VectorCopy (pose_origin, origin);
-	VectorCopy (pose_right, right);
-	VectorCopy (pose_up, up);
-	VectorCopy (pose_forward, forward);
-	return true;
+	return R_TrackedPoseBasis (hand->matrix, NULL, origin, right, up, forward);
 }
 
 qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction)

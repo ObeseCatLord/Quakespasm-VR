@@ -430,6 +430,11 @@ qboolean V_TrackedBodyOwnsRoomscale (void)
 		V_TrackedPlayerBase (&viewheight);
 }
 
+float V_VRGunAngle (void)
+{
+	return isfinite (vr_gunangle.value) ? vr_gunangle.value : 32.0f;
+}
+
 static qboolean V_TrackedHandAnglesForYaw (const vrxr_frame_t *frame,
 	int physical_hand, float yaw, vec3_t angles)
 {
@@ -439,8 +444,7 @@ static qboolean V_TrackedHandAnglesForYaw (const vrxr_frame_t *frame,
 	hand = &frame->devices[physical_hand + 1];
 	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
 		return false;
-	return VR_LocomotionHandAngles (hand->matrix, yaw,
-		isfinite (vr_gunangle.value) ? vr_gunangle.value : 32.f, angles);
+	return VR_LocomotionHandAngles (hand->matrix, yaw, V_VRGunAngle (), angles);
 }
 
 qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)

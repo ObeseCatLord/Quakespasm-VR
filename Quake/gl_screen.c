@@ -1719,7 +1719,8 @@ static vr_weapon_menu_panel_t vr_weapon_menu_panel;
 static vr_menu_anchor_t vr_weapon_menu_anchor;
 static unsigned int vr_weapon_menu_anchor_generation;
 static int vr_weapon_menu_anchor_mode;
-static vec3_t vr_weapon_menu_anchor_right, vr_weapon_menu_anchor_up, vr_weapon_menu_anchor_forward;
+static float vr_weapon_menu_opening_matrix[3][4];
+static float vr_weapon_menu_opening_gun_angle;
 
 typedef struct
 {
@@ -1927,17 +1928,18 @@ static void SCR_VRMenuPrepare (void)
 			320.0f, 200.0f, vr_menu_scale.value, vr_menu_anchor.center, right, down, normal, 160.0f, 100.0f);
 }
 
-/* Prepare the held weapon wheel once for the stereo pair. Its anchor is
- * captured at open and remains fixed until release/cancel; only the controller
- * ray pointer changes on subsequent setup frames. */
+/* Prepare the held weapon wheel once for the stereo pair. Keep the opening
+ * grip pose in tracking space and remap it through the current prepared view. */
 static void SCR_VRWeaponMenuPrepare (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	vec3_t ray_origin, ray_direction, hand_origin, forward, right, up, down, normal, view_angles;
+	vec3_t ray_origin, ray_direction, ray_right, ray_up, hand_origin;
+	vec3_t anchor_right, anchor_up, anchor_forward;
+	vec3_t forward, right, up, down, normal, view_angles;
 	int pointer_x = -1, pointer_y = -1;
 	int dominant, ring_count;
 	qboolean pointer_valid;
-	float scale, min_dimension;
+	float scale, min_dimension, live_gun_angle;
 	const unsigned int generation = VR_WeaponMenu_SessionGeneration ();
 	const int requested_mode = isfinite (vr_weaponmenu_mode.value) &&
 		vr_weaponmenu_mode.value >= 0.0f && vr_weaponmenu_mode.value < 2.0f ?
@@ -1977,47 +1979,57 @@ static void SCR_VRWeaponMenuPrepare (void)
 		vr_weapon_menu_anchor.valid = 0;
 		return;
 	}
-	ring_count = q_max (1, VR_WeaponMenu_VisibleRingCount ());
-	if (!vr_weapon_menu_anchor.valid)
+	live_gun_angle = V_VRGunAngle ();
+	if (!isfinite (live_gun_angle) ||
+		!R_TrackedPoseBasis (frame->devices[dominant + 1].matrix, &live_gun_angle,
+		ray_origin, ray_right, ray_up, ray_direction))
 	{
-		if (vr_weapon_menu_anchor_mode == 0)
-		{
-			if (!R_TrackedControllerBasis (dominant, hand_origin, vr_weapon_menu_anchor_right,
-				vr_weapon_menu_anchor_up, vr_weapon_menu_anchor_forward))
-			{
-				VR_WeaponMenu_Cancel ();
-				return;
-			}
-			VectorCopy (hand_origin, vr_weapon_menu_anchor.base);
-			vr_weapon_menu_anchor.valid = 1;
-		}
-		else
-		{
-			const int follow_mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
-				vr_menu_follow.value <= 2 ? (int)vr_menu_follow.value : 1;
-			VectorCopy (r_refdef.viewangles, view_angles);
-			view_angles[ROLL] = 0;
-			if (!VR_MenuAnchorUpdate (&vr_weapon_menu_anchor, r_refdef.vieworg, view_angles,
-				Sys_DoubleTime (), true, follow_mode, 48.0f, true))
-			{
-				VR_WeaponMenu_Cancel ();
-				return;
-			}
-		}
+		VR_WeaponMenu_Cancel ();
+		vr_weapon_menu_anchor.valid = 0;
+		return;
 	}
+	ring_count = q_max (1, VR_WeaponMenu_VisibleRingCount ());
 	if (vr_weapon_menu_anchor_mode == 0)
 	{
-		/* The hand origin/basis stay frozen. Match the donor's extra wheel
-		 * distance when more rings become visible during the held session. */
-		VectorMA (vr_weapon_menu_anchor.base,
-			10.5f + (ring_count - 1) * 2.5f,
-			vr_weapon_menu_anchor_forward, vr_weapon_menu_anchor.center);
-		VectorCopy (vr_weapon_menu_anchor_right, right);
-		VectorCopy (vr_weapon_menu_anchor_up, up);
-		VectorCopy (vr_weapon_menu_anchor_forward, forward);
+		if (!vr_weapon_menu_anchor.valid)
+		{
+			memcpy (vr_weapon_menu_opening_matrix, frame->devices[dominant + 1].matrix,
+				sizeof (vr_weapon_menu_opening_matrix));
+			vr_weapon_menu_opening_gun_angle = live_gun_angle;
+		}
+		if (!R_TrackedPoseBasis (vr_weapon_menu_opening_matrix,
+			&vr_weapon_menu_opening_gun_angle, hand_origin,
+			anchor_right, anchor_up, anchor_forward))
+		{
+			VR_WeaponMenu_Cancel ();
+			vr_weapon_menu_anchor.valid = 0;
+			return;
+		}
+		/* Re-evaluate the same opening pose against this frame's head, camera,
+		 * world scale and prepared stereo basis. */
+		vr_weapon_menu_anchor.valid = 1;
+		VectorMA (hand_origin,
+			10.5f + (ring_count - 1) * 2.5f, anchor_forward,
+			vr_weapon_menu_anchor.center);
+		VectorCopy (anchor_right, right);
+		VectorCopy (anchor_up, up);
+		VectorCopy (anchor_forward, forward);
 	}
 	else
+	{
+		VectorCopy (r_refdef.viewangles, view_angles);
+		if (!VR_MenuAnchorUpdate (&vr_weapon_menu_anchor, r_refdef.vieworg, view_angles,
+			Sys_DoubleTime (), true, 2, 48.0f, true))
+		{
+			VR_WeaponMenu_Cancel ();
+			vr_weapon_menu_anchor.valid = 0;
+			return;
+		}
+		/* The helper intentionally clears roll for generic menus. The weapon
+		 * wheel keeps the current headset roll in its own prepared frame. */
+		vr_weapon_menu_anchor.angles[ROLL] = view_angles[ROLL];
 		AngleVectors (vr_weapon_menu_anchor.angles, forward, right, up);
+	}
 	VectorScale (up, -1.0f, down);
 	VectorCopy (forward, normal);
 	min_dimension = q_min ((float)glwidth, (float)glheight);

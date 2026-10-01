@@ -53,6 +53,8 @@ void R_PrepareStereoFrame (void);
 qboolean R_StereoSceneView (int eye, vrxr_view_t *out);
 qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction);
 qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t right, vec3_t up, vec3_t forward);
+qboolean R_TrackedPoseBasis (const float matrix[3][4], const float *gun_angle,
+	vec3_t origin, vec3_t right, vec3_t up, vec3_t forward);
 qboolean R_TrackedHeadEyeHeight (float base_viewheight, float *out_height);
 qboolean R_TrackedHeadBodyOffset (vec3_t world_offset);
 void R_RestoreStereoView (void);
