@@ -109,8 +109,10 @@ static vec3_t tracked_view_angles, tracked_previous_aim, tracked_previous_orient
 static vec3_t tracked_raw_angles, tracked_withheld_aim;
 static float tracked_yaw;
 static float tracked_local_yaw;
+static vec3_t prediction_view_offset;
 static qboolean tracked_aim_ready;
 static qboolean tracked_controller_history_valid;
+static qboolean prediction_view_offset_applied;
 /* View-owner lifetime for the body-relative eye. Command samples can stop
  * temporarily on focus loss without returning the eye to positional tracking. */
 static qboolean tracked_body_anchor;
@@ -148,7 +150,7 @@ static const mod_held_melee_recipe_t *held_melee_recipe;
 static int held_melee_hand;
 static vec3_t held_melee_edge_offsets[2], held_melee_collision_offset;
 
-static int V_TrackedAimMode (void)
+int V_TrackedAimMode (void)
 {
 	return isfinite (vr_aimmode.value) && vr_aimmode.value >= 1 && vr_aimmode.value <= 7 ? (int)vr_aimmode.value : VR_AIMMODE_HEAD_MYAW;
 }
@@ -191,8 +193,42 @@ static void V_TrackedDeadzoneChanged (cvar_t *var)
 		Cvar_SetValueQuick (var, value);
 }
 
+static void V_RemovePredictionViewOffset (void)
+{
+	if (!prediction_view_offset_applied)
+		return;
+	VectorSubtract (r_refdef.vieworg, prediction_view_offset, r_refdef.vieworg);
+	VectorClear (prediction_view_offset);
+	prediction_view_offset_applied = false;
+}
+
+const float *V_GetPredictionViewOffset (void)
+{
+	return prediction_view_offset;
+}
+
+static void V_ApplyPredictionViewOffset (qboolean camera_eligible)
+{
+	vec3_t offset;
+	int axis;
+
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (r_refdef.vieworg[axis]))
+		{
+			CL_EvaluatePredictionViewOffset (offset, false);
+			return;
+		}
+	if (!CL_EvaluatePredictionViewOffset (offset, camera_eligible))
+		return;
+	VectorAdd (r_refdef.vieworg, offset, r_refdef.vieworg);
+	VectorCopy (offset, prediction_view_offset);
+	prediction_view_offset_applied = true;
+}
+
 void V_ResetTrackedAim (void)
 {
+	V_RemovePredictionViewOffset ();
+	CL_ResetPredictionSmoothing ();
 	V_ClearWeaponCollisionPresentation ();
 	VR_WeaponCalibrationAdjustCancel ();
 	tracked_local_yaw = 0;
@@ -2513,10 +2549,11 @@ V_SetupFrame
 void V_SetupFrame (void)
 {
 	qboolean refdef_updated = false;
-	const qboolean restore_desktop_viewmodel = cl.paused &&
-		tracked_viewmodel_pose_applied && (!V_TrackedSessionActive () ||
-		V_TrackedAimMode () != VR_AIMMODE_CONTROLLER);
+	qboolean restore_desktop_viewmodel;
 
+	V_RemovePredictionViewOffset ();
+	restore_desktop_viewmodel = cl.paused && tracked_viewmodel_pose_applied &&
+		(!V_TrackedSessionActive () || V_TrackedAimMode () != VR_AIMMODE_CONTROLLER);
 	V_ClearWeaponCollisionPresentation ();
 	V_UpdateBlend ();
 	if (con_forcedup)
@@ -2536,6 +2573,9 @@ void V_SetupFrame (void)
 		}
 	}
 	V_UpdateTrackedViewmodel (refdef_updated);
+	V_ApplyPredictionViewOffset (!con_forcedup && !cl.intermission &&
+		!cl.paused && !cls.demoplayback && cls.state == ca_connected &&
+		cls.signon == SIGNONS && !chase_active.value && base_player_view);
 }
 
 /*

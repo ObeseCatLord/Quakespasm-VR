@@ -39,12 +39,14 @@ void V_Init (void);
 // Existing view/input owner; runtime lifetime remains in the backend.
 qboolean V_UseTrackedView (void);
 qboolean V_TrackedSessionActive (void);
+int V_TrackedAimMode (void);
 float V_VRUnitsPerMetre (void);
 float V_VRFloorOffset (void);
 float V_VRGunAngle (void);
 qboolean V_TrackedPlayerBase (float *viewheight);
 void V_UpdateTrackedAim (void);
 void V_ResetTrackedAim (void);
+const float *V_GetPredictionViewOffset (void);
 void V_RebaseTrackedAim (void);
 void V_SetTrackedAngles (const vec3_t angles);
 void V_PushTrackedYaw (void);

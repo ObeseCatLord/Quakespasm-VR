@@ -50,6 +50,10 @@ cvar_t cl_bottomcolor = {"bottomcolor", "0", CVAR_ARCHIVE_GAME | CVAR_USERINFO};
 cvar_t cl_shownet = {"cl_shownet", "0", CVAR_NONE}; // can be 0, 1, or 2
 cvar_t cl_nolerp = {"cl_nolerp", "0", CVAR_NONE};
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_ARCHIVE};
+cvar_t cl_predict_smooth = {"cl_predict_smooth", "0", CVAR_NONE};
+cvar_t cl_predict_smooth_time = {"cl_predict_smooth_time", "0.10", CVAR_NONE};
+cvar_t cl_predict_smooth_min = {"cl_predict_smooth_min", "0.125", CVAR_NONE};
+cvar_t cl_predict_smooth_max = {"cl_predict_smooth_max", "4", CVAR_NONE};
 
 cvar_t cfg_unbindall = {"cfg_unbindall", "1", CVAR_ARCHIVE_GAME};
 
@@ -101,6 +105,9 @@ static cl_autoreconnect_t cl_autoreconnect;
 static char cl_last_connect_endpoint[MAX_OSPATH];
 static unsigned int cl_last_connect_legacy_qsvr;
 static qboolean cl_last_connect_valid;
+static qboolean cl_prediction_replay_valid;
+static int cl_prediction_replay_frame;
+static qboolean cl_prediction_replay_frame_valid;
 
 static void CL_TrySendAvatarSelection (void)
 {
@@ -272,11 +279,149 @@ void CL_ResetWeaponContactState (void)
 }
 
 // Pinned prediction presentation reset; epoch/replay state remains separately owned.
-void CL_ResetPredictionSmoothing (void)
+static void CL_ClearPredictionError (void)
 {
-	VectorCopy (vec3_origin, cl.prediction_error);
+	VectorClear (cl.prediction_error);
 	cl.prediction_error_time = 0;
 	cl.prediction_error_sequence = -1;
+}
+
+void CL_ResetPredictionSmoothing (void)
+{
+	CL_ClearPredictionError ();
+	memset (cl.prediction_samples, 0, sizeof (cl.prediction_samples));
+	cl.prediction_ack_sequence = 0;
+	cl.prediction_ack_sequence_valid = false;
+	memset (&cl.prediction_context, 0, sizeof (cl.prediction_context));
+	cl.prediction_context_valid = false;
+	cl_prediction_replay_valid = false;
+	cl_prediction_replay_frame = -1;
+	cl_prediction_replay_frame_valid = false;
+}
+
+static qboolean CL_PredictionSmoothingSettings (float *duration,
+	float *minimum, float *maximum)
+{
+	float time = cl_predict_smooth_time.value;
+	float min_error = cl_predict_smooth_min.value;
+	float max_error = cl_predict_smooth_max.value;
+	qboolean tracked = V_UseTrackedView () && V_TrackedSessionActive ();
+
+	if (!isfinite (cl_predict_smooth.value) || !cl_predict_smooth.value ||
+		!isfinite (time) || !isfinite (min_error) || !isfinite (max_error) ||
+		time <= 0 || min_error < 0 || max_error < min_error)
+		return false;
+
+	*duration = fminf (time, 0.10f);
+	*minimum = min_error;
+	*maximum = fminf (max_error, 4.0f);
+	if (tracked)
+	{
+		*duration = fminf (*duration, 0.060f);
+		*maximum = fminf (*maximum, 1.0f);
+	}
+	return isfinite (*duration) && isfinite (*minimum) &&
+		isfinite (*maximum) && *duration > 0 && *maximum >= *minimum;
+}
+
+static void CL_ObservePredictionContext (void)
+{
+	cl_prediction_context_t context;
+	entity_t *owner = NULL;
+
+	memset (&context, 0, sizeof (context));
+	context.world = cl.worldmodel;
+	context.viewentity = cl.viewentity;
+	context.protocol = cl.protocol;
+	context.private_protocol = cl.protocol_qsvr;
+	context.protocolflags = cl.protocolflags;
+	context.protocol_extensions = cl.protocol_pext2;
+	if (cl.entities && cl.viewentity > 0 && cl.viewentity < cl.num_entities)
+		owner = &cl.entities[cl.viewentity];
+	context.movement_mode = owner ? owner->netstate.pmovetype : 0;
+	context.authority = cl.move_ack_authority;
+	context.prediction_allowed = cl.move_ack_prediction_allowed;
+	context.mode_epoch = cl.move_ack_mode_epoch;
+	context.discontinuity_epoch = cl.move_ack_discontinuity_epoch;
+	context.discontinuity_reason = cl.move_ack_discontinuity_reason;
+	context.tracked_view = V_UseTrackedView ();
+	context.tracked_session = V_TrackedSessionActive ();
+	context.tracked_aim_mode = V_TrackedAimMode ();
+	context.chase_camera = chase_active.value != 0;
+	context.paused = cl.paused;
+	context.demo_playback = cls.demoplayback;
+	context.intermission = cl.intermission;
+	context.connection_state = cls.state;
+
+	if (!cl.prediction_context_valid ||
+		memcmp (&cl.prediction_context, &context, sizeof (context)))
+	{
+		CL_ResetPredictionSmoothing ();
+		cl.prediction_context = context;
+		cl.prediction_context_valid = true;
+	}
+}
+
+qboolean CL_EvaluatePredictionViewOffset (vec3_t offset, qboolean camera_eligible)
+{
+	float duration, minimum, maximum, scale, error_length;
+	double elapsed;
+	int axis;
+
+	VectorClear (offset);
+	CL_ObservePredictionContext ();
+	if (!camera_eligible || !cl_prediction_replay_valid ||
+		!cl_prediction_replay_frame_valid ||
+		cl_prediction_replay_frame != host_framecount)
+	{
+		CL_ResetPredictionSmoothing ();
+		return false;
+	}
+	if (!CL_PredictionSmoothingSettings (&duration, &minimum, &maximum))
+	{
+		CL_ResetPredictionSmoothing ();
+		return false;
+	}
+	if (cl.prediction_error_sequence < 0)
+		return false;
+	for (axis = 0; axis < 3; axis++)
+		if (!isfinite (cl.prediction_error[axis]))
+		{
+			CL_ClearPredictionError ();
+			return false;
+		}
+	error_length = VectorLength (cl.prediction_error);
+	if (!isfinite (error_length) || error_length < minimum ||
+		error_length > maximum)
+	{
+		CL_ClearPredictionError ();
+		return false;
+	}
+
+	elapsed = realtime - cl.prediction_error_time;
+	if (!isfinite (elapsed) || elapsed < 0)
+	{
+		CL_ResetPredictionSmoothing ();
+		return false;
+	}
+	if (elapsed >= duration)
+	{
+		CL_ClearPredictionError ();
+		return false;
+	}
+
+	scale = 1.0f - (float)(elapsed / duration);
+	for (axis = 0; axis < 3; axis++)
+	{
+		offset[axis] = scale * cl.prediction_error[axis];
+		if (!isfinite (offset[axis]))
+		{
+			VectorClear (offset);
+			CL_ClearPredictionError ();
+			return false;
+		}
+	}
+	return true;
 }
 
 /*
@@ -1575,6 +1720,31 @@ static void CL_PrepareReplayPreview (usercmd_t *cmd, qboolean private_replay)
 	cmd->seconds = (float)elapsed;
 }
 
+static qboolean CL_PredictionVectorFinite (const vec3_t vector)
+{
+	return isfinite (vector[0]) && isfinite (vector[1]) && isfinite (vector[2]);
+}
+
+static qboolean CL_PredictionContactEligible (qboolean private_replay)
+{
+	int i;
+
+	if (!private_replay)
+		return true;
+	if (pmove.onground && (pmove.groundent < 0 ||
+		pmove.groundent >= pmove.numphysent ||
+		pmove.physents[pmove.groundent].info != 0))
+		return false;
+	for (i = 0; i < pmove.numtouch; i++)
+	{
+		int physent = pmove.touchindex[i];
+		if (physent < 0 || physent >= pmove.numphysent ||
+			pmove.physents[physent].info != 0)
+			return false;
+	}
+	return true;
+}
+
 typedef struct
 {
 	vec3_t origin;
@@ -1583,6 +1753,12 @@ typedef struct
 	qboolean inwater;
 	int target_sequence;
 	float jump_secs;
+	cl_prediction_sample_t prediction_samples[CL_PREDICTION_SAMPLE_COUNT];
+	int prediction_sample_count;
+	qboolean smoothing_enabled;
+	qboolean ack_evaluation_valid, ack_sample_valid, ack_sample_eligible;
+	unsigned int ack_sequence;
+	vec3_t ack_error;
 } cl_replay_result_t;
 
 #ifdef QSVR_SHADOW_TRACE
@@ -1751,6 +1927,7 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	qboolean shadow, int target_sequence)
 {
 	qboolean private_replay;
+	qboolean prediction_samples_enabled = false;
 	playermove_t saved_pmove;
 	movevars_t saved_movevars;
 	usercmd_t preview;
@@ -1760,6 +1937,7 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	int i, seq, startseq, endseq;
 	int pm_type;
 
+	memset (result, 0, sizeof (*result));
 	if ((!shadow && cl_nopred.value) || cls.state != ca_connected || cls.signon != SIGNONS || cls.demoplayback ||
 		cl.paused || !cl.worldmodel || !cl.entities ||
 		cl.viewentity <= 0 || cl.viewentity >= cl.num_entities ||
@@ -1865,6 +2043,53 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 				goto shadow_failed;
 			return false;
 		}
+	if (!shadow)
+	{
+		float duration, minimum, maximum;
+		if (!CL_PredictionSmoothingSettings (&duration, &minimum, &maximum))
+			CL_ResetPredictionSmoothing ();
+		else
+		{
+			CL_ObservePredictionContext ();
+			if (cl.intermission || chase_active.value != 0)
+				CL_ResetPredictionSmoothing ();
+			else
+				prediction_samples_enabled = true;
+		}
+	}
+	result->smoothing_enabled = prediction_samples_enabled;
+	if (prediction_samples_enabled)
+	{
+		const unsigned int ack_sequence = (unsigned int)cl.ackedmovemessages;
+		cl_prediction_sample_t *sample;
+
+		if (cl.prediction_ack_sequence_valid &&
+			ack_sequence < cl.prediction_ack_sequence)
+		{
+			CL_ResetPredictionSmoothing ();
+			CL_ObservePredictionContext ();
+		}
+		if (!cl.prediction_ack_sequence_valid ||
+			ack_sequence > cl.prediction_ack_sequence)
+		{
+			result->ack_evaluation_valid = true;
+			result->ack_sequence = ack_sequence;
+			sample = &cl.prediction_samples[ack_sequence &
+				(CL_PREDICTION_SAMPLE_COUNT - 1)];
+			if (sample->valid && sample->sequence == ack_sequence)
+			{
+				result->ack_sample_valid = true;
+				result->ack_sample_eligible = sample->eligible &&
+					CL_PredictionVectorFinite (sample->origin);
+				if (result->ack_sample_eligible)
+				{
+					VectorSubtract (sample->origin, baseline_origin, result->ack_error);
+					result->ack_sample_eligible =
+						CL_PredictionVectorFinite (result->ack_error);
+				}
+			}
+		}
+	}
 	VectorCopy (baseline_origin, pmove.origin);
 
 	solidsize = ent->netstate.solidsize;
@@ -1932,6 +2157,17 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		}
 		else
 			PM_PlayerMove (1);
+		if (!shadow && prediction_samples_enabled &&
+			result->prediction_sample_count < CL_PREDICTION_SAMPLE_COUNT &&
+			CL_PredictionVectorFinite (pmove.origin))
+		{
+			cl_prediction_sample_t *sample =
+				&result->prediction_samples[result->prediction_sample_count++];
+			sample->sequence = histcmd->sequence;
+			VectorCopy (pmove.origin, sample->origin);
+			sample->eligible = CL_PredictionContactEligible (private_replay);
+			sample->valid = true;
+		}
 		if (!shadow && !private_replay)
 		{
 			cl.move_replay_propagate_sequence[(seq + 1) & MOVECMDS_MASK] = seq + 1;
@@ -2016,6 +2252,42 @@ shadow_failed:
 	return false;
 }
 
+static void CL_CommitPredictionSmoothing (const cl_replay_result_t *result)
+{
+	float duration, minimum, maximum, error_length;
+	int i;
+
+	if (!result->smoothing_enabled)
+		return;
+	for (i = 0; i < result->prediction_sample_count; i++)
+	{
+		const cl_prediction_sample_t *sample = &result->prediction_samples[i];
+		cl.prediction_samples[sample->sequence &
+			(CL_PREDICTION_SAMPLE_COUNT - 1)] = *sample;
+	}
+	if (!result->ack_evaluation_valid)
+		return;
+
+	cl.prediction_ack_sequence = result->ack_sequence;
+	cl.prediction_ack_sequence_valid = true;
+	if (!result->ack_sample_valid || !result->ack_sample_eligible ||
+		!CL_PredictionSmoothingSettings (&duration, &minimum, &maximum))
+	{
+		CL_ClearPredictionError ();
+		return;
+	}
+	error_length = VectorLength (result->ack_error);
+	if (!isfinite (error_length) || error_length < minimum ||
+		error_length > maximum || !CL_PredictionVectorFinite (result->ack_error))
+	{
+		CL_ClearPredictionError ();
+		return;
+	}
+	VectorCopy (result->ack_error, cl.prediction_error);
+	cl.prediction_error_time = realtime;
+	cl.prediction_error_sequence = (int)result->ack_sequence;
+}
+
 qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
 {
 	cl_replay_result_t result;
@@ -2054,8 +2326,16 @@ qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
 #endif
 
 	if (!CL_ComputeReplayPlayerMovement (ent, &result, false, -1))
+	{
+		CL_ResetPredictionSmoothing ();
+		cl_prediction_replay_valid = false;
 		return false;
+	}
 
+	CL_CommitPredictionSmoothing (&result);
+	cl_prediction_replay_valid = true;
+	cl_prediction_replay_frame = host_framecount;
+	cl_prediction_replay_frame_valid = true;
 	VectorCopy (result.origin, origin);
 	VectorCopy (result.velocity, cl.velocity);
 	cl.onground = result.onground;
@@ -2129,6 +2409,7 @@ typedef struct
 static void CL_PrepareRelinkViewPose (cl_relink_frame_t *frame, float frac)
 {
 	entity_t *viewent;
+	qboolean discontinuity;
 
 	memset (frame, 0, sizeof(*frame));
 	if (!cl.entities || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities)
@@ -2140,7 +2421,14 @@ static void CL_PrepareRelinkViewPose (cl_relink_frame_t *frame, float frac)
 	frame->viewpose_teleported =
 		CL_LerpEntity (viewent, frame->vieworigin, frame->viewangles, frac);
 	frame->viewpose_valid = true;
-	CL_ReplayPlayerMovement (viewent, frame->vieworigin);
+	discontinuity = frame->viewpose_teleported || viewent->forcelink;
+	if (discontinuity)
+		CL_ResetPredictionSmoothing ();
+	if (!CL_ReplayPlayerMovement (viewent, frame->vieworigin) || discontinuity)
+	{
+		cl_prediction_replay_valid = false;
+		cl_prediction_replay_frame_valid = false;
+	}
 }
 
 static qboolean CL_AttachEntity (entity_t *ent, float frac,
@@ -2264,6 +2552,10 @@ void CL_RelinkEntities (void)
 	qboolean  teleported;
 	cl_relink_frame_t frame;
 
+	cl_prediction_replay_valid = false;
+	cl_prediction_replay_frame_valid = false;
+	if (cl.time < cl.oldtime)
+		CL_ResetPredictionSmoothing ();
 	CL_ExpireStaleVRIKPoses ();
 
 	// determine partial update time
@@ -3256,6 +3548,10 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_shownet);
 	Cvar_RegisterVariable (&cl_nolerp);
 	Cvar_RegisterVariable (&cl_nopred);
+	Cvar_RegisterVariable (&cl_predict_smooth);
+	Cvar_RegisterVariable (&cl_predict_smooth_time);
+	Cvar_RegisterVariable (&cl_predict_smooth_min);
+	Cvar_RegisterVariable (&cl_predict_smooth_max);
 	Cvar_RegisterVariable (&lookspring);
 	Cvar_RegisterVariable (&lookstrafe);
 	Cvar_RegisterVariable (&sensitivity);

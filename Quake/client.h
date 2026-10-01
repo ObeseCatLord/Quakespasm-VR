@@ -71,6 +71,30 @@ typedef struct
 #define SIGNONS 4 // signon messages to receive before connected
 
 #define MAX_DLIGHTS 64 // johnfitz -- was 32
+
+#define CL_PREDICTION_SAMPLE_COUNT 64
+typedef struct
+{
+	unsigned int sequence;
+	vec3_t origin;
+	qboolean eligible;
+	qboolean valid;
+} cl_prediction_sample_t;
+
+/* Presentation continuity identity; this does not own movement admission. */
+typedef struct
+{
+	void *world;
+	int viewentity, protocol, private_protocol;
+	unsigned int protocolflags, protocol_extensions;
+	int movement_mode, authority;
+	qboolean prediction_allowed;
+	unsigned short mode_epoch, discontinuity_epoch;
+	unsigned char discontinuity_reason;
+	qboolean tracked_view, tracked_session, chase_camera, paused, demo_playback;
+	int tracked_aim_mode, intermission, connection_state;
+} cl_prediction_context_t;
+
 typedef struct
 {
 	vec3_t origin;
@@ -192,6 +216,11 @@ typedef struct
 	vec3_t prediction_error;
 	double prediction_error_time;
 	int prediction_error_sequence;
+	cl_prediction_sample_t prediction_samples[CL_PREDICTION_SAMPLE_COUNT];
+	unsigned int prediction_ack_sequence;
+	qboolean prediction_ack_sequence_valid;
+	cl_prediction_context_t prediction_context;
+	qboolean prediction_context_valid;
 	int net_move_acks, net_move_stale_acks;
 	int net_move_packets_sent, net_move_cmds_sent, net_move_last_packet_cmds;
 	unsigned long long net_move_msec_generated;
@@ -601,6 +630,7 @@ void Chase_UpdateForClient (void);	// johnfitz
 void Chase_UpdateForDrawing (void); // johnfitz
 
 void CL_ResetPredictionSmoothing (void);
+qboolean CL_EvaluatePredictionViewOffset (vec3_t offset, qboolean camera_eligible);
 void CL_FlushAckFrames (void);
 
 /* Audio worker boundary. Queueing and callbacks run on the client main thread. */
