@@ -3122,7 +3122,7 @@ void SV_Init (void)
 		Con_Warning ("VR: invalid weapon calibration schema for active game\n");
 	VR_WeaponMenu_ReloadGame ();
 
-	Cmd_AddCommand ("pext", SV_Pext_f);
+	Cmd_AddCommand_ClientCommand ("pext", SV_Pext_f);
 	Cmd_AddCommand ("sv_protocol", &SV_Protocol_f); // johnfitz
 	Cmd_AddCommand ("netdiag", SV_NetDiag_f);
 

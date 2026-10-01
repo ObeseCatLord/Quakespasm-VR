@@ -62,6 +62,21 @@ without replacing its server or assets.
 
 ## Native metadata qualification
 
+Actual desktop and simulated-XR full-engine runs timed out before signon.
+GDB proved thousands of host frames, active server/connected client, signon0,
+the generated pext offer sent and drained, and server pextknown=false. Native
+SV_Init used console-only Cmd_AddCommand for pext while the migrated command
+dispatcher rejects src_client for that registration. Pinned QSS-M registers
+pext with Cmd_AddCommand_ClientCommand. Host name/color/spawn/begin/prespawn/
+enablecsqc registrations already use the proper client boundary.
+
+Bounded repair: copy QSS-M's one-line pext registration into current SV_Init,
+retaining native Cmd_ExecuteString source policy, handler and separate console
+diagnostics. Do not broaden the dispatcher whitelist, weaken permissions or
+call the handler directly to bypass real transport. Rebuild and rerun actual
+desktop/stereo signon; attach this required fix to existing negotiation/C02
+acceptance, not a new feature. Old prepared fixtures did not establish this path.
+
 Both portable builders reached pinned SDL3 configuration and failed because
 the direct Ubuntu dependency selection omitted XTEST's libxtst-dev. SDL's own
 configuration requires that dependency and official Linux build documentation
