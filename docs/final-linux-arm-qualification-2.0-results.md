@@ -11,6 +11,14 @@ Meson debugoptimized, required SDL3/WAVE/MP3/FLAC/Vorbis/Opus and CURL, host
 GCC16.2.1/Vulkan1.4.357. Steam Audio disabled for this preliminary compile;
 full Steam Audio4.8.1 portable native builds are separately required.
 
+After the first correction, compilation found the copied entity-enumeration
+fingerprint cache uses the donor VM field qcvm->crc, absent in vkQuake. Native
+progs.h owns unsigned-short progscrc, initialized from the entire loaded file
+in PR_LoadProgs before byte swapping. Smallest correction: use that existing
+native field at both cache comparison/assignment; retain pointer/CRC cache,
+fingerprint, SSQC guard and traversal. Two expression substitutions, no new
+VM identity owner. Actual loaded-QC reload behavior still requires qualification.
+
 First build stopped at gl_model.c:4828/4829 under native warnings-as-errors:
 the inherited Copper axe cache passes const input to ReadLongUnaligned(byte*).
 The helper only memcpy-reads into a local int. Smallest correction: accept

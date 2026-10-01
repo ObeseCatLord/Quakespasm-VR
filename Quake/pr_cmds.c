@@ -1195,10 +1195,10 @@ static qboolean PF_ProgsNeedsActiveClientEnumeration (void)
 	if (qcvm != &sv.qcvm)
 		return false;
 
-	if (cached_progs != qcvm->progs || cached_crc != qcvm->crc)
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->progscrc)
 	{
 		cached_progs = qcvm->progs;
-		cached_crc = qcvm->crc;
+		cached_crc = qcvm->progscrc;
 		cached_result = ED_FindFunction ("centerprintlocal") != NULL &&
 			ED_FindFunction ("teleport_check_for_client") != NULL &&
 			ED_FindFunction ("teleport_enter_limbo") != NULL &&
