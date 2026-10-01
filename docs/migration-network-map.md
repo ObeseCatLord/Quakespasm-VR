@@ -1,5 +1,34 @@
 # Networking feature map
 
+## Native address-family reuse checkpoint (2026-09-30)
+
+NET-019 needs no additional driver transplant. Main inspected the current
+Unix driver table in `net_bsd.c`: both UDP4 and UDP6 supply their native
+initialization, listening, socket creation, address parsing/resolution and
+connection checks, using the existing shared datagram read/write/port helpers.
+`net_udp.c:UDP6_OpenSocket` creates a nonblocking PF_INET6 datagram socket,
+requests IPv6-only binding, binds its port and closes on the existing error
+path. `UDP6_Init` honors `-noudp`/`-noudp6` and reports unavailable control
+sockets through the native disabled-driver path. `UDP6_Listen` owns the accept
+socket. `UDP6_GetAddrFromName` handles bracketed literals with optional ports,
+resolves the unbracketed form through its existing retry and selects AF_INET6
+results with the default host port when needed.
+
+These are real consumers: `net_dgrm.c:Datagram_Listen` iterates initialized
+drivers; the existing connect state machine selects an initialized driver,
+resolves through its `GetAddrFromName`, opens through its `OpenSocket` and
+records the selected landriver on the connection. Keep this owner and the
+native `net_wins.c:WINIPv6_*` implementation; copying the older fork's IPv4
+driver would discard reusable support. Windows execution remains deferred.
+
+No socket, game, server or build was started for this checkpoint. After full
+implementation, isolated Linux/ARM qualification must exercise actual IPv4
+and IPv6 connects, explicit/default ports, invalid names, unavailable IPv6,
+disabled UDP6, reconnect/cancel and ordinary native connection cleanup.
+Driver existence and source wiring do not prove address reachability or
+crossplay. The inventory row below remains historical reference evidence;
+its CSV status now distinguishes implemented native reuse from qualification.
+
 ## Current-source parser reuse checkpoint (2026-09-30)
 
 The initial NET-008 row below is historical inventory, not an assertion that
