@@ -105,3 +105,26 @@ Final Linux/ARM checks must exercise actual negotiation, public/private send,
 blocked send and gameplay-first saturation, stale/rate/duplicate handling,
 ordinary incapable peers and transport-to-jitter-to-playback continuity. No
 build, test, compiler check, fixture, game or benchmark ran in this checkpoint.
+
+## Audio HUD source reconciliation (2026-09-30)
+
+Main traced the actual AUDIO-005 update and drawing consumers against the primary
+HUD/voice source. Host_Frame calls native S_Update once after rendering;
+snd_dma.c:916 calls Voice_Frame before native/spatial sound dispatch. Capture/VAD
+publishes atomic meter/transmit state, and jitter decode/end/stale/disable updates
+atomic speaker state. Voice_HUDEnabled/InputLevel/CaptureReady/IsTransmitting/
+SpeakerTalking only read those snapshots. No per-eye capture/encode/update.
+
+Sbar_Draw calls Sbar_DrawVoiceStatus before its CSQC/native branch. The existing
+GUI owner uses SCR_DrawVRHUDPanel with prepared native modern/classic transforms;
+the shared voice drawing selects panel-local or desktop canvas, preserves the
+previous canvas, bounds the speaker list to MAX_SCOREBOARD16, and distinguishes
+OFF/LIVE/READY/NO DEV. The primary draws the same basic status/meter/name list;
+2.0 adapts its native canvas and adds capture-failure visibility.
+
+This is source ownership/reuse, not readable-stereo or audio/UI qualification.
+The [capture continuity brief](voice-capture-continuity-2.0-plan.md) records a
+separate demonstrated producer gap: discarded/error data can leave old LIVE and
+preroll state. Its repair must reuse existing voice reset/capture owners. Broader
+Linux/ARM audio qualification remains at the end of implementation; no builds,
+tests or runtime checks ran in this reconciliation.

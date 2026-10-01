@@ -155,6 +155,17 @@ Negative/out-of-range reference refusal and ordinary initial-map/QC/console
 assignment remain required. A direct parser fixture alone is supporting evidence;
 no new save format or parser state machine is implied.
 
+The [voice capture continuity adapter](voice-capture-continuity-2.0-plan.md)
+requires real producer/queue/HUD consumers for SDL2/3 detected query/read/put
+failure, raw/converted backlog and positive short reads. Prior LIVE/preroll/VAD/
+encoder/self-feed state must retire; repeated drops before network drainage
+retain the exact pending END marker, without re-aging or replay policy. Healthy
+zero/sub-frame buffering does not reset state or close devices. Held PTT resumes
+on valid data, key release during the existing10-second retry remains effective,
+and saved microphone consent/default-device choices remain unchanged. Include
+actual local wet-only/spatial reset and no-Opus coverage. This does not require a
+new silent-device timeout or certify audible/headset quality.
+
 Read game assets only from the existing quakespasm_straight installation. Native
 runners may link/copy needed data into disposable writable profiles; saves,
 configs and generated QC programs belong there. The map/mod matrix includes
