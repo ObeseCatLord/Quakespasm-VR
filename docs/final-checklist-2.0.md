@@ -46,8 +46,13 @@ Native enumeration and old/committed-value scratch buffers now match the existin
 1023-byte prefix limitation; it does not certify sender framing or peer capacity.
 Publication/privacy/envelope work remains; these partial receipts do not close C02.
 
-- [ ] Settle stock-QSS-M interoperability/recipient command limits and an explicit
-  permanent-oversize outcome; the existing optional user question is unanswered.
+- [ ] Integrate explicit directional reader-capacity declaration at native pext,
+  then implement complete recipient-envelope checks and visible permanent-oversize
+  handling. The [local Astra reopening](metadata-capability-reopen-2.0-review.md),
+  `c42cc32d`, resolves reader selection technically without an answer to the
+  optional stock-peer question. The [capability slice](metadata-capability-2.0-plan.md)
+  is in progress; unknown peers retain token1023/text2046 limits. Arbitrary stock
+  large-field parity is not claimed; compatible bundle policy remains to be specified.
 - [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
   slots before signon3 using current stores and native reliable-buffer retry.
 - [ ] Preserve publication across mid-signon changes, map changes and spawn/
@@ -124,8 +129,10 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   The oversized763-line draft remains unaccepted. The
   [local Astra staging disposition](portable-linux-staging-reopen-2.0-review.md)
   and updated [staging plan](portable-linux-staging-2.0-plan.md) are committed in
-  `0eb04c2a`; bounded Luna refinement of the schema, receipts and actual staged
-  dependency closure is in progress. Main source review is required before integration.
+  `0eb04c2a`. The returned refinement also exceeded its bound (973+41 lines) and
+  remains paused/unaccepted. The [second reopening](portable-linux-staging-second-reopen-2.0-brief.md),
+  `9c3a1570`, records main-verified version/ownership/notice/duplication defects
+  for local Astra review before further refinement. No artifact acceptance yet.
 - [ ] Include matching dependency notices, header/static contributions,
   versions/hashes/patches and source-access artifacts through existing owners.
 - [ ] Implement artifact verification at the shared staging owner.
@@ -134,8 +141,9 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   retrieval preserves aliases; depends on the unfinished staging/verifier slice.
   Execute builders/wrapper/verifiers only in final qualification after implementation.
 
-The sole unresolved product choice is C02's stock-QSS-M peer contract. C19's
-staging refinement is technical work, already within scope.
+C02's reader-selection contract is now a reviewed technical decision; the optional
+stock-peer question is not a prerequisite to its capability slice. Complete sender
+policy and C19's staging consolidation still require their specified implementation.
 The detailed plans and review evidence below define their native integration seams.
 
 ## Original audit findings and source integrations
