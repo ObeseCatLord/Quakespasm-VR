@@ -149,3 +149,26 @@ their timing, result ownership under SDK execution, map-teardown concurrency,
 audible transitions and native ARM library delivery still require the final
 consolidated Linux/ARM qualification. No implementation rewrite or execution
 check was introduced by this inventory reconciliation.
+
+## Local wet-only capture source reconciliation (2026-09-30)
+
+Main compared primary voice.c/snd_steamaudio.c with the actual AUDIO-010
+producer/consumer path. Voice_RefreshCapture combines independent profile
+self-reverb permission with available recording device and Spatial_Active,
+without requiring a network session or enabling network transmission.
+Voice_EncodeCaptureFrame sends PCM to Spatial_SelfPCM before its separately
+gated multiplayer/transmit/PTT-or-VAD path. Voice_Frame publishes the local gain
+through Spatial_SelfGain. Menu/profile controls and explicit console confirmation
+keep local permission independent; the selected system-default microphone and
+saved VR transmit opt-out policy remain their existing owners.
+
+SA_WriteSelf bounds local queued PCM to two20ms frames. render_block consumes
+that ring only into room_send; it never adds dry self PCM to mixed/network voice.
+SAR_Render supplies the room effect afterward. Disabled gain discards pending
+self PCM, and Spatial_ResetSelf excludes the callback before clearing the ring,
+gains, remainder and room effect state. Capture continuity repair47df36e6 uses
+that same reset. These copied/adapted source contracts reconcile the old
+AUDIO-010 label without another recording device or monitoring implementation.
+Actual audible wet-only output, independent capture/transmission, mode/profile
+resets and Linux/ARM package execution remain final qualification; no tests,
+builds, microphone capture, audio or runtime probes ran in this checkpoint.
