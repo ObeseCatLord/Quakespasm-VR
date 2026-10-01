@@ -2468,7 +2468,10 @@ static qboolean VR_WeaponMenu_WorldContactVisible (const vec3_t start,
 		return false;
 	if (cl.worldmodel && !cl.worldmodel->needload)
 	{
-		CL_TraceWorldLine (start, contact, impact, hit_normal);
+		vec3_t trace_start, trace_contact;
+		VectorCopy (start, trace_start);
+		VectorCopy (contact, trace_contact);
+		CL_TraceWorldLine (trace_start, trace_contact, impact, hit_normal);
 		VectorSubtract (contact, impact, remaining);
 		if (VectorLength (remaining) >= 1.0f)
 			return false;

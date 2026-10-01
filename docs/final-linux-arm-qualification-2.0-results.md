@@ -39,6 +39,11 @@ duplicating a protocol bit or weakening the gesture/trigger policy. Header-only
 compile correction; existing gesture fixtures and native input qualification
 remain required.
 
+World-wheel occlusion likewise passes immutable frame endpoints to native
+CL_TraceWorldLine's mutable-vector interface. Copy both endpoints into local
+vec3 inputs at that existing call; retain actual trace/impact/distance checks
+and avoid changing the shared native particle API or casting away const.
+
 First build stopped at gl_model.c:4828/4829 under native warnings-as-errors:
 the inherited Copper axe cache passes const input to ReadLongUnaligned(byte*).
 The helper only memcpy-reads into a local int. Smallest correction: accept
