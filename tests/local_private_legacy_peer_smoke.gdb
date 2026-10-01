@@ -404,9 +404,7 @@ outcome = 'failed' if failure else 'passed'
 result = dict(status=outcome,
               upstream_reference=upstream_peer, expected_peers=expected_peers,
               mode='map_switch' if ready_path else ('private' if expect_private else 'public'),
-              samples=[{key: value for key, value in item.items()
-                        if key not in ('origin', 'displayed', 'owner')}
-                       for item in samples])
+              samples=samples)
 if failure:
     result['failure'] = failure
 else:
@@ -442,5 +440,10 @@ marker = 'QSVR_LOCAL_MAP_SWITCH_PASSED' if ready_path else (
 if assert_public_move_stats_off:
     marker = 'QSVR_LOCAL_PUBLIC_MOVE_STATS_OFF_PASSED'
 gdb.write(marker + '\n')
+if os.environ.get('QSVR_LIFECYCLE_ROOT'):
+    helper = os.environ.get('QSVR_LIFECYCLE_HELPER')
+    if not helper: raise RuntimeError('QSVR_LIFECYCLE_HELPER is required with lifecycle mode')
+    exec(compile(open(helper).read(), helper, 'exec'), globals())
+    ConnectedLifecycle(globals()).run()
 end
 quit 0

@@ -69,6 +69,11 @@ receipts. These overlap intentionally; test shared boundaries once.
   Two successive unchanged public vkQuake desktop/private XR runs also pass.
   The first mixed run's inconsistent movement distance remains a bounded F01
   follow-up; map/slot/transport/metadata lifecycles stay open.
+- F01: current private connected map/reset/disconnect/reused-slot vertical
+  proofs pass for private and unchanged public desktop peers, with fresh
+  gameplay, mutual received poses and natural client/server exits; [exact results/limits](connected-lifecycle-current-2.0-results.md).
+  Transport/metadata boundaries and intermittent original
+  movement-distance evidence remain open.
 - F03: actual loaded SSQC/CSQC core numeric/name binding, permission discovery,
   simultaneous VM preservation and toggle/reload subset passes;
   [exact results and limits](qc-binding-current-qualification-2.0.md).

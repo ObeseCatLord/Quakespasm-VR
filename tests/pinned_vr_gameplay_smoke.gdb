@@ -24,6 +24,7 @@ actions = 0
 neutral_actions = 0
 armed = False
 wire = {}
+lifecycle_hook = None
 head_z_anchor = None
 result = {'status':'running', 'scope':'focused XR admission, private VR command, shotgun shell consumption',
           'follow_up':['body/eye/muzzle geometry', 'roomscale movement and collision',
@@ -106,7 +107,8 @@ def inject():
                 'set openxr_frame.hands[%d].profile = VRXR_PROFILE_INDEX' % hand,
                 'set openxr_frame.hands[%d].pressed = %s' %
                     (hand, 'VRXR_BUTTON_PRIMARY' if expect_selected_prediction and
-                     phase == 'fire' and hand == 0 else '0'),
+                     phase == 'fire' and hand == 0 and
+                     not globals().get('lifecycle_stationary_fire', False) else '0'),
                 'set openxr_frame.hands[%d].trigger = %s' % (hand, '0.90' if phase == 'fire' and hand == 1 else '0'),
                 'set openxr_frame.hands[%d].grip = 0' % hand]
             for r in range(3):
@@ -296,7 +298,9 @@ def prediction_failure_cause():
     return 'replay_proven_displacement_below_0.25'
 
 class Actions(gdb.Breakpoint):
-    def stop(self): return inject()
+    def stop(self):
+        if lifecycle_hook is not None and lifecycle_hook.skip_input(): return False
+        return inject()
 
 class PrivateWire(gdb.Breakpoint):
     def stop(self):
@@ -318,6 +322,7 @@ class PrivateWire(gdb.Breakpoint):
                     rec['finite']):
                 fire_prediction_command = rec
             wire[seq] = rec
+            if lifecycle_hook is not None: lifecycle_hook.observe_wire(rec)
         except Exception as exc:
             result['wire_error'] = str(exc)
         return False
@@ -481,5 +486,10 @@ finally:
 marker = 'QSVR_PINNED_VR_PASSED ' if result['status'] == 'passed' else 'QSVR_PINNED_VR_FAILED '
 gdb.write(marker + json.dumps(result, separators=(',', ':')) + '\n')
 if result['status'] != 'passed': raise RuntimeError(result.get('error','probe failed'))
+if os.environ.get('QSVR_LIFECYCLE_ROOT'):
+    helper = os.environ.get('QSVR_LIFECYCLE_HELPER')
+    if not helper: raise RuntimeError('QSVR_LIFECYCLE_HELPER is required with lifecycle mode')
+    exec(compile(open(helper).read(), helper, 'exec'), globals())
+    ConnectedLifecycle(globals()).run()
 end
 quit

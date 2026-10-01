@@ -3362,6 +3362,23 @@ files, and `connected-crossplay-result.json`. It passes only when both GDB
 processes exit successfully, both JSON statuses are `passed`, and both probe
 pass markers are present; timeout or missing evidence fails the run.
 
+Optional `--public-desktop` uses an unchanged public vkQuake desktop binary,
+retaining public movement/fire/ACK checks while disabling only private-layout
+assertions. Optional `--lifecycle` retains both original gameplay probes, changes
+the map through native server stdin, disconnects Desktop, observes its retired
+identity from VR, and starts Replacement in a separate fresh profile. The
+shared GDB helper reuses the original XR injector. It checks native map-state
+retirement, exact slot reuse, stationary ammo consumption followed by fresh
+moving/fire commands and ACKs, received peer positions after a shared settling
+phase and normal client/server quit. The handoff explicitly retires prior GDB
+observers before installing the lifecycle observers. Private phase files coordinate owned processes;
+they are not game-state injections. Replacement uses diagnostic native30Hz
+commands so its original between-send and short-jump assertions can both run;
+VR retains10Hz, original Desktop native cadence. No speed/performance claim.
+All three lifecycle JSON statuses/markers and normal exits must pass in addition
+to the original probe checks. Public-only layout fields are never assumed.
+See [the before-code plan](../docs/connected-lifecycle-final-2.0-plan.md).
+
 
 Later 2026-09-29 capability update: native NVIDIA and RADV GPUs are accessible
 in this session. Running `/tmp/qsvr-openxr-layout` without a SwiftShader override
