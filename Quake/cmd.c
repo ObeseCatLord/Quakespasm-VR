@@ -1127,16 +1127,18 @@ void Cmd_ForwardToServer (void)
 			if (!cls.legacy_qsvr)
 			{
 				cls.offered_qsvr = QSVR_PROTOCOL_PINNED;
-				SZ_Print (&cls.message, va ("pext %#x %#x %#x %#x %#x %#x %#x %#x",
+				SZ_Print (&cls.message, va ("pext %#x %#x %#x %#x %#x %#x %#x %#x %#x %#x",
 					PROTOCOL_FTE_PEXT1, PEXT1_SUPPORTED_CLIENT,
 					PROTOCOL_FTE_PEXT2, PEXT2_SUPPORTED_CLIENT,
 					PROTOCOL_QSVR_PROFILE, cls.offered_qsvr,
-					PROTOCOL_QSVR_PMOVE_POLICIES, QSVR_PMOVE_CAP_SUPPORTED));
+					PROTOCOL_QSVR_PMOVE_POLICIES, QSVR_PMOVE_CAP_SUPPORTED,
+					PROTOCOL_QSVR_METADATA, QSVR_METADATA_VERSION));
 			}
 			else
-				SZ_Print (&cls.message, va ("pext %#x %#x %#x %#x",
+				SZ_Print (&cls.message, va ("pext %#x %#x %#x %#x %#x %#x",
 					PROTOCOL_FTE_PEXT1, PEXT1_SUPPORTED_CLIENT,
-					PROTOCOL_FTE_PEXT2, PEXT2_SUPPORTED_CLIENT));
+					PROTOCOL_FTE_PEXT2, PEXT2_SUPPORTED_CLIENT,
+					PROTOCOL_QSVR_METADATA, QSVR_METADATA_VERSION));
 			return;
 		}
 		if (!strcmp (Cmd_Args (), "pext"))

@@ -243,6 +243,7 @@ typedef struct client_s
 	unsigned int limit_sounds;	   //
 	qboolean	 pextknown;
 	unsigned int offered_qsvr; // capability received under PROTOCOL_QSVR_PROFILE
+	unsigned int offered_metadata; // server-to-client metadata reader version
 	unsigned int offered_pmove_policies; // consumers offered with the private profile
 	unsigned int offered_pext1; // original public CSQC offer, retained across sign-ons
 	unsigned int offered_pext2; // original public FTE offer, retained across map sign-ons

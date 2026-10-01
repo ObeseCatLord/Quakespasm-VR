@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 // sv_main.c -- server main program
 
+#include <errno.h>
 #include "quakedef.h"
 #include "skyroom_metadata.h"
 #include "pmove.h"
@@ -3407,6 +3408,7 @@ void SV_SendServerinfo (client_t *client)
 		// make sure we try reenabling it again on the next map though.
 		client->pextknown = false;
 		client->offered_qsvr = 0;
+		client->offered_metadata = 0;
 		client->offered_pmove_policies = 0;
 		client->offered_pext1 = 0;
 		client->offered_pext2 = 0;
@@ -3669,6 +3671,58 @@ retry:
 		Con_Printf ("Protocol limitation (serverinfo) for %s\n", NET_QSocketGetTrueAddressString (client->netconnection));
 }
 
+static unsigned int SV_PextMetadataVersion (void)
+{
+	const char *raw = Cmd_Args ();
+	const char *start;
+	char *end;
+	unsigned long parsed;
+	unsigned int key = 0;
+	unsigned int metadata = 0;
+	int saved_errno;
+	int argc = Cmd_Argc ();
+	int i;
+	qboolean seen = false;
+
+	if (argc < 3 || ((argc - 1) & 1))
+		return 0;
+	for (i = 1; i < argc; i++)
+	{
+		const char *arg = Cmd_Argv (i);
+		size_t len = strlen (arg);
+
+		while (*raw && (unsigned char)*raw <= ' ')
+			raw++;
+		start = raw;
+		if (!len || strncmp (start, arg, len) ||
+			(start[len] && (unsigned char)start[len] > ' ') ||
+			arg[0] == '+' || arg[0] == '-')
+			return 0;
+		raw = start + len;
+		saved_errno = errno;
+		errno = 0;
+		parsed = strtoul (arg, &end, 0);
+		if (errno == ERANGE || end == arg || *end || parsed > UINT_MAX)
+		{
+			errno = saved_errno;
+			return 0;
+		}
+		errno = saved_errno;
+		if (i & 1)
+			key = (unsigned int)parsed;
+		else if (key == PROTOCOL_QSVR_METADATA)
+		{
+			if (seen || parsed != QSVR_METADATA_VERSION)
+				return 0;
+			seen = true;
+			metadata = (unsigned int)parsed;
+		}
+	}
+	while (*raw && (unsigned char)*raw <= ' ')
+		raw++;
+	return *raw || !seen ? 0 : metadata;
+}
+
 void SV_Pext_f (void)
 {
 	// this only makes sense on the server. the clientside part only takes the form of 'cmd pext', for compat with clients that don't support this.
@@ -3700,6 +3754,8 @@ void SV_Pext_f (void)
 		int i;
 		int key;
 		int value;
+		unsigned int offered_metadata = SV_PextMetadataVersion ();
+
 		for (i = 1; i < Cmd_Argc (); i += 2)
 		{
 			key = strtoul (Cmd_Argv (i), NULL, 0);
@@ -3716,6 +3772,7 @@ void SV_Pext_f (void)
 			// else some other extension that we don't know
 		}
 
+		host_client->offered_metadata = offered_metadata;
 		host_client->pextknown = true;
 		SV_SendServerinfo (host_client);
 	}
@@ -3785,6 +3842,7 @@ void SV_ConnectClient (int clientnum)
 
 	client->pextknown = false;
 	client->offered_qsvr = 0;
+	client->offered_metadata = 0;
 	client->offered_pmove_policies = 0;
 	client->offered_pext2 = 0;
 	client->protocol_qsvr = 0;

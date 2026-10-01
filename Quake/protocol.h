@@ -467,6 +467,11 @@ extern entity_state_t nullentitystate; // note: not all null.
 	(('Q' << 0) + ('S' << 8) + ('P' << 16) + ('M' << 24))
 #define QSVR_PMOVE_CAP_Q30_JUMP 1u
 #define QSVR_PMOVE_CAP_SUPPORTED QSVR_PMOVE_CAP_Q30_JUMP
+/* Server-to-client metadata receive contract: v1 allows full commands up to
+ * 8211 bytes and tokens up to 8191; ordinary ui/svi remain limited to 2047. */
+#define PROTOCOL_QSVR_METADATA \
+	(('Q' << 0) + ('S' << 8) + ('M' << 16) + ('I' << 24))
+#define QSVR_METADATA_VERSION 1u
 #define QSVR_PEXT2_REQUIRED 0x000000e9u
 #define QSVR_MODEL_LIMIT 4096
 #define QSVR_SVC_MOVEACK 57
