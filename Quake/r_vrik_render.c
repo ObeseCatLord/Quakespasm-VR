@@ -67,6 +67,7 @@ typedef struct r_vrik_staged_avatar_s
 	float target_to_canonical[12];
 	qboolean humanoid;
 	qboolean humanoid_ik;
+	qboolean implicit_qbj3;
 	qboolean valid;
 } r_vrik_staged_avatar_t;
 
@@ -156,6 +157,36 @@ static const r_avatar_profile_t *R_VRIKRenderProfileForId (int id)
 {
 	const custom_avatar_t *custom = CustomAvatar_Get (id);
 	return custom ? &custom->profile : R_AvatarProfileForId (id);
+}
+
+static qboolean R_VRIKRenderQBJ3Game (void)
+{
+	const char *game = COM_SkipPath (com_gamedir);
+	return game && !q_strcasecmp (game, "qbj3");
+}
+
+static qboolean R_VRIKRenderQBJ3PlayerFrame (const entity_t *entity)
+{
+	return entity && entity->model && !entity->model->needload &&
+		entity->model->type == mod_alias &&
+		!q_strcasecmp (entity->model->name, "progs/player_qbj.mdl") &&
+		entity->model->numframes == 143 && entity->frame >= 0 && entity->frame <= 142;
+}
+
+static qboolean R_VRIKRenderQBJ3LivePlayer (const entity_t *entity)
+{
+	return R_VRIKRenderQBJ3PlayerFrame (entity) &&
+		!(entity->frame >= 41 && entity->frame <= 102);
+}
+
+qboolean R_VRIKRenderOriginalModelEligible (const entity_t *entity)
+{
+	if (!entity || !entity->model || entity->model->needload ||
+		entity->model->type != mod_alias)
+		return false;
+	if (R_VRIKRenderQBJ3Game ())
+		return R_VRIKRenderQBJ3LivePlayer (entity);
+	return !strcmp (entity->model->name, "progs/player.mdl");
 }
 
 static qmodel_t *R_VRIKRenderCustomModel (int id)
@@ -461,7 +492,10 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 	r_vrik_staged_avatar_t selection = {0};
 	qmodel_t *source, *target;
 	const r_avatar_profile_t *profile;
-	int player;
+	const custom_avatar_t *custom = NULL;
+	vrik_pose_t pose;
+	int player, selected_id = id;
+	qboolean qbj3_game, implicit_qbj3 = false;
 
 	if (!entity || !cl.entities)
 		return false;
@@ -472,25 +506,45 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 		return false;
 	/* Replace any prior choice even when admission fails. */
 	staged[player - 1] = selection;
-	if (id == PLAYER_AVATAR_RANGER)
+	qbj3_game = R_VRIKRenderQBJ3Game ();
+	if (!R_VRIKRenderOriginalModelEligible (entity))
+		return false;
+	if (qbj3_game && id == PLAYER_AVATAR_RANGER)
+	{
+		/* The receiver leaves unresolved custom descriptors at Ranger. Keep
+		 * QBJ3's native art for those descriptors instead of inferring a pack. */
+		if (cl.avatar_custom_keys[player - 1][0] || !VR_InputVRIKAllowed () ||
+			!R_VRIKSampleEntityPose (entity, &pose))
+			return true;
+		selected_id = CustomAvatar_IdForKey ("qbj3");
+		if (selected_id < PLAYER_AVATAR_COUNT || selected_id >= R_VRIK_RENDER_MAX_AVATARS)
+			return true;
+		custom = CustomAvatar_Get (selected_id);
+		if (!custom || CustomAvatar_HasFailed (selected_id) ||
+			custom->profile.equipment_policy != R_AVATAR_EQUIPMENT_RANGER)
+			return true;
+		implicit_qbj3 = true;
+	}
+	else if (id == PLAYER_AVATAR_RANGER)
 		return true;
-	profile = R_VRIKRenderProfileForId (id);
-	if (!profile || !entity->model || entity->model->needload ||
-		entity->model->type != mod_alias || strcmp (entity->model->name, "progs/player.mdl"))
+	if (selected_id < 0 || selected_id >= R_VRIK_RENDER_MAX_AVATARS)
+		return false;
+	profile = R_VRIKRenderProfileForId (selected_id);
+	if (!profile)
 		return false;
 
 	source = R_VRIKRenderBuiltinModel (PLAYER_AVATAR_RANGER);
-	target = source ? (id < PLAYER_AVATAR_COUNT ? R_VRIKRenderBuiltinModel (id) :
-		R_VRIKRenderCustomModel (id)) : NULL;
-	selection.id = id;
-	if (id < 0 || id >= R_VRIK_RENDER_MAX_AVATARS ||
-		!source || !target || !Mod_GetMD5Skeleton (source, &selection.source_skeleton) ||
+	target = source ? (selected_id < PLAYER_AVATAR_COUNT ? R_VRIKRenderBuiltinModel (selected_id) :
+		R_VRIKRenderCustomModel (selected_id)) : NULL;
+	selection.id = selected_id;
+	selection.implicit_qbj3 = implicit_qbj3;
+	if (!source || !target || !Mod_GetMD5Skeleton (source, &selection.source_skeleton) ||
 		!selection.source_skeleton.from_rerelease ||
 		!Mod_GetMD5Skeleton (target, &selection.target_skeleton) ||
 		!R_VRIKRenderResolveRigs (&selection, source, target, profile))
 		return false;
 	selection.base_profile = profile;
-	if (r_avatar_humanoid.value != 0.0f && CustomAvatar_Get (id))
+	if (r_avatar_humanoid.value != 0.0f && CustomAvatar_Get (selected_id))
 		R_VRIKRenderStageHumanoidPresentation (&selection);
 	selection.humanoid_ik = selection.humanoid && r_avatar_humanoid.value != 2.0f;
 	if ((!selection.humanoid && !R_VRIKRenderStageGenericPresentation (&selection)) ||
@@ -511,6 +565,7 @@ qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id)
 	selection.source_geometry = (const aliashdr_t *)source->extradata[PV_MD5];
 	selection.target_geometry = (const aliashdr_t *)target->extradata[PV_MD5];
 	if (!selection.source_geometry || !selection.target_geometry ||
+		(qbj3_game && selection.source_geometry->numframes < 143) ||
 		selection.source_geometry->numjoints != (int)selection.source_skeleton.joint_count ||
 		selection.target_geometry->numjoints != (int)selection.target_skeleton.joint_count ||
 		(selection.source_geometry->poseverttype != PV_MD5 && selection.source_geometry->poseverttype != PV_MD5_8) ||
@@ -1050,8 +1105,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	target_rig = &selection->target_rig;
 	if (!selection->valid || selection->entity != entity ||
 		selection->id <= PLAYER_AVATAR_RANGER || !R_VRIKRenderProfileForId (selection->id) ||
-		!entity->model || entity->model != selection->original_model || entity->model->needload ||
-		strcmp (entity->model->name, "progs/player.mdl") ||
+		!R_VRIKRenderOriginalModelEligible (entity) || entity->model != selection->original_model ||
 		!selection->source_model || !selection->target_model ||
 		selection->source_model->needload || selection->target_model->needload ||
 		!selection->source_model->avatar_builtin ||
@@ -1113,6 +1167,8 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	ranger.capacity = R_VRIK_RENDER_MAX_JOINTS;
 	ranger.joint_count = 0;
 	tracked = VR_InputVRIKAllowed () && R_VRIKSampleEntityPose (entity, &pose);
+	if (selection->implicit_qbj3 && !tracked)
+		return false;
 	if (tracked)
 	{
 		if (R_VRIKSampleEntityLowerTargets (entity, &lower_targets))

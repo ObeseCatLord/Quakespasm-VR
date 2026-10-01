@@ -59,6 +59,9 @@ typedef struct r_vrik_prepared_palette_s
  * This is the only render path that may load an avatar model. */
 qboolean R_VRIKRenderStageAvatar (const entity_t *entity, int id);
 
+/* Shared raster and BLAS admission for supported original player models. */
+qboolean R_VRIKRenderOriginalModelEligible (const entity_t *entity);
+
 /* Main-thread content reset hook; permits retry of previously missing packs. */
 void R_VRIKRenderResetAdmission (void);
 
