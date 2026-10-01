@@ -2175,6 +2175,17 @@ static qboolean SCR_VRHUDPose (vec3_t target, vec3_t right, vec3_t down, vec3_t 
 		aim_angles[ROLL] = 0;
 		AngleVectors (aim_angles, forward, right, up);
 		VectorMA (cl.viewent.origin, 1.0f, forward, target);
+		const float *offset = V_GetPredictionViewOffset ();
+		if (!offset)
+			return false;
+		for (int i = 0; i < 3; ++i)
+		{
+			if (!isfinite (offset[i]))
+				return false;
+			target[i] += offset[i];
+			if (!isfinite (target[i]))
+				return false;
+		}
 	}
 
 	VectorCopy (aim_angles, panel_angles);

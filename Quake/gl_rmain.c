@@ -1412,6 +1412,21 @@ void R_PrepareVRCrosshair (void)
 			if (prepared.mode == 2)
 				prepared.impact[ray][2] += vertical_offset * 10.0f;
 		}
+		/* Preserve the authoritative trace and hit; only the rendered near start follows the camera. */
+		if (prepared.mode == 2)
+		{
+			const float *offset = V_GetPredictionViewOffset ();
+			if (!offset)
+				return;
+			for (int i = 0; i < 3; ++i)
+			{
+				if (!isfinite (offset[i]))
+					return;
+				prepared.start[ray][i] += offset[i];
+				if (!isfinite (prepared.start[ray][i]))
+					return;
+			}
+		}
 		for (int i = 0; i < 3; ++i)
 			if (!isfinite (prepared.impact[ray][i]))
 				return;
@@ -1441,7 +1456,7 @@ static qboolean R_AkimboPairDrawReady (void)
 			return false;
 		R_SetupAliasFrame (entity, geometry, &lerpdata);
 		R_GetEntityLerpedTransform (entity, lerpdata.origin, lerpdata.angles);
-		if (R_AliasModelMatrix (entity, geometry, &lerpdata, matrix) < 0)
+		if (R_AliasDrawModelMatrix (entity, geometry, &lerpdata, matrix) < 0)
 			return false;
 	}
 	return true;

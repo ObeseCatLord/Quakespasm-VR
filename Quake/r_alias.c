@@ -1096,6 +1096,34 @@ int R_HeldMeleeMatrix (entity_t *e, const aliashdr_t *geometry,
 		true, recipe, -1);
 }
 
+int R_AliasDrawModelMatrix (entity_t *e, const aliashdr_t *geometry,
+	lerpdata_t *lerpdata, float matrix[16])
+{
+	/* Keep shared/native matrices intact; only the draw-local weapon follows the camera. */
+	const int result = V_HeldMeleeRenderEntity (e) ?
+		R_HeldMeleeMatrix (e, geometry, lerpdata, matrix) :
+		R_AliasModelMatrix (e, geometry, lerpdata, matrix);
+	if (result < 0 || (e != &cl.viewent && !R_IsVRViewmodel (e)) ||
+		!R_AliasMatrixIsFinite (matrix))
+		return result;
+
+	const float *offset = V_GetPredictionViewOffset ();
+	float translated[3];
+	if (!offset)
+		return result;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		if (!isfinite (offset[axis]))
+			return result;
+		translated[axis] = matrix[12 + axis] + offset[axis];
+		if (!isfinite (translated[axis]))
+			return result;
+	}
+	for (int axis = 0; axis < 3; ++axis)
+		matrix[12 + axis] = translated[axis];
+	return result;
+}
+
 static void R_DrawAliasSurfaces (
 	cb_context_t *cbx, entity_t *e, aliashdr_t *geometry, const aliashdr_t *selected_geometry, lerpdata_t lerpdata,
 	float model_matrix[16], float entity_alpha, qboolean alphatest, vec3_t shadevector, vec3_t lightcolor, qboolean force_unlit,
@@ -1206,9 +1234,7 @@ void R_DrawAliasModel (cb_context_t *cbx, entity_t *e, int *aliaspolys)
 	// transform it
 	//
 	float model_matrix[16];
-	const int matrix_result = held_melee ?
-		R_HeldMeleeMatrix (e, draw_geometry, &lerpdata, model_matrix) :
-		R_AliasModelMatrix (e, draw_geometry, &lerpdata, model_matrix);
+	const int matrix_result = R_AliasDrawModelMatrix (e, draw_geometry, &lerpdata, model_matrix);
 	if (matrix_result < 0)
 		return;
 	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
@@ -1305,7 +1331,7 @@ qboolean R_DrawAliasCoopOverlay (cb_context_t *cbx, entity_t *e, const vec3_t co
 	R_SetupAliasFrame (e, geometry, &lerpdata);
 	R_GetEntityLerpedTransform (e, lerpdata.origin, lerpdata.angles);
 	float model_matrix[16];
-	if (R_AliasModelMatrix (e, draw_geometry, &lerpdata, model_matrix) < 0 ||
+	if (R_AliasDrawModelMatrix (e, draw_geometry, &lerpdata, model_matrix) < 0 ||
 		!R_AliasMatrixIsFinite (model_matrix))
 		return false;
 	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
@@ -1449,9 +1475,7 @@ void R_DrawAliasModel_ShowTris (cb_context_t *cbx, entity_t *e)
 	// transform it
 	//
 	float model_matrix[16];
-	const int matrix_result = held_melee ?
-		R_HeldMeleeMatrix (e, draw_geometry, &lerpdata, model_matrix) :
-		R_AliasModelMatrix (e, draw_geometry, &lerpdata, model_matrix);
+	const int matrix_result = R_AliasDrawModelMatrix (e, draw_geometry, &lerpdata, model_matrix);
 	if (matrix_result < 0)
 		return;
 	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
@@ -1499,7 +1523,7 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 		return;
 
 	float model_matrix[16];
-	if (R_AliasModelMatrix (e, paliashdr, &lerpdata, model_matrix) < 0)
+	if (R_AliasDrawModelMatrix (e, paliashdr, &lerpdata, model_matrix) < 0)
 		return;
 	if (avatar && !R_AliasAppendAvatarPresentation (model_matrix, avatar))
 		return;
