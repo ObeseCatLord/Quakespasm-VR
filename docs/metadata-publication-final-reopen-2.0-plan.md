@@ -85,6 +85,11 @@ move production work outside the bound. These limits include the prior846 lines.
    mid-signon changes, map resets and retired/reused occupants remain correct.
    Keep native reliable sender exits and DONE/FLUSH ordering. Source-review that
    no phase can deadlock at an empty logical buffer or append partial units.
+   The prespawn SIGNONMSG phase drains serverinfo only; leave userinfo obligations
+   pending until the post-spawn phase. Reuse the same static drain with an explicit
+   include-userinfo argument (true for spawned/post-spawn, false before signon2).
+   Sending all slots before2 and rearming them after spawn duplicates a complete
+   initial table unnecessarily. No new state owner or phase is needed.
 
 ## Required client/control refinement
 
