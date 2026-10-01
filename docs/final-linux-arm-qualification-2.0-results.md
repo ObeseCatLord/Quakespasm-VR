@@ -33,6 +33,12 @@ at that one cleanup line; avoid adding a movement dependency or confusing the
 unrelated dynamic-vector Vec_Clear API. Smoothing lifecycle acceptance remains
 pending after the full rebuild.
 
+Gesture attack merging needs the shared BUTTON_ATTACK command-bit definition
+owned by pmove.h. Include that existing header in vr_input.c, rather than
+duplicating a protocol bit or weakening the gesture/trigger policy. Header-only
+compile correction; existing gesture fixtures and native input qualification
+remain required.
+
 First build stopped at gl_model.c:4828/4829 under native warnings-as-errors:
 the inherited Copper axe cache passes const input to ReadLongUnaligned(byte*).
 The helper only memcpy-reads into a local int. Smallest correction: accept
