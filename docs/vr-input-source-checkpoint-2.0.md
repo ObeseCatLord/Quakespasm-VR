@@ -96,3 +96,30 @@ binding arrays, logical-role mapping and focused-session haptic owner. Optional
 button availability alone does not establish a missing gameplay contract.
 This is source integration and documentation evidence, not executed runtime
 binding acceptance, controller/haptic behavior or performance qualification.
+
+## Roomscale, floor and lifecycle source reconciliation (2026-09-30)
+
+Requested local Astra xhigh completed two bounded read-only primary/current
+comparisons: first the input/reference/scale owners, then their direct lifecycle
+callers and final eye-height consumers. It reported no confirmed P1/P2 defect
+in that scope. Main spot-checked the client-clear, loading invalidation, floor
+height and motion-reset chains. Effective routing metadata was unavailable;
+this is source advice rather than certified model/final-goal signoff.
+
+| Boundary | Current owner and retained behavior |
+| --- | --- |
+| Scale / horizontal displacement | view.c:V_VRUnitsPerMetre retains world_scale/(1.5*0.0254). vr_input.c accumulation maps tracking Z/X to horizontal Quake coordinates, rotates by mapped yaw and copies bounded pending displacement into commands. Tracking baseline remains in metres. |
+| Focus / context / rejected movement | InvalidateMotion calls ResetMotionContinuity, clearing pending displacement, position validity and queued180 turn, then neutral-gates movement/turn. The next admitted position seeds a baseline. |
+| Teleport / authoritative yaw | cl_parse.c setangle/setview reach V_SetTrackedAngles/V_PushTrackedYaw; accepted teleport epoch invalidates motion once. Pending server yaw resolves after valid reference rebasing. Native large-distance interpolation alone is not treated as a new VR reset contract. |
+| Serverinfo / disconnect | CL_ClearState and CL_Disconnect call V_ResetTrackedAim before state teardown; serverinfo additionally clears keys through VR_InputClear. Full reset clears body ownership and pending presentation/motion. |
+| Frozen loading | gl_screen.c frozen refresh calls GL_InvalidateXRInput, clearing focus/hands. Existing input/motion gates reject those samples. Serverinfo supplies an independent map reset. |
+| Runtime reference / session retirement | Reference change invalidates stereo reference and calls V_RebaseTrackedAim before failed/nonrendering exits. Healthy disable releases input before detach; retirement restores the base view and rebases. Same-world retirement preserves mapped history/body ownership. |
+| Floor space versus LOCAL | R_TrackedHeadEyeHeight and final stereo placement share floor_offset+head_y*units for floor space, or saved desktop height+floor_offset+16+(head_y-reference_y)*units for LOCAL. Final eyes add each scaled eye-minus-head offset once; body-owned roomscale removes duplicate horizontal tracking translation. |
+| Centerview | Current V_CenterView synchronizes visual/input aim/history. Primary VR_ResetOrientation likewise leaves its runtime-origin reset commented out; no new physical tracking-origin reset is inferred. |
+
+This reconciles VR-004's current source owners, not actual transport/solver
+collision, rendered continuity or complete VR-002 session qualification. Final
+Linux/ARM coverage still needs accepted command/server collision and lifecycle
+ordering at actual owners; headset continuity remains the user's later testing.
+Excluded Gorilla effective-floor policy is not an implementation gap. No tests,
+builds, compiler invocations, probes or runtime activity occurred here.
