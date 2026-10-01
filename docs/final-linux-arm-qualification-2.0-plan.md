@@ -170,7 +170,12 @@ The [explicit defaults adapter](vr-default-restoration-2.0-plan.md) requires
 actual built-in pak/default-script and menu-reset execution, mod-provided script
 completion, attached/unfocused/desktop-to-XR cases, nonempty native/custom
 bindings, and deliberate later unbind/custom assignment after missing-only
-filling. Repeated ordinary frames must not reapply defaults. Reuse current
+filling. Also cover a detached explicit reset after prior VR use followed by
+single-key NULL/empty assignment, unbindall including already-NULL keys, or a
+menu action clear with no currently bound matching key, before the next sample.
+Those deliberate edits remain excluded while other missing controls restore;
+an entirely excluded restore is consumed once. A new explicit reset starts a
+fresh restore. Repeated ordinary frames must not reapply defaults. Reuse current
 startup missing-only policy for a deferred first sample; script text alone is
 not packaged-control behavior or native key-release/neutral proof.
 
