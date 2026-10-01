@@ -13,12 +13,16 @@
 #include "native_engine_fixture.h"
 
 #include <assert.h>
+#include <setjmp.h>
+
+extern jmp_buf host_abortserver;
 
 static qboolean hold_client_send;
 static byte receive_bytes[NET_MAXMESSAGE];
 static unsigned query_count, full_count, empty_full_count, increment_count;
 static unsigned userinfo_count, signon2_count, signon3_count;
 static unsigned userinfo_count_at_signon3;
+static unsigned disconnect_count;
 static unsigned skin_translation_calls, loading_end_calls, particle_clear_calls;
 static unsigned graphical_map_reset_calls;
 static qboolean control_pressure, name_pressure_armed, begin_pressure_armed;
@@ -116,6 +120,7 @@ static void ReceiveClientPackets (void)
 		int received = NET_GetMessage (cls.netcon);
 		assert (received >= 0);
 		if (!received) return;
+		disconnect_count += net_message.cursize == 1 && net_message.data[0] == svc_disconnect;
 		query_count += Contains (net_message.data, net_message.cursize, "cmd pext");
 		full_count += CountText (net_message.data, net_message.cursize, "//fullserverinfo");
 		empty_full_count += CountText (net_message.data, net_message.cursize, "//fullserverinfo \"\"");
@@ -245,6 +250,18 @@ void __wrap_SZ_Write (sizebuf_t *buf, const void *data, int length)
 void __real_MSG_WriteByte (sizebuf_t *buf, int value);
 void __wrap_MSG_WriteByte (sizebuf_t *buf, int value)
 {
+	/* Select a permanent peer limit while the real metadata unit is being built,
+	 * before SV_MetadataDrain checks admission. Do not replace its decision. */
+	client_t *peer = &svs.clients[0];
+	if (!strcmp (signon_limit, "permanent") && !limit_applied &&
+		buf != &peer->message && value == svc_stufftext && peer->active &&
+		peer->sendsignon == PRESPAWN_SIGNONMSG &&
+		peer->metadata_serverinfo_pending && cls.signon == 1)
+	{
+		assert (buf->maxsize == NET_MAXMESSAGE && peer->message.maxsize > 1);
+		peer->message.maxsize = 1;
+		limit_applied = true;
+	}
 	if (limit_applied && !signon_capacity_restored &&
 		buf == &svs.clients[0].message && value == svc_signonnum)
 	{
@@ -315,12 +332,24 @@ int main (int argc, char **argv)
 	assert (mode);
 	assert (!strcmp (mode, "qsmi") || !strcmp (mode, "predinfo"));
 	assert (!strcmp (signon_limit, "none") || !strcmp (signon_limit, "exact") ||
-		!strcmp (signon_limit, "pressure"));
+		!strcmp (signon_limit, "pressure") || !strcmp (signon_limit, "permanent"));
+	/* Reuse the native _Host_Frame abort boundary. Only persistent/static engine
+	 * state is inspected after a jump; changed automatic frame locals are not. */
+	if (setjmp (host_abortserver))
+	{
+		assert (!strcmp (signon_limit, "permanent") && limit_applied &&
+			disconnect_count == 1 && query_count && !signon2_count && !signon3_count);
+		assert (cls.state == ca_disconnected && !cls.netcon && !cls.signon &&
+			!sv.active && !svs.clients[0].active && !svs.clients[0].spawned);
+		puts ("METADATA_NATIVE_PASSED offer=qsmi limit=permanent native-drop-disconnect-host-abort");
+		return 0;
+	}
 	Fixture_InitNativeEngine (argc, argv, "e1m1", false);
 	CL_Init (); /* Registers the native client metadata command handlers headlessly. */
 	PR_SwitchQCVM (NULL);
 	SetServerInfo (mode);
 	cls.state = ca_connected;
+	cls.demonum = -1;
 	cls.demoplayback = false;
 	cls.offered_qsvr = 0;
 	cls.legacy_qsvr = 0;
@@ -372,6 +401,7 @@ int main (int argc, char **argv)
 			peer->spawned, userinfo_count);
 		return 3;
 	}
+	assert (strcmp (signon_limit, "permanent")); /* Permanent refusal must never spawn. */
 	assert (query_count && offer_sent && peer->pextknown && cl.serverinfo_received &&
 		cls.signon >= 3 && signon2_count == 1 && signon3_count == 1 &&
 		userinfo_count_at_signon3 >= MAX_SCOREBOARD);

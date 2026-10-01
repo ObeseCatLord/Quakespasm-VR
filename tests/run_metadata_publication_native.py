@@ -31,6 +31,7 @@ def main():
             ("qsmi", "exact", False),
             ("qsmi", "pressure", False),
             ("qsmi", "none", True),
+            ("qsmi", "permanent", False),
         ])
 
     for offer, limit, control_pressure in cases:

@@ -1,5 +1,33 @@
 # Native C02 metadata publication qualification
 
+## Current native disconnect follow-up
+
+2026-10-01: following the BEFORE580 test-only reopening in
+[the follow-up plan](final-fixture-followup-2.0-plan.md), the fixture now has435 C
+plus80 Python lines (515 combined). Main added the native host_abortserver/setjmp
+boundary and an explicitly selected permanent one-byte peer reliable limit while
+the native metadata unit is built, before its real admission check. No production
+drop/parser/transport owner was changed. Automatic locals modified after setjmp
+are not used in the jump branch. Unexpected jumps in the five positive cases fail.
+
+The strict native fixture build and all six runner cases passed (exit0).
+The permanent case logs the real metadata-envelope warning, native client removal,
+one-byte svc_disconnect reception, then native Host_EndGame disconnect/server
+shutdown and return through the armed host boundary. Assertions require no
+signon2/3 or spawn, disconnected client/no socket, and inactive server/peer.
+This closes the earlier harness crash diagnosis; it is not full C02 acceptance.
+
+Main refreshed gl_model.c/r_brush.c for production repairs through29129513;
+embedded_pak.c is generated and was refreshed separately. The tracked production
+source comparison against the current ff83e66a worktree records zero mismatches.
+Exact private logs: qualification logs/metadata-negative-host-build.log and
+metadata-negative-host-run.log; six disposable profiles are under
+/tmp/qsvr-metadata-publication-native-8e3ngp42. Available pak0 only; graphical
+callbacks remain excluded and the first native query still selects its offer
+through the real command path rather than automatic client query parsing.
+
+The remainder below records earlier snapshots and limitations.
+
 2026-10-01. Behavioral reference: C02 source integration `f3727a10` and its
 final reopening plan. Run at checkout `cfc19120` on branch `2.0`. The fixture
 is405 C plus79 Python lines,484 combined, exceeding the original450-line bound.
