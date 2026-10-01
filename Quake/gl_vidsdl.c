@@ -4208,6 +4208,7 @@ static void GL_CreateXRImageViews (void)
 				vkDestroyImageView (vulkan_globals.device, openxr_density_image_views[i], NULL);
 		free (openxr_density_image_views);
 		openxr_density_image_views = NULL;
+		openxr_density_backend_failed = true;
 		Con_Printf ("OpenXR borrowed density-map views unavailable; rendering at full rate.\n");
 	}
 }
@@ -4795,7 +4796,8 @@ static void GL_OpenXRAttach (void)
 	openxr_desktop_height = vid.height;
 	/* Device-time FDM readiness survives rediscovery; only request borrowed
 	 * maps from a runtime that still supports the selected route. */
-	qboolean runtime_density_maps = vulkan_globals.openxr_fragment_density_map_enabled && VRXR_VulkanFoveationSupported ();
+	qboolean runtime_density_maps = !openxr_density_backend_failed &&
+		vulkan_globals.openxr_fragment_density_map_enabled && VRXR_VulkanFoveationSupported ();
 	VkImageCreateFlags runtime_density_image_flags = 0;
 #if defined(VK_QCOM_fragment_density_map_offset)
 	if (runtime_density_maps && vulkan_globals.openxr_fragment_density_offset_enabled)
@@ -5067,12 +5069,10 @@ static qboolean GL_PrepareRuntimeFoveation (void)
 	openxr_density_eye_active = false;
 	vulkan_globals.openxr_fragment_density_frame_active = false;
 	memset (openxr_density_offsets, 0, sizeof (openxr_density_offsets));
-	if (openxr_density_backend_failed)
-		return true;
-	if (!openxr_density_image_views)
-		return true;
-
-	int mode = !vulkan_globals.openxr_fragment_density_map_active || key_dest == key_menu ?
+	/* A resource failure does not turn off the runtime's last profile. Require
+	 * an explicit OFF update before drawing without its density attachment. */
+	int mode = openxr_density_backend_failed || !openxr_density_image_views ||
+		!vulkan_globals.openxr_fragment_density_map_active || key_dest == key_menu ?
 		VRF_MODE_OFF : VRF_RequestedMode (vr_foveation.value);
 	const qboolean allow_eye = mode == VRF_MODE_EYE_TRACKED && VRF_EyeTrackingEnabled (vr_eye_tracking.value) &&
 		VRXR_VulkanFoveationEyeAvailable ();
@@ -5103,8 +5103,20 @@ static qboolean GL_PrepareRuntimeFoveation (void)
 	}
 	openxr_density_backend_failed = true;
 	vulkan_globals.openxr_fragment_density_map_active = false;
-	Con_Printf ("OpenXR runtime foveation could not restore full rate; disabling density passes.\n");
+	Con_Printf ("OpenXR runtime foveation could not restore full rate; retiring its swapchains.\n");
 	return false;
+}
+
+static void GL_RecoverRuntimeFoveation (void)
+{
+	/* Abort may itself retire a lost session. Release VR-owned input first. */
+	VR_InputCommands (NULL);
+	VRXR_AbortFrame ();
+	VRXR_DetachVulkan ();
+	/* Eligibility alone also permits explicit recovery after loss/EXITING.
+	 * Only a healthy optional-feature failure authorizes this automatic retry. */
+	if (openxr_session_wanted && VRXR_StopReason () == VRXR_STOP_NONE && VRXR_VulkanRetryAvailable ())
+		openxr_attach_attempted = false;
 }
 
 static void GL_PrepareFragmentShadingRateMap (void)
@@ -5301,7 +5313,7 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		vulkan_globals.stereo_scene_descriptor_set = VK_NULL_HANDLE;
 		if (!GL_PrepareRuntimeFoveation ())
 		{
-			VRXR_AbortFrame ();
+			GL_RecoverRuntimeFoveation ();
 			vid.restart_next_frame = true;
 			return false;
 		}
