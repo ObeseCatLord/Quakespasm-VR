@@ -8,8 +8,9 @@ are listed below. No final-tree builds or tests have run. The user-owned changes
 to migration-2.0.md remain untouched.
 
 Following that review, C07's draw phase was source-integrated in `1b5b2d84` and
-C14's optional extraction phase in `19e2c6b3`. **Three implementation areas now
-remain: C02, C14 and C19.** C14 still needs staging and consumers. None of these
+C14's optional extraction phase in `19e2c6b3` and producer in `3b80ac1a`.
+**Three implementation areas now remain: C02, C14 and C19.** C14 still needs
+consumer refinement/integration. None of these
 source receipts constitutes final executable acceptance.
 
 Local Astra xhigh reviewed all 185 inventory rows: 153 source-integrated/native
@@ -83,14 +84,18 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
 - [x] Separate verified source key/digest/geometry admission from selected target
   ATTACH_HAND policy; `19e2c6b3` removed that erroneous source-policy gate.
   Frame preparation still needs the selected-target attachment branch.
-- [ ] Stage source identity/readiness and publish two immutable attachment records
+- [x] Stage source identity/readiness and publish two immutable attachment records
   at the existing frame owner: dominant-hand shotgun and upper-spine wrench,
-  correct source presentation/socket mapping, skin/glow and independent bounds.
+  correct source presentation/socket mapping, skin/glow and independent bounds;
+  `3b80ac1a` after main source review (398 changed lines).
   Follow the [phase2 senior reopening](qbj3-equipment-phase2-reopen-2.0-review.md):
   correct relative cache indexing, effective-target staging gate and native
   affine reuse before accepting the paused producer.
 - [ ] Extend native raster, co-op overlays, ShowTris and matching TLAS count/
   emission to both records, with all masks before outlines and consistent shadows.
+  The [consumer senior reopening](qbj3-equipment-consumers-reopen-2.0-review.md)
+  requires native per-record helper reuse, rolling skin fallback alignment,
+  duplicate declaration removal and simpler temporary state before integration.
 - [ ] Keep the selected body on optional pair failure, publish neither equipment
   nor derived muzzle, avoid Ranger substitution and preserve ordinary Ranger plus
   independent C13 death/corpse presentation and lifetime rules.
@@ -102,16 +107,20 @@ Publication/privacy/envelope work remains; these partial receipts do not close C
   policy; bounded before-code slices committed in `4b485cd6` after the senior
   disposition. [Inputs](portable-linux-2.0-inputs.md) and
   [plan](portable-linux-2.0-plan.md); build qualification remains pending.
-- [ ] Implement shared native builder using Meson installation and reused
-  Steam Audio4.8.1 recipe with required SDL3, shaders, codecs and CURL enabled.
+- [x] Implement shared native builder using Meson installation and reused
+  Steam Audio4.8.1 recipe with required SDL3, shaders, codecs and CURL enabled;
+  `8059edb7`, including main source-derived compressed-input/SDK-prefix repairs.
+  No execution/build qualification yet.
 - [ ] Stage complete dependency closure, explicitly seed executable-side OpenXR
   loader, normalize each ELF RUNPATH and preserve internal SONAME aliases;
   reject unresolved/conflicting/escaping dependencies and retain GLIBC<=2.39.
 - [ ] Include matching dependency notices, header/static contributions,
   versions/hashes/patches and source-access artifacts through existing owners.
-- [ ] Implement artifact verification and isolated source-in/results-out Foundry
-  transport for one immutable snapshot, without modifying the deployed server.
-  Execute builders/verifiers only in final qualification after implementation.
+- [ ] Implement artifact verification at the shared staging owner.
+- [x] Implement isolated source-in/results-out Foundry transport for one immutable
+  snapshot, without modifying the deployed server; `2785feb9`. Tar/checksum
+  retrieval preserves aliases; depends on the unfinished staging/verifier slice.
+  Execute builders/wrapper/verifiers only in final qualification after implementation.
 
 The sole unresolved product choice is C02's stock-QSS-M peer contract. C07/C14
 refinements and C19 policy choices are technical work, already within scope.
@@ -125,7 +134,7 @@ before-code plans and main review of the Luna patches. Their executable
 acceptance remains pending. **Three implementation items remain**: C02,
 C14 and C19. C07's native replay/camera phase is integrated in `3f8b398c` and its
 renderer/HUD phase in `1b5b2d84`. C14 phase1 is integrated in `19e2c6b3`, while
-staging/consumer phases remain required. The shared Q01 rendering correction is also source-integrated;
+consumer integration remains required after producer `3b80ac1a`. The shared Q01 rendering correction is also source-integrated;
 its rendered acceptance remains pending.
 No tests or builds have run since the audit.
 Each remaining slice needs a committed before-code plan, implementation/source
