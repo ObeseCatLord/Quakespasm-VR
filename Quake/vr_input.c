@@ -3930,28 +3930,78 @@ static void VR_MigrateModBindings_f (void)
 		Key_SetBinding (K_VR_ALTFIRE, "+hook");
 }
 
-static qboolean vr_default_bindings_applied;
+typedef enum
+{
+	VR_DEFAULT_BINDINGS_STARTUP_PENDING,
+	VR_DEFAULT_BINDINGS_APPLIED,
+	VR_DEFAULT_BINDINGS_EXPLICIT_PENDING
+} vr_default_bindings_phase_t;
 
-static void VR_InputApplyDefaultBindings (void)
+static vr_default_bindings_phase_t vr_default_bindings_phase;
+/* Temporary exclusions over the existing eleven defaults, only while explicit
+ * restoration is pending. Startup filling retains its original policy. */
+static unsigned int vr_default_bindings_excluded;
+
+void VR_InputDefaultBindingChanged (int key)
+{
+	if (vr_default_bindings_phase != VR_DEFAULT_BINDINGS_EXPLICIT_PENDING)
+		return;
+	for (size_t i = 0; i < countof (vr_default_bindings); ++i)
+		if (vr_default_bindings[i].key == key)
+			vr_default_bindings_excluded |= 1u << i;
+}
+
+void VR_InputDefaultBindingsCleared (void)
+{
+	if (vr_default_bindings_phase == VR_DEFAULT_BINDINGS_EXPLICIT_PENDING)
+		vr_default_bindings_excluded = (1u << countof (vr_default_bindings)) - 1u;
+}
+
+void VR_InputDefaultCommandCleared (const char *command)
+{
+	if (vr_default_bindings_phase != VR_DEFAULT_BINDINGS_EXPLICIT_PENDING)
+		return;
+	for (size_t i = 0; i < countof (vr_default_bindings); ++i)
+		if (!strcmp (vr_default_bindings[i].binding, command))
+			vr_default_bindings_excluded |= 1u << i;
+}
+
+static void VR_InputApplyDefaultBindings (unsigned int excluded)
 {
 	for (size_t i = 0; i < countof (vr_default_bindings); ++i)
 	{
 		const int key = vr_default_bindings[i].key;
-		if (key >= 0 && key < MAX_KEYS &&
+		if (!(excluded & (1u << i)) && key >= 0 && key < MAX_KEYS &&
 			(!keybindings[key] || !keybindings[key][0]))
 			Key_SetBinding (key, vr_default_bindings[i].binding);
 	}
 }
 
+static void VR_InputFinishDefaultBindings (void)
+{
+	const unsigned int excluded = vr_default_bindings_excluded;
+	/* Retire even an entirely excluded restore before generated bindings notify. */
+	vr_default_bindings_phase = VR_DEFAULT_BINDINGS_APPLIED;
+	vr_default_bindings_excluded = 0;
+	VR_InputApplyDefaultBindings (excluded);
+}
+
 static void VR_InputDefaultBindings_f (void)
 {
-	if (V_TrackedSessionActive ())
-		VR_InputApplyDefaultBindings ();
+	vr_default_bindings_excluded = 0;
+	if (!V_TrackedSessionActive ())
+	{
+		if (vr_default_bindings_phase != VR_DEFAULT_BINDINGS_STARTUP_PENDING)
+			vr_default_bindings_phase = VR_DEFAULT_BINDINGS_EXPLICIT_PENDING;
+		return;
+	}
+	VR_InputFinishDefaultBindings ();
 }
 
 void VR_InputInit (void)
 {
-	vr_default_bindings_applied = false;
+	vr_default_bindings_phase = VR_DEFAULT_BINDINGS_STARTUP_PENDING;
+	vr_default_bindings_excluded = 0;
 	VR_InputFBTReset ();
 	Cvar_RegisterVariable (&vr_lefthanded);
 	Cvar_RegisterVariable (&vr_haptic);
@@ -3999,13 +4049,10 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	qboolean desired[2][MAX_KEYS] = {{false}};
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
-	/* The first completed XR frame follows config loading. Fill only missing
-	 * VR actions once, so later user unbinds are respected. */
-	if (!vr_default_bindings_applied && frame && frame->sample_id)
-	{
-		VR_InputApplyDefaultBindings ();
-		vr_default_bindings_applied = true;
-	}
+	/* The first completed XR frame fills missing startup bindings; a later
+	 * detached defaults request fills once, respecting intervening changes. */
+	if (vr_default_bindings_phase != VR_DEFAULT_BINDINGS_APPLIED && frame && frame->sample_id)
+		VR_InputFinishDefaultBindings ();
 	/* Reapply the archived preference each input pass: OpenXR teardown resets
 	 * runtime state, while this also lets users enable tracking mid-session. */
 	VRXR_SetTrackerEnabled (vr_fbt_enabled.value != 0.0f);

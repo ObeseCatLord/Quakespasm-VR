@@ -689,6 +689,7 @@ void Key_SetBinding (int keynum, const char *binding)
 {
 	if (keynum < 0 || keynum >= MAX_KEYS)
 		return;
+	VR_InputDefaultBindingChanged (keynum);
 	if (binding && keybindings[keynum] && !strcmp (binding, keybindings[keynum]))
 		return;
 
@@ -748,6 +749,7 @@ void Key_Unbindall_f (void)
 		if (keybindings[i])
 			Key_SetBinding (i, NULL);
 	}
+	VR_InputDefaultBindingsCleared ();
 }
 
 /*

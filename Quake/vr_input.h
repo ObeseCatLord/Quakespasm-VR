@@ -37,6 +37,11 @@ enum
 };
 
 void VR_InputInit (void);
+/* Binding-owner/menu notifications only exclude defaults during a pending
+ * explicit restoration; they never schedule or apply bindings. */
+void VR_InputDefaultBindingChanged (int key);
+void VR_InputDefaultBindingsCleared (void);
+void VR_InputDefaultCommandCleared (const char *command);
 extern cvar_t vr_fbt_enabled;
 
 typedef enum

@@ -4347,6 +4347,7 @@ void M_Options_Key (int k)
 			{
 				Cbuf_AddText ("resetcfg\n");
 				Cbuf_AddText ("exec default.cfg\n");
+				Cbuf_AddText ("vr_defaultbindings\n");
 			}
 			break;
 		case OPT_VIDEO:
@@ -4628,6 +4629,7 @@ void M_UnbindCommand (const char *command)
 		if (!strcmp (b, command))
 			Key_SetBinding (j, NULL);
 	}
+	VR_InputDefaultCommandCleared (command);
 }
 
 extern qpic_t *pic_up, *pic_down;
