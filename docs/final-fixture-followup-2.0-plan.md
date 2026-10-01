@@ -89,3 +89,14 @@ capture its current ammunition after native processing, then require an actual
 decrease after the existing attack window. Preserve all phase/health/ACK/death
 assertions. Do not assign weapon/ammunition, suppress pickups or force policy.
 This replaces an obsolete constant with the actual producer/consumer invariant.
+
+### Ordinary assertions before invasive cases
+
+The gap's own assertions now pass; the outer ordinary-run shells<initial assertion
+then fails because the optional death/respawn case has legitimately changed that
+inventory. BEFORE30 further changed test lines: execute all unchanged ordinary
+movement/ammunition/peer/snapshot/ACK assertions before optional gap/velocity
+cases. Retain their state objects until all cases finish, then use the same native
+Mem_Free calls in a separate cleanup loop. Do not reset bodies/inventory or remove
+any assertion. This tests each phase against its actual reference start rather
+than applying the ordinary initial baseline after a destructive scenario.
