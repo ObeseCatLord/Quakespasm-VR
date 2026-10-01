@@ -125,6 +125,27 @@ OFF/LIVE/READY/NO DEV. The primary draws the same basic status/meter/name list;
 This is source ownership/reuse, not readable-stereo or audio/UI qualification.
 The [capture continuity brief](voice-capture-continuity-2.0-plan.md) records a
 separate demonstrated producer gap: discarded/error data can leave old LIVE and
-preroll state. Its repair must reuse existing voice reset/capture owners. Broader
+preroll state. Its repair47df36e6 reuses existing voice reset/capture owners,
+with final source-review receipt in that plan. Broader
 Linux/ARM audio qualification remains at the end of implementation; no builds,
 tests or runtime checks ran in this reconciliation.
+
+## Spatial inventory reconciliation (2026-09-30)
+
+Main rechecked AUDIO-008/009 actual producers and consumers before updating
+their inventory rows. Spatial_ApplyCvars projects current room/radio/occlusion/
+voice-reverb controls into the existing settings snapshot. Spatial_UpdateOcclusion
+uses a bounded world-only trace budget with source-generation/world/motion/age
+invalidation; render_block smooths obstruction and radio mixing while applying
+the inherited filter/compression/drive. This establishes the existing generic
+owners, without old setting-name aliases or an additional DSP implementation.
+
+The room worker publishes reflection results under its existing lock and
+coalesces input at a maximum10Hz without a growing work queue. SAR_Render and
+render_block use try-lock snapshots instead of waiting for game-thread work.
+Spatial_ReplaceRoom/ClearWorld detach under native callback exclusion, release
+it, then destroy/join the detached room. These source contracts are present;
+their timing, result ownership under SDK execution, map-teardown concurrency,
+audible transitions and native ARM library delivery still require the final
+consolidated Linux/ARM qualification. No implementation rewrite or execution
+check was introduced by this inventory reconciliation.
