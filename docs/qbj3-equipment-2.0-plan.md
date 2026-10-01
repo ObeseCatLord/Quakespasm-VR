@@ -94,7 +94,17 @@ primary full canonical bind points without scaling prop by target body twice.
 Finite matrix and each view bound checks precede publication. Union both prop
 bounds into existing conservative body bound. No animation/rig algorithm rewrite.
 
-Estimate170–230 changed lines. Reopen >290/new publication owner.
+The paused producer exceeded the original170–230 estimate and290 reopening
+threshold. The [phase2 senior disposition](qbj3-equipment-phase2-reopen-2.0-review.md)
+supersedes that estimate before further refinement. Correct custom cache indexing
+to id-PLAYER_AVATAR_COUNT after range validation; gate optional staging on the
+effective selected ATTACH_HAND target before source lookup. Reuse native
+R_ConcatTransforms through local non-alias inputs/output and finite checks,
+retaining rotation-only anchor basis/full-forward origin and conservative
+optional-pair refusal. Remove redundant fallback/clearing and preserve native
+Ranger comments. Required identity/readiness/bounds guards remain.
+
+Revised estimate350–380 changed lines; stop/reopen above400 or a new owner.
 
 ## Phase3: native consumers
 
@@ -108,10 +118,16 @@ TLAS count and emission both use identical bounded pair admission/iteration.
 Native GLMesh shared prop BLAS discovery stays unchanged unless source proves
 a missing seam; seek main approval of reopened plan before changing its owner.
 
-Estimate110–160 changed lines; reopen >210. Combined rough390–550; reopen on
-material growth (>650), duplicate policy/cache, new upload/animation layer or
-unexpected adjacency. Coding delegates edit only precise current-phase files,
-no tests/builds/lint/probes/assets/docs/staging/commits.
+Preflight complete pairs at each consumer before any optional prop output:
+material, transform, lighting and conditional BLAS readiness. Reuse bounded local
+arrays; TLAS count and emission must agree. Optional consumer failure retains
+the valid selected body and emits neither prop. No new persistent consumer state.
+
+Revised estimate140–180 changed lines; reassess above180. With phase1's217,
+combined expected707–777; reopen above800, duplicate policy/cache, new upload/
+animation layer or unexpected adjacency. These bounds supersede earlier650/
+phase3 limits following the senior reopening. Coding delegates edit only precise
+current-phase files, no tests/builds/lint/probes/assets/docs/staging/commits.
 
 ## Final consolidated acceptance
 

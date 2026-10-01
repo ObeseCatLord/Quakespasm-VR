@@ -20,7 +20,8 @@ below; no row remains unreviewed.
 
 The [current local Astra xhigh refresh](final-checklist-refresh-2.0-review.md)
 accounts for all185 IDs using the original review and current receipts, verifies
-challenged consumers, and confirms **four remaining implementation areas**.
+challenged consumers, and confirmed **four remaining implementation areas at
+that review snapshot**. C07 has since been source-integrated, leaving three.
 It found necessary C07/C14 refinements, not a fifth independent missing feature.
 Source integration and software acceptance remain separate.
 
@@ -33,6 +34,11 @@ another renderer, VM, networking stack or movement solver.
 
 **C02 / NET-021 — server and player metadata publication**
 
+Receiver argc, nonnegative bounded scoreboard slots and terminated full
+replacement are source-integrated in `2a43c96b`, following the
+[receiver plan](metadata-receivers-2.0-plan.md). Quoting/reader and publication
+work remain; this partial receipt does not close C02.
+
 - [ ] Settle stock-QSS-M interoperability/recipient command limits and an explicit
   permanent-oversize outcome; the existing optional user question is unanswered.
 - [ ] Publish initial/empty serverinfo before signon2 and all current userinfo
@@ -44,8 +50,9 @@ another renderer, VM, networking stack or movement solver.
 - [ ] Share full/incremental public projection including the cvar path, exclude
   private underscore keys, retain star keys and clear unrepresentable old values
   without silent1024-byte truncation or changes to local stores.
-- [ ] Repair full/update receiver argc, bounded nonnegative slots, string
-  termination and quoted-command validation; extend only the explicit required
+- [x] Repair full/update receiver argc, bounded nonnegative slots and full-string
+  termination; `2a43c96b` (source integration, final qualification pending).
+- [ ] Finish quoted-command validation and extend only the explicit required
   full-userinfo reader allowance. No new metadata protocol or copied queue.
 
 **C07 / NET-014 — source-integrated; final qualification pending**
@@ -74,6 +81,9 @@ another renderer, VM, networking stack or movement solver.
 - [ ] Stage source identity/readiness and publish two immutable attachment records
   at the existing frame owner: dominant-hand shotgun and upper-spine wrench,
   correct source presentation/socket mapping, skin/glow and independent bounds.
+  Follow the [phase2 senior reopening](qbj3-equipment-phase2-reopen-2.0-review.md):
+  correct relative cache indexing, effective-target staging gate and native
+  affine reuse before accepting the paused producer.
 - [ ] Extend native raster, co-op overlays, ShowTris and matching TLAS count/
   emission to both records, with all masks before outlines and consistent shadows.
 - [ ] Keep the selected body on optional pair failure, publish neither equipment
@@ -82,9 +92,11 @@ another renderer, VM, networking stack or movement solver.
 
 **C19 / PLAT-003 — portable Linux x86-64 and native ARM64 release artifacts**
 
-- [ ] Finish exact SDK/tool/dependency pins and flags, portable ISA, OpenXR
+- [x] Select exact SDK/tool/dependency pins and flags, portable ISA, OpenXR
   JsonCpp/system configuration-prefix choices and explicit host/bundled SONAME
-  policy; commit bounded before-code slices after the existing senior disposition.
+  policy; bounded before-code slices committed in `4b485cd6` after the senior
+  disposition. [Inputs](portable-linux-2.0-inputs.md) and
+  [plan](portable-linux-2.0-plan.md); build qualification remains pending.
 - [ ] Implement shared native builder using Meson installation and reused
   Steam Audio4.8.1 recipe with required SDL3, shaders, codecs and CURL enabled.
 - [ ] Stage complete dependency closure, explicitly seed executable-side OpenXR
