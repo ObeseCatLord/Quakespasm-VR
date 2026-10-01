@@ -3476,6 +3476,7 @@ void CL_ParseServerMessage (void)
 		case svc_stufftext:
 		{
 			static const char fullserverinfo_prefix[] = "//fullserverinfo \"";
+			static const char fulluserinfo_prefix[] = "//fui ";
 			static char server_command[sizeof (fullserverinfo_prefix) - 1 + (SERVER_INFO_STRING_SIZE - 1) + sizeof ("\"\n")];
 			int command_start = msg_readcount;
 			size_t command_length;
@@ -3486,9 +3487,11 @@ void CL_ParseServerMessage (void)
 			// string reader consumes excess bytes even when its buffer fills.
 			if (msg_badread || msg_readcount - command_start != (int)command_length + 1)
 				Host_Error ("CL_ParseServerMessage: truncated server command");
-			// Preserve the old 2047-byte limit for every other stuffed command.
+			// Only explicit full metadata snapshots use the info-store capacity;
+			// preserve the old 2047-byte limit for every other stuffed command.
 			if (command_length >= MSG_READSTRING_SIZE &&
-				strncmp (str, fullserverinfo_prefix, sizeof (fullserverinfo_prefix) - 1))
+				strncmp (str, fullserverinfo_prefix, sizeof (fullserverinfo_prefix) - 1) &&
+				strncmp (str, fulluserinfo_prefix, sizeof (fulluserinfo_prefix) - 1))
 				Host_Error ("CL_ParseServerMessage: truncated server command");
 			// handle special commands
 			if (command_length > 2 && str[0] == '/' && str[1] == '/')

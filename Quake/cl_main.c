@@ -3143,9 +3143,31 @@ static void CL_Viewpos_Completion_f (const char *partial)
 	Con_AddToTabList ("copy", partial, NULL);
 }
 
+/* The native tokenizer accepts a quoted token ending at NUL. Metadata must
+ * instead be a complete command before any shared store or scoreboard changes. */
+static qboolean CL_MetadataCommandComplete (void)
+{
+	const char *text = Cmd_Args ();
+	char token[SERVER_INFO_STRING_SIZE];
+	for (int argument = 1; argument < Cmd_Argc (); ++argument)
+	{
+		const char *start, *end;
+		qboolean parse_error;
+		end = COM_ParseExBufferSpan (text, CPE_NOTRUNC, token, sizeof (token),
+			&parse_error, &start);
+		if (!end || parse_error || !start || strcmp (token, Cmd_Argv (argument)) ||
+			(*start == '"' && (end - start < 2 || end[-1] != '"')))
+			return false;
+		text = end;
+	}
+	while (*text && (unsigned char)*text <= ' ')
+		++text;
+	return !*text;
+}
+
 static void CL_ServerExtension_FullServerinfo_f (void)
 {
-	if (Cmd_Argc () != 2)
+	if (Cmd_Argc () != 2 || !CL_MetadataCommandComplete ())
 		return;
 	const char *newserverinfo = Cmd_Argv (1);
 	q_strlcpy (cl.serverinfo, newserverinfo, sizeof (cl.serverinfo));
@@ -3153,7 +3175,7 @@ static void CL_ServerExtension_FullServerinfo_f (void)
 }
 static void CL_ServerExtension_ServerinfoUpdate_f (void)
 {
-	if (Cmd_Argc () != 3)
+	if (Cmd_Argc () != 3 || !CL_MetadataCommandComplete ())
 		return;
 	const char *newserverkey = Cmd_Argv (1);
 	const char *newservervalue = Cmd_Argv (2);
@@ -3186,7 +3208,7 @@ static void CL_ServerExtension_FullUserinfo_f (void)
 	unsigned int slot;
 	scoreboard_t *sb;
 	const char *newuserinfo;
-	if (Cmd_Argc () != 3 || !cl.scores || cl.maxclients <= 0 ||
+	if (Cmd_Argc () != 3 || !CL_MetadataCommandComplete () || !cl.scores || cl.maxclients <= 0 ||
 		cl.maxclients > MAX_SCOREBOARD ||
 		!CL_ParseBoundedDecimal (Cmd_Argv (1), (unsigned int)(cl.maxclients - 1), &slot))
 		return;
@@ -3201,7 +3223,7 @@ static void CL_ServerExtension_UserinfoUpdate_f (void)
 {
 	unsigned int slot;
 	scoreboard_t *sb;
-	if (Cmd_Argc () != 4 || !cl.scores || cl.maxclients <= 0 ||
+	if (Cmd_Argc () != 4 || !CL_MetadataCommandComplete () || !cl.scores || cl.maxclients <= 0 ||
 		cl.maxclients > MAX_SCOREBOARD ||
 		!CL_ParseBoundedDecimal (Cmd_Argv (1), (unsigned int)(cl.maxclients - 1), &slot))
 		return;
