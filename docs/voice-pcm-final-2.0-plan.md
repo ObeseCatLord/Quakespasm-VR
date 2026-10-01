@@ -50,7 +50,8 @@ Opus/jitter/voice queue. Private build adapter/argv receipts remain with logs.
    Voice_MixAudio. Require nonzero output and depleted real ring; no synthetic
    decoded samples or fake jitter/Opus. Check mute silence/gain and missing/reordered
    captured packets at the existing transport boundary if within the bound.
-4. Observe native reset retirement and newer/older server generation handling,
+4. Observe native reset retirement; newer/older server generation handling stays
+   a distinct required F08 case outside this bounded fixture,
    clean Voice_Shutdown and original engine shutdown. This slice does not close
    whole F08: live transport, full capture routing/defaults/retry/PTT/VAD matrix,
    Steam Audio/HRTF/music/spatial worker and map/slot scenarios remain distinct.
@@ -127,3 +128,34 @@ compile_commands.json and ninja's existing native link command, replaces only
 the five fixture-included owners, and adds the existing four wrappers. No new
 compiler policy/configuration or general fixture framework. Preserve exact
 flags, library order and actual Opus dependency; main owns this helper.
+
+## Focused Astra disposition before revised acceptance
+
+Main verified effective gpt-6-astra/xhigh and spot-checked all four source
+findings. Earlier exit0 is superseded for safe fixture acceptance. The review
+keeps the existing adapter and challenges its resource/output preconditions;
+this is not overall F10 signoff.
+
+| Finding | Disposition |
+| --- | --- |
+| P1: prepared entity arrays freed before native disconnect writes VRIK caches | Adopted: retain resources through native host/disconnect shutdown, then clear aliases and free. Earlier success cannot certify lifetime safety. |
+| P2: reset checks start with empty jitter/PCM/outgoing | Adopted: native third/fourth burst builds nonzero PCM and pending jitter; actual producer builds a separate nonempty outgoing queue before reset. Require all preconditions and subsequent retirement. |
+| P2: newer/older generation ordering not exercised | Adapted: explicitly retain as distinct required F08 work; this fixture's nonzero/same generation is not replacement/stale-packet proof. |
+| P2: mute silence lacks nonzero unread-PCM precondition | Adopted: inspect nonzero unread ring samples immediately before native mute, without consuming/modifying them. |
+
+No product repair follows; changes are test ownership/acceptance corrections.
+Rerun the changed fixture; original failure/success logs remain historical.
+
+Verified Astra xhigh follow-up finds no remaining concrete issue in the revised
+source: prepared resources live through native shutdown, nonzero mute input
+and pending outgoing/jitter/PCM reset preconditions are established. Source-only
+review, actual revised run is main-owned; no F10/whole-F08 signoff. Preserve
+the review's assertion-enabled condition explicitly: builder rejects NDEBUG
+flags and the fixture has an NDEBUG compile error, so safety/acceptance guards
+cannot silently disappear in a release compile. Final affected build/run follows.
+
+Final reproducible build/run after the assertion guard both exit0 with the
+positive marker. Builder refusal and textual source NDEBUG guard independently
+reject assertion-disabled inputs; the first source-negative attempt failed at
+a mismatched DEBUG PCH and is retained but is not guard evidence. No more
+fixture reruns are needed without a new relevant change/failure.

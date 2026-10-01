@@ -15,6 +15,8 @@ source = Path(__file__).resolve().parent / 'voice_pcm_native_fixture.c'
 entries=json.loads((build/'compile_commands.json').read_text())
 entry=next(x for x in entries if x['file'].endswith('/Quake/voice.c'))
 arguments=entry.get('arguments') or shlex.split(entry['command'])
+if any(flag.startswith('-DNDEBUG') for flag in arguments):
+ raise SystemExit('requires assertion-enabled DEBUG compiler flags')
 if '-DUSE_VOICECHAT' not in arguments or '-DUSE_SDL3' not in arguments:
  raise SystemExit('requires a voice-enabled SDL3 Meson build')
 original=entry['file']

@@ -1,5 +1,9 @@
 /* Controlled PCM through the native voice codec, transport, relay and mixer.
  * Only SDL's dummy recording backend and a controlled DMA descriptor are used. */
+#ifdef NDEBUG
+#error "voice PCM fixture requires assertions for input and dummy-driver guards"
+#endif
+
 #define NEGOTIATION_FIXTURE_CUSTOM_CAN_SEND
 #define MIXED_NATIVE_FIXTURE_ENTRY MixedFixtureMain
 #include "mixed_native_fixture.c"
@@ -139,6 +143,19 @@ static void PlayUntilBuffered (void)
 		Voice_AtomicGet (&voice_speakers[0].pcm_read));
 }
 
+static qboolean UnreadSpeakerHasSignal (void)
+{
+	int read = Voice_AtomicGet (&voice_speakers[0].pcm_read);
+	const int write = Voice_AtomicGet (&voice_speakers[0].pcm_write);
+	while (read != write)
+	{
+		if (voice_speakers[0].pcm[read * 2] || voice_speakers[0].pcm[read * 2 + 1])
+			return true;
+		read = (read + 1) % VOICE_PCM_RING_FRAMES;
+	}
+	return false;
+}
+
 static qboolean MixHasSignal (qboolean muted)
 {
 	int16_t mixed[VOICE_PCM_RING_FRAMES * 2] = {0};
@@ -225,12 +242,40 @@ Voice_RefreshCapture (true);
 			MixHasSignal (false);
 		else
 		{
+			assert (UnreadSpeakerHasSignal ());
 			Cmd_ExecuteString ("voice_mute 1", src_command);
 			assert (voice_speakers[0].muted);
 			MixHasSignal (true);
 		}
 		*states[1] = cl;
 	}
+	Cmd_ExecuteString ("voice_mute 1", src_command);
+	assert (!voice_speakers[0].muted);
+	/* Leave real PCM buffered, then real jitter queued, without consuming either. */
+	for (int burst = 0; burst < 2; ++burst)
+	{
+		int16_t pcm[VOICE_FRAME_SAMPLES];
+		for (int i = 0; i < VOICE_FRAME_SAMPLES; ++i)
+			pcm[i] = (i / 96) & 1 ? 12000 : -12000;
+		SendControlledFrame (peers[0], states[0], pcm);
+		RelayToReceiver (peers[1], states[1]);
+		if (!burst) PlayUntilBuffered ();
+		*states[1] = cl;
+	}
+	assert (UnreadSpeakerHasSignal () && voice_speakers[0].jitter.count > 0 &&
+		voice_speakers[0].have_generation);
+	/* Independently leave a native producer packet queued at the sender. */
+	cl = *states[0];
+	cls.netcon = peers[0]->netconnection;
+	{
+		int16_t pcm[VOICE_FRAME_SAMPLES];
+		for (int i = 0; i < VOICE_FRAME_SAMPLES; ++i)
+			pcm[i] = (i / 96) & 1 ? 12000 : -12000;
+		Voice_PTTKeyEvent (K_F12, true);
+		Voice_EncodeCaptureFrame (pcm);
+		Voice_PTTKeyEvent (K_F12, false);
+	}
+	assert (cl.voice_outgoing_count > 0 && CL_VoiceTransportAvailable ());
 	CL_ResetVoiceTransportState ();
 	Voice_ResetConnection ();
 	assert (!CL_VoiceTransportAvailable () && !cl.voice_outgoing_count);
@@ -249,13 +294,20 @@ Voice_RefreshCapture (true);
 		host_client = peers[slot];
 		SV_DropClient (false);
 		assert (!peers[slot]->active && !peers[slot]->netconnection);
-		Mem_Free (states[slot]->entities);
-		Mem_Free (states[slot]->scores);
-		Mem_Free (states[slot]);
 	}
 	PR_SwitchQCVM (NULL);
 	Host_ShutdownServer (false);
 	Host_Shutdown ();
+	/* Native disconnect has now completed every cache write through global cl. */
+	assert (cls.state == ca_disconnected && !cls.netcon);
+	cl.entities = NULL;
+	cl.scores = NULL;
+	for (int slot = 0; slot < 2; ++slot)
+	{
+		Mem_Free (states[slot]->entities);
+		Mem_Free (states[slot]->scores);
+		Mem_Free (states[slot]);
+	}
 	puts ("VOICE_PCM_NATIVE_PASSED native negotiated codec/relay/PCM/mute/reset; captured transport/dummy capture");
 	return 0;
 }
