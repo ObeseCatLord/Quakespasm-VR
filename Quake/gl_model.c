@@ -1204,6 +1204,30 @@ Loads in a model for the given name
 qmodel_t *Mod_ForName (const char *name, qboolean crash)
 {
 	qmodel_t *mod;
+	char trimmed[MAX_QPATH];
+	size_t len;
+
+	/* Some BSP entity keys contain a space after an otherwise valid model
+	 * filename (hwjam2_thulsa's pumpkin is one example). Prefer the exact
+	 * virtual filename, including a possible legitimate trailing space. Only
+	 * when that file is absent may we resolve the trimmed spelling, so server
+	 * and client both use one cached model without changing QuakeC strings or
+	 * the model names transmitted in the signon packet. */
+	len = strlen(name);
+	if (len > 0 && len < sizeof(trimmed) &&
+		(name[len - 1] == ' ' || name[len - 1] == '\t'))
+	{
+		q_strlcpy(trimmed, name, sizeof(trimmed));
+		while (len > 0 && (trimmed[len - 1] == ' ' || trimmed[len - 1] == '\t'))
+			trimmed[--len] = '\0';
+		if (len > 0 && !COM_FileExists(name, NULL) &&
+			COM_FileExists(trimmed, NULL))
+		{
+			Con_DPrintf("Mod_ForName: using %s for model with trailing whitespace\n",
+				trimmed);
+			name = trimmed;
+		}
+	}
 
 	mod = Mod_FindName (name);
 
