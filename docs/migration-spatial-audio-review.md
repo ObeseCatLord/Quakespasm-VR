@@ -172,3 +172,32 @@ AUDIO-010 label without another recording device or monitoring implementation.
 Actual audible wet-only output, independent capture/transmission, mode/profile
 resets and Linux/ARM package execution remain final qualification; no tests,
 builds, microphone capture, audio or runtime probes ran in this checkpoint.
+
+## Native playback and weapon/voice routing source reconciliation
+
+Main traced AUDIO-006/007 actual native startup, publication and callback
+consumers against the primary spatial audio source. S_Init attempts Spatial_Init
+before native S_Startup; -sndlegacy or renderer creation failure leaves native
+playback selected. The native SDL callback renders bounded SA_BLOCK chunks when
+spatial playback is active and otherwise retains its original mixer path.
+S_Shutdown stops DMA before Spatial_Shutdown destroys room/renderer state.
+Missing linked SDK libraries remain a packaging concern, not proof of fallback.
+
+S_Update owns channel/listener/settings publication once per host frame;
+Spatial_Update projects native channels/cache generations into existing source
+slots. Sound caches are forgotten before descriptor recycling. Static sources
+stay independent in spatial mode rather than using native panning aggregation.
+render_block selects the inherited HRTF effect versus controlled panning through
+the published listener/settings snapshot. Decoded voice selects Spatial_VoicePCM
+or the native stereo ring exclusively, and callback mixing does not introduce
+a second voice capture or per-eye sound update.
+
+For local eligible weapon channels, Spatial_Update uses the existing shared
+VR_InputCrosshairAimRay muzzle when valid, with ordinary channel-origin fallback.
+Voice_Frame projects positional-only/distance/radio controls through
+Spatial_VoiceSettings; render_block retains the primary distance-dependent
+positional/radio blend and invalid-position radio fallback. These paths already
+exist and need no separate solo/MP sound calibration. This is source-owner
+reconciliation only: audible direction/continuity, mixer/cursor behavior,
+cache rollover, actual fallback and Linux/ARM dependency execution remain at
+end-of-implementation qualification. No builds/tests/audio/runtime checks ran.
