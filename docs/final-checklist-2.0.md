@@ -14,6 +14,13 @@ consumers in `4179ef1e`. C19 staging/verification is source-integrated in
 None of these
 source receipts constitutes final executable acceptance.
 
+Read-only reference revalidation found one newer primary commit after canonical
+51b452c0:7acafa8b adds generic model-path trailing-whitespace fallback. That
+bounded C06/NET-007 follow-up is source-integrated in `c034a2f5`, following the
+[model-path plan](model-path-whitespace-2.0-plan.md), without another feature ID
+or a mod-specific branch. Exact virtual names still win; final filesystem/cache/
+client-server qualification remains pending. Primary remains read-only.
+
 Local Astra xhigh reviewed all 185 inventory rows: 153 source-integrated/native
 (S), 18 missing (M), two unresolved (Q, one shared rendering question), 11
 excluded/deferred (X), one reference experiment (R). These overlapping rows are
@@ -200,7 +207,7 @@ qualification phase.
 | C22 — bounded classic-particle capacity and 32-bit quad indices | [Particle plan](classic-particle-capacity-2.0-plan.md); source commit `0d2c182c`. Final dense-particle rendered acceptance pending. |
 | C01/C03/C05 — late-model helper, ordinary QC metadata lookup, truthful protocol offers | [Networking plan](precache-infokey-protocol-2.0-plan.md); source commit `ab1423fb`. Final remote precache/QC/negotiation qualification pending. C02 publication is still separate. |
 | C15/C16/C17 — shared loop pause, reduced loop room send, inherited wet-monitor default | [Audio plan](spatial-loop-monitor-2.0-plan.md); source commit `ab1423fb`. Callback code/sample identity/generation/offset and independent mic permissions retained. Final software audio qualification pending. |
-| C04/C06 — loading nop and missing-model cancellation | [Loading/reconnect plan](loading-keepalive-reconnect-2.0-plan.md); source commit `486d1b42`. Main checked independent nop buffer preserves parser/reliable state and current true-to-abort cleanup. Final peer/loading/reconnect qualification pending. |
+| C04/C06 — loading nop and missing-model cancellation | [Loading/reconnect plan](loading-keepalive-reconnect-2.0-plan.md); source commit `486d1b42`. Main checked independent nop buffer preserves parser/reliable state and current true-to-abort cleanup. Newer-primary generic filename fallback is integrated in `c034a2f5`, following [its narrow plan](model-path-whitespace-2.0-plan.md). Final peer/loading/reconnect/filesystem/cache qualification pending. |
 | C10/C11 — sampled avatar root yaw and viewer eligibility | [Avatar plan](avatar-root-viewer-gate-2.0-plan.md); source commit `73bd354b`. Main checked immutable published yaw, preparation-time muzzle override and shared viewer/sender eligibility. Ordinary selected-avatar animation remains available without tracking. Final body/prop/muzzle/shadow and toggle acceptance pending. |
 | Q01 — per-eye alpha categories at liquid boundaries | [Stereo transparency plan](stereo-water-transparency-2.0-plan.md); source commit `a7d06c01`. Main reviewed the Luna six-file adapter, serialized exceptional recording, context resets and local non-alias angles. Shared sorting, native passes and opaque single-pass stereo remain. Final rendered boundary/OIT/context acceptance pending. |
 | C12 — inherited QBJ3 live-player admission | [Live-avatar plan](qbj3-live-avatar-2.0-plan.md); source commit `33d6b90a`. Main reviewed exact model/frame/live admission, explicit choice precedence, unresolved-descriptor fallback and implicit tracking recheck; raster and BLAS share eligibility. Final installed-content/rendered acceptance pending. |

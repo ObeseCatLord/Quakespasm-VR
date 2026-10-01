@@ -137,6 +137,13 @@ explicit/default ports, bracketed literals, invalid names, unavailable IPv6,
 driver table or testing loopback does not qualify these paths. Windows checks
 remain deferred.
 
+The newer-primary [model-path fallback](model-path-whitespace-2.0-plan.md),
+source-integrated c034a2f5, needs actual native virtual filesystem/cache loading
+with legitimate exact trailing-space filenames, absent-exact/existing-trimmed
+names, missing both, space/tab/length/empty/inline/repeated-load cases and ordinary/
+dynamic server-client precaches. Keep network and QC names unchanged; source
+copying and a path-existence helper alone do not prove real loading/cancellation.
+
 The [final C02 publication plan](metadata-publication-integration-2.0-plan.md)
 adds complete native signon and metadata consumer cases. Existing
 local_load_native_fixture.c prepares renderer signon and clears the peer's

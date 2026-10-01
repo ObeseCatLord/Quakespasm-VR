@@ -37,3 +37,9 @@ loads and shares canonical cache; missing both retains existing failure/cancel
 path; spaces/tabs/non-trailing whitespace, length/empty/inline and repeated load,
 server/client/dynamic precache, ordinary native desktop/VR. All execution waits
 until required implementation is finished; source copying is not runtime proof.
+
+Source-integrated in c034a2f5 after main review of Luna's24-addition/no-deletion
+diff. Only Mod_ForName changed; bounded buffer/space-tab gates, exact-file first,
+trimmed-file existence and synchronous model-owned cache copy checked. Luna
+routing was externally verified gpt-6-luna/xhigh; completed worker closed. Scoped
+diff check passed; no executable checks. Deferred cases above remain required.
