@@ -2532,7 +2532,7 @@ static void Mod_LoadFaces (qmodel_t *mod, byte *mod_base, lump_t *l, qboolean bs
 		out->flags = 0;
 		out->polys = NULL;
 
-		if (out->numedges < 3 || out->firstedge < 0 ||
+		if (out->numedges < 2 || out->firstedge < 0 ||
 			out->firstedge > mod->numsurfedges ||
 			out->numedges > mod->numsurfedges - out->firstedge ||
 			planenum < 0 || planenum >= mod->numplanes ||
