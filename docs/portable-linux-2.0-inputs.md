@@ -15,8 +15,8 @@ metadata and raw source manifests were read; no compiler/build/probe/test ran.
 | OpenXR-SDK | KhronosGroup/OpenXR-SDK release-1.1.60 | 64f2b37c8c6da3d83c9b4d11865ba1fb752cb8ec |
 | Steam Audio | ValveSoftware/steam-audio v4.8.1 | 0da18255cca520771f363ee01f100572b39a308e |
 | SDL3 | libsdl-org/SDL release-3.4.12, matching existing AppImage source version | f87239e71e42da91ca317a12eefb82cfbf3393eb |
-| FlatBuffers candidate | google/flatbuffers v23.5.26 | 0100f6a5779831fa7a651e4b67ef389a8752bd9b |
-| PFFFT candidate | marton78/pffft v1.0.0 | d0db768f2898912cf7e84322124c5634aa961a41 |
+| FlatBuffers selection | google/flatbuffers v23.5.26 | 0100f6a5779831fa7a651e4b67ef389a8752bd9b |
+| PFFFT selection | marton78/pffft v1.0.0 | d0db768f2898912cf7e84322124c5634aa961a41 |
 
 The shader tool pair is source-matched, not a guessed version combination:
 [glslang known_good.json](https://github.com/KhronosGroup/glslang/blob/f0bd0257c308b9a26562c1a30c4748a0219cc951/known_good.json)
@@ -26,12 +26,39 @@ agrees on the header commit. Tests/fuzzers are not needed for the tool build;
 do not fetch their optional test dependency stack merely because DEPS lists it.
 Release shader canonicalize-ids capability remains a final build requirement.
 
-PFFFT and FlatBuffers are researched candidates, not certified selections.
-The inspected newer PFFFT v1.1.0 installs headers under include/pffft; Valve's
-finder asks for pffft.h, so an explicit include path may be needed. Before coding,
-inspect the chosen v1.0.0 exact API/install/optimization options and license;
-keep matching FlatBuffers compiler and headers. Do not assume native CPU/ISA
-compatibility or successful SDK compilation from the tag metadata.
+PFFFT and FlatBuffers are selected for the before-code plan, not build-qualified.
+The chosen PFFFT v1.0.0 installs include/pffft, while Valve's finder asks for
+pffft.h: set PFFFT_INCLUDE_DIR explicitly. Its TARGET_C_ARCH/TARGET_CXX_ARCH
+default none avoids march=native; aarch64 selects its NEON implementation without
+requiring a host-specific CPU flag. Preserve SIMD and float/double defaults,
+disable tests/benchmarks/examples and install shared pffft. LICENSE.txt is the
+complete selected-source notice. FlatBuffers installs matching flatc and headers;
+disable tests/benchmarks/grpc tests and unnecessary flat library builds. LICENSE
+covers the incorporated C++ headers. No successful compilation is implied.
+
+Selected native base: official Ubuntu24.04 multiarchitecture image index
+sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3,
+read from Docker's official registry on2026-10-01. Native amd64 manifest
+sha256:496754492fb28b4d3049432f2ca787449331e23fb14f0dd3fffea86bf5a93eb4;
+arm64/v8 manifest sha256:11dc1ccb427f0464a2369e645454c272bb0baece7357c892ba69d313b3a332cf.
+The shared index fixes the image input for both architectures. Distro security
+packages remain selected within noble/noble-updates/noble-security; record exact
+resolved binary/source versions, repository inputs and matching source archives
+in each artifact. This is not a promise of bit-identical outputs across builds.
+
+Official noble package pages were read for Meson1.3.2-1ubuntu1,
+MySOFA1.3.2+dfsg-2ubuntu2, libdecor0.2.2-1build2, JsonCpp1.9.5-6build1,
+FLAC1.4.3+ds-2.1ubuntu2, Opus1.4-1build1 and codec/CURL development packages.
+MPG123/CURL pages expose security revisions and architecture variation: capture
+the actual resolved versions, never copy these observations into an unsupported
+universal version pin. Meson is architecture-independent; a literal lack of amd64/
+arm64 in that package page is not absence of native support.
+
+Official source receipts:
+- [PFFFT exact optimization owner](https://github.com/marton78/pffft/blob/d0db768f2898912cf7e84322124c5634aa961a41/cmake/target_optimizations.cmake)
+- [PFFFT notice](https://github.com/marton78/pffft/blob/d0db768f2898912cf7e84322124c5634aa961a41/LICENSE.txt)
+- [FlatBuffers selected build/install options](https://github.com/google/flatbuffers/blob/0100f6a5779831fa7a651e4b67ef389a8752bd9b/CMakeLists.txt)
+- [Noble JsonCpp package/source notices](https://packages.ubuntu.com/noble/libjsoncpp-dev)
 
 Other required before-code receipts: exact OpenXR options and system JsonCpp
 choice/config prefixes; MySOFA/zlib and distro codec/CURL package policy; native
