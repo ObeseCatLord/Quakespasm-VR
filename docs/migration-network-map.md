@@ -2,7 +2,9 @@
 
 ## Native address-family reuse checkpoint (2026-09-30)
 
-NET-019 needs no additional driver transplant. Main inspected the current
+NET-019 needs no additional driver transplant. Static byte comparison confirms
+`net_udp.c`, `net_bsd.c`, `net_wins.c` and `net_win.c` are identical to the
+pinned donor checkout (`4bc898f2`). Main inspected the current
 Unix driver table in `net_bsd.c`: both UDP4 and UDP6 supply their native
 initialization, listening, socket creation, address parsing/resolution and
 connection checks, using the existing shared datagram read/write/port helpers.

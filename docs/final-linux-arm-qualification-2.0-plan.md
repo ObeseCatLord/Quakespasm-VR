@@ -49,6 +49,13 @@ runtime, packet counter or helper test must keep its proof limitations explicit.
 | Assets, maps and performance mechanisms | Actual PNG/TGA/JPG/JPEG/fullbright MDL/MD3/MD5/static/level loads, WAD3 per-texture palettes, native liquid lightmaps and CPU/GPU lightstyle interpolation, material/texture-cache/recolor identity, precision/clip bias; native worker rendering/loading, large-BSP/no-VIS/visibility/allocation behavior, alias/BLAS batching and scripted particle lifetimes/effects. Source mechanisms are required; measured speedups are not claimed. |
 | Audio and discovery/UI | Actual optional Opus packet/jitter/generation/levels/mute owners and budgets, game/voice HRTF/native fallback/radio/occlusion/reverb/local wet reflections; system-default mic, saved VR default-on opt-out versus desktop opt-in; capture error/profile transitions, meter/HUD/PTT. Steam/rerelease/localization paths, mod launch/filter/catalogue/approval/validated package cancellation, reconnect and UI scale/branding. |
 
+The native networking reuse checkpoint additionally requires
+isolated IPv4/IPv6 connections through the real driver/connection owners:
+explicit/default ports, bracketed literals, invalid names, unavailable IPv6,
+`-noudp6`, cancel/reconnect and native socket cleanup. Merely inspecting the
+driver table or testing loopback does not qualify these paths. Windows checks
+remain deferred.
+
 The inherited aim source repairs add focused cases to the VR movement and
 presentation row: deadzone 0/70/out-of-range/nonfinite and unchanged valid
 fractional values; controller-to-head/mouse/blended history with unavailable

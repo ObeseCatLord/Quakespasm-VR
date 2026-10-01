@@ -47,3 +47,27 @@ The static prop BLAS builder and per-player TLAS instance are now integrated on 
 | Check readiness, then request the address separately. | Adapted. The checked address accessor alone is sufficient. |
 
 Local `build-nocurl` compilation passes. GPU validation and raster/shadow visual agreement are still unverified; a successful build does not close the equipment parity gate. Cold-start, RT off/on, offscreen players, unload/reload, and the earlier Knight scene remain the relevant checks. The user will handle live headset acceptance.
+
+## Current consumer source checkpoint, 2026-09-30
+
+Main inspected the current raster palette/prop validators, alias draw and
+overlay transforms, prepared bounds, body BLAS palette and prop TLAS owners.
+`r_alias.c:R_AliasUsablePalette` selects the same complete frame record used by
+`gl_mesh.c:R_EntityBLASPalette`; their alternate geometry/joint/identity gates
+retain native fallback. `R_AliasUsableAttachedProp` validates the whole private
+surface chain. Raster and overlays apply its attachment without the alternate
+body affine. `r_brush.c:R_TLASPreparedAvatarProp` uses the same prop geometry
+and attachment, with one predicate for instance counting and emission and the
+source-owned BLAS address. Native transparent-shadow eligibility is unchanged.
+`R_PreparedAvatarWorldBounds` consumes the prepared pose/prop bound with
+outward rounding; an unusable bound retains rather than rejects the entity.
+
+The body AS update consumes `palette_address` for tracked instances; ordinary
+animation retains native pose cache/refit behavior. Model cleanup frees private
+prop GPU/CPU resources and custom skins through existing owners. These reads
+confirm consumer wiring, not independent-instance rendered shadow agreement.
+The native local-player multipass pitch mutation is an explicit limitation of
+the [muzzle-light source review](avatar-muzzle-light-2.0-plan.md), not proof of
+every-pass root agreement. AV-006/007 acceptance remains pending final software
+qualification; no new build, test or game was run for this checkpoint. Historical
+compilation statements above describe earlier work only.
