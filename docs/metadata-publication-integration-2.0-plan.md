@@ -7,9 +7,10 @@ No tests/builds/compiler/lint/syntax probes/fixtures/scripts/SSH/game runs until
 all required implementation is finished. Source reads, wc and scoped diff check
 only. Keep all changes unstaged for main source review.
 
-Implementation paused with zero edits under step11. Resolve the
-[live reverse admission reopening](metadata-live-admission-2.0-brief.md) before
-resuming the coupled worker. The rest of the adopted native design is retained.
+The zero-edit step11 stop is resolved by the
+[live reverse admission disposition](metadata-live-admission-2.0-review.md).
+The native design below remains adopted, with its explicit live seam and revised
+aggregate estimate. Resume one fresh Luna worker after this plan is committed.
 
 ## Behavioral reference and architecture
 
@@ -23,8 +24,8 @@ whole units and retry from committed stores.
 
 One worker owns exactly Quake/server.h, sv_main.c, client.h, cl_main.c, cvar.c,
 host_cmd.c, host.c. Existing source helpers may be reused in place. No new module,
-renderer, protocol syntax or packaging edits. Target450–600 total changed lines
-(additions plus deletions), stop/reopen before650 or any additional queue/owner.
+renderer, protocol syntax or packaging edits. Target550–750 total changed lines
+(additions plus deletions), stop/reopen BEFORE800 or any additional queue/owner.
 Do not minify, move work outside the count, or weaken guards to meet the bound.
 
 ## Whole-unit projection and native publication
@@ -87,12 +88,35 @@ Do not minify, move work outside the count, or weaken guards to meet the bound.
     CL_SendCmd, allowing existing bytes to drain; retire after complete append.
     Permanent logical-envelope or individual-command failure is visible before
     partial initialization. No silent omission/truncation or new metadata queue.
-11. Inspect connected live userinfo cvar/control paths while integrating their
-    shared mutation boundary. If complete-command/backpressure handling cannot
-    fit this reviewed design, stop with exact evidence and proposed smallest
-    adjustment; do not leave an observed loss/truncation unreported or improvise
-    another owner. Stock-QSS-M's1024 store is a separate external limit; no
-    unrestricted external-peer guarantee is added.
+11. Live reverse mutation uses pre-mutation admission at existing cvar/console
+    owners. After native eligibility/no-op checks, changing connected non-demo
+    USERINFO with a nonnull callback refuses before effects. Current name/colors
+    are callback-free; disconnected/demo settings remain local/native. Do not
+    reorder arbitrary callbacks, reserve bytes generally or add rollback/state.
+12. Shared bounded preparation uses ephemeral prospective cls.userinfo through
+    native Info_SetKey, extracts actual whole values including deletion, and
+    formats native name/color/setinfo. Validate live key first: nonempty,
+    representable, bounded, no backslash; reject star updates ignored by server.
+    Reverse underscore keys remain server-visible. Preserve quoted LF; refuse
+    quote-unrepresentable or individually oversized commands. Colors use both
+    prospective values including empty strings; _cl_name retains name mapping.
+13. Append the complete admitted command to existing cls.message before native
+    cvar assignment. Preserve assignment/default/flags/autocvar/serverinfo order;
+    install the prospective info at existing USERINFO tail, without another append.
+    Scratch must not borrow strings assignment frees. Refusal leaves local cvar/
+    flags/default/VM/store unchanged and prints bounded reason; pressure says
+    unchanged/retry, with no eventual retry promise or remote acceptance guarantee.
+14. Preflight native name/color/_cl_color wrappers as complete synchronous
+    sequences before the first setter, respecting locks/no-ops and sequential
+    prospective stores: up to2/3/2 emissions respectively. Keep ordinary emission
+    order/multiplicity; replace trailing raw forward with bounded prepared native
+    command from actual prospective values. Individual setters still share
+    admission. No intervening normal reliable writer with callback-free setters.
+15. Console setinfo retains registered USERINFO redirection; otherwise prepare/
+    append complete command and commit prospective store, with no raw forwarding.
+    Do not introduce a live dirty flag/current-store replay: it cannot name deleted
+    keys and reverse protocol has no reset. Stock-QSS-M's1024 store remains a
+    separate external limit; no unrestricted external-peer guarantee is added.
 
 ## Handoff and deferred acceptance
 
