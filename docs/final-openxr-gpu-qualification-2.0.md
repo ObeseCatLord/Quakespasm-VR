@@ -49,3 +49,35 @@ qualify actual eye tracking, runtime/GPU foveation, headset presentation,
 controller gameplay, full content, audio, native Frame or performance. Desktop
 hazards/abort remain separate failures. All eight full qualification groups
 remain open.
+
+## Current pass/shutdown repair refresh
+
+Production55eaa33b, preliminary host rebuilt including c8de89f6 guarded physics
+initialization, d7ef88bf reuse of native render-resource shutdown and55eaa33b
+stable unused-attachment compaction. Main reviewed both complete source patches;
+no global diagnostic barrier remains. Existing logical first-use/stencil policies,
+special rate attachment retention and physical framebuffer/clear remapping checked.
+
+The same actual Monado/Vulkan24-probe matrix passed again: probes0–23 exactly
+once, no validation errors/hazards/failed markers, command exit0 and normal inferior
+exit. Private log: gpu/logs/xr-pass-shutdown-final.log; capture stem
+gpu/stereo-pass-shutdown. Main inspected the new initial two-eye world/HUD image.
+Same hardware/runtime/audio-disabled/absent-gaze-and-foveation limits as above.
+
+Native desktop also reached signon4/twelve frames with no validation errors or
+hazards and normal exit0, without debugger-injected cleanup/barriers. Separate
+native screenshot run passed and wrote the rendered start-map image through the
+engine screenshot/readback owner; main inspected it. Logs:
+desktop-pass-shutdown-final.log and desktop-native-screenshot-final.log. Earlier
+window-name capture harness failed/timed out; it supplies no product failure or
+acceptance. Full desktop campaigns/content/lifecycle qualification remains open.
+
+A separate15-probe native desktop run exercised OIT0/1/2, MSAA1/4, indirect0/1,
+palette/native color, AO0/1,800x600 resize and explicit400x300 render/upscale target
+with an actual dimension assertion. No validation errors/hazards, command exit0,
+normal inferior exit; desktop-matrix-upscale-final.log. An earlier harness attempt
+referenced nonexistent r_scale and an intermediate run did not prove upscale;
+neither substitutes for this corrected run. These bounded cases resolve the
+previously reproduced baseline desktop sync/quit symptoms in the tested settings,
+not all eight final groups. Subsequent92bc7775 changes only model face admission;
+these rendering results retain their exact production snapshot.

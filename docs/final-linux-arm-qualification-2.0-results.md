@@ -191,3 +191,61 @@ verified effective routing and spot-checked supporting source. The
 [disposition](unused-attachment-sync-2.0-review.md) retains exact-image attribution,
 correct rendered output and clean validation as unresolved. No renderer repair
 was made or accepted. Ordinary desktop shutdown remains independently unresolved.
+
+## Reviewed final repairs and current bounded results
+
+The prior paragraph is the historical pre-repair snapshot. Main reviewed Luna's
+four-line declaration initialization and integrated `c8de89f6`; isolated pinned
+amd64 GCC13 -O3/-Werror sv_phys.c compilation passed. No reachable uninitialized
+restoration was established; native callback/ownership guards remain unchanged.
+
+The planned global barrier was temporary, produced a clean desktop synchronization
+run and was removed. Main reviewed the complete140-line pass-only Luna adapter
+and integrated55eaa33b: stable unused-attachment compaction with native logical
+policy retained and all copied references/framebuffer views/clear values remapped.
+Main separately integrated d7ef88bf to call the existing complete render-resource
+shutdown owner instead of partial cleanup, after a successful diagnostic.
+
+Host build through55eaa33b passed. Actual native desktop signon4/twelve frames,
+native screenshot readback/output and normal process exit passed with no validation
+errors/hazards. Main inspected the native screenshot and refreshed two-eye image.
+Actual Monado/Vulkan24-probe XR matrix again passed, no errors/hazards/failed
+markers, exit0. Separate15-probe desktop MSAA/OIT/indirect/AO/palette/resize and
+asserted400x300-to800x600 upscale run likewise passed validation/normal exit.
+Exact source/configuration/limits are in the refreshed GPU receipt; no hardware/
+gaze/foveation/audio/performance/full-content acceptance is implied.
+
+Immutable55eaa33b full native Linux and isolated ARM builders both printed source
+compilation/install completion including Steam Audio and required dependencies.
+Local command returned143 despite the final completion marker; preserve that
+unresolved command status, not a successful-run claim. ARM candidate staged and
+verified45 ELF files/651 inventory entries/118 Ubuntu contributors, then transport
+checksum matched and archive was retrieved; wrapper exit0. Local package staging launched
+from existing output. Neither final artifact is accepted, and these snapshots
+predate subsequent model repairs; their evidence cannot qualify the newer tree.
+
+Native metadata worker stopped at484 combined C/Python lines, beyond450. Main
+read the entire return/logs and recorded the explicit500-line test-only reopening,
+corrected misleading query-parser/asset/count claims and integrated aa1d2eb0.
+Main refreshed the four later-changed engine sources, compared all308 production
+source/header/shader/make files against immutable55eaa33b (zero mismatches), rebuilt
+and reran five cases successfully. Permanent-limit failure is now localized to
+the fixture invoking native Host_EndGame/longjmp without _Host_Frame's setjmp.
+No production drop defect is established; a correctly owned negative/lifecycle
+test remains required. Full C02 acceptance remains open.
+
+Actual mj4m1 loading found ten valid-range two-edge BSP2 faces rejected by a
+migrated stricter guard. Main compared native vkQuake and Ironwail, retained
+zero-triangle native surface identity and all range/allocation checks, and
+integrated three existing-consumer lower-bound repairs in92bc7775/56e592ce/29129513
+following the bounded plan. Host rebuild passed; actual native mj4m1 signon4,
+23 frame completions at the marker, screenshot output and normal exit0 passed
+with no validation error/hazard and no heapsize workaround. Main inspected the
+rendered screenshot. Private log: gpu/logs/mjolnir-mj4m1-native-final.log. Assets
+were linked read-only into an isolated writable profile, no real mod/config edits.
+This is a native initial-map load/render/quit case, not a full campaign, VR-map,
+saved-game or performance qualification. No special Mjolnir policy or measured
+performance claim.
+
+All eight full groups remain open. These final fixes/partial proofs attach to
+their existing owners; neither scope reduction nor goal signoff is implied.

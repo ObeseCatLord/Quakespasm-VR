@@ -23,14 +23,20 @@ closure. Exact unreviewed IDs: none. No additional missing source feature was
 established. Unchanged implementations retain prior source audits; this is not
 a fresh line-by-line audit or executable certification of every row.
 
-**Current concrete repair obligations:** desktop Vulkan synchronization hazards,
-ordinary desktop shutdown allocator abort (both reproduced in untouched vkQuake),
-and required GCC13 portable compilation failures in server-physics saved-state
-locals (amd64/ARM). The earlier stereo-view and cached foveation-format warnings
-were repaired in `b5e7af20`; the complete portable retry reached sv_phys.c and
-failed on saved globals/angles in two existing melee helpers and saved angles
-around PlayerPostThink. Neither architecture has an accepted final artifact.
-Runtime reachability of the compiler warnings remains unproved. Broad controller-input fixture linkage
+**Current concrete findings and repairs:** guarded server-physics initialization
+is integrated in `c8de89f6` and passes the isolated GCC13 amd64 compile. Native
+resource-owner shutdown reuse (`d7ef88bf`) and unused-attachment compaction
+(`55eaa33b`) resolve the previously reproduced desktop hazards/allocator abort
+in tested native desktop and actual simulated-XR settings. Current bounded
+rendering results are in the GPU receipt; broader qualification remains open.
+Both complete portable builders printed successful native compilation/install
+through55eaa33b, but final artifact acceptance is pending (local command exited143;
+ARM candidate staged/verified/retrieved). Those archives predate the subsequently
+found generic mj4m1 two-edge face compatibility repairs in `92bc7775`/`56e592ce`/`29129513`.
+The affected native map load/render/screenshot/normal-exit run passed through29129513
+with clean validation and no heapsize workaround. A native metadata negative trial
+crash is localized to the fixture's unarmed host longjmp boundary; it requires a
+proper host-frame test, not a production drop rewrite. Broad controller-input fixture linkage
 is unfinished verification; equivalent native-input evidence may replace it.
 The complete remaining scope is the eight groups below, with exact cases in
 the qualification plan and partial results in the ledger.
@@ -38,8 +44,10 @@ the qualification plan and partial results in the ledger.
 Already established bounded results: full preliminary host compilation,18 of19
 standalone fixtures, and actual simulated-OpenXR24-probe rendering with clean
 validation/normal exit. Host Steam Audio was disabled; no complete portable
-package is accepted. The host rebuild after `b5e7af20` also passed; the GPU result
-predates that initialization-only repair. No additional features are added by
+package is accepted. Host rebuilds through the subsequent physics/pass/shutdown
+repairs passed, and the actual24-probe XR matrix passed again through55eaa33b.
+The five bounded native metadata cases passed with refreshed engine objects.
+No additional features are added by
 this checklist. The [focused unused-attachment review](unused-attachment-sync-2.0-review.md)
 records diagnostic evidence and bounded repair candidates, without declaring a
 renderer fix accepted or adding a performance-measurement gate.

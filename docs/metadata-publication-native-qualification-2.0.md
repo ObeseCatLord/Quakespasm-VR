@@ -72,3 +72,27 @@ mid-signon mutation, separately empty/update-only initialization, other protocol
 logical limits, live cvar refusal, demo signon, renderer/headset integration,
 and general gameplay remain unproved. Renderer map/particle/skin operations are
 explicitly wrapped; this is sender/parser qualification, not graphics proof.
+
+## Main current-object refresh
+
+Main rebuilt the isolated fixture after copying the four subsequently changed
+engine sources (gl_rmain.c, gl_vidsdl.c, r_passes.c, sv_phys.c) from committed
+production55eaa33b. Main compared all308 production C/header/shader/make files
+with that immutable source archive; zero source mismatches after refresh. The
+five cases again passed with frames5/5/5/7/9. Logs:
+`/tmp/qsvr-metadata-publication-native-brtfw9uc` and final qualification
+metadata-final-objects-build.log / metadata-final-objects-run.log. These are
+current sender/parser/physics objects at that production snapshot, not complete
+portable/audio/graphics acceptance. Later92bc7775 changes only the BSP face
+guard, so loaded-content evidence must still name its newer revision.
+
+Main localized the permanent-limit crash with a current-object debugger trace:
+native SV_DropClient completes and the receiver enters Host_EndGame("Server
+disconnected"). It then calls longjmp with all eight host_abortserver jump slots
+still zero. The fixture drives server/parser functions directly and never enters
+native _Host_Frame's setjmp boundary. Private evidence:
+metadata-host-jump-diagnosis.log. Thus this particular crash is a fixture lifecycle
+defect, not an established product drop-path defect. The diagnostic stops before
+the invalid jump and is not negative-case acceptance. Permanent incompatibility
+still needs a correctly armed native host-frame/disconnect test; no production
+drop rewrite is justified.
