@@ -329,3 +329,13 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   already-empty jitter claims. [Exact results/dispositions](voice-hrtf-current-2.0-results.md).
   HRTF-enabled smoke does not independently distinguish voice panning; physical
   callbacks, wet-only monitor/room/music and other frozen F08/F10 boundaries remain.
+
+
+- F08: seven private music format cases across five native codec families pass
+  actual positive reads/EOF/close, nonzero post-closure SDK output, ring emptiness
+  and silence. Pre-decode pause/resume, observed decode after initial-loop rewind,
+  aligned stop and drained format restart sequences pass. Eleven-marker combined
+  run passes; local Astra corrections applied with final affected rerun and actual
+  mpg123/tag source provenance. [Exact results/dispositions](music-native-current-2.0-results.md).
+  Full EOF-tail completeness, live clock/device callbacks, wet-only monitor/room
+  worker and other frozen F08/F10 boundaries remain distinct.

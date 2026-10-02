@@ -3893,3 +3893,16 @@ No-Steam-Audio graphs reject this option. It does not open physical output or
 prove callback contention/live player publication; see the
 [plan](../docs/voice-hrtf-final-2.0-plan.md) and
 [results/limits](../docs/voice-hrtf-current-2.0-results.md).
+
+
+For native music coverage on the same enabled graph, prepare original private
+signals with `python3 -B tests/prepare_music_native.py --output-dir NEW_DIRECTORY`.
+It requires installed CPU ffmpeg audio encoders and refuses existing directories.
+Place the resulting `music` directory under the fresh fixture game's `id1`
+before engine initialization, then add `-music-native` to the prior ten audio
+options. Expect `MUSIC_NATIVE_PASSED` and normal native exit0. Forwarded native
+codec observers check seven format/EOF cases, queued audio drainage, pause before
+decode, bounded initial-loop rewinds, aligned stop and format restart. Native
+clock cadence/physical callback/listening are outside this check; see the
+[plan](../docs/music-native-final-2.0-plan.md) and
+[results/limits](../docs/music-native-current-2.0-results.md).
