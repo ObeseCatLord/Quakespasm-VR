@@ -36,7 +36,7 @@ for owner in exclude:
 link=[x for x in link if not any(x.endswith('Quake_'+s+'.c.o') for s in exclude)]
 link[link.index('-o')+1]=str(root/'voice-pcm')
 link.insert(link.index('-Wl,--start-group'),str(obj))
-link += ['-Wl,--wrap=Loop_Init','-Wl,--wrap=NET_CanSendMessage','-Wl,--wrap=NET_SendUnreliableMessage','-Wl,--wrap=R_TranslateNewPlayerSkin']
+link += ['-Wl,--wrap=Loop_Init','-Wl,--wrap=NET_CanSendMessage','-Wl,--wrap=NET_SendUnreliableMessage','-Wl,--wrap=R_TranslateNewPlayerSkin','-Wl,--wrap=SDL_GetAudioStreamAvailable','-Wl,--wrap=SDL_GetAudioStreamData','-Wl,--wrap=SDL_OpenAudioDeviceStream']
 if '-DUSE_STEAMAUDIO' in arguments:
  link += ['-Wl,--wrap=SA_SetSource','-Wl,--wrap=S_CodecReadStream','-Wl,--wrap=S_CodecRewindStream','-Wl,--wrap=S_CodecCloseStream']
 (root/'link-argv.json').write_text(json.dumps(link,indent=2)+'\n')

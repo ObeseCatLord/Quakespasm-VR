@@ -3749,6 +3749,12 @@ It sets explicit native MSAA4/SSAO1, controller mode7 and public camera-only
 admission. Eight phases check center/basis/both-eye origins and capture both
 the compositor and exact inferior-owned native left-eye mirror window.
 
+An isolated Monado null compositor can be used with
+`XR_SIXDOF_NULL_COMPOSITOR=1`; only compositor-window captures are skipped.
+Native mirror captures and camera/quality/assertion checks remain required.
+The probe uses the existing StereoClip seam after location instead of a fragile
+source-line number, and queues mirror1 explicitly with its setup commands.
+
 Supply an otherwise fresh private `-basedir`/`-userdir` profile, read-only pak0
 link and fresh `XR_SIXDOF_OUTPUT` directory. Inherit only the existing private
 XDG/runtime/validation environment described in the GPU recipe above:
@@ -3774,6 +3780,16 @@ not hardware/runtime sensor or full private roomscale gameplay certification.
 [exact current results/limits](../docs/sixdof-current-qualification-2.0.md).
 
 ## Controlled voice PCM and native relay
+
+The existing combined SDL3 native fixture also accepts `-device-fault`.
+Require `VOICE_DEVICE_FAULT_NATIVE_PASSED` along with previous requested markers.
+Three linker wrappers inject one availability/read failure for the exact capture
+stream and a failed recording open; all unarmed calls reach real SDL. Only dummy
+capture is allowed. Native public Key_Event/Voice_Frame handle PTT, discontinuity,
+END-only cleanup and prepared10second retry deadlines, then real dummy reopen and
+fresh PCM production. These clocks/API failures are controlled; no hardware or
+permission-dialog certification. [Plan](../docs/voice-device-fault-final-2.0-plan.md)
+and [exact current results](../docs/voice-device-fault-current-2.0-results.md).
 
 `voice_pcm_native_fixture.c` reuses the existing stock/QC mixed bootstrap and
 actual voice capture-frame producer, Opus, negotiated queues/writers/relay, full

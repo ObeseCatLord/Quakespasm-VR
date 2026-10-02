@@ -362,6 +362,7 @@ static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
 #include "voice_queue_recovery_native_fixture.h"
 #include "voice_routing_native_fixture.h"
 #include "voice_vad_native_fixture.h"
+#include "voice_device_fault_native_fixture.h"
 #include "voice_budget_native_fixture.h"
 #include "voice_fatal_send_native_fixture.h"
 #include "voice_client_send_native_fixture.h"
@@ -417,6 +418,11 @@ int main (int argc, char **argv)
 	if (COM_CheckParm ("-vad")) {
 		Voice_VADNativeChecks (peers[0], states[0], peers[1], states[1]);
 		puts ("VOICE_VAD_NATIVE_PASSED producer/preroll/decode/hangover/PTT/discontinuity/dummy recovery");
+	}
+	if (COM_CheckParm ("-device-fault"))
+	{
+		Voice_DeviceFaultNativeChecks (peers[0], states[0]);
+		puts ("VOICE_DEVICE_FAULT_NATIVE_PASSED controlled-realtime SDL3 API injection/exact retry deadlines; native dummy reopen");
 	}
 	saved_binding = keybindings[K_F12];
 	keybindings[K_F12] = "+voicerecord";
