@@ -433,5 +433,7 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   snapshot/presentation receipts and actual mapped shader exclusion/alias/stage
   consumers. Expiring-notification failed repeat retained, fixed via read-only
   expiry plus eight settled frames. [Exact bounded results/limits](stereo-alpha-reference-current-2.0-results.md).
-  Category-local visible-layer checker integration remains pending; no fullF05
-  or whole-goal closure. Production renderer remains unchanged.
+  Reviewed category-local checker now passes all8cells with146–948independent
+  native footprints each;24missing-layer substitutions are rejected. This closes
+  the opposite-wet/dry transparency boundary. OtherF05/frozen owners and final
+  integration signoff remain open. Production renderer remains unchanged.

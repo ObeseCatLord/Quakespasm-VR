@@ -270,7 +270,16 @@ pass, but it does not independently certify every shared renderer policy, shader
 or driver. Actual native presentation is observed; X11 capture has no explicit
 per-image display-server completion feedback. Stable repeated output is required.
 No validation-layer, physical headset/gaze or benchmark pass is inferred.
-[Senior dispositions and plan](../docs/stereo-alpha-reference-2.0-review.md).
+`check_stereo_alpha_reference.py` requires Python, NumPy and Pillow. Run once
+per group/eye output: `python3 tests/check_stereo_alpha_reference.py --captures
+OUTPUT_DIRECTORY --assets EMITTED_ASSETS/assets.json`. Require JSON status passed
+and exit0. The read-only checker uses actual column-major clips/native geometry,
+pre-C same-pixel B/E/W influence and at least16unique native sampling footprints
+per category, then rejects local E/W/B replacements for C. It writes no captures
+or product settings. Quality/consumer inputs are additionally asserted by the
+native recipe. An inconclusive result is not a pass.
+[Senior dispositions and plan](../docs/stereo-alpha-reference-2.0-review.md),
+[current native output acceptance and limits](../docs/stereo-alpha-reference-current-2.0-results.md).
 
 ## Native pending screenshot request
 

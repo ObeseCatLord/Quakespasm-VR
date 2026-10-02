@@ -32,8 +32,9 @@ plus eight consecutive matching/expired end-frame observations gate captures.
 The first attempt is retained: E/W/C already match, but the first B image still
 has3064different notification pixels. Capture-time expiry alone was insufficient
 for a previously recorded UI frame. No cropping/tolerance/state forcing accepts
-that failed repeat. Fresh settled runs resolve it; all images are inspected as
-actual rendered world/model/water/HUD output, not a mock image producer.
+that failed repeat. Fresh settled runs resolve it. Representative world/model/
+water/HUD images are visually inspected; all64images are independently decoded
+for equality. The native renderer supplies the captured output.
 
 The original12x1fixed planes provide no conservative same-side water/model
 footprints in four cells. The planned minimal refinement uses12x1.5planes with
@@ -57,8 +58,33 @@ Native fixture binary remains13b7d270b66aea8812edf064ab29f505d18f38092a02e93cda8
 the bounded test host described in [native export evidence](stereo-alpha-geometry-current-2.0-results.md),
 not a new complete shipping build. No hardware/benchmark/validation-layer pass.
 
-Category-specific geometric overlap and local B/E/W influence checker integration
-remain pending at this document's initial commit. Exact equivalence certifies
+Main reviews the delegated standalone checker and corrects its column-major
+matrices, actual BSP name, dictionary image indexing, inactive-eye flags, literal
+active ordering and same-pixel pre-C influence selection. Unrequested output
+writer is removed; the checker prints JSON only. Current checker passes all four
+actual targets at exit0 after review. Before C, native model and relevant water
+polygon projection select conservative2x2native bilinear footprints with a
+quarter-pixel interior margin and actual E!=B and W!=B at the same pixel. At least
+16unique native footprints are required, not16upscaled pixels. Combined C differs
+from E/W/B at those same independently selected footprints.
+
+| Group / eye | Wet selected / distinguished | Dry selected / distinguished |
+| --- | --- | --- |
+| 0 / 0 | 152 / 152 | 948 / 948 |
+| 0 / 1 | 815 / 815 | 148 / 148 |
+| 1 / 0 | 827 / 827 | 146 / 146 |
+| 1 / 1 | 152 / 152 | 936 / 936 |
+
+All24category-local E/W/B substitutions for C are rejected by the local influence
+validator, independently of whole-image cross-mode equality. These are controlled
+missing-layer guards, not injected renderer faults or a universal arithmetic bound.
+Actual B/E/W effects qualify visible water/entity influence; exported polygons
+alone would not certify visibility or depth. Main independently spot-checks first
+target counts against a separate native projection/decoded-image calculation.
+
+This completes the renewed opposite-wet/dry transparency selector/output boundary
+under F05, retaining existing OIT reset and empty-scene consumer acceptance.
+Other F05 cases remain separate. Exact equivalence certifies
 this selector/execution comparison only: both paths share rendering/material
 policies. Independent source ordering plus native consumed flags strengthen it,
 not a universal renderer or driver certificate. Successful native present calls
