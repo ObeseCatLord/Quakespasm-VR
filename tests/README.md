@@ -146,6 +146,23 @@ metadata is not rendered atlas output; this is a finite CPU-only F03 subset.
 [Plan](../docs/qc-surface-final-2.0-plan.md),
 [exact results/limits](../docs/qc-surface-current-2.0-results.md).
 
+## Loaded QC entity copy and player queries
+
+Generate disposable licensed SSQC/CSQC programs with `--copy-player`; run with
+`-copy-player`. Compile the existing native fixture with
+`QC_COPY_PLAYER_NATIVE_HOST_FIXTURE` and reuse the unchanged host adapter,
+replacing only the native host object in this isolated link. Keep assertions
+enabled and native strict flags; all allocation/world/scoreboard owners remain
+production code. Require assembly/compile/host-compile/link/run0 plus
+`QC_BINDING_COPY_PLAYER_NATIVE_PASSED`.
+
+Acceptance observes actual loaded payload/metadata copies, free-source refusal
+before allocation, native no-touch relinking, numeric entity bounds and CSQC
+scoreboard queries/sorted selection. Score records are prepared inputs over native
+memory/sorting; this does not certify full graphical serverinfo parsing or authored
+HUD/network consumers. Private profiles perform no GPU or device work.
+[Plan](../docs/qc-copy-player-final-2.0-plan.md).
+
 ## Native opposite liquid eye categories
 
 `openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled
