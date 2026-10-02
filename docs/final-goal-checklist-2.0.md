@@ -86,8 +86,12 @@ receipts. These overlap intentionally; test shared boundaries once.
   Fresh stored VR-on/desktop-off and saved VR opt-out, native desktop dummy
   default/unique-device/missing-explicit/no-fallback/recovery/revoke pass in a
   combined PCM/recovery run; [routing results/limits](voice-routing-current-2.0-results.md).
-  Distinct live delivery, byte-rate/send failure, receiver/map reset,
-  active XR profile/other device/spatial/music boundaries remain open. Native VAD
+  Distinct live delivery, client-send failure, receiver/map reset,
+  active XR profile/other device/spatial/music boundaries remain open. Native
+  valid high-payload byte-window refusal/admission recovery, server relay busy
+  retry and fatal native loopback/QC drop/close/recipient-slot reuse pass;
+  [exact results/limits](voice-transport-current-2.0-results.md). Controlled
+  transport results and prepared states do not certify live socket delivery. Native VAD
   preroll/content order, hangover/END, meter, PTT and direct discontinuity-owner
   reset/forced dummy reopen also pass in the combined run;
   [exact results/limits](voice-vad-current-2.0-results.md). Actual device-read

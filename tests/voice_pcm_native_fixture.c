@@ -5,11 +5,24 @@
 #endif
 
 #define NEGOTIATION_FIXTURE_CUSTOM_CAN_SEND
+#define MIXED_FIXTURE_CUSTOM_UNRELIABLE
 #define MIXED_NATIVE_FIXTURE_ENTRY MixedFixtureMain
 #include "mixed_native_fixture.c"
 #undef MIXED_NATIVE_FIXTURE_ENTRY
 
 #include "../Quake/voice.c"
+
+static int voice_fixture_send_result = 1;
+
+int __wrap_NET_SendUnreliableMessage(qsocket_t *socket, sizebuf_t *message)
+{
+	assert(socket && message->cursize >= 0 &&
+		message->cursize <= (int)sizeof(captured));
+	captured_sends++;
+	memcpy(captured, message->data, message->cursize);
+	captured_length = message->cursize;
+	return voice_fixture_send_result;
+}
 
 static int VoiceOfferPacket (client_t *peer, byte *packet, size_t capacity)
 {
@@ -345,6 +358,8 @@ static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
 #include "voice_queue_recovery_native_fixture.h"
 #include "voice_routing_native_fixture.h"
 #include "voice_vad_native_fixture.h"
+#include "voice_budget_native_fixture.h"
+#include "voice_fatal_send_native_fixture.h"
 
 int main (int argc, char **argv)
 {
@@ -425,6 +440,13 @@ int main (int argc, char **argv)
 		VoiceLossReorderChecks (peers, states);
 		VoiceGenerationChecks (peers, states, public_offer);
 	}
+	if (COM_CheckParm ("-budgets"))
+	{
+		Voice_BudgetNativeChecks (peers[0], states[0], peers[1], states[1]);
+		puts ("VOICE_BUDGET_NATIVE_PASSED controlled parser replay/no auto-retransmit; nonfatal send0/send1 same bytes; independent decode/PCM");
+	}
+	if (COM_CheckParm ("-fatal-send"))
+		Voice_FatalSendNativeChecks (peers, states, public_offer);
 	/* Leave real PCM buffered, then real jitter queued, without consuming either. */
 	for (int burst = 0; burst < 2; ++burst)
 	{
@@ -486,6 +508,8 @@ int main (int argc, char **argv)
 		puts ("VOICE_RECOVERY_NATIVE_PASSED generated stream/queue/gain/loss/reorder/generation; captured transport");
 	if (COM_CheckParm ("-routing"))
 		puts ("VOICE_ROUTING_NATIVE_PASSED stored VR defaults/opt-out; desktop dummy routes");
+	if (COM_CheckParm ("-fatal-send"))
+		puts ("VOICE_FATAL_SEND_NATIVE_PASSED native loop ctor/admission/close/QC drop/slot reuse; controlled fatal send");
 	puts ("VOICE_PCM_NATIVE_PASSED native negotiated codec/relay/PCM/mute/reset; captured transport/dummy capture");
 	return 0;
 }

@@ -3837,3 +3837,15 @@ completion markers and native exit0. Keep SDL dummy/environment assertions.
 Direct interruption calls do not establish actual hardware/device-read errors
 or retry timing. See [plan](../docs/voice-vad-final-2.0-plan.md) and
 [results/limits](../docs/voice-vad-current-2.0-results.md).
+
+Add `-budgets` to check native valid high-payload byte-window refusal/recovery
+and server relay busy0→accepted1 cursor/wire/decoded PCM behavior. Add
+`-fatal-send` to reuse actual loopback construction/admission/close and stock
+QC drop for a controlled fatal server relay result, then slot reuse/fresh
+audio. Combine with `-vad -routing -recovery` in fresh private preferences;
+require all six pass markers and native exit0. Codec settings and transport
+results are explicit prepared inputs; this is not an OS/live-socket failure
+or complete client reconnect/map reset. Use the existing builder unchanged.
+See [byte/busy plan](../docs/voice-budget-final-2.0-plan.md),
+[fatal plan](../docs/voice-fatal-send-final-2.0-plan.md) and
+[reviewed results/limits](../docs/voice-transport-current-2.0-results.md).
