@@ -163,6 +163,15 @@ memory/sorting; this does not certify full graphical serverinfo parsing or autho
 HUD/network consumers. Private profiles perform no GPU or device work.
 [Plan](../docs/qc-copy-player-final-2.0-plan.md).
 
+## Loaded QC command dispatch
+
+Generate private licensed programs with `--commands`, execute `-commands`, and
+compile the existing fixture with `QC_COMMAND_NATIVE_HOST_FIXTURE`. Reuse the
+unchanged native host adapter; require all six stages0 and
+`QC_BINDING_COMMAND_NATIVE_PASSED`. Native startup is consumed before witnesses.
+[Plan](../docs/qc-command-final-2.0-plan.md),
+[senior dispositions, exact results and limits](../docs/qc-command-current-2.0-results.md).
+
 ## Native opposite liquid eye categories
 
 `openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled

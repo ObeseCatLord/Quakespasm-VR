@@ -258,3 +258,14 @@ reconstruction. AV-009/general VRM importer and eleven mapped additions remain
 research. Windows builds and user live headset/gaze/provider/listening/
 multiplayer/performance tests remain deferred. No human decision blocks this
 list. Main/reference and user-owned migration-2.0.md remain untouched.
+
+- F03: loaded command registration/dedup, formal full-text/quoted arguments,
+  native cvar effects, normal-return VM restoration, source/alias/native controls,
+  buffered dispatch and independent registration through client/server reloads
+  pass. Local Astra/xhigh caught two oracle gaps; corrections and final rerun pass.
+  [Exact results/limits](qc-command-current-2.0-results.md). No full F03 closure.
+- F10: initial actual Windows Release build failed on demonstrated MSVC/PCH
+  incompatibilities. Narrow source/project fixes committed32f7f777; all110 shader
+  jobs have checked Windows Debug/Release generation/compile coverage. Linux
+  rebuild passes; new matching ARM refresh runs. Root space prevents another VM
+  build presently. [Exact current limits](windows-current-2.0-results.md).

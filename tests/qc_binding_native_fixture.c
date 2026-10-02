@@ -10,8 +10,8 @@
 #include <limits.h>
 #include <stdlib.h>
 
-/* Loaded reflection, entity, surface and copy/player fixtures use the actual host owner. */
-#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_ENTITY_NATIVE_HOST_FIXTURE) || defined(QC_SURFACE_NATIVE_HOST_FIXTURE) || defined(QC_COPY_PLAYER_NATIVE_HOST_FIXTURE)
+/* Loaded reflection, entity, surface, copy/player and command fixtures use the actual host owner. */
+#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_ENTITY_NATIVE_HOST_FIXTURE) || defined(QC_SURFACE_NATIVE_HOST_FIXTURE) || defined(QC_COPY_PLAYER_NATIVE_HOST_FIXTURE) || defined(QC_COMMAND_NATIVE_HOST_FIXTURE)
 extern void FixtureLoadCSProgsNative (void);
 #endif
 #ifdef QC_SURFACE_NATIVE_HOST_FIXTURE
@@ -79,7 +79,7 @@ static void FixtureQuery (const char *name, float expected)
 	assert (FixtureFloat (name) == expected);
 }
 
-#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_COPY_PLAYER_NATIVE_HOST_FIXTURE)
+#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_COPY_PLAYER_NATIVE_HOST_FIXTURE) || defined(QC_COMMAND_NATIVE_HOST_FIXTURE)
 static link_t *FixtureReflectArea (edict_t *ent)
 {
 	link_t *owner = NULL;
@@ -2096,6 +2096,314 @@ static void FixtureTokensCases (void)
 	puts ("QC_BINDING_TOKENS_NATIVE_PASSED SSQC/CSQC loaded token calls, shared cleanup and zoned ownership");
 }
 
+
+#ifdef QC_COMMAND_NATIVE_HOST_FIXTURE
+static cvar_t fixture_command_result = {
+	"qc_binding_command_result", "fixture-command-prior", CVAR_NONE
+};
+static int fixture_command_native_calls, fixture_command_client_calls, fixture_command_server_calls;
+static char fixture_command_native_arg[64];
+
+static void FixtureCommandNative (void)
+{
+	fixture_command_native_calls++;
+	q_strlcpy (fixture_command_native_arg, Cmd_Argv (1), sizeof (fixture_command_native_arg));
+}
+static void FixtureCommandClient (void) { fixture_command_client_calls++; }
+static void FixtureCommandServer (void) { fixture_command_server_calls++; }
+
+static void FixtureCommandExec (const char *name)
+{
+	char ref[96];
+	q_snprintf (ref, sizeof (ref), "fixture_ref_commands_%s", name);
+	PR_ExecuteProgram (FixtureRef (ref));
+}
+
+static edict_t *FixtureCommandMakeWitness (link_t **owner, link_t **prev, link_t **next)
+{
+	qcvm_t *saved = qcvm;
+	FixtureSwitch (&sv.qcvm);
+	assert (qcvm->areanodes[0].axis >= 0 && qcvm->areanodes[0].axis < 2);
+	edict_t *ent = ED_Alloc ();
+	VectorSet (ent->v.mins, -2, -2, -2); VectorSet (ent->v.maxs, 2, 2, 2);
+	ent->v.origin[qcvm->areanodes[0].axis] = qcvm->areanodes[0].dist + 128;
+	ent->v.origin[2] = qcvm->worldmodel->maxs[2] + 512;
+	ent->v.solid = SOLID_BBOX;
+	ent->v.health = 37; ent->v.frame = 11;
+	SV_LinkEdict (ent, false);
+	*owner = FixtureReflectArea (ent);
+	assert (*owner && ent->area.prev && ent->area.next);
+	*prev = ent->area.prev; *next = ent->area.next;
+	FixtureSwitch (saved);
+	return ent;
+}
+
+static void FixtureCommandCheckWitness (dprograms_t *program, edict_t *ent,
+	link_t *owner, link_t *prev, link_t *next)
+{
+	qcvm_t *saved = qcvm;
+	FixtureSwitch (&sv.qcvm);
+	assert (sv.qcvm.progs == program && !ent->free && ent->v.health == 37 && ent->v.frame == 11);
+	assert (FixtureReflectArea (ent) == owner);
+	assert (ent->area.prev == prev && ent->area.next == next);
+	FixtureSwitch (saved);
+}
+
+static void FixtureCommandLoad (void)
+{
+	assert (sv.qcvm.progs && sv.qcvm.worldmodel);
+	FixtureSwitch (NULL);
+	cl.worldmodel = sv.qcvm.worldmodel; cl.model_precache[1] = cl.worldmodel;
+	FixtureLoadCSProgsNative ();
+	assert (qcvm == NULL && cl.qcvm.progs && cl.qcvm.edicts);
+	FixtureSwitch (&cl.qcvm);
+	assert (cl.qcvm.extfuncs.CSQC_Ent_Update &&
+		cl.qcvm.extfuncs.CSQC_ConsoleCommand == FixtureRef ("fixture_ref_commands_callback"));
+	FixtureSwitch (NULL);
+}
+
+static void FixtureCommandClear (void)
+{
+	FixtureSwitch (&cl.qcvm); PR_ClearProgs (&cl.qcvm); FixtureSwitch (NULL);
+	assert (!cl.qcvm.progs && qcvm == NULL);
+}
+
+static void FixtureCommandCheckRecords (cmd_function_t *owned, cmd_function_t *native)
+{
+	assert (Cmd_FindCommand ("FIXTURE_QC_OWNED") == owned);
+	assert (owned && owned->function == NULL && owned->srctype == src_command &&
+		owned->dynamic && owned->name == (const char *)(owned + 1));
+	assert (Cmd_FindCommand ("fixture_qc_native") == native);
+	assert (native && native->function == FixtureCommandNative && native->srctype == src_command);
+}
+
+static void FixtureCommandObserve (const char *line, const char *value,
+	const char *tail, float previous_count)
+{
+	assert (FixtureFloat ("fixture_commands_count") == previous_count + 1);
+	assert (FixtureFloat ("fixture_commands_token_count") == 3 &&
+		FixtureFloat ("fixture_commands_argc") == 3);
+	assert (!strcmp (FixtureString ("fixture_commands_full"), line));
+	assert (!strcmp (FixtureString ("fixture_commands_arg0"), "fixture_qc_owned"));
+	assert (!strcmp (FixtureString ("fixture_commands_arg1"), value));
+	assert (!strcmp (FixtureString ("fixture_commands_arg2"), tail));
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), value));
+	FixtureCommandExec ("release");
+}
+
+static void FixtureCommandDispatch (const char *line, const char *value,
+	const char *tail, float accept, qcvm_t *previous)
+{
+	FixtureSwitch (&cl.qcvm); FixtureSetFloat ("fixture_commands_accept", accept);
+	float previous_count = FixtureFloat ("fixture_commands_count");
+	FixtureSwitch (previous);
+	assert (Cmd_ExecuteString (line, src_command));
+	assert (qcvm == previous && cmd_source == src_command);
+	FixtureSwitch (&cl.qcvm);
+	FixtureCommandObserve (line, value, tail, previous_count);
+	FixtureSwitch (previous);
+	assert (qcvm == previous);
+}
+
+static void FixtureCommandBuffered (void)
+{
+	const char *line = "fixture_qc_owned \"buffer words\" buffered";
+	FixtureSwitch (&cl.qcvm); FixtureSetFloat ("fixture_commands_accept", 1);
+	float previous_count = FixtureFloat ("fixture_commands_count");
+	FixtureSwitch (NULL);
+	Cbuf_AddText ("fixture_qc_owned \"buffer words\" buffered\n"); Cbuf_Execute ();
+	assert (qcvm == NULL && cmd_source == src_command);
+	FixtureSwitch (&cl.qcvm);
+	FixtureCommandObserve (line, "buffer words", "buffered", previous_count);
+	FixtureSwitch (NULL);
+}
+
+static void FixtureCommandNoCallback (void)
+{
+	FixtureSwitch (&cl.qcvm);
+	func_t saved = cl.qcvm.extfuncs.CSQC_ConsoleCommand;
+	float previous_count = FixtureFloat ("fixture_commands_count");
+	FixtureSetFloat ("fixture_commands_accept", 1);
+	FixtureSwitch (&sv.qcvm);
+	Cvar_Set ("qc_binding_command_result", "missing-callback");
+	cl.qcvm.extfuncs.CSQC_ConsoleCommand = 0;
+	assert (Cmd_ExecuteString ("fixture_qc_owned \"missing callback\" probe", src_command));
+	assert (qcvm == &sv.qcvm);
+	cl.qcvm.extfuncs.CSQC_ConsoleCommand = saved;
+	FixtureSwitch (&cl.qcvm);
+	assert (FixtureFloat ("fixture_commands_count") == previous_count);
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "missing-callback"));
+	FixtureSwitch (&sv.qcvm);
+}
+
+static void FixtureCommandSourceControls (void)
+{
+	assert (Cmd_ExecuteString ("fixture_qc_native preserved", src_command));
+	assert (fixture_command_native_calls == 1 && !strcmp (fixture_command_native_arg, "preserved"));
+	assert (Cmd_ExecuteString ("fixture_qc_native denied", src_client));
+	assert (fixture_command_native_calls == 1);
+	assert (!Cmd_ExecuteString ("fixture_qc_native denied", src_server));
+	assert (fixture_command_native_calls == 1);
+	assert (Cmd_ExecuteString ("fixture_source_client", src_client));
+	assert (fixture_command_client_calls == 1);
+	assert (Cmd_ExecuteString ("fixture_source_client", src_command));
+	assert (fixture_command_client_calls == 2);
+	assert (!Cmd_ExecuteString ("fixture_source_client", src_server));
+	assert (fixture_command_client_calls == 2);
+	assert (Cmd_ExecuteString ("fixture_source_server", src_server));
+	assert (fixture_command_server_calls == 1);
+	assert (Cmd_ExecuteString ("fixture_source_server", src_command));
+	assert (Cmd_ExecuteString ("fixture_source_server", src_client));
+	assert (fixture_command_server_calls == 1);
+}
+
+static void FixtureCommandFallbackControls (void)
+{
+	Cvar_Set ("qc_binding_command_result", "before-cvar");
+	assert (Cmd_ExecuteString ("qc_binding_command_result \"native quoted value\"", src_command));
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "native quoted value"));
+	assert (Cmd_ExecuteString (
+		"alias fixture_qc_alias \"qc_binding_command_result alias-value\"", src_command));
+	assert (Cmd_ExecuteString ("fixture_qc_alias", src_command));
+	Cbuf_Execute ();
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "alias-value"));
+	Cvar_Set ("qc_binding_command_result", "remote-alias-client-sentinel");
+	assert (!Cmd_ExecuteString ("fixture_qc_alias", src_client));
+	Cbuf_Execute ();
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "remote-alias-client-sentinel"));
+	Cvar_Set ("qc_binding_command_result", "remote-alias-server-sentinel");
+	assert (!Cmd_ExecuteString ("fixture_qc_alias", src_server));
+	Cbuf_Execute ();
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "remote-alias-server-sentinel"));
+	assert (Cmd_ExecuteString ("unalias fixture_qc_alias", src_command));
+	Cvar_Set ("qc_binding_command_result", "remote-source");
+	assert (!Cmd_ExecuteString ("qc_binding_command_result \"client denied\"", src_client));
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "remote-source"));
+	assert (!Cmd_ExecuteString ("qc_binding_command_result \"server denied\"", src_server));
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "remote-source"));
+}
+
+static void FixtureCommandRemoteRegistered (void)
+{
+	FixtureSwitch (&cl.qcvm);
+	float before = FixtureFloat ("fixture_commands_count");
+	FixtureSwitch (NULL);
+	Cvar_Set ("qc_binding_command_result", "registered-source");
+	assert (Cmd_ExecuteString ("fixture_qc_owned \"client denied\" probe", src_client));
+	Cbuf_Execute ();
+	assert (qcvm == NULL);
+	FixtureSwitch (&cl.qcvm);
+	assert (FixtureFloat ("fixture_commands_count") == before);
+	FixtureSwitch (NULL);
+	assert (!Cmd_ExecuteString ("fixture_qc_owned \"server denied\" probe", src_server));
+	Cbuf_Execute ();
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "registered-source"));
+}
+
+static void FixtureCommandCases (void)
+{
+	char saved_value[128], saved_client_name[sizeof (svs.clients[0].name)];
+	client_t *saved_host_client = host_client;
+	cmd_function_t *native, *client_command, *server_command, *owned;
+	dprograms_t *server_program;
+	edict_t *witness;
+	link_t *area_owner, *area_prev, *area_next;
+
+	/* Retire native startup work before building command/program witnesses. */
+	extern sizebuf_t cmd_text;
+	FixtureSwitch (NULL);
+	for (int pass = 0; cmd_text.cursize && pass < 8; ++pass)
+	{
+		Cbuf_Waited (); Cbuf_Execute ();
+	}
+	assert (!cmd_text.cursize && sv.active && qcvm == NULL);
+
+	Cvar_RegisterVariable (&fixture_command_result);
+	q_strlcpy (saved_value, Cvar_VariableString ("qc_binding_command_result"), sizeof (saved_value));
+	assert (!Cmd_FindCommand ("fixture_qc_owned") && !Cmd_FindCommand ("fixture_qc_native"));
+	assert (!Cmd_FindCommand ("fixture_source_client") && !Cmd_FindCommand ("fixture_source_server"));
+	assert (svs.clients && svs.maxclients > 0);
+	host_client = &svs.clients[0];
+	q_strlcpy (saved_client_name, host_client->name, sizeof (saved_client_name));
+	q_strlcpy (host_client->name, "QC command fixture", sizeof (host_client->name));
+
+	native = Cmd_AddCommand2 ("fixture_qc_native", FixtureCommandNative, src_command, false);
+	client_command = Cmd_AddCommand2 ("fixture_source_client", FixtureCommandClient, src_client, false);
+	server_command = Cmd_AddCommand2 ("fixture_source_server", FixtureCommandServer, src_server, false);
+	assert (native && client_command && server_command);
+	witness = FixtureCommandMakeWitness (&area_owner, &area_prev, &area_next);
+	server_program = sv.qcvm.progs;
+
+	FixtureCommandLoad ();
+	FixtureSwitch (&cl.qcvm); FixtureCommandExec ("register");
+	owned = Cmd_FindCommand ("fixture_qc_owned");
+	assert (owned);
+	FixtureCommandExec ("register");
+	FixtureCommandCheckRecords (owned, native);
+	FixtureSwitch (NULL);
+	FixtureCommandCheckWitness (server_program, witness, area_owner, area_prev, area_next);
+	assert (Cmd_ExecuteString (
+		"alias fixture_qc_owned \"qc_binding_command_result alias-fired\"", src_command));
+	FixtureCommandDispatch ("fixture_qc_owned \"first quoted\" one", "first quoted", "one", 1, NULL);
+	FixtureCommandDispatch ("fixture_qc_owned \"server prior\" two", "server prior", "two", 1, &sv.qcvm);
+	FixtureCommandDispatch ("fixture_qc_owned \"client prior\" three", "client prior", "three", 0, &cl.qcvm);
+	Cbuf_Execute ();
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "client prior"));
+	FixtureSwitch (&cl.qcvm);
+	float native_control_count = FixtureFloat ("fixture_commands_count");
+	FixtureSwitch (NULL);
+	FixtureCommandSourceControls ();
+	FixtureCommandFallbackControls ();
+	FixtureSwitch (&cl.qcvm);
+	assert (FixtureFloat ("fixture_commands_count") == native_control_count);
+	FixtureSwitch (NULL);
+	FixtureCommandBuffered ();
+	FixtureCommandNoCallback ();
+	FixtureCommandRemoteRegistered ();
+
+	FixtureCommandClear ();
+	FixtureCommandCheckRecords (owned, native);
+	FixtureCommandCheckWitness (server_program, witness, area_owner, area_prev, area_next);
+	Cvar_Set ("qc_binding_command_result", "missing-program");
+	assert (Cmd_ExecuteString ("fixture_qc_owned \"missing program\" probe", src_command));
+	Cbuf_Execute ();
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "missing-program"));
+	assert (!Cmd_ExecuteString ("fixture_qc_owned \"server missing\" probe", src_server));
+	assert (!strcmp (Cvar_VariableString ("qc_binding_command_result"), "missing-program"));
+
+	FixtureCommandLoad ();
+	FixtureCommandCheckRecords (owned, native);
+	FixtureCommandCheckWitness (server_program, witness, area_owner, area_prev, area_next);
+	FixtureCommandDispatch ("fixture_qc_owned \"reloaded client\" four", "reloaded client", "four", 1, NULL);
+	FixtureSwitch (&cl.qcvm); FixtureCommandExec ("register");
+	FixtureCommandCheckRecords (owned, native); FixtureSwitch (NULL);
+	FixtureCommandBuffered ();
+	FixtureCommandClear ();
+	FixtureCommandCheckWitness (server_program, witness, area_owner, area_prev, area_next);
+
+	q_strlcpy (host_client->name, saved_client_name, sizeof (host_client->name));
+	host_client = saved_host_client;
+	FixtureSwitch (&sv.qcvm); SV_SpawnServer ("e1m1");
+	assert (sv.active && sv.qcvm.progs && sv.qcvm.worldmodel);
+	server_program = sv.qcvm.progs;
+	witness = FixtureCommandMakeWitness (&area_owner, &area_prev, &area_next);
+	FixtureCommandLoad ();
+	FixtureSwitch (&cl.qcvm); FixtureCommandExec ("register");
+	FixtureCommandCheckRecords (owned, native); FixtureSwitch (NULL);
+	FixtureCommandCheckWitness (server_program, witness, area_owner, area_prev, area_next);
+	FixtureCommandDispatch ("fixture_qc_owned \"server replaced\" five", "server replaced", "five", 1, &sv.qcvm);
+	FixtureCommandClear ();
+	FixtureCommandCheckWitness (server_program, witness, area_owner, area_prev, area_next);
+
+	assert (Cmd_ExecuteString ("unalias fixture_qc_owned", src_command));
+	assert (Cmd_FindCommand ("fixture_qc_owned") == owned);
+	Cmd_RemoveCommand (owned); Cmd_RemoveCommand (native);
+	Cmd_RemoveCommand (client_command); Cmd_RemoveCommand (server_command);
+	Cvar_Set ("qc_binding_command_result", saved_value);
+	puts ("QC_BINDING_COMMAND_NATIVE_PASSED loaded CSQC command dispatch, source admission, reload and native ownership");
+}
+#endif
+
 int main (int argc, char **argv)
 {
 	dprograms_t *server_program;
@@ -2104,6 +2412,13 @@ int main (int argc, char **argv)
 
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
 	assert (sv.active);
+#ifdef QC_COMMAND_NATIVE_HOST_FIXTURE
+	if (COM_CheckParm ("-commands"))
+	{
+		FixtureCommandCases ();
+		return 0;
+	}
+#endif
 #ifdef QC_ENTITY_NATIVE_HOST_FIXTURE
 	if (COM_CheckParm ("-entities"))
 	{

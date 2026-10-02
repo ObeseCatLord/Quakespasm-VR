@@ -9,7 +9,7 @@ from cooperative_qc_program import source_program
 
 def assemble(program, resources=False, files=False, calls=False, tokens=False, events=False,
              reflection=False, reflection_fields_complete=False, entities=False,
-             entity_fingerprint="none", surfaces=False, copy_player=False):
+             entity_fingerprint="none", surfaces=False, copy_player=False, commands=False):
     if entity_fingerprint not in ("none", "complete", "missing"):
         raise ValueError("unknown entity fingerprint variant")
     if entity_fingerprint != "none" and not entities:
@@ -1227,6 +1227,66 @@ def assemble(program, resources=False, files=False, calls=False, tokens=False, e
         copy_entry("touch", code)
         entry("CSQC_Ent_Update", [])
 
+
+    if commands:
+        for builtin, number in (("registercommand", 352), ("tokenize", 441),
+                                ("argv", 442), ("argc", 0), ("cvar_set", 72),
+                                ("strzone", 118), ("strunzone", 119)):
+            add_ref("commands_" + builtin,
+                    add_function(builtin, -number if number else 0))
+
+        command_name = global_slot("fixture_commands_name", 1, name("fixture_qc_owned"))
+        native_name = global_slot("fixture_commands_native_name", 1, name("fixture_qc_native"))
+        cvar_name = global_slot("fixture_commands_cvar_name", 1, name("qc_binding_command_result"))
+        zero_string = global_slot("fixture_commands_zero", 1, 0)
+        one = global_slot("fixture_commands_one", value=1.0)
+        accept = global_slot("fixture_commands_accept", value=1.0)
+        count = global_slot("fixture_commands_count")
+        token_count = global_slot("fixture_commands_token_count")
+        argc_result = global_slot("fixture_commands_argc")
+        full_text = global_slot("fixture_commands_full", 1)
+        arguments = [global_slot("fixture_commands_arg%d" % i, 1) for i in range(3)]
+        parameter = global_slot("fixture_commands_parameter", 1)
+        indices = [global_slot("fixture_commands_index%d" % i, value=float(i)) for i in range(3)]
+
+        def command_call(code, builtin, args=(), output=None, store=31):
+            for index, (slot, opcode) in enumerate(args):
+                code.append((opcode, slot, 4 + index * 3, 0))
+            code.append((51 + len(args), ref_slots["commands_" + builtin], 0, 0))
+            if output is not None:
+                code.append((store, 1, output, 0))
+
+        registration = []
+        for slot in (command_name, native_name):
+            command_call(registration, "registercommand", ((slot, 33),))
+        add_ref("commands_register", entry("fixture_commands_register", registration))
+
+        callback = [(6, count, one, count)]
+        command_call(callback, "strzone", ((parameter, 33),), full_text, 33)
+        command_call(callback, "tokenize", ((parameter, 33),), token_count)
+        command_call(callback, "argc", output=argc_result)
+        for index, output in enumerate(arguments):
+            callback.extend(((31, indices[index], 4, 0),
+                             (52, ref_slots["commands_argv"], 0, 0),
+                             (33, 1, 4, 0),
+                             (52, ref_slots["commands_strzone"], 0, 0),
+                             (33, 1, output, 0)))
+        callback.extend(((33, cvar_name, 4, 0),
+                         (33, arguments[1], 7, 0),
+                         (53, ref_slots["commands_cvar_set"], 0, 0),
+                         (43, accept, 0, 0)))
+        callback_start = emit(callback + [(0, 0, 0, 0)])
+        add_ref("commands_callback",
+                add_function("CSQC_ConsoleCommand", callback_start, parameter, 1, (1,)))
+
+        release = []
+        for slot in (full_text, *arguments):
+            release.extend(((33, slot, 4, 0),
+                            (52, ref_slots["commands_strunzone"], 0, 0),
+                            (33, zero_string, slot, 0)))
+        add_ref("commands_release", entry("fixture_commands_release", release))
+        entry("CSQC_Ent_Update", [])
+
     strings.extend(b"\0" * (-len(strings) % 4))
     output = bytearray(60)
     for section, (slot, width) in zip(sections, ((2, 8), (4, 8), (6, 8),
@@ -1253,9 +1313,14 @@ def main():
     parser.add_argument("--entities", action="store_true", help="append loaded entity-search callers")
     parser.add_argument("--surfaces", "-surfaces", action="store_true", help="append loaded native BSP surface callers")
     parser.add_argument("--copy-player", action="store_true", help="append loaded entity-copy and CSQC player-query callers")
+    parser.add_argument("--commands", "-commands", action="store_true", help="append the loaded CSQC command-dispatch case")
     parser.add_argument("--entity-fingerprint", choices=("none", "complete", "missing"), default="none",
                         help="client search fingerprint variant for entity mode")
     args = parser.parse_args()
+    if args.commands and (args.copy_player or args.reflection or args.entities or args.surfaces or
+                         args.reflection_fields_complete or args.entity_fingerprint != "none" or
+                         any((args.resources, args.files, args.calls, args.tokens, args.events))):
+        parser.error("--commands is a separate fixture mode")
     if args.copy_player and (args.reflection or args.entities or args.surfaces or
                              args.reflection_fields_complete or any((args.resources, args.files,
                                  args.calls, args.tokens, args.events))):
@@ -1275,7 +1340,7 @@ def main():
         parser.error("--surfaces is a separate fixture mode")
     result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls,
                       args.tokens, args.events, args.reflection, args.reflection_fields_complete,
-                      args.entities, args.entity_fingerprint, args.surfaces, args.copy_player)
+                      args.entities, args.entity_fingerprint, args.surfaces, args.copy_player, args.commands)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)
