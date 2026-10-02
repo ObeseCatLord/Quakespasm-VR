@@ -279,3 +279,9 @@ list. Main/reference and user-owned migration-2.0.md remain untouched.
   corrected/new owners pass strict output-free syntax checks under both Release
   and Debug definitions. Linux rebuild passes. Full Windows build/link and final
   artifact reconciliation remain required; root space still insufficient.
+
+- F10: native ARM32f7f777 build/stage/static verification/checksummed retrieval
+  completes0; main independently matches archived source/revision and AArch64
+  ELF. [Exact artifact/results/limits](arm-refresh-current-2.0-results.md).
+  Later3204aaba portability edits are outside that immutable archive; no final
+  reconciled shipping-artifact or whole-goal signoff is claimed.
