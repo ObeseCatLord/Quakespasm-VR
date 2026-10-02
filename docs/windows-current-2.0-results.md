@@ -70,5 +70,15 @@ in windows32f7f777/current-sources-syntax*.json and reviewed provenance receipt
 under the durable recovery directory above. Linux rebuilt the four affected
 owners and linked successfully. These are syntax/diagnostic checks; object
 code generation, full project build, shaders, linking and PE dependencies still
-require the actual Windows builds after space is available. The in-flight ARM
-refresh remains at32f7f777, before these additional source-only portability fixes.
+require the actual Windows builds after space is available. The ARM
+refresh at32f7f777 subsequently completed and was retrieved/verified; see
+[ARM refresh results](arm-refresh-current-2.0-results.md). It predates these
+additional source-only portability fixes and is not the final reconciled artifact.
+
+2026-10-02 continuation: Docker mount inspection confirms the actual WinBoat
+/storage backing directory is on the root filesystem (about206MB available),
+so placing host receipts on FastGames does not remove VM disk growth risk.
+Storage-gate receipt and immutable3204aaba source archive/build script are
+prepared under windows3204aaba in the durable recovery directory. No full
+Release/Debug build was started with this insufficient storage. Full build and
+PE/link qualification remain open; no output-free check is substituted for them.
