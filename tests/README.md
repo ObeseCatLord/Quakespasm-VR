@@ -3829,3 +3829,11 @@ It does not execute active XR profile switching, hardware selection, duplicate
 names or failed default-device opens. See the
 [routing plan](../docs/voice-routing-final-2.0-plan.md) and
 [exact native results/limits](../docs/voice-routing-current-2.0-results.md).
+
+Add `-vad` for the native producer/preroll/Opus content-order, hangover/END,
+public meter, real bound PTT and direct discontinuity-owner checks. Combine
+`-vad -routing -recovery` only with fresh private preferences; require all four
+completion markers and native exit0. Keep SDL dummy/environment assertions.
+Direct interruption calls do not establish actual hardware/device-read errors
+or retry timing. See [plan](../docs/voice-vad-final-2.0-plan.md) and
+[results/limits](../docs/voice-vad-current-2.0-results.md).

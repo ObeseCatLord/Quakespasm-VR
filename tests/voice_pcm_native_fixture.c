@@ -344,6 +344,7 @@ static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
 
 #include "voice_queue_recovery_native_fixture.h"
 #include "voice_routing_native_fixture.h"
+#include "voice_vad_native_fixture.h"
 
 int main (int argc, char **argv)
 {
@@ -388,6 +389,10 @@ int main (int argc, char **argv)
 	voice_settings.desktop.mode = 1;
 	Voice_RefreshCapture (true);
 	assert (voice_capture_device && Voice_CaptureReady ());
+	if (COM_CheckParm ("-vad")) {
+		Voice_VADNativeChecks (peers[0], states[0], peers[1], states[1]);
+		puts ("VOICE_VAD_NATIVE_PASSED producer/preroll/decode/hangover/PTT/discontinuity/dummy recovery");
+	}
 	saved_binding = keybindings[K_F12];
 	keybindings[K_F12] = "+voicerecord";
 	key_dest = key_game;

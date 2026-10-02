@@ -87,7 +87,11 @@ receipts. These overlap intentionally; test shared boundaries once.
   default/unique-device/missing-explicit/no-fallback/recovery/revoke pass in a
   combined PCM/recovery run; [routing results/limits](voice-routing-current-2.0-results.md).
   Distinct live delivery, byte-rate/send failure, receiver/map reset,
-  active XR profile/other device/VAD/discontinuity/spatial/music boundaries remain open.
+  active XR profile/other device/spatial/music boundaries remain open. Native VAD
+  preroll/content order, hangover/END, meter, PTT and direct discontinuity-owner
+  reset/forced dummy reopen also pass in the combined run;
+  [exact results/limits](voice-vad-current-2.0-results.md). Actual device-read
+  fault detection and retry timing remain distinct; this does not close F08.
 - F03: actual loaded SSQC/CSQC core numeric/name binding, permission discovery,
   simultaneous VM preservation and toggle/reload subset passes;
   [exact results and limits](qc-binding-current-qualification-2.0.md).
