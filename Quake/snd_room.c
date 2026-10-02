@@ -122,8 +122,8 @@ static int simulate(void *ptr)
         pos.x *= SA_METERS_PER_UNIT; pos.y *= SA_METERS_PER_UNIT; pos.z *= SA_METERS_PER_UNIT;
         shared.listener.origin = pos;
         shared.listener.right.x = 1; shared.listener.up.y = 1; shared.listener.ahead.z = -1;
-        shared.numRays = (int)bounded(settings.room_rays, 256, 4096);
-        shared.numBounces = (int)bounded(settings.room_bounces, 2, 32);
+        shared.numRays = (int)bounded((float)settings.room_rays, 256, 4096);
+        shared.numBounces = (int)bounded((float)settings.room_bounces, 2, 32);
         shared.duration = ROOM_DURATION; shared.order = 1;
         shared.irradianceMinDistance = 0.5f;
         input.flags = IPL_SIMULATIONFLAGS_REFLECTIONS;
@@ -143,7 +143,7 @@ static int simulate(void *ptr)
             output.reflections.reverbTimes[i] = bounded(output.reflections.reverbTimes[i], .1f, 3);
             output.reflections.eq[i] = bounded(output.reflections.eq[i], 0, 4);
         }
-        output.reflections.delay = (int)bounded(output.reflections.delay, 0, ROOM_SAMPLES);
+        output.reflections.delay = (int)bounded((float)output.reflections.delay, 0, ROOM_SAMPLES);
         sa_spin_lock(&r->lock);
         r->published = output.reflections;
         r->stats.runs++; r->stats.ready = 1;

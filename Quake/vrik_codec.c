@@ -129,7 +129,7 @@ static vrik_codec_status_t vrik_validate_v2_wire(const vrik_v2_pose_t *pose)
 
 	if (!pose)
 		return VRIK_CODEC_INVALID_ARGUMENT;
-	if (pose->flags & (uint8_t)~VRIK_V2_FLAG_KNOWN)
+	if (pose->flags & ~VRIK_V2_FLAG_KNOWN)
 		return VRIK_CODEC_MALFORMED;
 	if ((pose->flags & VRIK_V2_FLAG_ACTIVE) &&
 		!(pose->flags & VRIK_V2_FLAG_HEAD_TRACKED))
@@ -177,9 +177,9 @@ static vrik_codec_status_t vrik_validate_v3(const vrik_codec_pose_t *pose)
 
 	if (!pose)
 		return VRIK_CODEC_INVALID_ARGUMENT;
-	if ((pose->flags & (uint8_t)~VRIK_V3_FLAG_KNOWN) ||
-		(pose->present_mask & (uint8_t)~VRIK_TARGET_MASK_ALL) ||
-		(pose->tracked_mask & (uint8_t)~VRIK_TARGET_MASK_ALL) ||
+	if ((pose->flags & ~VRIK_V3_FLAG_KNOWN) ||
+		(pose->present_mask & ~VRIK_TARGET_MASK_ALL) ||
+		(pose->tracked_mask & ~VRIK_TARGET_MASK_ALL) ||
 		(pose->tracked_mask & (uint8_t)~pose->present_mask))
 		return VRIK_CODEC_MALFORMED;
 	if (!(pose->flags & VRIK_V3_FLAG_ACTIVE)) {
@@ -211,7 +211,7 @@ vrik_codec_status_t vrik_v3_body_size(uint8_t present_mask, size_t *body_size)
 
 	if (!body_size)
 		return VRIK_CODEC_INVALID_ARGUMENT;
-	if (present_mask & (uint8_t)~VRIK_TARGET_MASK_ALL)
+	if (present_mask & ~VRIK_TARGET_MASK_ALL)
 		return VRIK_CODEC_MALFORMED;
 	for (mask = present_mask; mask != 0; mask = (uint8_t)(mask >> 1))
 		count += (size_t)(mask & 1u);
@@ -448,9 +448,9 @@ vrik_codec_status_t vrik_normalized_to_v2(const vrik_codec_pose_t *pose, vrik_v2
 		return VRIK_CODEC_INVALID_ARGUMENT;
 	/* Permit legacy v2 normalized inactive payloads, but still reject all other
 	 * impossible normalized states before dropping body-only roles. */
-	if ((pose->flags & (uint8_t)~VRIK_V3_FLAG_KNOWN) ||
-		(pose->present_mask & (uint8_t)~VRIK_TARGET_MASK_ALL) ||
-		(pose->tracked_mask & (uint8_t)~VRIK_TARGET_MASK_ALL) ||
+	if ((pose->flags & ~VRIK_V3_FLAG_KNOWN) ||
+		(pose->present_mask & ~VRIK_TARGET_MASK_ALL) ||
+		(pose->tracked_mask & ~VRIK_TARGET_MASK_ALL) ||
 		(pose->tracked_mask & (uint8_t)~pose->present_mask) ||
 		((pose->flags & VRIK_V3_FLAG_ACTIVE) &&
 		 !(pose->present_mask & VRIK_TARGET_BIT(VRIK_TARGET_HEAD))))

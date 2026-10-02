@@ -425,7 +425,7 @@ static void render_block(sa_renderer_t *r)
             if (!c->position_valid) blend = 1;
             radio = (r->render_settings.pure_voice ? 0 : blend * r->render_settings.radio_gain) * gain;
             gain *= (1 - blend) / (1 + distance / 512);
-            spatial = c->position_valid != 0;
+            spatial = c->position_valid ? 1.0f : 0.0f;
         } else if (c->kind == SA_POSITIONAL) {
             gain *= clamp01(1 - distance * c->attenuation);
             spatial = 1;
