@@ -56,6 +56,22 @@ these checks do not certify overlapping alpha composition or whole F05.
 [Plan/senior dispositions](../docs/stereo-liquid-final-2.0-review-brief.md),
 [actual results/limits](../docs/stereo-liquid-current-2.0-results.md).
 
+## Native authored alpha scene (output qualification incomplete)
+
+`stereo_alpha_native_fixture.c` includes the native parser. Compile with the
+assertion-enabled Meson cl_parse.c arguments and replace only that object in
+the native client link. A disposable licensed stock e1m1 profile supplies the
+two generated v6 MDL paths declared by the helper. Register its private commands
+after native CPU submission retirement; queue initialization/opacity through
+the normal engine command buffer. The helper uses actual late precache/static
+parsing and efrags; no copied renderer, visibility list or category assignment.
+
+Compilation/linking and native wet/dry alpha-list admission were observed.
+Visible composition is **not accepted**. GPU qualification stopped after an
+NVIDIA recovery-required fault during the isolated Monado workload; do not
+repeat its GPU probes while that fault remains. [Plan](../docs/stereo-alpha-output-final-2.0-plan.md),
+[partial evidence, failure and limits](../docs/stereo-alpha-current-2.0-results.md).
+
 ## Native pending screenshot request
 
 `screenshot_pending_native.gdb` uses normal native commands/rendering/encoders

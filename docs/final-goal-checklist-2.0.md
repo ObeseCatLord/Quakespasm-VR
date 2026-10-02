@@ -159,6 +159,12 @@ receipts. These overlap intentionally; test shared boundaries once.
   [Exact results/limits](stereo-liquid-current-2.0-results.md). Alpha-entity counts
   are zero here; authored overlapping composition and either-eye culling remain
   distinct existing F05 work, not inferred from water tint/stage calls.
+- F05: authored native alias/static parsing and wet/dry alpha-list admission
+  pass a diagnostic subset; visible layer composition remains unaccepted.
+  Subsequent native device creation failed and the kernel recorded a Monado
+  NVIDIA fault with recovery required. All owned GPU workloads stopped;
+  GPU qualification remains stopped while CPU/source work can continue.
+  [Partial results and incident limits](stereo-alpha-current-2.0-results.md).
 - F10: production482cd9f5 changes cl_main.c and4ef67790 changes gl_rmisc.c;
   07f83e6e changes host_cmd.c;8071a46b changes gl_rmain.c/glquake.h/view.c.
   aa828629 changes gl_vidsdl.c for foveation OFF/recovery.
