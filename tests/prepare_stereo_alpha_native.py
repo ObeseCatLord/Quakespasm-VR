@@ -18,8 +18,8 @@ TRIVERTEX = struct.Struct("<4B")
 EXPECTED_MDL_BYTES = 308
 
 SCALE = (1.0 / 16.0, 1.0 / 16.0, 1.0 / 16.0)
-SCALE_ORIGIN = (-6.0, 0.0, -0.5)
-VERTICES = ((0, 0, 0), (192, 0, 0), (192, 0, 16), (0, 0, 16))
+SCALE_ORIGIN = (-6.0, 0.0, -0.75)
+VERTICES = ((0, 0, 0), (192, 0, 0), (192, 0, 24), (0, 0, 24))
 ST_COORDS = ((1, 1), (6, 1), (6, 6), (1, 6))
 TRIANGLES = ((0, 1, 2), (0, 2, 3), (2, 1, 0), (3, 2, 0))
 PALETTE = {
@@ -38,7 +38,7 @@ def make_mdl(palette_index):
         6,
         *SCALE,
         *SCALE_ORIGIN,
-        math.sqrt(36.25),
+        math.sqrt(36.5625),
         0.0, 0.0, 0.0,
         1, 8, 8, 4, 4, 1, 0, 0,
         1.0,
@@ -59,7 +59,7 @@ def make_mdl(palette_index):
     frame = (
         struct.pack("<i", 0)
         + pack_trivert((0, 0, 0))
-        + pack_trivert((192, 0, 16))
+        + pack_trivert((192, 0, 24))
         + frame_name
         + b"".join(pack_trivert(vertex) for vertex in VERTICES)
     )
@@ -114,15 +114,15 @@ def asset_record(name, palette_index, rgb, data):
             "vertices": 4,
             "triangles": 4,
             "frames": 1,
-            "model_units": [12.0, 0.0, 1.0],
+            "model_units": [12.0, 0.0, 1.5],
         },
         "geometry": {
             "scale": list(SCALE),
             "scale_origin": list(SCALE_ORIGIN),
-            "bounding_radius": math.sqrt(36.25),
+            "bounding_radius": math.sqrt(36.5625),
             "vertices_byte": [list(vertex) for vertex in VERTICES],
             "bbox_min_byte": [0, 0, 0],
-            "bbox_max_byte": [192, 0, 16],
+            "bbox_max_byte": [192, 0, 24],
             "st_vertices": [
                 {"onseam": 0, "s": s, "t": t} for s, t in ST_COORDS
             ],

@@ -427,3 +427,11 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   Local Astra catches notification expiry in earlier captures; recorded transfer
   settings did not prove overlay stability. [Dispositions and smaller reference plan](stereo-alpha-reference-2.0-review.md).
   Native common-pass equivalence, ordering and category-local influence stay open.
+
+- F05: native exceptional/common alpha reference passes both eyes/reversed
+  arrangements with64phases, exact repeat/cross-mode decoded equality,480native
+  snapshot/presentation receipts and actual mapped shader exclusion/alias/stage
+  consumers. Expiring-notification failed repeat retained, fixed via read-only
+  expiry plus eight settled frames. [Exact bounded results/limits](stereo-alpha-reference-current-2.0-results.md).
+  Category-local visible-layer checker integration remains pending; no fullF05
+  or whole-goal closure. Production renderer remains unchanged.

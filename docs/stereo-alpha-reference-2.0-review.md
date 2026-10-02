@@ -27,3 +27,26 @@ Successful native snapshot/presentation receipts retained. Normal notification
 expiry gates capture. Main owns consumer observers, geometry/influence checker,
 qualification and integration; Luna owns only the new recipe input/scheduling.
 No production edits, new feature IDs, numerical certifier or exhaustive matrix.
+
+Before-code test-input refinement: main independently projects the exported
+water polygons and decoded alias vertices using recorded native center/eye
+matrices, clipping in homogeneous Vulkan coordinates. A conservative2x2native
+source box with quarter-pixel interior margin gives no same-side water/model
+boxes for the original1-unit height in four cells. This is insufficient input,
+not a renderer failure. A1.5-unit height gives152/948/827/148/827/148/152/948
+geometric boxes across group/eye/category cells before inspecting combined C.
+Keep12-unit X width, origins, native center-leaf classes, UV/skin/alpha, topology
+and308-byte format; change z-byte extent16→24 and centered scale-origin-.5→-.75,
+matching bbox/radius/manifest. Both planes remain entirely on their own water
+side (nearest edge0.25world units from z=-296). Minimal fixed test-input change;
+no new parser/render owner. These counts do not yet prove visible water or depth.
+Qualify the first reference pair using fresh assets and preserve previous captures.
+
+First qualified-target attempt: native ordering/exclusion/alias acceptance and
+E/W/C repeat/cross-mode decoded equality pass. First background repeat differs
+in3064notification pixels despite capture-time expired flag. Presentation can
+contain an earlier UI recording. Before-code observer correction: admit receipts
+only after native notification expiry and require eight consecutive end-frame
+observations with expired notifications and matching phase inputs. These are
+observer counters, not native state assignments. Preserve this failed first
+repeat; no image cropping/tolerance or notification state forcing.

@@ -235,6 +235,43 @@ faults/failures remain retained. [Plan](../docs/stereo-alpha-output-final-2.0-pl
 [native presentation receipts](../docs/stereo-alpha-presentation-current-2.0-results.md),
 [earlier partial evidence](../docs/stereo-alpha-current-2.0-results.md).
 
+## Native exceptional/common alpha reference
+
+`openxr-stereo-alpha-reference.gdb` reuses the above host, normal parser/command
+owners and successful snapshot/presentation observers. Generate fresh current
+assets: the fixed12x1.5world-unit planes stay wholly on opposite sides of the
+water plane and create useful geometric overlap. Existing captures retain their
+original12x1asset hashes; do not silently replace their inputs.
+
+Set `XR_STEREO_ALPHA_OUTPUT` to fresh output, `XR_STEREO_ALPHA_GROUP` and
+`XR_STEREO_ALPHA_EYE` each exactly0or1, and `XR_STEREO_ALPHA_GEOMETRY` to a new
+geometry JSON path in output. One run contains16phases: exceptional/common,
+B/E/W/C and two repeats. Other-eye co-location changes only controlled located
+pose/FOV inputs; actual masks/common state are observed, never supplied. Head,
+target eye and target projection stay invariant. Runtime validity/tracking
+flags remain untouched. Notifications expire normally; eight consecutive
+expired matching-input end frames precede capture. No forced console state.
+
+The observer reads actual mapped stereo UBO bytes selected by native descriptor
+and offset. Shader target/inactive exclusion flags, accepted alias geometry,
+fixture identities, native leaf classes and literal legacy wet/dry ordering are
+checked at the actual alias consumer. Common mode has no descriptor override;
+exceptional mode consumes native eye-specific pairs. Missing tuples fail.
+Require exit0, `ALPHA_LAYER_REFERENCE_NATIVE_PASSED` and16passed samples with
+native presentation receipts, then qualify exact decoded same-state repeats,
+exceptional/common equality and category-specific overlapping geometry/layer
+influence. A changed target, unstable repeat or missing visible influence is
+inconclusive. Never fit a color tolerance or force visibility to obtain a pass.
+Expand to both groups/eyes only after the first target is qualified.
+
+This compares the exceptional selector/execution boundary against existing
+common rendering. Its independent ordering table anchors the inherited ordinary
+pass, but it does not independently certify every shared renderer policy, shader
+or driver. Actual native presentation is observed; X11 capture has no explicit
+per-image display-server completion feedback. Stable repeated output is required.
+No validation-layer, physical headset/gaze or benchmark pass is inferred.
+[Senior dispositions and plan](../docs/stereo-alpha-reference-2.0-review.md).
+
 ## Native pending screenshot request
 
 `screenshot_pending_native.gdb` uses normal native commands/rendering/encoders
