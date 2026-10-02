@@ -3870,3 +3870,15 @@ native exit0, with Steam Audio inactive. This tests relative stereo direction
 and equal-channel radio fallback, not HRTF, live movement or XR listener input.
 See [plan](../docs/voice-fallback-final-2.0-plan.md) and
 [results/limits](../docs/voice-fallback-current-2.0-results.md).
+
+
+With a **complete assertion-enabled Steam Audio/SDL3/voice Meson object graph**,
+add `-spatial-callback` after the previous eight-marker options. The existing
+builder conditionally observes-and-forwards `SA_SetSource`. Require all nine
+markers and exit0. Directed real SDK checks cover prepared cache publication,
+partial consumed cursor, looping pause/resume/menu policy, one-shot continuity,
+cardinal HRTF/panning output and serialized teardown. Continue using dummy audio,
+`-nosound`/dedicated/fresh private preferences; no physical output callback.
+Disabled builds explicitly reject this option. See
+[plan](../docs/spatial-callback-final-2.0-plan.md) and
+[reviewed results/limits](../docs/spatial-callback-current-2.0-results.md).

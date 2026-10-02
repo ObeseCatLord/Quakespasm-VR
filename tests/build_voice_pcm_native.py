@@ -37,6 +37,8 @@ link=[x for x in link if not any(x.endswith('Quake_'+s+'.c.o') for s in exclude)
 link[link.index('-o')+1]=str(root/'voice-pcm')
 link.insert(link.index('-Wl,--start-group'),str(obj))
 link += ['-Wl,--wrap=Loop_Init','-Wl,--wrap=NET_CanSendMessage','-Wl,--wrap=NET_SendUnreliableMessage','-Wl,--wrap=R_TranslateNewPlayerSkin']
+if '-DUSE_STEAMAUDIO' in arguments:
+ link += ['-Wl,--wrap=SA_SetSource']
 (root/'link-argv.json').write_text(json.dumps(link,indent=2)+'\n')
 subprocess.run(link,cwd=build,check=True)
 print(root/'voice-pcm')

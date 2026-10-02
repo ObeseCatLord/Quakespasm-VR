@@ -1,0 +1,35 @@
+# Native Steam Audio publication/callback senior brief
+
+2026-10-02. Bounded frozen F08, not whole-goal F10. Before-code plan: spatial-callback-final-2.0-plan.md. Existing production sound owners untouched; source built against4.8.1 native SDK and all four current sound owners, no mixed disabled objects. Luna/xhigh wrote only260-line optional header source-only, main verified effective context/closed worker, owns tiny existing-fixture optional integration/conditional builder wrap and private build/receipts. Main added remote-menu case, corrected exact-pan hrtf-off energy oracle (one ear legitimately zero), and observes borrowed renderer solely for native nonfinite/realtime-allocation safety counters before shutdown, clears alias afterward.
+
+| Fact | Verification / exact limit |
+| --- | --- |
+| [verified: build] Full object graph | /home/obesecatlord/FastGames/qsvr-spatial-callback-k5pdo7ld/native: Meson setup0/full453-job compile+link0, assertion-enabled debugoptimized, SDL3/voice/Opus/codecs/CURL/SteamAudio enabled, all four SDK audio owners present. SDK4.8.1 headers and native phonon/pffft from prior owned retry3, version/hashes entry.json. Two-library private symlink dir only; child-only LD_LIBRARY_PATH, explicit linker rpath-link, system SDL3 retained. No system/driver/global runtime changes. |
+| [verified: source] Minimal boundary | tests/spatial_callback_native_fixture.h only captures native SA_SetSource publication for two nonambient channels, always forwards __real function. Conditional existing builder flag only with actual USE_STEAMAUDIO. No production cache/renderer/clock/lifecycle replacement or extra excluded object. Dedicated host normally skips sound init; actual S_Init called under asserted -nosound registers native cvars/mutex without opening output. Actual Spatial_Init/CacheSound/Update/Render/GetProgress/Reset/Shutdown used. |
+| [verified: source/run] Cached loop and one-shot | Prepared native-format16384-frame mono48k S16 caches, loop0/shot-1, real native SDL cache conversion. Observed sample/generation/offset/dry gain; loop room_send0.35 and equivalent shot1.0 at equal gain. Real partial17+19 then remaining-block render gives exact public consumed cursors and nonzero finite output. Tests align to256-frame block boundaries, not immediate interruption of cached remainder. |
+| [verified: source/run] Pause/menu | Actual shared predicate and native publication/callback: cl.paused holds loop cursor/generation/sample/offset/gain while shot advances; resume advances loop from held cursor; option disabled permits advancement. Active solo menu holds loop then key_game resumes; hosted multiplayer and remote solo menus leave loop advancing. Server/maxclient/key/paused globals are prepared acoustic policy inputs, restored before native network/QC work. No time/cursor/output assignment. |
+| [verified: source/run] HRTF and panning | Native reset, actual positional source on listener right then left, native snd_hrtf1/0 publication. Eight real callback blocks per case; energy after initial two blocks is nonzero and direction correct, both ears nonzero for HRTF. Panner at exact pan1 may zero one ear. Real SDK binaural processing remains native (maintains history even in panning mode). Channel energy is behavioral evidence, not listening quality. No room worker instantiated in this stage. |
+| [verified: source/run] Lifetime/health | Borrowed renderer observed from forwarded native publication; public SA_GetStats before teardown reports no nonfinite samples and no SDK-context allocator calls during these callbacks. Not a timing benchmark. Actual Spatial_Shutdown retires converted samples/renderer before original prepared caches free; observer renderer alias cleared. Channels/cvars/listener/core policy values restored. No physical DMA callback started; direct serialized Spatial_Render invokes the real callback renderer. Not concurrent callback exclusion proof. |
+| [verified: execution] Consolidated | Existing builder0/native run0/completion0/input-stability0, all nine markers with all previous voice options and -spatial-callback, normal Host_Shutdown. Fresh prefs/dummy audio/dedicated/no UDP/no sound/no Steam API, linked licensed pak0 used only for reading. pre/post dependency/object/PCH/exe/runner/SDK/header/pak0 hashes stable; source-provenance.json and reviewed-provenance-summary.json actual counts/hashes. No GPU/OpenXR/window/hardware mic/output/performance/deployed server/user prefs changes. |
+| [unknown/deferred] Remaining | Prepared cache/policy/listener inputs, captured voice transport results/core clients, serialized real renderer. No physical listening, native SDL device callback, live pose/network listener, voice decoded-to-HRTF, room-worker/wet-only monitor, music/formats/EOF, device-read retry or whole F08/F10 proof. Full Windows compilation/link remains root-space blocked. |
+
+Decisions: reject inline snd_spatial.c/private-state recompile and separate audio fixture framework in favor of public-boundary forwarding observation and existing fixture. Full enabled graph instead of injecting SDK objects into disabled build. No new production layers. Depth budget <=750words, read-only bounded header/integration/builder/native owner and actual private receipts. Verify before critique, prioritize lifecycle/false-pass/SDK path/oracle/call-context/exclusion/claim risks and simplification. Is observed publication plus real progress/output sufficient for stated component boundary? Do restored policy/globals and cache lifetime preserve following native client/server shutdown? Do HRTF cases distinguish selected mode adequately without overclaim? Report P0/P1/P2 or none with file:line and required corrections/limits. No edits/builds/tests/runtimes/nested delegation or whole-goal enumeration. Main spot-checks and synthesizes dispositions.
+
+Main's additional off-mode oracle question received a narrow local Astra/xhigh
+answer confirming P2: add exact-zero far-ear energy only for reset cardinal
+room-free panning cases, preserving HRTF both-ear positivity and signal/direction
+checks. This was not a returned complete lifecycle/provenance review. That
+reviewer is closed; fresh explicit Astra/xhigh must finish the full contract.
+Main independently inspected exact 1±pan arithmetic, adopted one assertion,
+preserved original receipts/source under first-integrated-run, and reran the
+same consolidated case: build/run/completion/input-stability0, nine markers,
+361 stable inputs/221objects/1PCH/16sources. Main verifies current hashes. No
+other code change. Current scope/entry remains full enabled native build plus
+this directed serialized callback component qualification.
+
+Complete local Astra/xhigh review subsequently returned no P0/P1 and a reporting
+P2: recorded executed inputs are stable but selected source hashes are post-run,
+not comprehensive compile-time attestation. Main adopted precise limitations
+and retained explicit device/concurrency/cache-eviction/wrap/completion/host/room/
+voice-HRTF/music limits. See results for main dispositions; no source mutation
+or extra run after the complete review, no full F08/F10 claim.

@@ -311,3 +311,11 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   match the embedded source archive. [Exact results/limits](arm-3204aaba-current-2.0-results.md).
   Later source fixes would require affected refresh; Windows/full integration
   signoff and other finite boundaries remain open.
+
+- F08: complete enabled Steam Audio native object graph compiles/links and the
+  current nine-marker voice run passes. Actual native cache publication/partial
+  callback cursor/pause-resume/one-shot/menu/HRTF-versus-panning observations,
+  health and serialized teardown are locally Astra-reviewed;
+  [exact results/dispositions](spatial-callback-current-2.0-results.md).
+  Voice-to-HRTF, wet-only monitor/room worker/music, full host/device callback
+  and remaining finite boundaries are distinct; F08/F10 are not closed.
