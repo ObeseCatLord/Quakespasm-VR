@@ -43,3 +43,32 @@ The pending request is to free at least10GB on root. Further guest compilation
 waits for adequate space; source/CPU qualification can continue on FastGames.
 Final Windows Release/Debug builds, PE dependencies, artifact hashes and the
 matching Linux/ARM refresh remain required F10 work.
+
+## Additional output-free MSVC qualification
+
+2026-10-02. With root still below250MB, main used the actual installed MSVC
+compiler's documented /Zs syntax-only option, which creates no output files:
+https://learn.microsoft.com/en-us/cpp/build/reference/zs-syntax-check-only?view=msvc-170
+No guest object/PDB/shader generation/link, game/device launch or SDK change.
+A small separately checksummed source overlay leaves the original immutable
+build source intact. Actual compiler input hashes match the current checkout.
+
+The four newly included production source owners exposed missing Q_COUNTOF
+in custom_avatar.c and an inner loop shadow in r_avatar.c. Reuse native countof
+in both avatar and tracker storage (6+5 sites) and rename only the inner avatar
+loop index. Main inspected the native declarations and corrected the prior
+function-index cast: func_t is already unsigned, while dprograms_t.numfunctions
+is signed. Explicitly convert the count bound to func_t at the three existing
+comparisons, preserving the original usual-arithmetic-conversion semantics.
+No new behavior, helper, registry, policy or weakened warning setting.
+
+Final actual MSVC14.44 /Zs /W4 /WX /utf-8 checks pass for all16 corrected/new
+source owners under both Release/NDEBUG and Debug/_DEBUG definitions, with the
+existing native warning exclusions, codecs/voice and Steam Audio enabled.
+Current source hashes, arguments, native exits and raw local output are retained
+in windows32f7f777/current-sources-syntax*.json and reviewed provenance receipt
+under the durable recovery directory above. Linux rebuilt the four affected
+owners and linked successfully. These are syntax/diagnostic checks; object
+code generation, full project build, shaders, linking and PE dependencies still
+require the actual Windows builds after space is available. The in-flight ARM
+refresh remains at32f7f777, before these additional source-only portability fixes.

@@ -125,7 +125,7 @@ static int VR_FBT_StorageEnsureDirectory(const char *path, int create)
 #ifdef _WIN32
 	wchar_t wpath[MAX_OSPATH];
 	DWORD attributes;
-	if (!VR_FBT_StorageUTF8ToWide(path, wpath, Q_COUNTOF(wpath)))
+	if (!VR_FBT_StorageUTF8ToWide(path, wpath, countof(wpath)))
 		return 0;
 	attributes = GetFileAttributesW(wpath);
 	if (attributes == INVALID_FILE_ATTRIBUTES) {
@@ -204,7 +204,7 @@ static int VR_FBT_StorageFinalPathIsSafe(const char *path)
 #ifdef _WIN32
 	wchar_t wpath[MAX_OSPATH];
 	DWORD attributes;
-	if (!VR_FBT_StorageUTF8ToWide(path, wpath, Q_COUNTOF(wpath)))
+	if (!VR_FBT_StorageUTF8ToWide(path, wpath, countof(wpath)))
 		return 0;
 	attributes = GetFileAttributesW(wpath);
 	return attributes == INVALID_FILE_ATTRIBUTES ||
@@ -334,8 +334,8 @@ static int VR_FBT_StorageReplaceFile(const char *temporary, const char *final)
 #ifdef _WIN32
 	wchar_t wtemporary[MAX_OSPATH];
 	wchar_t wfinal[MAX_OSPATH];
-	if (!VR_FBT_StorageUTF8ToWide(temporary, wtemporary, Q_COUNTOF(wtemporary)) ||
-		!VR_FBT_StorageUTF8ToWide(final, wfinal, Q_COUNTOF(wfinal)))
+	if (!VR_FBT_StorageUTF8ToWide(temporary, wtemporary, countof(wtemporary)) ||
+		!VR_FBT_StorageUTF8ToWide(final, wfinal, countof(wfinal)))
 		return 0;
 	return MoveFileExW(wtemporary, wfinal,
 		MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
@@ -358,7 +358,7 @@ static int VR_FBT_StorageCreateTemporary(const char *final, char *temporary,
 		wchar_t wparent[MAX_OSPATH];
 		wchar_t wtemporary[MAX_OSPATH];
 		int converted;
-		if (!VR_FBT_StorageUTF8ToWide(parent, wparent, Q_COUNTOF(wparent)) ||
+		if (!VR_FBT_StorageUTF8ToWide(parent, wparent, countof(wparent)) ||
 			!GetTempFileNameW(wparent, L"vft", 0, wtemporary))
 			return 0;
 		converted = WideCharToMultiByte(CP_UTF8, 0, wtemporary, -1,

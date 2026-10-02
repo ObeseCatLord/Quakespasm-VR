@@ -31,7 +31,8 @@ include, missing PCH includes in independent helpers, UTF-8 comments read as
 codepage 932, local-name shadow warnings and three signed function-index
 comparisons. Disable PCH only for the demonstrated independent/prelude owners,
 specify UTF-8 in the existing compiler metadata, rename only local identifiers,
-and cast already-positive function indices to unsigned for bounds comparisons.
+and make the existing unsigned conversion of function-count bounds explicit
+using func_t, preserving the native comparison semantics.
 MSVC warns on the existing standard C flexible-array member; retain its exact
 layout/allocation math with a declaration-local warning push/pop for C4200.
 Do not weaken warnings globally or replace working runtime owners.

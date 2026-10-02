@@ -935,10 +935,10 @@ float R_AvatarSolveHumanoidLimb(const r_avatar_rig_t *rig,float *palette,
 	for(r=0;r<3;++r){from[r]=palette[end*12+r*4+3]-palette[lower*12+r*4+3];to[r]=tip[r]-palette[lower*12+r*4+3];}
 	if(!R_AvatarAimBranch(rig,palette,lower,from,to,branch,2))goto fail;
 	/* Apply endpoint orientation to its descendants as well (fingers/toes). */
-	{float inv[12],desired[12],delta[12];int i;
+	{float inv[12],desired[12],delta[12];int joint_index;
 	 memcpy(desired,endpoint,sizeof(desired));for(r=3;r<12;r+=4)desired[r]=palette[end*12+r];
 	 R_AvatarInverseRigid(palette+end*12,inv);R_AvatarMultiply(desired,inv,delta);
-	 for(i=end;i<R_AvatarJointCount(rig->live);++i)if(branch[i]&4)R_AvatarMultiply(delta,palette+i*12,palette+i*12);
+	 for(joint_index=end;joint_index<R_AvatarJointCount(rig->live);++joint_index)if(branch[joint_index]&4)R_AvatarMultiply(delta,palette+joint_index*12,palette+joint_index*12);
 	}
 	return R_AvatarJointDistance(palette+end*12,endpoint);
 fail:

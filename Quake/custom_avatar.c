@@ -174,7 +174,7 @@ static int CA_SafeDirectory(const char *path)
 {
 	wchar_t w[MAX_OSPATH];
 	DWORD a;
-	return CA_Wide(path, w, Q_COUNTOF(w)) &&
+	return CA_Wide(path, w, countof(w)) &&
 		   (a = GetFileAttributesW(w)) != INVALID_FILE_ATTRIBUTES &&
 		   (a & FILE_ATTRIBUTE_DIRECTORY) && !(a & FILE_ATTRIBUTE_REPARSE_POINT);
 }
@@ -182,14 +182,14 @@ static int CA_SafeFile(const char *path)
 {
 	wchar_t w[MAX_OSPATH];
 	DWORD a;
-	return CA_Wide(path, w, Q_COUNTOF(w)) &&
+	return CA_Wide(path, w, countof(w)) &&
 		   (a = GetFileAttributesW(w)) != INVALID_FILE_ATTRIBUTES &&
 		   !(a & FILE_ATTRIBUTE_DIRECTORY) && !(a & FILE_ATTRIBUTE_REPARSE_POINT);
 }
 static int CA_PathExists(const char *path)
 {
 	wchar_t w[MAX_OSPATH];
-	return CA_Wide(path, w, Q_COUNTOF(w)) && GetFileAttributesW(w) != INVALID_FILE_ATTRIBUTES;
+	return CA_Wide(path, w, countof(w)) && GetFileAttributesW(w) != INVALID_FILE_ATTRIBUTES;
 }
 #else
 static int CA_SafeDirectory(const char *path)
@@ -240,7 +240,7 @@ static int CA_ReadFile(const char *path, size_t max, byte **out, size_t *outsize
 		FILE_ATTRIBUTE_TAG_INFO tag;
 		LARGE_INTEGER size;
 		DWORD got;
-		if (!CA_Wide(path, wpath, Q_COUNTOF(wpath)))
+		if (!CA_Wide(path, wpath, countof(wpath)))
 			return 0;
 		handle = CreateFileW(wpath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
 							 FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
@@ -607,8 +607,8 @@ static void CA_ScanRoot(const char *root)
 		WIN32_FIND_DATAW e;
 		HANDLE h;
 		char key[32];
-		if (!CA_Wide(base, pattern, Q_COUNTOF(pattern)) ||
-			wcslen(pattern) + 3 >= Q_COUNTOF(pattern))
+		if (!CA_Wide(base, pattern, countof(pattern)) ||
+			wcslen(pattern) + 3 >= countof(pattern))
 			return;
 		wcscat(pattern, L"\\*");
 		h = FindFirstFileW(pattern, &e);

@@ -8897,7 +8897,7 @@ static const char *SV_PrivateWalkTrialOwnerStateError (edict_t *ent, client_t *c
 	if (!SV_PrivateWalkTrialStockProgram () &&
 		(!isfinite (ent->v.nextthink) ||
 		 (ent->v.nextthink > 0 &&
-		  (ent->v.think <= 0 || (unsigned int)ent->v.think >= qcvm->progs->numfunctions))))
+		  (ent->v.think <= 0 || ent->v.think >= (func_t)qcvm->progs->numfunctions))))
 		return "invalid scheduled Think";
 	if (cmd && cmd->vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
@@ -8925,7 +8925,7 @@ static const char *SV_PrivateWalkTrialOwnerStateError (edict_t *ent, client_t *c
 	customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
 	if (customphysics && customphysics->function &&
 		(SV_PrivateWalkTrialStockProgram () || SV_PrivateWalkTrialQ30Program () ||
-		 customphysics->function < 0 || (unsigned int)customphysics->function >= qcvm->progs->numfunctions))
+		 customphysics->function < 0 || customphysics->function >= (func_t)qcvm->progs->numfunctions))
 		return "unsupported or invalid customphysics";
 
 	groundprog = ent->v.groundentity; // QC entity slots are integer byte offsets
@@ -9704,7 +9704,7 @@ static qboolean SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (edict_t *ent,
 	if (!window || !window->available || !isfinite (window->world_frametime) ||
 		window->world_frametime < 0 || ent->v.nextthink <= 0 ||
 		ent->v.nextthink > qcvm->time + window->world_frametime ||
-		ent->v.think <= 0 || (unsigned int)ent->v.think >= qcvm->progs->numfunctions)
+		ent->v.think <= 0 || ent->v.think >= (func_t)qcvm->progs->numfunctions)
 		return false;
 	for (int i = 0; i < countof (attacks); ++i)
 		if (ED_FindFunction (attacks[i]) == &qcvm->functions[ent->v.think])
