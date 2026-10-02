@@ -244,6 +244,14 @@ receipts. These overlap intentionally; test shared boundaries once.
   portability changes require final matching artifacts; no current F10 closure.
 - F03–F08 and F10 remain open at their finite boundaries above.
 
+- F05: native authored red/blue aliases now visibly render after correcting only
+  the generated indexed skin's flood-fill premise. Native precache/static/efrag/
+  list/material owners, wet/dry leaves, MSAA4/SSAO1/OIT0 and all16B/E/W/C captures
+  pass twice, including the published recipe, with normal exits.
+  [Visible-input results/limits](stereo-alpha-colored-current-2.0-results.md).
+  This closes visible test-input preparation, not yet the independent pixel
+  composition oracle or either-eye-only bounds. No production renderer change.
+
 ## Senior dispositions and independent main checks
 
 | Recommendation | Disposition / evidence |

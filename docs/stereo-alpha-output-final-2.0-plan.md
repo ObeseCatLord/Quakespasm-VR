@@ -82,3 +82,15 @@ production/other fixtures/docs or commit. Main integrates at the existing native
 parser helper, owns actual geometry/visibility/composition analysis and retains
 all prior failed runs. Generator correctness/actual visible output must be
 observed; emitted bytes alone are not F05 acceptance.
+
+2026-10-02 skin preparation correction, before implementation: image B/E
+comparison shows the authored strips do draw, but darken the background instead
+of showing their intended colors. Native gl_model.c:4168 treats the top-left
+skin color as connected background; a completely uniform indexed skin is
+flood-filled to black before fullbright detection. Keep this upstream behavior
+unchanged. Give the generated skin a single top-left index255 guard, which the
+native flood-fill explicitly skips, and map UVs to the interior1..6 coordinates.
+The other63 texels retain the intended fullbright color. Record the guard and
+nonuniform skin accurately in assets.json. Preserve308-byte geometry/paths and
+use a fresh private output directory; retain the first black-strip captures.
+Require visibly colored native output before evaluating composition.

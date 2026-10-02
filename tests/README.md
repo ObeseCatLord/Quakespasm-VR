@@ -198,21 +198,37 @@ these checks do not certify overlapping alpha composition or whole F05.
 [Plan/senior dispositions](../docs/stereo-liquid-final-2.0-review-brief.md),
 [actual results/limits](../docs/stereo-liquid-current-2.0-results.md).
 
-## Native authored alpha scene (output qualification incomplete)
+## Native authored alpha scene
 
 `stereo_alpha_native_fixture.c` includes the native parser. Compile with the
 assertion-enabled Meson cl_parse.c arguments and replace only that object in
-the native client link. A disposable licensed stock e1m1 profile supplies the
-two generated v6 MDL paths declared by the helper. Register its private commands
-after native CPU submission retirement; queue initialization/opacity through
-the normal engine command buffer. The helper uses actual late precache/static
-parsing and efrags; no copied renderer, visibility list or category assignment.
+the native client link. Generate inputs with
+`python3 tests/prepare_stereo_alpha_native.py --output-dir EMPTY_DIRECTORY`.
+Place its progs directory in a disposable licensed stock e1m1 profile. The
+emitter refuses existing content and records the two308-byte v6 MDLs/hashes.
+A single top-left255 skin guard preserves fullbright colors through native
+flood-fill; interior UV1..6 avoids that guard. Uniform indexed skins are unsuitable.
 
-Compilation/linking and native wet/dry alpha-list admission were observed.
-Visible composition is **not accepted**. GPU qualification stopped after an
-NVIDIA recovery-required fault during the isolated Monado workload; do not
-repeat its GPU probes while that fault remains. [Plan](../docs/stereo-alpha-output-final-2.0-plan.md),
-[partial evidence, failure and limits](../docs/stereo-alpha-current-2.0-results.md).
+Use `openxr-stereo-alpha.gdb` with that native test host, private basedir/userdir,
+`-openxr -window -width 640 -height 480 -nomouse -nojoy -nosound -noudp
+-nosteamapi -postcfg alpha.cfg`, and isolated simulated Monado. Use the opposite
+liquid settings above, plus `gamma 1`, `contrast 1`, `vid_palettize 0`,
+`r_waterwarp 0`, `gl_fullbrights 1`. Set `XR_STEREO_ALPHA_OUTPUT` to a writable
+fresh output directory. Native command registration occurs after CPU submission
+retirement; initialization/opacity execute through the normal command buffer.
+The helper uses actual late precache/static parsing and efrags; no copied
+renderer, visibility list or category assignment.
+
+Require exit0, `ALPHA_LAYER_CAPTURE_NATIVE_PASSED`, passed layers.json and all16
+native B/E/W/C captures: two mirrored eyes and reversed wet/dry arrangements.
+The probe checks actual identities, skin/fullbright/leaf/alpha inputs, frozen
+native time, MSAA4/SSAO1/OIT0 and native formats. Inspect visibly red/blue models.
+This is capture/premise acceptance; a separate pixel-order oracle is required
+for composition acceptance. No validation-layer or hardware pass is inferred.
+The GPU is available again and isolated null-compositor captures pass; earlier
+faults/failures remain retained. [Plan](../docs/stereo-alpha-output-final-2.0-plan.md),
+[current visible-input evidence](../docs/stereo-alpha-colored-current-2.0-results.md),
+[earlier partial evidence](../docs/stereo-alpha-current-2.0-results.md).
 
 ## Native pending screenshot request
 
