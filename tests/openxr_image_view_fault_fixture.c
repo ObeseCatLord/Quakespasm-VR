@@ -1,19 +1,46 @@
 /* Actual borrowed-view constructors with controlled metadata/Vulkan dispatch.
  * No driver, runtime image ownership, render-pass or framebuffer proof. */
+#include <assert.h>
+#include <stdlib.h>
 #ifdef NDEBUG
 #error "OpenXR view fixture requires assertions"
 #endif
 #define OPENXR_ENABLE_CUSTOM_IMAGE_VIEW_DESTROY
+static void *openxr_fixture_calloc (size_t count, size_t size);
+#define calloc openxr_fixture_calloc
 #define main ImageViewInheritedFixtureMain
 #include "openxr_enable_fixture.c"
 #undef main
+#undef calloc
 
 viddef_t vid;
 static vrxr_vulkan_eye_t source_images[3];
 static VkImageView created_views[6], destroyed_views[6];
 static VkImage created_images[6];
 static unsigned created_count, destroyed_count, image_queries, create_calls;
+static unsigned calloc_calls, rejected_calloc_calls;
+static qboolean fail_density_array_calloc, color_array_calloc_succeeded;
 static int failed_density_index;
+
+static void *openxr_fixture_calloc (size_t count, size_t size)
+{
+ assert (count == 3 && size == sizeof (VkImageView));
+ ++calloc_calls;
+ if (calloc_calls == 1)
+ {
+  void *allocation = calloc (count, size);
+  color_array_calloc_succeeded = allocation != NULL;
+  return allocation;
+ }
+ assert (calloc_calls == 2 && color_array_calloc_succeeded);
+ if (fail_density_array_calloc)
+ {
+  fail_density_array_calloc = false;
+  ++rejected_calloc_calls;
+  return NULL;
+ }
+ return calloc (count, size);
+}
 
 void Sys_Error (const char *format, ...)
 {
@@ -89,6 +116,9 @@ static void run_case (int failure)
 {
  assert (!openxr_image_views && !openxr_density_image_views && !openxr_image_count);
  created_count = destroyed_count = image_queries = create_calls = 0;
+ calloc_calls = rejected_calloc_calls = 0;
+ fail_density_array_calloc = failure == 5;
+ color_array_calloc_succeeded = false;
  failed_density_index = failure == 1 ? 1 : -1;
  openxr_density_backend_failed = false;
  vid.width = vid.height = 64;
@@ -108,6 +138,9 @@ static void run_case (int failure)
 
  GL_CreateXRImageViews ();
  assert (image_queries == 3 && openxr_image_count == 3 && openxr_image_views);
+ assert (calloc_calls == (unsigned)(failure == 4 ? 1 : 2));
+ assert (rejected_calloc_calls == (unsigned)(failure == 5));
+ assert (!fail_density_array_calloc && color_array_calloc_succeeded);
  for (int i = 0; i < 3; ++i)
   assert (openxr_image_views[i] && view_source (openxr_image_views[i]) == source_images[i].image);
  if (!failure)
@@ -120,18 +153,23 @@ static void run_case (int failure)
  }
  else
  {
+  const qboolean no_density_views = failure == 4 || failure == 5;
   assert (!openxr_density_image_views);
   assert (openxr_density_backend_failed == (failure != 4));
-  assert (created_count == (unsigned)(failure == 4 ? 3 : 4));
-  assert (destroyed_count == (unsigned)(failure == 4 ? 0 : 1));
+  assert (created_count == (unsigned)(no_density_views ? 3 : 4));
+  assert (destroyed_count == (unsigned)(no_density_views ? 0 : 1));
   assert (create_calls == created_count + (failure == 1));
-  if (failure != 4) assert (destroyed_views[0] == created_views[1]);
+  if (!no_density_views) assert (destroyed_views[0] == created_views[1]);
  }
  GL_CreateXRImageViews ();
  assert (image_queries == 3 && create_calls == created_count + (failure == 1));
+ assert (calloc_calls == (unsigned)(failure == 4 ? 1 : 2));
  GL_DestroyXRImageViews ();
  assert (!openxr_image_views && !openxr_density_image_views && !openxr_image_count);
  assert (destroyed_count == created_count);
+ if (failure == 5)
+  for (unsigned i = 0; i < 3; ++i)
+   assert (destroyed_views[i] == created_views[i]);
  if (!failure)
   for (unsigned i = 0; i < 3; ++i)
   {
@@ -142,7 +180,7 @@ static void run_case (int failure)
 
 int main (void)
 {
- for (int failure = 0; failure < 5; ++failure) run_case (failure);
+ for (int failure = 0; failure < 6; ++failure) run_case (failure);
  puts ("OPENXR_IMAGE_VIEW_FAULT_PASSED native color retention/density retirement; controlled dispatch");
  return 0;
 }

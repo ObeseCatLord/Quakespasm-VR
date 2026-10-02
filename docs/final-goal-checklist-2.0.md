@@ -140,6 +140,10 @@ receipts. These overlap intentionally; test shared boundaries once.
   review completed; both strengthened components compile/run0;
   [selection results/limits](foveation-device-selection-current-2.0-results.md).
   This does not create a device or certify real FB/META runtime images.
+- F06: same actual view constructor now also passes controlled optional-array
+  allocation rejection, retaining three corresponding color views and exact
+  cleanup; all six cases compile/run0. [Updated constructor evidence](foveation-image-view-current-2.0-results.md).
+  Pass/framebuffer rejection and protected GPU output remain distinct.
 - F04/F05: signed XYZ/yaw/pitch/roll, composed camera at nonzero game yaw and
   native live Vulkan eye-mirror parallax/rotation pass. Local Astra found paused
   body-owned horizontal freeze; repaired8071a46b. Actual-source query/reset/

@@ -48,3 +48,19 @@ minimal fixture corrections. [Senior disposition](foveation-device-final-2.0-rev
 No assets, user settings, deployed server or main/reference changes.
 The unchanged normal renderer fixture also compiles/runs0 after its six guard
 lines, with OPENXR_ENABLE_PASSED; logs/foveation-enable-after-guards-{build,run}.log.
+
+2026-10-01 follow-up: Luna/xhigh adds one optional-array allocation case in this
+same fixture. Main verified its effective model/effort, read the complete delta
+and compiled with the same strict SDL3 command (exit0), then ran all six cases
+(exit0/pass marker). The actual native constructor receives a real color-array
+allocation, then a controlled null density-array allocation exactly once. All
+three corresponding color views survive, zero density views become owned, the
+backend-failed latch is set, repeated entry allocates nothing and ordinary
+cleanup destroys each successful color view once. No production changes or
+package refresh needed for this test-only delta.
+
+Evidence: stereo-boundaries-current/{allocation-build.log,allocation-run.log,
+image-view-allocation} under the same private root. The earlier five-case receipt
+remains historical; optional allocation failure is now qualified at this
+controlled constructor boundary. Native pass/framebuffer rejection and GPU/
+provider output distinctions remain open. [Before-code follow-up plan](stereo-boundaries-final-2.0-plan.md).

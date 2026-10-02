@@ -98,11 +98,14 @@ External dispatch/resources are spies; no borrowed density image runs here.
 
 `openxr_image_view_fault_fixture.c` reuses that fixture and invokes the native
 borrowed-view constructor/destructor. Valid maps, rejected second density view,
-missing later map, insufficient extent and absent maps check retained color
+missing later map, insufficient extent, absent maps and rejected optional array
+allocation check retained color
 views, optional failure latch, exact one-time owned-view retirement and repeated
 creation. Every retained view is matched to its corresponding source image.
-Metadata and Vulkan dispatch are controlled; no real runtime images,
-allocation fault or render-pass/framebuffer claim.
+Metadata, allocation and Vulkan dispatch are controlled; no real runtime images
+or render-pass/framebuffer claim. The allocation case permits the ordinary color
+array, rejects the optional density array once, and checks all three color views
+survive until exact ordinary cleanup.
 
 ```sh
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Werror \
