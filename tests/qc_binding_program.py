@@ -7,7 +7,7 @@ from pathlib import Path
 from cooperative_qc_program import source_program
 
 
-def assemble(program, resources=False):
+def assemble(program, resources=False, files=False):
     header = list(struct.unpack_from("<15i", program))
     if header[0] != 6:
         raise ValueError("fixture requires classic version6 QC")
@@ -309,6 +309,219 @@ def assemble(program, resources=False):
         invoke(code, "bufstr_get", (arg("handle"), arg("one")), values["live_one"], True)
         entry_ref("assert_owner", "assert_owner", code)
 
+    if files:
+        for builtin, number in (("fopen", 110), ("fclose", 111), ("fgets", 112), ("fputs", 113),
+                                ("strlen", 114), ("strcat", 115), ("search_begin", 444), ("search_end", 445),
+                                ("search_getsize", 446), ("search_getfilename", 447),
+                                ("buf_create", 460), ("buf_getsize", 462), ("bufstr_get", 466), ("bufstr_set", 467),
+                                ("bufstr_free", 469), ("buf_loadfile", 535), ("buf_writefile", 536)):
+            add_ref("files_" + builtin, add_function(builtin, -number))
+
+        vals = {}
+
+        def ff(key, value=0.0):
+            vals[key] = global_slot("fixture_files_" + key, value=value)
+            return vals[key]
+
+        def fs(key, value):
+            vals[key] = global_slot("fixture_files_" + key, 1, name(value))
+            return vals[key]
+
+        for key, value in (("server_seed", "SSQC_OWNER"), ("client_seed", "CSQC_OWNER"),
+                           ("input", "fixture-read.txt"), ("empty", "fixture-empty.txt"),
+                           ("pattern", "fixture-search/*"), ("missing_pattern", "fixture-no-such-search/*"),
+                           ("server_output", "fixture-server-output.txt"),
+                           ("client_output", "fixture-client-output.txt"), ("foreign_write", "foreign-corruption\n"),
+                           ("owner_write", "owner-after-foreign\n"),
+                           ("empty_text", ""), ("prime_text", "return-prime"),
+                           ("bad_parent", "../escape.txt"), ("bad_absolute", "/absolute.txt"),
+                           ("bad_colon", "C:drive.txt"), ("bad_backslash", "bad\\path.txt")):
+            fs(key, value)
+        for key, value in (("zero", 0), ("one", 1), ("two", 2), ("three", 3), ("read_mode", 0),
+                           ("write_mode", 2), ("append_mode", 1), ("flags", 0), ("quiet", 1), ("negative", -1),
+                           ("huge", 1e30), ("nan", float("nan")), ("infinity", float("inf")),
+                           ("minus_infinity", -float("inf"))):
+            ff(key, value)
+        for key in ("buffer", "stream", "writer", "search", "search_probe", "foreign_buffer",
+                    "foreign_stream", "foreign_writer", "foreign_search", "query_handle", "query_index", "closed_handle",
+                    "extra_handle", "close_handle", "read_result", "empty_result", "size", "load_result",
+                    "empty_load_result", "write_result", "search_size", "foreign_load_result",
+                    "foreign_write_file_result", "foreign_write_buffer_result", "foreign_search_size", "empty_search", "invalid_open_parent",
+                    "invalid_open_absolute", "invalid_open_colon", "invalid_open_backslash",
+                    "invalid_search_parent", "invalid_search_absolute", "invalid_search_colon",
+                    "invalid_search_backslash", "retired_buffer_size", "retired_search_size"):
+            ff(key)
+        for key in ("loaded_first", "loaded_blank", "loaded_last", "buffer_zero", "buffer_hole",
+                    "buffer_blank", "buffer_last", "line_first", "line_blank", "line_last", "line_eof",
+                    "foreign_line", "foreign_search_name", "search_name", "query_prime", "file_prime",
+                    "retired_buffer_string", "retired_file_string", "retired_search_string"):
+            fs(key, "")
+        for key in ("output", "open_result", "bad_handle",
+                    "bad_index", "retired_buffer", "retired_stream", "retired_search"):
+            ff(key)
+
+        out = {}
+
+        def arg(key, string=False):
+            return vals[key], string
+
+        def invoke(code, builtin, args=(), output=None, string_result=False):
+            for index, (slot, is_string) in enumerate(args):
+                code.append((store_string if is_string else store_float, slot, 4 + index * 3, 0))
+            code.append((call_function - 1 + len(args), ref_slots["files_" + builtin], 0, 0))
+            if output is not None:
+                code.append((store_string if string_result else store_float, 1, output, 0))
+
+        def files_entry(key, code):
+            add_ref("files_" + key, entry("fixture_files_" + key, code))
+
+        def prime_float(code, key):
+            invoke(code, "strlen", (arg("prime_text", True),), ff("prime_" + key))
+
+        for vm in ("server", "client"):
+            code = []
+            invoke(code, "buf_create", output=vals["buffer"])
+            invoke(code, "bufstr_set", (arg("buffer"), arg("zero"), arg(vm + "_seed", True)))
+            invoke(code, "buf_loadfile", (arg("input", True), arg("buffer")), out.setdefault("load_" + vm, global_slot("fixture_files_load_" + vm)))
+            invoke(code, "buf_loadfile", (arg("empty", True), arg("buffer")), out.setdefault("empty_load_" + vm, global_slot("fixture_files_empty_load_" + vm)))
+            invoke(code, "buf_getsize", (arg("buffer"),), out.setdefault("setup_size_" + vm, global_slot("fixture_files_setup_size_" + vm)))
+            for index, label in (("one", "first"), ("two", "blank"), ("three", "last")):
+                invoke(code, "bufstr_get", (arg("buffer"), arg(index)), out.setdefault("loaded_" + label + "_" + vm, global_slot("fixture_files_loaded_" + label + "_" + vm, 1)), True)
+            invoke(code, "bufstr_free", (arg("buffer"), arg("one")))
+            invoke(code, "buf_getsize", (arg("buffer"),), out.setdefault("post_free_size_" + vm, global_slot("fixture_files_post_free_size_" + vm)))
+            invoke(code, "fopen", (arg("input", True), arg("read_mode")), vals["stream"])
+            invoke(code, "search_begin", (arg("pattern", True), arg("flags"), arg("quiet")), vals["search"])
+            invoke(code, "fopen", (arg(vm + "_output", True), arg("write_mode")), vals["writer"])
+            invoke(code, "buf_writefile", (arg("writer"), arg("buffer")), vals["write_result"])
+            invoke(code, "fclose", (arg("writer"),))
+            files_entry("setup_" + vm, code)
+
+        code = []
+        invoke(code, "fgets", (arg("stream"),), vals["line_first"], True)
+        files_entry("read_first", code)
+        code = []
+        invoke(code, "fgets", (arg("stream"),), vals["line_blank"], True)
+        invoke(code, "fgets", (arg("stream"),), vals["line_last"], True)
+        invoke(code, "fgets", (arg("stream"),), vals["line_eof"], True)
+        files_entry("read_rest", code)
+        code = []
+        invoke(code, "fclose", (arg("stream"),))
+        invoke(code, "fopen", (arg("input", True), arg("read_mode")), vals["stream"])
+        files_entry("reopen_stream", code)
+        for vm in ("server", "client"):
+            code = []
+            invoke(code, "fopen", (arg(vm + "_output", True), arg("append_mode")), vals["writer"])
+            files_entry("reopen_writer_" + vm, code)
+
+        code = []
+        invoke(code, "fgets", (arg("stream"),), vals["line_first"], True)
+        files_entry("read_after_foreign", code)
+
+        code = []
+        invoke(code, "fgets", (arg("stream"),), vals["line_blank"], True)
+        files_entry("read_blank", code)
+        code = []
+        invoke(code, "fgets", (arg("stream"),), vals["line_last"], True)
+        invoke(code, "fgets", (arg("stream"),), vals["line_eof"], True)
+        files_entry("read_tail", code)
+
+        code = []
+        invoke(code, "buf_getsize", (arg("buffer"),), vals["size"])
+        for index, key in ((0, "buffer_zero"), (1, "buffer_hole"), (2, "buffer_blank"), (3, "buffer_last")):
+            index_key = "zero" if index == 0 else "one" if index == 1 else "two" if index == 2 else "three"
+            invoke(code, "bufstr_get", (arg("buffer"), arg(index_key)), vals[key], True)
+        invoke(code, "search_getsize", (arg("search"),), vals["search_size"])
+        invoke(code, "search_getfilename", (arg("search"), arg("query_index")), vals["search_name"], True)
+        files_entry("assert_owner", code)
+        code = []
+        invoke(code, "search_getsize", (arg("search"),), vals["search_size"])
+        invoke(code, "search_getfilename", (arg("search"), arg("query_index")), vals["search_name"], True)
+        files_entry("search_only", code)
+
+        code = []
+        invoke(code, "strcat", (arg("prime_text", True),), vals["file_prime"], True)
+        invoke(code, "fgets", (arg("foreign_stream"),), vals["foreign_line"], True)
+        invoke(code, "fputs", (arg("foreign_writer"), arg("foreign_write", True)))
+        prime_float(code, "foreign_write_file")
+        invoke(code, "buf_writefile", (arg("foreign_writer"), arg("buffer")), vals["foreign_write_file_result"])
+        prime_float(code, "foreign_write_buffer")
+        invoke(code, "buf_writefile", (arg("writer"), arg("foreign_buffer")), vals["foreign_write_buffer_result"])
+        invoke(code, "fclose", (arg("foreign_stream"),))
+        invoke(code, "fclose", (arg("foreign_writer"),))
+        prime_float(code, "foreign_load")
+        invoke(code, "buf_loadfile", (arg("input", True), arg("foreign_buffer")), vals["foreign_load_result"])
+        invoke(code, "search_getfilename", (arg("search"), arg("zero")), vals["query_prime"], True)
+        invoke(code, "search_end", (arg("foreign_search"),))
+        invoke(code, "search_getfilename", (arg("foreign_search"), arg("zero")), vals["foreign_search_name"], True)
+        prime_float(code, "foreign_size")
+        invoke(code, "search_getsize", (arg("foreign_search"),), vals["foreign_search_size"])
+        files_entry("foreign", code)
+
+        code = []
+        invalid_paths = (("parent", "bad_parent"), ("absolute", "bad_absolute"),
+                         ("colon", "bad_colon"), ("backslash", "bad_backslash"))
+        for label, path in invalid_paths:
+            invoke(code, "fopen", (arg(path, True), arg("read_mode")), vals["invalid_open_" + label])
+            invoke(code, "search_begin", (arg(path, True), arg("flags"), arg("quiet")), vals["invalid_search_" + label])
+        files_entry("invalid_paths", code)
+
+        code = []
+        invoke(code, "search_begin", (arg("missing_pattern", True), arg("flags"), arg("quiet")), vals["empty_search"])
+        files_entry("empty_search", code)
+
+        code = []
+        invoke(code, "search_begin", (arg("pattern", True), arg("flags"), arg("quiet")), vals["search_probe"])
+        invoke(code, "search_end", (arg("search_probe"),))
+        invoke(code, "search_getfilename", (arg("search"), arg("zero")), vals["query_prime"], True)
+        invoke(code, "search_getfilename", (arg("search_probe"), arg("zero")), vals["foreign_search_name"], True)
+        prime_float(code, "closed_size")
+        invoke(code, "search_getsize", (arg("search_probe"),), vals["closed_handle"])
+        files_entry("closed_query", code)
+
+        code = []
+        invalids = ("nan", "infinity", "minus_infinity", "negative", "huge")
+        for key in invalids:
+            invoke(code, "search_getfilename", (arg("search"), arg("zero")), vals["query_prime"], True)
+            bad_name = global_slot("fixture_files_invalid_handle_" + key, 1)
+            bad_size = global_slot("fixture_files_invalid_size_" + key)
+            invoke(code, "search_getfilename", (arg(key), arg("zero")), bad_name, True)
+            prime_float(code, "invalid_size_" + key)
+            invoke(code, "search_getsize", (arg(key),), bad_size)
+            invoke(code, "search_end", (arg(key),))
+            invoke(code, "strcat", (arg("prime_text", True),), vals["file_prime"], True)
+            bad_stream = global_slot("fixture_files_invalid_stream_" + key, 1)
+            invoke(code, "fgets", (arg(key),), bad_stream, True)
+            invoke(code, "fclose", (arg(key),))
+        for key in invalids:
+            invoke(code, "search_getfilename", (arg("search"), arg("zero")), vals["query_prime"], True)
+            bad_name = global_slot("fixture_files_invalid_index_" + key, 1)
+            invoke(code, "search_getfilename", (arg("search"), arg(key)), bad_name, True)
+        files_entry("invalid_queries", code)
+
+        code = []
+        prime_float(code, "retired_buffer_size")
+        invoke(code, "buf_getsize", (arg("retired_buffer"),), vals["retired_buffer_size"])
+        invoke(code, "strcat", (arg("prime_text", True),), vals["query_prime"], True)
+        invoke(code, "bufstr_get", (arg("retired_buffer"), arg("zero")), vals["retired_buffer_string"], True)
+        invoke(code, "strcat", (arg("prime_text", True),), vals["query_prime"], True)
+        invoke(code, "fgets", (arg("retired_stream"),), vals["retired_file_string"], True)
+        invoke(code, "strcat", (arg("prime_text", True),), vals["query_prime"], True)
+        invoke(code, "search_getfilename", (arg("retired_search"), arg("zero")), vals["retired_search_string"], True)
+        prime_float(code, "retired_search_size")
+        invoke(code, "search_getsize", (arg("retired_search"),), vals["retired_search_size"])
+        files_entry("probe_retired", code)
+
+        code = []
+        invoke(code, "search_begin", (arg("pattern", True), arg("flags"), arg("quiet")), vals["extra_handle"])
+        files_entry("open_extra", code)
+        code = []
+        invoke(code, "search_end", (arg("close_handle"),))
+        files_entry("close_search", code)
+        code = []
+        invoke(code, "fputs", (arg("writer"), arg("owner_write", True)))
+        invoke(code, "fclose", (arg("writer"),))
+        files_entry("close_writer", code)
+
     strings.extend(b"\0" * (-len(strings) % 4))
     output = bytearray(60)
     for section, (slot, width) in zip(sections, ((2, 8), (4, 8), (6, 8),
@@ -325,8 +538,11 @@ def main():
     parser.add_argument("--output", type=Path, required=True, help="SSQC progs.dat path")
     parser.add_argument("--csqc-output", type=Path, required=True)
     parser.add_argument("--resources", action="store_true", help="append the finite loaded buffer/string cases")
+    parser.add_argument("--files", "-files", action="store_true", help="append loaded file/search ownership cases")
     args = parser.parse_args()
-    result = assemble(source_program(args.source_pack), args.resources)
+    if args.resources and args.files:
+        parser.error("--resources and --files are separate fixture modes")
+    result = assemble(source_program(args.source_pack), args.resources, args.files)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)

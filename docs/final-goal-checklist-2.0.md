@@ -99,6 +99,13 @@ receipts. These overlap intentionally; test shared boundaries once.
   primed rejected returns/raw zero and unchanged core mode pass in final reruns.
   [Exact results/limits](qc-buffer-current-2.0-results.md). Files/search/callback/
   entity/error/full resource lifecycles remain distinct F03 boundaries.
+- F03: loaded SSQC/CSQC file/buffer/search consumers pass native data-priority,
+  CRLF/blank/tail/EOF, sparse/exact disk output, primed individual refusals,
+  reciprocal foreign ownership and real16slot exhaustion/reuse. Positive
+  writable/retiring-stream witnesses and both VM retirement phases pass after
+  verified local Astra/xhigh oracle corrections; no production edit or GPU.
+  [Exact results/limits](qc-files-current-2.0-results.md). Callback/entity/surface/
+  error/authored consumers and other finite distinctions remain open.
 - F07: repeated native mj4m1 loads observe actual indexed worker entries; all
   427881 surfaces match native serial extent recalculation on both loads, with
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).

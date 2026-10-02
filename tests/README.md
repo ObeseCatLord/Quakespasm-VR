@@ -35,6 +35,24 @@ covered. Files/search/callback/entity/full resource lifecycles remain distinct.
 [Plan](../docs/qc-buffer-final-2.0-plan.md),
 [actual results/limits](../docs/qc-buffer-current-2.0-results.md).
 
+## Loaded QC file/search consumers
+
+The same `qc_binding_program.py` accepts `--files` in place of `--resources`;
+retain the private licensed source/output recipe above. Run the native fixture
+with `-files -game binding -dedicated 3 -noudp -nosound`, never a graphical client.
+Prepare the disposable pack/loose inputs specified by the
+[plan](../docs/qc-files-final-2.0-plan.md): data-first CRLF/blank/unterminated tail,
+empty file, overlapping/nested pack and loose search names, and actual mounted
+original/data-prefixed sentinel names for denied paths. No archive extraction.
+
+Require strict compile/link/run0 and `QC_BINDING_FILES_NATIVE_PASSED`. Both real
+VMs use native interpreter/file/buffer/search owners; exact sparse17byte output
+and post-foreign-close37byte owner-sentinel output, primed per-case refusals,
+shared16slot exhaustion/reuse and VM clear/reload retirement are asserted. No
+SDL window, GPU/OpenXR, sockets or microphone. Preserve failures and precise
+limits; this is a finite F03 subset. [Actual results](../docs/qc-files-current-2.0-results.md),
+[local Astra dispositions](../docs/qc-files-final-2.0-review-brief.md#final-disposition).
+
 ## Native opposite liquid eye categories
 
 `openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled
