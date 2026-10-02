@@ -8,7 +8,12 @@ from cooperative_qc_program import source_program
 
 
 def assemble(program, resources=False, files=False, calls=False, tokens=False, events=False,
-             reflection=False, reflection_fields_complete=False):
+             reflection=False, reflection_fields_complete=False, entities=False,
+             entity_fingerprint="none"):
+    if entity_fingerprint not in ("none", "complete", "missing"):
+        raise ValueError("unknown entity fingerprint variant")
+    if entity_fingerprint != "none" and not entities:
+        raise ValueError("entity fingerprint requires entity mode")
     header = list(struct.unpack_from("<15i", program))
     if header[0] != 6:
         raise ValueError("fixture requires classic version6 QC")
@@ -949,6 +954,105 @@ def assemble(program, resources=False, files=False, calls=False, tokens=False, e
         reflect_entry("touch", code)
         entry("CSQC_Ent_Update", [])
 
+    if entities:
+        def entity_field_name(offset):
+            if offset < 0 or offset >= len(strings):
+                return ""
+            return bytes(strings[offset:]).split(b"\0", 1)[0].decode("ascii", "replace")
+
+        entity_fields = {}
+        for pos in range(0, len(fields), 8):
+            kind, offset, text_offset = struct.unpack_from("<HHi", fields, pos)
+            entity_fields.setdefault(entity_field_name(text_offset), (kind & 0x7fff, offset))
+        entity_width = header[14]
+
+        def ensure_entity_field(text, kind):
+            nonlocal entity_width
+            present = entity_fields.get(text)
+            if present is not None:
+                if present[0] != kind:
+                    raise ValueError("existing entity field has unexpected type: " + text)
+                return present[1]
+            if entity_width > 32767:
+                raise ValueError("entity field offset exceeds classic QC range")
+            fields.extend(struct.pack("<HHi", kind, entity_width, name(text)))
+            entity_fields[text] = (kind, entity_width)
+            entity_width += 1
+            return entity_width - 1
+
+        for field_name in ("target2", "targetname2", "targetname3", "targetname4"):
+            ensure_entity_field(field_name, 1)  # EV_STRING
+        ensure_entity_field("fixture_entity_chain", 4)  # EV_ENTITY
+        header[14] = entity_width
+
+        builtin_numbers = (("find", 18), ("nextent", 47), ("findradius", 22),
+                           ("findfloat", 98), ("findflags", 449), ("findchain", 402),
+                           ("findchainfloat", 403), ("findchainflags", 450), ("edict_num", 459))
+        builtins = {}
+        for builtin, number in builtin_numbers:
+            slot = global_slot("fixture_entity_builtin_" + builtin, 6,
+                               add_function(builtin, -number))
+            builtins[builtin] = slot
+
+        inputs = {
+            "start": global_slot("fixture_entity_input_start", 4),
+            "field": global_slot("fixture_entity_input_field", 5),
+            "chainfield": global_slot("fixture_entity_input_chainfield", 5),
+            "string": global_slot("fixture_entity_input_string", 1),
+            "match": global_slot("fixture_entity_input_match"),
+            "origin": global_slot("fixture_entity_input_origin", 3, (0.0, 0.0, 0.0)),
+            "radius": global_slot("fixture_entity_input_radius"),
+        }
+        outputs = {
+            "prime": global_slot("fixture_entity_prime", 4),
+            "result": global_slot("fixture_entity_result", 4),
+        }
+        prime_index = global_slot("fixture_entity_input_prime_index", value=1.0)
+
+        def entity_call(code, builtin, args, output):
+            for index, (slot, store_op) in enumerate(args):
+                code.append((store_op, slot, 4 + index * 3, 0))
+            code.append((51 + len(args), builtins[builtin], 0, 0))
+            code.append((34, 1, output, 0))  # STORE_ENT from OFS_RETURN
+
+        entry_specs = (
+            ("find", "find", ((inputs["start"], 34), (inputs["field"], 35),
+                                (inputs["string"], 33))),
+            ("nextent", "nextent", ((inputs["start"], 34),)),
+            ("findfloat", "findfloat", ((inputs["start"], 34), (inputs["field"], 35),
+                                           (inputs["match"], 31))),
+            ("findflags", "findflags", ((inputs["start"], 34), (inputs["field"], 35),
+                                          (inputs["match"], 31))),
+            ("findchain", "findchain", ((inputs["field"], 35), (inputs["string"], 33))),
+            ("findchain_custom", "findchain", ((inputs["field"], 35), (inputs["string"], 33),
+                                                  (inputs["chainfield"], 35))),
+            ("findchainfloat", "findchainfloat", ((inputs["field"], 35), (inputs["match"], 31))),
+            ("findchainfloat_custom", "findchainfloat", ((inputs["field"], 35),
+                                                            (inputs["match"], 31),
+                                                            (inputs["chainfield"], 35))),
+            ("findchainflags", "findchainflags", ((inputs["field"], 35), (inputs["match"], 31))),
+            ("findchainflags_custom", "findchainflags", ((inputs["field"], 35),
+                                                            (inputs["match"], 31),
+                                                            (inputs["chainfield"], 35))),
+            ("findradius", "findradius", ((inputs["origin"], 32), (inputs["radius"], 31))),
+        )
+        for ref_name, builtin, args in entry_specs:
+            code = []
+            entity_call(code, "edict_num", ((prime_index, 31),), outputs["prime"])
+            entity_call(code, builtin, args, outputs["result"])
+            add_ref("entity_" + ref_name, entry("fixture_entity_" + ref_name, code))
+
+        fingerprint_functions = ()
+        if entity_fingerprint == "complete":
+            fingerprint_functions = ("centerprintlocal", "teleport_check_for_client",
+                                     "teleport_enter_limbo", "spawn_tpush")
+        elif entity_fingerprint == "missing":
+            fingerprint_functions = ("centerprintlocal", "teleport_check_for_client",
+                                     "teleport_enter_limbo")
+        for function_name in fingerprint_functions:
+            entry(function_name, [])
+        entry("CSQC_Ent_Update", [])
+
     strings.extend(b"\0" * (-len(strings) % 4))
     output = bytearray(60)
     for section, (slot, width) in zip(sections, ((2, 8), (4, 8), (6, 8),
@@ -972,6 +1076,9 @@ def main():
     parser.add_argument("--reflection", action="store_true", help="append loaded field reflection cases")
     parser.add_argument("--reflection-fields-complete", action="store_true",
                         help="supply missing native engine fields in reflection mode")
+    parser.add_argument("--entities", action="store_true", help="append loaded entity-search callers")
+    parser.add_argument("--entity-fingerprint", choices=("none", "complete", "missing"), default="none",
+                        help="client search fingerprint variant for entity mode")
     args = parser.parse_args()
     existing_modes = (args.resources, args.files, args.calls, args.tokens, args.events)
     if sum(existing_modes) > 1:
@@ -980,8 +1087,13 @@ def main():
         parser.error("--reflection is a separate fixture mode")
     if args.reflection_fields_complete and not args.reflection:
         parser.error("--reflection-fields-complete requires --reflection")
+    if args.entities and (args.reflection or any(existing_modes)):
+        parser.error("--entities is a separate fixture mode")
+    if args.entity_fingerprint != "none" and not args.entities:
+        parser.error("--entity-fingerprint requires --entities")
     result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls,
-                      args.tokens, args.events, args.reflection, args.reflection_fields_complete)
+                      args.tokens, args.events, args.reflection, args.reflection_fields_complete,
+                      args.entities, args.entity_fingerprint)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)

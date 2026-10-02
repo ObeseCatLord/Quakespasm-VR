@@ -10,7 +10,7 @@
 #include <stdlib.h>
 
 /* Reflection-only fixture links the actual host owner plus this narrow shim. */
-#ifdef QC_REFLECTION_NATIVE_HOST_FIXTURE
+#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_ENTITY_NATIVE_HOST_FIXTURE)
 extern void FixtureLoadCSProgsNative (void);
 #endif
 
@@ -478,6 +478,250 @@ static void FixtureReflectionCases (void)
 	assert (sv.active && sv.qcvm.edicts && sv.qcvm.worldmodel);
 	FixtureReflectMetadata (complete); FixtureReflectBody (true);
 	puts ("QC_BINDING_REFLECTION_NATIVE_PASSED actual field maps, zoned aliases and native relinking");
+}
+#endif
+
+#ifdef QC_ENTITY_NATIVE_HOST_FIXTURE
+static void FixtureEntityInput (const char *name, etype_t type, int value)
+{
+	G_INT (FixtureGlobal (name, type)->ofs) = value;
+}
+
+static int FixtureEntityField (const char *name)
+{
+	int offset = ED_FindFieldOffset (name);
+	assert (offset >= 0);
+	return offset;
+}
+
+static edict_t *FixtureEntityQuery (const char *entry, edict_t *start, const char *field, const char *text, float match)
+{
+	char name[96];
+	int prime = qcvm->num_edicts - 1;
+	while (prime > 0 && EDICT_NUM (prime)->free) prime--;
+	assert (prime > 0);
+	FixtureSetFloat ("fixture_entity_input_prime_index", prime);
+	FixtureEntityInput ("fixture_entity_input_start", ev_entity, EDICT_TO_PROG (start));
+	FixtureEntityInput ("fixture_entity_input_field", ev_field, FixtureEntityField (field));
+	FixtureEntityInput ("fixture_entity_input_string", ev_string, PR_SetEngineString (text));
+	FixtureEntityInput ("fixture_entity_input_chainfield", ev_field, FixtureEntityField ("fixture_entity_chain"));
+	FixtureSetFloat ("fixture_entity_input_match", match);
+	q_snprintf (name, sizeof (name), "fixture_ref_entity_%s", entry);
+	PR_ExecuteProgram (FixtureRef (name));
+	assert (G_INT (FixtureGlobal ("fixture_entity_prime", ev_entity)->ofs) == EDICT_TO_PROG (EDICT_NUM (prime)));
+	assert (G_INT (FixtureGlobal ("fixture_entity_prime", ev_entity)->ofs) != 0);
+	return PROG_TO_EDICT (G_INT (FixtureGlobal ("fixture_entity_result", ev_entity)->ofs));
+}
+
+static void FixtureEntityString (edict_t *ent, const char *field, const char *text)
+{
+	GetEdictFieldValue (ent, FixtureEntityField (field))->string = PR_SetEngineString (text);
+}
+
+static void FixtureEntityChain (const char *entry, const char *field, const char *text, float match,
+	edict_t *a, edict_t *b, qboolean custom)
+{
+	int alternate = FixtureEntityField ("fixture_entity_chain");
+	for (int i = 0; i < 2; i++)
+	{
+		edict_t *e = i ? b : a;
+		e->v.chain = EDICT_TO_PROG (e);
+		GetEdictFieldValue (e, alternate)->edict = EDICT_TO_PROG (e);
+	}
+	assert (FixtureEntityQuery (entry, qcvm->edicts, field, text, match) == b);
+	assert ((custom ? GetEdictFieldValue (b, alternate)->edict : b->v.chain) == EDICT_TO_PROG (a));
+	assert ((custom ? GetEdictFieldValue (a, alternate)->edict : a->v.chain) == 0);
+	assert ((custom ? b->v.chain : GetEdictFieldValue (b, alternate)->edict) == EDICT_TO_PROG (b));
+	assert ((custom ? a->v.chain : GetEdictFieldValue (a, alternate)->edict) == EDICT_TO_PROG (a));
+}
+
+static void FixtureEntityBody (qboolean server, qboolean fingerprint)
+{
+	edict_t *world = qcvm->edicts, *a = ED_Alloc (), *b = ED_Alloc (), *freed = ED_Alloc ();
+	if (NUM_FOR_EDICT (a) > NUM_FOR_EDICT (b)) { edict_t *swap = a; a = b; b = swap; }
+	edict_t *names[] = {a, b, freed};
+	for (int i = 0; i < 3; i++)
+	{
+		char *text;
+		names[i]->v.classname = PR_AllocString (sizeof ("fixture-native-search"), &text);
+		memcpy (text, "fixture-native-search", sizeof ("fixture-native-search"));
+	}
+	assert (a->v.classname != b->v.classname && a->v.classname != freed->v.classname);
+	a->v.health = b->v.health = freed->v.health = 8123;
+	a->v.flags = 524288; b->v.flags = 524296; freed->v.flags = 524288;
+	ED_Free (freed);
+	assert (freed->free && freed->v.health == 8123 && freed->v.flags == 524288 &&
+		!strcmp (PR_GetString (freed->v.classname), "fixture-native-search"));
+	assert (FixtureEntityQuery ("find", world, "classname", "fixture-native-search", 0) == a);
+	assert (FixtureEntityQuery ("find", a, "classname", "fixture-native-search", 0) == b);
+	assert (FixtureEntityQuery ("find", b, "classname", "fixture-native-search", 0) == world);
+	assert (FixtureEntityQuery ("find", world, "classname", "fixture-absent-search", 0) == world);
+	const char *iter[] = {"findfloat", "findflags"};
+	for (int i = 0; i < 2; i++)
+	{
+		const char *field = i ? "flags" : "health"; float value = i ? 1572864 : 8123;
+		assert (FixtureEntityQuery (iter[i], world, field, "", value) == a);
+		assert (FixtureEntityQuery (iter[i], a, field, "", value) == b);
+		assert (FixtureEntityQuery (iter[i], b, field, "", value) == world);
+		assert (FixtureEntityQuery (iter[i], world, field, "", i ? 0 : 8124) == world);
+	}
+	const char *chains[] = {"findchain", "findchainfloat", "findchainflags"};
+	const char *fields[] = {"classname", "health", "flags"};
+	for (int i = 0; i < 3; i++)
+	{
+		char custom[64]; q_snprintf (custom, sizeof (custom), "%s_custom", chains[i]);
+		FixtureEntityChain (chains[i], fields[i], "fixture-native-search", i == 1 ? 8123 : 1572864, a, b, false);
+		FixtureEntityChain (custom, fields[i], "fixture-native-search", i == 1 ? 8123 : 1572864, a, b, true);
+		assert (FixtureEntityQuery (chains[i], world, fields[i], "fixture-absent-search", i == 1 ? 8124 : 0) == world);
+	}
+	VectorSet (G_VECTOR (FixtureGlobal ("fixture_entity_input_origin", ev_vector)->ofs), 1048576, 0, 0);
+	a->v.solid = b->v.solid = SOLID_BBOX;
+	VectorSet (a->v.origin, 1048571, 0, 0); VectorSet (a->v.mins, 0, 0, 0); VectorSet (a->v.maxs, 10, 0, 0);
+	VectorSet (b->v.origin, 1048580, 0, 0);
+	FixtureSetFloat ("fixture_entity_input_radius", 4);
+	assert (FixtureEntityQuery ("findradius", world, "classname", "", 0) == b && b->v.chain == EDICT_TO_PROG (a) && a->v.chain == 0);
+	FixtureSetFloat ("fixture_entity_input_radius", 3);
+	assert (FixtureEntityQuery ("findradius", world, "classname", "", 0) == a);
+	a->v.solid = SOLID_NOT;
+	assert (FixtureEntityQuery ("findradius", world, "classname", "", 0) == world);
+	if (server)
+	{
+		assert (svs.maxclients >= 2);
+		edict_t *one = EDICT_NUM (1), *two = EDICT_NUM (2);
+		qboolean active0 = svs.clients[0].active, active1 = svs.clients[1].active;
+		one->free = two->free = false; one->v.classname = two->v.classname = PR_SetEngineString ("fixture-native-client");
+		svs.clients[0].active = false; svs.clients[1].active = true;
+		assert (FixtureEntityQuery ("find", world, "classname", "fixture-native-client", 0) == (fingerprint ? two : one));
+		assert (FixtureEntityQuery ("nextent", world, "classname", "", 0) == (fingerprint ? two : one));
+		assert (FixtureEntityQuery ("find", two, "classname", "fixture-native-client", 0) == world);
+		one->v.health = two->v.health = 9135; one->v.flags = two->v.flags = 1048576;
+		assert (FixtureEntityQuery ("findfloat", world, "health", "", 9135) == one);
+		assert (FixtureEntityQuery ("findflags", world, "flags", "", 1048576) == one);
+		FixtureEntityChain ("findchain", "classname", "fixture-native-client", 0, one, two, false);
+		FixtureEntityChain ("findchainfloat", "health", "", 9135, one, two, false);
+		FixtureEntityChain ("findchainflags", "flags", "", 1048576, one, two, false);
+		ED_Free (one);
+		assert (FixtureEntityQuery ("nextent", world, "classname", "", 0) == two);
+		one->free = false;
+		svs.clients[0].active = active0; svs.clients[1].active = active1;
+	}
+	else
+		assert (FixtureEntityQuery ("nextent", world, "classname", "", 0) == EDICT_NUM (1));
+	int last = qcvm->num_edicts - 1;
+	while (last > 0 && EDICT_NUM (last)->free) last--;
+	assert (last > 0 && FixtureEntityQuery ("nextent", EDICT_NUM (last), "classname", "", 0) == world);
+}
+
+static void FixtureEntityRoundQuery (edict_t *target, const char *field, const char *text, qboolean suppressed)
+{
+	FixtureEntityString (target, field, text);
+	assert (FixtureEntityQuery ("find", qcvm->edicts, field, text, 0) == (suppressed ? qcvm->edicts : target));
+}
+
+static edict_t *FixtureEntityRounds (void)
+{
+	edict_t *target = ED_Alloc (), *monster = ED_Alloc (), *attacker = ED_Alloc ();
+	const char *fields[] = {"targetname", "targetname2", "targetname3", "targetname4"};
+	const char *absent_counters[] = {"wincnt", "losscnt"}, *opposites[] = {"loss", "win"};
+	pr_global_struct->self = 0;
+	for (int i = 0; i < 2; i++)
+	{
+		FixtureEntityRoundQuery (target, "targetname", "rounds", false);
+		FixtureEntityString (target, "targetname", "fixture-no-counter");
+		assert (FixtureEntityQuery ("find", qcvm->edicts, "targetname", absent_counters[i], 0) == qcvm->edicts);
+		FixtureEntityRoundQuery (target, "targetname", opposites[i], true);
+	}
+	for (int i = 0; i < 4; i++)
+	{
+		pr_global_struct->self = 0;
+		FixtureEntityRoundQuery (target, fields[i], "rounds", false);
+		FixtureEntityRoundQuery (target, fields[i], "win", false);
+		FixtureEntityRoundQuery (target, fields[i], "loss", false);
+		FixtureEntityRoundQuery (target, fields[i], "wincnt", false);
+		FixtureEntityRoundQuery (target, fields[i], "wincnt", false);
+		FixtureEntityRoundQuery (target, fields[i], "win", false);
+		FixtureEntityRoundQuery (target, fields[i], "loss", true);
+		FixtureEntityRoundQuery (target, fields[i], "losscnt", true);
+		monster->v.classname = PR_SetEngineString ("monster_fixture");
+		FixtureEntityString (monster, "target2", "clearer"); FixtureEntityString (monster, "target", "loss");
+		pr_global_struct->self = EDICT_TO_PROG (monster);
+		FixtureEntityRoundQuery (target, fields[i], "clearer", true);
+		FixtureEntityString (monster, "target", "win"); FixtureEntityRoundQuery (target, fields[i], "clearer", false);
+		FixtureEntityRoundQuery (target, fields[i], "rounds", false);
+		FixtureEntityRoundQuery (target, fields[i], "losscnt", false);
+		FixtureEntityRoundQuery (target, fields[i], "losscnt", false);
+		FixtureEntityRoundQuery (target, fields[i], "loss", false);
+		FixtureEntityRoundQuery (target, fields[i], "win", true);
+		FixtureEntityRoundQuery (target, fields[i], "wincnt", true);
+		FixtureEntityRoundQuery (target, fields[i], "clearer", true);
+	}
+	const char *attackers[] = {"trigger_hurt", "trigger_teleport", "teledeath"};
+	FixtureEntityRoundQuery (target, "targetname", "rounds", false);
+	FixtureEntityString (monster, "target", "win"); monster->v.enemy = EDICT_TO_PROG (attacker);
+	for (int i = 0; i < 3; i++)
+	{
+		attacker->v.classname = PR_SetEngineString (attackers[i]); FixtureEntityString (attacker, "targetname", "hurter");
+		FixtureEntityRoundQuery (target, "targetname", "win", true);
+		FixtureEntityRoundQuery (target, "targetname", "loss", true);
+		FixtureEntityRoundQuery (target, "targetname", "clearer", true);
+		FixtureEntityRoundQuery (target, "classname", "win", false);
+	}
+	attacker->v.classname = PR_SetEngineString ("trigger_hurt"); FixtureEntityString (attacker, "targetname", "other");
+	FixtureEntityRoundQuery (target, "targetname", "win", false);
+	FixtureEntityString (attacker, "targetname", "hurter"); monster->v.classname = PR_SetEngineString ("item_fixture");
+	FixtureEntityRoundQuery (target, "targetname", "win", false);
+	monster->v.classname = PR_SetEngineString ("monster_fixture"); FixtureEntityString (monster, "target2", "other");
+	FixtureEntityRoundQuery (target, "targetname", "win", false);
+	FixtureEntityString (monster, "target2", "clearer"); monster->v.enemy = 0;
+	FixtureEntityRoundQuery (target, "targetname", "win", false);
+	monster->v.enemy = EDICT_TO_PROG (attacker); FixtureEntityString (monster, "target", "other");
+	FixtureEntityRoundQuery (target, "targetname", "win", false);
+	FixtureEntityString (monster, "target", "win");
+	monster->v.enemy = EDICT_TO_PROG (attacker) + 1;
+	FixtureEntityRoundQuery (target, "targetname", "win", false);
+	monster->v.enemy = qcvm->num_edicts * qcvm->edict_size;
+	FixtureEntityRoundQuery (target, "targetname", "win", false);
+	monster->v.enemy = EDICT_TO_PROG (attacker); ED_Free (attacker);
+	FixtureEntityRoundQuery (target, "targetname", "win", false);
+	pr_global_struct->self = 0;
+	FixtureEntityRoundQuery (target, "targetname", "wincnt", false);
+	return target;
+}
+
+static void FixtureEntityCases (void)
+{
+	int argument = COM_CheckParm ("-entity-fingerprint"), present = 0;
+	assert (argument > 0 && argument + 1 < com_argc);
+	const char *variant = com_argv[argument + 1];
+	qboolean fingerprint = !strcmp (variant, "complete");
+	assert (fingerprint || !strcmp (variant, "missing") || !strcmp (variant, "none"));
+	const char *functions[] = {"centerprintlocal", "teleport_check_for_client", "teleport_enter_limbo", "spawn_tpush"};
+	for (int i = 0; i < 4; i++) present += ED_FindFunction (functions[i]) != NULL;
+	assert (present == (fingerprint ? 4 : !strcmp (variant, "missing") ? 3 : 0));
+	assert (fingerprint || !ED_FindFunction ("spawn_tpush"));
+	char saved_name[sizeof (sv.name)]; q_strlcpy (saved_name, sv.name, sizeof (saved_name));
+	FixtureEntityBody (true, fingerprint);
+	q_strlcpy (sv.name, "shubswager", sizeof (sv.name));
+	edict_t *target = FixtureEntityRounds ();
+	dprograms_t *server_program = sv.qcvm.progs; qmodel_t *world = sv.qcvm.worldmodel;
+	for (int load = 0; load < 2; load++)
+	{
+		FixtureSwitch (NULL); cl.worldmodel = world; cl.model_precache[1] = world;
+		FixtureLoadCSProgsNative (); assert (qcvm == NULL && cl.qcvm.progs && cl.qcvm.edicts);
+		FixtureSwitch (&cl.qcvm); FixtureEntityBody (false, fingerprint);
+		edict_t *client_target = ED_Alloc ();
+		FixtureEntityRoundQuery (client_target, "targetname", "losscnt", false);
+		FixtureEntityRoundQuery (client_target, "targetname", "win", false);
+		PR_ClearProgs (&cl.qcvm); assert (!cl.qcvm.progs && sv.qcvm.progs == server_program);
+		FixtureSwitch (&sv.qcvm); FixtureEntityRoundQuery (target, "targetname", "losscnt", true);
+	}
+	q_strlcpy (sv.name, saved_name, sizeof (sv.name));
+	FixtureEntityRoundQuery (target, "targetname", "losscnt", false);
+	FixtureEntityRoundQuery (target, "targetname", "wincnt", false);
+	SV_SpawnServer ("e1m1"); FixtureSwitch (&sv.qcvm);
+	assert (sv.active && sv.qcvm.edicts && sv.qcvm.worldmodel);
+	FixtureEntityBody (true, fingerprint);
+	puts ("QC_BINDING_ENTITIES_NATIVE_PASSED loaded searches, chains, fingerprint and round predicates");
 }
 #endif
 
@@ -1072,6 +1316,13 @@ int main (int argc, char **argv)
 
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
 	assert (sv.active);
+#ifdef QC_ENTITY_NATIVE_HOST_FIXTURE
+	if (COM_CheckParm ("-entities"))
+	{
+		FixtureEntityCases ();
+		return 0;
+	}
+#endif
 #ifdef QC_REFLECTION_NATIVE_HOST_FIXTURE
 	if (COM_CheckParm ("-reflection"))
 	{

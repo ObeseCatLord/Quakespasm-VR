@@ -126,6 +126,12 @@ receipts. These overlap intentionally; test shared boundaries once.
   component hash-key lifetime bug is repaired using existing VM string storage.
   [Exact results/limits](qc-reflection-current-2.0-results.md). GPU stays stopped;
   entity-search/surface/authored consumers and GUI error cleanup remain open.
+- F03: loaded searches/chains/radius and complete/missing/ordinary client-slot
+  fingerprints pass in three native profiles; prepared inherited round predicates
+  and independent CSQC/server-latch behavior pass. No production/GPU change.
+  [Exact results/limits](qc-entity-search-current-2.0-results.md). Authored gameplay,
+  changed-program fingerprint cache/lifecycle and remaining entity/surface/command/
+  error consumers stay open; no broad closure from prepared query inputs.
 - F07: repeated native mj4m1 loads observe actual indexed worker entries; all
   427881 surfaces match native serial extent recalculation on both loads, with
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).

@@ -110,6 +110,23 @@ server reload observe independent VM ownership. No device or renderer work.
 [Plan](../docs/qc-reflection-final-2.0-plan.md),
 [exact results/limits](../docs/qc-reflection-current-2.0-results.md).
 
+## Loaded QC entity searches
+
+Generate disposable licensed SSQC `progs.dat`/CSQC `csprogs.dat` with `--entities`
+and `--entity-fingerprint none|complete|missing`; runtime uses `-entities` and
+matching `-entity-fingerprint`. Compile the existing native fixture with
+`QC_ENTITY_NATIVE_HOST_FIXTURE`, reusing the unchanged reflection host adapter
+and replacing only the normal host object in this link. Other modes retain their
+existing compile flags/linkage. Use assertion-enabled strict dedicated CPU recipe.
+
+Require compile/host-compile/link/run0 and `QC_BINDING_ENTITIES_NATIVE_PASSED`
+for all three variants. Actual loaded queries observe iteration/free/exhaustion,
+chain fields, radius centers/boundary, reserved-slot fingerprint policy and
+prepared inherited round predicates. Native client loads/server replacement
+reuse existing owners; no device/GPU work or actual mod-gameplay claim.
+[Plan](../docs/qc-entity-search-final-2.0-plan.md),
+[exact results/limits](../docs/qc-entity-search-current-2.0-results.md).
+
 ## Native opposite liquid eye categories
 
 `openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled
