@@ -3882,3 +3882,14 @@ cardinal HRTF/panning output and serialized teardown. Continue using dummy audio
 Disabled builds explicitly reject this option. See
 [plan](../docs/spatial-callback-final-2.0-plan.md) and
 [reviewed results/limits](../docs/spatial-callback-current-2.0-results.md).
+
+
+With the same complete enabled native graph, add `-voice-hrtf` alongside
+`-spatial-callback` and the earlier voice options. The optional header reuses
+native encoder/parser/jitter/SDK owners to check prepared right/left HRTF,
+far/absent/stale centered radio and receive-disable clearing queued plus
+partially rendered speech. Expect `VOICE_HRTF_NATIVE_PASSED` and native exit0.
+No-Steam-Audio graphs reject this option. It does not open physical output or
+prove callback contention/live player publication; see the
+[plan](../docs/voice-hrtf-final-2.0-plan.md) and
+[results/limits](../docs/voice-hrtf-current-2.0-results.md).

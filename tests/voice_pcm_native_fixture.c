@@ -367,6 +367,7 @@ static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
 #include "voice_client_send_native_fixture.h"
 #include "voice_fallback_native_fixture.h"
 #include "spatial_callback_native_fixture.h"
+#include "voice_hrtf_native_fixture.h"
 
 int main (int argc, char **argv)
 {
@@ -461,8 +462,10 @@ int main (int argc, char **argv)
 #ifdef USE_STEAMAUDIO
 	if (COM_CheckParm ("-spatial-callback"))
 		Spatial_CallbackNativeChecks ();
+	if (COM_CheckParm ("-voice-hrtf"))
+		Voice_HRTFNativeChecks (peers[0], states[0], peers[1], states[1]);
 #else
-	assert (!COM_CheckParm ("-spatial-callback"));
+	assert (!COM_CheckParm ("-spatial-callback") && !COM_CheckParm ("-voice-hrtf"));
 #endif
 	/* Leave real PCM buffered, then real jitter queued, without consuming either. */
 	for (int burst = 0; burst < 2; ++burst)
@@ -543,6 +546,10 @@ int main (int argc, char **argv)
 #ifdef USE_STEAMAUDIO
 	if (COM_CheckParm ("-spatial-callback"))
 		puts ("SPATIAL_CALLBACK_NATIVE_PASSED actual SDK/publication/progress; prepared cached loops/one-shots/pause/menu/HRTF/panning/teardown");
+#endif
+#ifdef USE_STEAMAUDIO
+	if (COM_CheckParm ("-voice-hrtf"))
+		puts ("VOICE_HRTF_NATIVE_PASSED native decoded SDK stereo/radio; prepared positions; receive-disable retirement");
 #endif
 	puts ("VOICE_PCM_NATIVE_PASSED native negotiated codec/relay/PCM/mute/reset; captured transport/dummy capture");
 	return 0;

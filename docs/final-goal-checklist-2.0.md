@@ -319,3 +319,13 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   [exact results/dispositions](spatial-callback-current-2.0-results.md).
   Voice-to-HRTF, wet-only monitor/room worker/music, full host/device callback
   and remaining finite boundaries are distinct; F08/F10 are not closed.
+
+
+- F08: actual decoded voice reaches the enabled native SDK/public renderer;
+  prepared near right/left direction and far/missing/stale centered radio output
+  pass. Native receive-disable clears pending decoded SDK speech/generation and
+  partially rendered remainder, then eight isolated blocks are silent. Ten-marker
+  combined run passes with current stable inputs; local Astra narrows HRTF and
+  already-empty jitter claims. [Exact results/dispositions](voice-hrtf-current-2.0-results.md).
+  HRTF-enabled smoke does not independently distinguish voice panning; physical
+  callbacks, wet-only monitor/room/music and other frozen F08/F10 boundaries remain.
