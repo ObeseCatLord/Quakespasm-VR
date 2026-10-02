@@ -76,6 +76,24 @@ An upgrade that replaces a native weapon slot should replace its preview,
 not become another independently selectable entry. AD's shadow axe/grapple,
 Widowmaker, and plasma upgrade, and Enyo's AV72 upgrade, use this rule. Their
 native parent weapon owns the slot; an upgrade flag alone is not ownership.
+HWJAM2 uses the same AD upgrade slots. Snack Pack's Rotary Shotgun instead
+has separate ownership in `items_snack` (exported as `moditems`), not the
+stock armor bit with the same numeric value. Its native shotgun toggle is
+used with target-aware retries to select the double or rotary shotgun.
+
+Snack Pack's Impaler uses a dedicated one-sixth held scale, a centered rear
+grip and a bolt-exit muzzle. Its native projectile launches from `self.origin`
+and retains the mod's lobbed trajectory. The Stakegun also has a dedicated
+grip/muzzle calibration and preserves its native alternating barrel origins.
+The Rotary shares Dwell's calibrated mesh profile; HWJAM2 shares AD's profiles.
+Old engine-generated generic calibrations are upgraded only when the classic
+scale, grip and muzzle all still match their old defaults. Personal,
+multiplayer, enhanced and global calibrations are preserved.
+
+Wheel previews use their own scale, independent of held calibration, and
+are centered on all three axes at their selection point, including when
+highlighted or rotated. A pickup model is preferred; a missing pickup falls
+back to the held model.
 
 Runtime discovery records genuinely new held models and selectors. It does
 not guess arbitrary selection impulses or treat coincident key, armor,

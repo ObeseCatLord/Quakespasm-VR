@@ -1126,6 +1126,15 @@ static qboolean VR_GameDirIs(const char *name) {
   return game && name && !q_strcasecmp(game, name);
 }
 
+static qboolean VR_IsSnackGame(void) {
+  return VR_GameDirIs("snack3") || VR_GameDirIs("snack");
+}
+
+static qboolean VR_IsADWeaponGame(void) {
+  /* HWJAM2 ships the AD weapon selectors and moditems upgrade bits. */
+  return VR_GameDirIs("ad") || VR_GameDirIs("hwjam2");
+}
+
 static int VR_DwellOwnedMaskForActive(int active) {
   switch (active) {
   case 128: // W_QUAD_SHOTGUN / Rotary Shotgun
@@ -1249,7 +1258,7 @@ static const char *VR_DynWeaponViewmodel(const vr_dyn_weapon_t *w) {
     return (cl.stats[STAT_VR_WEAPONS] & 16384) ? "progs/ee_v_av72.mdl" :
                                                "progs/ee_v_smgs.mdl";
   if (w->game_profile && !(w->schema_fields & VR_SCHEMA_VIEWMODEL) &&
-      VR_GameDirIs("ad")) {
+      VR_IsADWeaponGame()) {
     int modifiers = cl.stats[STAT_VR_MODITEMS];
     switch (w->bitmask) {
     case IT_AXE:
@@ -1274,7 +1283,7 @@ static const char *VR_DynWeaponPreviewPath(const vr_dyn_weapon_t *w) {
     return (cl.stats[STAT_VR_WEAPONS] & 16384) ? "progs/ee_g_av72.mdl" :
                                                "progs/ee_g_smgs.mdl";
   if (w->game_profile && !(w->schema_fields & VR_SCHEMA_PREVIEW) &&
-      VR_GameDirIs("ad")) {
+      VR_IsADWeaponGame()) {
     int modifiers = cl.stats[STAT_VR_MODITEMS];
     switch (w->bitmask) {
     case IT_AXE:
@@ -1308,7 +1317,7 @@ static qboolean VR_DynWeaponModelMatches(const vr_dyn_weapon_t *w,
         (!q_strcasecmp(model_path,"progs/ee_v_smgs.mdl") ||
          !q_strcasecmp(model_path,"progs/ee_v_av72.mdl")))
       return true;
-    if (VR_GameDirIs("ad") &&
+    if (VR_IsADWeaponGame() &&
         ((w->bitmask == IT_AXE && !q_strcasecmp(model_path,"progs/v_ghook.mdl")) ||
          (w->bitmask == IT_SUPER_SHOTGUN &&
           (!q_strcasecmp(model_path,"progs/v_shot2.mdl") ||
@@ -1317,7 +1326,7 @@ static qboolean VR_DynWeaponModelMatches(const vr_dyn_weapon_t *w,
           (!q_strcasecmp(model_path,"progs/v_light.mdl") ||
            !q_strcasecmp(model_path,"progs/v_plasma.mdl")))))
       return true;
-    if (VR_GameDirIs("ad") && w->bitmask == IT_AXE &&
+    if (VR_IsADWeaponGame() && w->bitmask == IT_AXE &&
         !q_strncasecmp(model_path, "progs/v_shadaxe", 15) &&
         model_path[15] >= '0' && model_path[15] <= '5' &&
         !q_strcasecmp(model_path + 16, ".mdl"))
@@ -1704,7 +1713,7 @@ static void VR_AddBuiltinWeaponDefault(int bitmask, int impulse,
 }
 
 static void VR_AddADWeaponDefaults(void) {
-  if (!VR_GameDirIs("ad")) return;
+  if (!VR_IsADWeaponGame()) return;
   static const struct { int bit, impulse, ammo, max; const char *pickup, *held; }
       slots[] = {
     {IT_AXE,1,-1,0,"progs/g_axe.mdl","progs/v_shadaxe0.mdl"},
@@ -1720,6 +1729,39 @@ static void VR_AddADWeaponDefaults(void) {
     VR_AddBuiltinWeaponDefault(s.bit, s.impulse, s.pickup, STAT_ITEMS, s.bit,
                                STAT_ACTIVEWEAPON, s.bit, s.ammo, s.max, 1.0f);
     int i = VR_FindDynWeapon(s.bit, STAT_ITEMS, s.bit, STAT_ACTIVEWEAPON,
+                             s.bit, s.pickup, 0);
+    if (i >= 0 && !(dyn_weapons[i].schema_fields & VR_SCHEMA_VIEWMODEL))
+      q_strlcpy(dyn_weapons[i].viewmodel_path, s.held,
+                 sizeof(dyn_weapons[i].viewmodel_path));
+  }
+}
+
+static void VR_AddSnackWeaponDefaults(void) {
+  if (!VR_IsSnackGame())
+    return;
+
+  /* Snack keeps stock .items selectors except the Rotary Shotgun, whose
+   * independent ownership lives in .items_snack, not the armor bit 128. */
+  static const struct { int bit, impulse, ammo, max; const char *pickup, *held; }
+      slots[] = {
+    {IT_AXE,1,-1,0,"progs/g_axe.mdl","progs/v_axe2.mdl"},
+    {1,2,STAT_SHELLS,100,"progs/g_shotgn.mdl","progs/v_shot.mdl"},
+    {2,3,STAT_SHELLS,100,"progs/g_shot.mdl","progs/v_shot2.mdl"},
+    {4,4,STAT_NAILS,200,"progs/g_nail.mdl","progs/v_nail.mdl"},
+    {8,5,STAT_NAILS,200,"progs/g_nail2.mdl","progs/v_nail2.mdl"},
+    {16,6,STAT_ROCKETS,100,"progs/g_rock.mdl","progs/v_rock.mdl"},
+    {32,7,STAT_ROCKETS,100,"progs/g_rock2.mdl","progs/v_rock2.mdl"},
+    {64,8,STAT_CELLS,100,"progs/g_light.mdl","progs/v_light.mdl"},
+    /* ImpulseCommands routes 23/33 to developer commands, not the apparent
+     * direct selectors in W_ChangeWeapon. Native impulse 3 toggles these two;
+     * the existing target-aware retry stops at the requested active weapon. */
+    {128,3,STAT_SHELLS,100,"progs/g_shot3.mdl","progs/v_shot3.mdl"}
+  };
+  for (const auto &s : slots) {
+    int owned_stat = s.bit == 128 ? STAT_VR_MODITEMS : STAT_ITEMS;
+    VR_AddBuiltinWeaponDefault(s.bit, s.impulse, s.pickup, owned_stat, s.bit,
+                               STAT_ACTIVEWEAPON, s.bit, s.ammo, s.max, 1.0f);
+    int i = VR_FindDynWeapon(s.bit, owned_stat, s.bit, STAT_ACTIVEWEAPON,
                              s.bit, s.pickup, 0);
     if (i >= 0 && !(dyn_weapons[i].schema_fields & VR_SCHEMA_VIEWMODEL))
       q_strlcpy(dyn_weapons[i].viewmodel_path, s.held,
@@ -1867,6 +1909,7 @@ static void VR_AddExpansionWeaponDefaults(void) {
 static void VR_AddBuiltinWeaponDefaults(void) {
   VR_AddExpansionWeaponDefaults();
   VR_AddADWeaponDefaults();
+  VR_AddSnackWeaponDefaults();
   VR_AddDwellWeaponDefaults();
   VR_AddAlkalineWeaponDefaults();
   VR_AddEnyoWeaponDefaults();
@@ -1875,7 +1918,7 @@ static void VR_AddBuiltinWeaponDefaults(void) {
   VR_AddMG3WeaponDefaults();
   /* These verified profiles enumerate their complete native weapon families.
    * Partial third-party calibration/command overlays are not complete rosters. */
-  if (VR_GameDirIs("ad") || VR_GameDirIs("alk") || VR_GameDirIs("limjam") ||
+  if (VR_IsADWeaponGame() || VR_IsSnackGame() || VR_GameDirIs("alk") || VR_GameDirIs("limjam") ||
       VR_GameDirIs("enyo") || VR_GameDirIs("qbj3") || VR_IsDwellGame())
     vr_has_authoritative_roster = true;
 }
@@ -4032,7 +4075,12 @@ qboolean VR_WeaponSpawnsAtSelfOrigin(const char *viewmodel, int weapon_bit) {
       return vr_weapon_spawn_at_self_origin[slot];
   }
 
-  return weapon_bit == IT_GRENADE_LAUNCHER;
+  /* Snack's Impaler has no stock +8 forward/+16 Z in W_FireImpaler.
+   * Keep the native source default here, not in the mutable held-offset slot:
+   * loading a personal calibration reinitializes that slot's metadata. */
+  return weapon_bit == IT_GRENADE_LAUNCHER ||
+      (VR_IsSnackGame() && weapon_bit == IT_SUPER_NAILGUN && viewmodel &&
+       !Q_strcmp(viewmodel, "progs/v_nail2.mdl"));
 }
 
 void VR_GetWeaponProjectileSourceOffset(const char *viewmodel, int weapon_bit,
@@ -4050,7 +4098,11 @@ void VR_GetWeaponProjectileSourceOffset(const char *viewmodel, int weapon_bit,
 
     VectorCopy(angles, mutable_angles);
     AngleVectors(mutable_angles, forward, right, up);
-    VectorMA(out, 8.0f, forward, out);
+    /* Snack's Stakegun uses W_SpikeOrigin's eleven-unit forward source;
+     * retain its alternating +/-2.5 right barrel offsets in QuakeC. */
+    float forward_offset = VR_IsSnackGame() && weapon_bit == IT_NAILGUN &&
+        viewmodel && !Q_strcmp(viewmodel, "progs/v_nail.mdl") ? 11.0f : 8.0f;
+    VectorMA(out, forward_offset, forward, out);
     out[2] += 16.0f;
   }
 
@@ -8280,8 +8332,32 @@ void InitAllWeaponCVars() {
     VR_InitQBJ3WeaponCVars();
     i = 26;
   }
+  else if (VR_IsSnackGame()) {
+    InitWeaponCVars(i++, "progs/v_axe2.mdl", "-3.5", "34", "41.5", "0.33");
+    InitWeaponCVars(i++, "progs/v_shot.mdl", "1.5", "1", "10", "0.5");
+    InitWeaponCVars(i++, "progs/v_shot2.mdl", "-3.5", "1", "8.5", "0.8");
+    /* Snack's Stakegun is a custom mesh, not the stock nailgun. */
+    InitWeaponCVars(i, "progs/v_nail.mdl", "-18.119550", "29.178477",
+                    "113.478652", "0.1666667");
+    InitWeaponMuzzleCVars(i++, "0.015233", "7.372823", "18.445326");
+    /* Impaler: one third of the former .5 scale. Center the controller in
+     * the rear thumbhole (frame-0 perimeter center), not at the bolt tip.
+     * MDL scale_origin is NOT multiplied by held_scale; these offsets
+     * compensate that origin before centering the smaller mesh. */
+    InitWeaponCVars(i, "progs/v_nail2.mdl", "-0.301060", "69.561041",
+                    "136.059723", "0.1666667");
+    /* Right/up/forward from grip to bolt exit, including the default
+     * world_scale/.75 model transform. Preserve QC's native lob velocity. */
+    InitWeaponMuzzleCVars(i++, "-0.072624", "5.060089", "31.53750");
+    InitWeaponCVars(i++, "progs/v_rock.mdl", "10", "1.5", "13", "0.5");
+    InitWeaponCVars(i++, "progs/v_rock2.mdl", "10", "7", "19", "0.5");
+    InitWeaponCVars(i++, "progs/v_light.mdl", "3", "4", "13", "0.5");
+    /* This is the same mesh as Dwell's calibrated Rotary Shotgun. */
+    InitWeaponCVars(i++, "progs/v_shot3.mdl", "-3.5", "0.4", "8.5",
+                    "0.5333333");
+  }
   // weapons for Arcane Dimensions mod; initially made for v1.70 + patch1
-  else if (!strcmp(COM_SkipPath(com_gamedir), "ad")) {
+  else if (VR_IsADWeaponGame()) {
     // ad specific models
     InitWeaponCVars(i++, "progs/v_shadaxe0.mdl", "-1.5", "43.1", "41",
                     "0.25"); // shadow axe
@@ -8842,6 +8918,61 @@ static void VR_NormalizeLegacyWeaponSchema(vr_weapon_cmd_t *w,
     *fields &= ~(VR_SCHEMA_PREVIEW | VR_SCHEMA_VIEWMODEL);
 }
 
+/* Older engine-generated files baked the generic Quake calibration into
+ * these custom meshes. Upgrade only that exact, untouched classic triple;
+ * personal, multiplayer, source and enhanced calibrations remain independent.
+ * Defaults are already initialized when this runs, before the file overrides. */
+static qboolean VR_UpgradeLegacyModCalibration(vr_weapon_cmd_t *w) {
+  if ((!VR_IsSnackGame() && !VR_GameDirIs("hwjam2")) ||
+      !w->has_held_scale || !w->has_held_offset || !w->has_muzzle_offset ||
+      w->has_mp_held_offset || w->has_mp_muzzle_offset ||
+      w->has_muzzle_source_offset || w->has_muzzle_source_viewofs ||
+      w->has_spawn_at_self_origin)
+    return false;
+
+  static const struct { const char *id; float scale; vec3_t held; } old[] = {
+    {"progs/v_shot.mdl", .5f, {1.5f, 1, 10}},
+    {"progs/v_shot2.mdl", .8f, {-3.5f, 1, 8.5f}},
+    {"progs/v_nail.mdl", .5f, {-5, 3, 15}},
+    {"progs/v_nail2.mdl", .5f, {0, 3, 19}},
+    {"progs/v_rock.mdl", .5f, {10, 1.5f, 13}},
+    {"progs/v_rock2.mdl", .5f, {10, 7, 19}},
+    {"progs/v_light.mdl", .5f, {3, 4, 13}},
+    {"progs/v_plasma.mdl", .5f, {3, 4, 13}}
+  };
+  for (const auto &entry : old) {
+    if (Q_strcmp(w->viewmodel_path, entry.id) ||
+        (VR_IsSnackGame() && Q_strcmp(entry.id, "progs/v_nail2.mdl") &&
+         Q_strcmp(entry.id, "progs/v_nail.mdl")))
+      continue;
+    if (fabsf(w->held_scale - entry.scale) > .000001f ||
+        fabsf(w->muzzle_offset[0]) > .000001f ||
+        fabsf(w->muzzle_offset[1]) > .000001f ||
+        fabsf(w->muzzle_offset[2] - entry.held[2]) > .000001f)
+      return false;
+    for (int axis = 0; axis < 3; ++axis)
+      if (fabsf(w->held_offset[axis] - entry.held[axis]) > .000001f)
+        return false;
+    /* A duplicate block may contain a later explicit override. Do not rewrite
+     * all matching blocks through the existing calibration writer in that case. */
+    int matches = 0;
+    for (int i = 0; i < num_vr_weapons; ++i)
+      if (!Q_strcmp(vr_weapons[i].viewmodel_path, entry.id))
+        ++matches;
+    int slot = VR_FindWeaponOffsetSlot(entry.id, NULL);
+    if (matches != 1 || slot < 0)
+      return false;
+    w->held_scale = vr_weapon_offset[slot * VARS_PER_WEAPON + 3].value;
+    for (int axis = 0; axis < 3; ++axis) {
+      w->held_offset[axis] = vr_weapon_offset[slot * VARS_PER_WEAPON + axis].value;
+      w->muzzle_offset[axis] =
+          vr_weapon_muzzle_offset[slot * VARS_PER_WEAPON_MUZZLE + axis].value;
+    }
+    return true;
+  }
+  return false;
+}
+
 void VR_LoadWeaponSchema(void) {
   char *data;
   char *start;
@@ -9176,6 +9307,10 @@ void VR_LoadWeaponSchema(void) {
   // Precache models
   for (int i = 0; i < num_vr_weapons; i++) {
     vr_weapon_cmd_t *w = &vr_weapons[i];
+    qboolean migrated = own_game && !has_global_held_scale &&
+        !has_global_held_offset && !has_global_muzzle_offset &&
+        !has_global_mp_held_offset && !has_global_mp_muzzle_offset &&
+        VR_UpgradeLegacyModCalibration(w);
     VR_NormalizeLegacyWeaponSchema(w,&vr_schema_wheel_fields[i]);
     if (w->model_path[0])
       Mod_ForName(w->model_path, false);
@@ -9222,6 +9357,9 @@ void VR_LoadWeaponSchema(void) {
           w->viewmodel_path, vr_schema_enhanced_mp_muzzle_offset[i]);
     if (own_game && (w->bitmask || w->owned_stat >= 0 || w->active_stat >= 0))
       VR_ApplyWeaponSchema(w,vr_schema_wheel_fields[i]);
+    if (migrated)
+      VR_SaveWeaponAdjustmentsToSchema(
+          VR_FindWeaponOffsetSlot(w->viewmodel_path, NULL), false);
   }
 }
 
@@ -12189,6 +12327,18 @@ static qmodel_t *VR_WeaponPreviewModel(const vr_dyn_weapon_t *w) {
   return NULL;
 }
 
+/* Match R_DrawAliasModel_NoCull for the temporary preview entity, not the
+ * currently equipped viewmodel (which may force classic akimbo geometry). */
+static aliashdr_t *VR_WeaponPreviewHeader(const entity_t *ent) {
+  if (!VR_UseAkimboClassicViewModel(ent)) {
+    if (Mod_UseMD3ModelForFrame(ent->model, ent->skinnum, ent->frame))
+      return Mod_GetMD3Extradata(ent->model);
+    if (Mod_UseMD5ModelForFrame(ent->model, ent->skinnum, ent->frame))
+      return Mod_GetMD5Extradata(ent->model);
+  }
+  return (aliashdr_t *)Mod_Extradata(ent->model);
+}
+
 static int VR_GetWeaponMenuPlayers(int *out, int max) {
   int count = 0;
 
@@ -12243,8 +12393,23 @@ static qboolean VR_WeaponMenuCanSelect(const vr_dyn_weapon_t *w) {
 
   /* Unknown reserves and current-weapon magazine stats cannot establish
    * whether an inactive mod weapon can fire/reload. Leave that to QuakeC. */
-  return w->ammo_stat == STAT_AMMO ||
-         !VR_GetWeaponAmmo(w, &ammo, &max_ammo) || ammo > 0;
+  if (w->ammo_stat == STAT_AMMO ||
+      !VR_GetWeaponAmmo(w, &ammo, &max_ammo))
+    return true;
+
+  /* Snack's native selectors reject an Impaler without ten nails and a
+   * Rotary without four shells. Keep them visible, but do not start a
+   * doomed selection/retry when the player cannot equip them. */
+  if (w->game_profile && VR_IsSnackGame()) {
+    if (w->bitmask == IT_SUPER_SHOTGUN && w->ammo_stat == STAT_SHELLS)
+      return ammo >= 2;
+    if (w->bitmask == IT_SUPER_NAILGUN && w->ammo_stat == STAT_NAILS)
+      return ammo >= 10;
+    if (w->bitmask == 128 && w->owned_stat == STAT_VR_MODITEMS &&
+        w->ammo_stat == STAT_SHELLS)
+      return ammo >= 4;
+  }
+  return ammo > 0;
 }
 
 static void VR_UpdateWeaponMenuSelection(vr_dyn_weapon_t **visible,
@@ -12898,22 +13063,22 @@ static void VR_RunWeaponMenu(qboolean draw) {
 
       float schema_scale = w->scale > 0.0f ? w->scale : 1.0f;
       float entity_scale = (is_selected ? 0.40f : 0.25f) * schema_scale;
-      float layout_entity_scale = 0.25f * schema_scale;
       if (entity_scale > 0.0f && entity_scale < (1.0f / ENTSCALE_DEFAULT))
         entity_scale = 1.0f / ENTSCALE_DEFAULT;
-      if (layout_entity_scale > 0.0f &&
-          layout_entity_scale < (1.0f / ENTSCALE_DEFAULT))
-        layout_entity_scale = 1.0f / ENTSCALE_DEFAULT;
-      float visual_scale = entity_scale * weapon_mesh_scale;
-      float layout_scale = playspace ? layout_entity_scale * weapon_mesh_scale
-                                     : visual_scale;
-
-      // Center model vertically using its bounding box so weapons with
-      // low origins (axe, super shotgun) don't clip into neighbours.
-      float vert_center = (mdl->mins[2] + mdl->maxs[2]) / 2.0f;
-      VectorMA(ent.origin, -vert_center * layout_scale, up, ent.origin);
-
       ent.scale = ENTSCALE_ENCODE(entity_scale);
+      float visual_scale = ENTSCALE_DECODE(ent.scale) * weapon_mesh_scale;
+
+      /* Pickup origins are often offset horizontally as well as vertically;
+       * held fallbacks can be far from zero on every axis. Rotate the complete
+       * model center and use the actual encoded draw scale so neither spinning
+       * nor highlighting moves it out of its selectable entry. Held VR
+       * calibration (including Snack's smaller Impaler) never scales previews. */
+      vec3_t model_center, world_center;
+      for (int axis = 0; axis < 3; ++axis)
+        model_center[axis] = (mdl->mins[axis] + mdl->maxs[axis]) * 0.5f;
+      VR_ModelOffsetToWorld(model_center, angles, visual_scale, false,
+                            world_center);
+      VectorSubtract(ent.origin, world_center, ent.origin);
       ent.alpha = ENTALPHA_ENCODE(1.0f);
 
       if (draw) {
@@ -12941,7 +13106,23 @@ static void VR_RunWeaponMenu(qboolean draw) {
           glScalef(weapon_mesh_scale, weapon_mesh_scale, weapon_mesh_scale);
           glTranslatef(-ent.origin[0], -ent.origin[1], -ent.origin[2]);
         }
+        /* A held-model fallback may share the header that Mod_Weapon has
+         * calibrated for the hand. Preview native geometry temporarily;
+         * restore it immediately so the next eye/viewmodel is unchanged. */
+        aliashdr_t *preview_header = VR_WeaponPreviewHeader(&ent);
+        vec3_t saved_scale, saved_origin;
+        if (preview_header) {
+          VectorCopy(preview_header->scale, saved_scale);
+          VectorCopy(preview_header->scale_origin, saved_origin);
+          VectorCopy(preview_header->original_scale, preview_header->scale);
+          VectorCopy(preview_header->original_scale_origin,
+                      preview_header->scale_origin);
+        }
         R_DrawAliasModel_NoCull(&ent);
+        if (preview_header) {
+          VectorCopy(saved_scale, preview_header->scale);
+          VectorCopy(saved_origin, preview_header->scale_origin);
+        }
         if (weapon_mesh_scale != 1.0f)
           glPopMatrix();
 
@@ -12968,11 +13149,9 @@ static void VR_RunWeaponMenu(qboolean draw) {
         }
 
         vec3_t text_pos;
-        // Position text above the model's visual top.  ent.origin is the
-        // vertically-centered model origin; add the distance from center to
-        // model top so text always clears the weapon.
-        float model_top = (mdl->maxs[2] - vert_center) * visual_scale;
-        VectorCopy(ent.origin, text_pos);
+        // Position text above the centered model, independent of its origin.
+        float model_top = (mdl->maxs[2] - model_center[2]) * visual_scale;
+        VectorCopy(pos, text_pos);
         VectorMA(text_pos, -2.0f * text_layout_scale, forward, text_pos);
         VectorMA(text_pos, model_top + 1.5f * text_layout_scale, up, text_pos);
 
@@ -12985,14 +13164,8 @@ static void VR_RunWeaponMenu(qboolean draw) {
                       playspace);
       }
 
-      // Save the stable layout centre for selection raycasting.  The entity
-      // origin was offset to centre the normal-size model at pos, so using
-      // ent.origin here puts the hotspot below models whose bounds have a
-      // positive vertical centre.
-      vec3_t target_pos;
-      VectorCopy(pos, target_pos);
-      VectorMA(target_pos, 3.0f * weapon_mesh_scale, right, target_pos);
-      VectorCopy(target_pos, weapon_positions[w_index]);
+      // Rendering and hit-testing share the exact centered entry position.
+      VectorCopy(pos, weapon_positions[w_index]);
       weapon_position_valid[w_index] = true;
     }
     current_assigned_index += items_on_this_ring;
