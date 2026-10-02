@@ -101,6 +101,11 @@ receipts. These overlap intentionally; test shared boundaries once.
   prepared native loop/hosted-server close pass;
   [reviewed exact results/limits](voice-client-send-current-2.0-results.md).
   Private movement framing and fresh admission/reconnect remain distinct.
+  Six prepared native fallback source/listener/model/time cases also pass
+  actual decoded/mixed stereo direction or equal-channel radio output, in one
+  current eight-marker run containing all previous voice cases;
+  [exact results/limits](voice-fallback-current-2.0-results.md).
+  HRTF/live listener, callback/loops/room-worker/music remain distinct.
 - F03: actual loaded SSQC/CSQC core numeric/name binding, permission discovery,
   simultaneous VM preservation and toggle/reload subset passes;
   [exact results and limits](qc-binding-current-qualification-2.0.md).

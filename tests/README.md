@@ -3861,3 +3861,12 @@ sender, and send results are controlled. This does not certify private movement
 framing, new client admission/reconnect/map reset or OS socket failure. Existing
 builder unchanged. See [plan](../docs/voice-client-send-final-2.0-plan.md) and
 [reviewed results/limits](../docs/voice-client-send-current-2.0-results.md).
+
+
+Add `-spatial-fallback` to the same consolidated voice run for six prepared
+source/listener/model/time cases through the actual codec/relay/decoder/stereo
+mixer. Require `VOICE_FALLBACK_NATIVE_PASSED` and all prior seven markers,
+native exit0, with Steam Audio inactive. This tests relative stereo direction
+and equal-channel radio fallback, not HRTF, live movement or XR listener input.
+See [plan](../docs/voice-fallback-final-2.0-plan.md) and
+[results/limits](../docs/voice-fallback-current-2.0-results.md).

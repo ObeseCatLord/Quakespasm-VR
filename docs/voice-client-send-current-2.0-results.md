@@ -37,3 +37,10 @@ again finishes all four statuses0, seven markers and normal shutdown. Final
 This is the corrected bounded result; original review inspected the earlier
 passing source, and main applied/verified its explicit corrections. It is not
 final whole-goal Astra integration signoff or a current shipping artifact pass.
+
+
+Later fixture integration adds optional fallback spatial cases; this earlier
+nine-source hash snapshot qualifies its own a28a76bb input. All seven cases pass
+again on the new fixture together with fallback spatialization; use the
+[eight-marker current results](voice-fallback-current-2.0-results.md) for latest
+fixture provenance. Production shipping bytes remain unchanged.

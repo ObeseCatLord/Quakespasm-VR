@@ -365,6 +365,7 @@ static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
 #include "voice_budget_native_fixture.h"
 #include "voice_fatal_send_native_fixture.h"
 #include "voice_client_send_native_fixture.h"
+#include "voice_fallback_native_fixture.h"
 
 int main (int argc, char **argv)
 {
@@ -454,6 +455,8 @@ int main (int argc, char **argv)
 		Voice_FatalSendNativeChecks (peers, states, public_offer);
 	if (COM_CheckParm ("-client-send"))
 		Voice_ClientSendNativeChecks (peers[0], states[0], peers[1], states[1]);
+	if (COM_CheckParm ("-spatial-fallback"))
+		Voice_FallbackNativeChecks (peers[0], states[0], peers[1], states[1]);
 	/* Leave real PCM buffered, then real jitter queued, without consuming either. */
 	for (int burst = 0; burst < 2; ++burst)
 	{
@@ -528,6 +531,8 @@ int main (int argc, char **argv)
 		puts ("VOICE_FATAL_SEND_NATIVE_PASSED native loop ctor/admission/close/QC drop/slot reuse; controlled fatal send");
 	if (COM_CheckParm ("-client-send"))
 		puts ("VOICE_CLIENT_SEND_NATIVE_PASSED public heartbeat queue preservation/consumption/decoded signal; native fatal close and hosted shutdown");
+	if (COM_CheckParm ("-spatial-fallback"))
+		puts ("VOICE_FALLBACK_NATIVE_PASSED six prepared position/listener cases; native decoded/mixed stereo direction and equal-channel radio");
 	puts ("VOICE_PCM_NATIVE_PASSED native negotiated codec/relay/PCM/mute/reset; captured transport/dummy capture");
 	return 0;
 }
