@@ -100,3 +100,34 @@ free space does not provide host allocation capacity. No full build started.
 Private exact receipt: qsvr-room-native-_1heinas/windows-prerequisites-readonly.json
 on FastGames. Prepared3204 Release/Debug job remains pending the existing host
 space request; no credentials/VM/driver/system settings changed.
+
+## Full build resumed after storage recovery
+
+2026-10-02. Host root now has over300GiB available; the earlier storage blocker
+is resolved. Actual f814 Release compilation exposed three int-to-float room
+arguments, boolean-to-float spatial assignment and eight constant complement
+mask casts. Narrow9649 repairs preserve the existing values/masks and warnings.
+The current actual native Linux graph recompiles/links0 and all12 combined
+audio qualification markers pass; [current room/audio receipt](room-monitor-native-current-2.0-results.md).
+
+Actual9649 MSVC compile/shaders reach linking and fail on four missing Opus
+encoder imports. The bundled DLL and main reference are decoder-only. Full
+shared Opus1.5.2, matched GNU/native import libraries and required BSD notice
+are now integrated in d50a13a3; [bounded actual dependency result](windows-opus-2.0-results.md).
+
+Fresh immutable d50a13a3 source archive SHA256
+c4650e27da3a6905e8798dc6b38f2e36b96643f888ef8c245a6a883cb04c0141
+compiles engine/shaders and reaches native Release LTCG. The Opus unresolved
+imports are gone, but link-time C4701/C4703 guard-dependent lifetime diagnostics
+across six owners cause strict /WX code-generation failure/LNK1257, actual
+MSBuild exit1. These paths are undergoing verified local Astra/xhigh review
+before narrow edits. No successful full Release or Debug build is claimed.
+
+The guarded wrapper now retains the actual process handle before waiting and
+records native exit correctly; a process-only child ExecutionPolicy permits
+its private script without changing system policy. Failed first policy/exit-
+property launcher receipts are retained. The fresh source is never edited in
+place. Exact current logs/status/storage observations are private
+FastGames/qsvr-windows-d50a-4wutinyc; no storage stop occurred. No engine/GPU,
+physical audio or headset test ran. Windows full builds/PE closure and final
+matching Linux/ARM artifacts remain open.

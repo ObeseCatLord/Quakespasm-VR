@@ -3012,7 +3012,7 @@ static qboolean SV_AreaAddPMovePhysents (edict_t *ignore, areanode_t *node,
 	{
 		edict_t *other = EDICT_FROM_AREA (link);
 		physent_t *phys;
-		int modelindex;
+		int modelindex = 0;
 		qmodel_t *model = NULL;
 
 		next = link->next;

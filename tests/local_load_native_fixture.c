@@ -252,6 +252,54 @@ static client_t *LocalLoad (const char *command)
 	return peer;
 }
 
+/* Mutate only owned native save headers; retain the real writer's body. */
+static void LocalInvalidSave (client_t *peer)
+{
+	assert (svs.maxclients == 1 && SV_PrivateWalkTrialStockProgram ());
+	SaveFixture ("valid-header-fixture", 5);
+	const char *bad[] = {"not-a-number", "nan", "1e30"};
+	qsocket_t *connection = cls.netcon;
+	edict_t *player = peer->edict;
+	dprograms_t *program = sv.qcvm.progs;
+	const double world_time = sv.qcvm.time;
+	const int skill = current_skill;
+
+	for (int kex = 0; kex < 2; ++kex)
+		for (int field = 0; field < 2; ++field)
+			for (int variant = 0; variant < (field ? 2 : 3); ++variant)
+			{
+				FILE *in = fopen (va ("%s/valid-header-fixture.sav", com_gamedir), "r");
+				FILE *out = fopen (va ("%s/invalid-header-fixture.sav", com_gamedir), "w");
+				assert (in && out);
+				char line[4096];
+				int index = 0;
+				while (fgets (line, sizeof (line), in))
+				{
+					if (!index && kex)
+						assert (fprintf (out, "6\nid1\n") > 0);
+					else if (index == NUM_BASIC_SPAWN_PARMS + 2 + field * 2)
+						assert (fprintf (out, "%s\n", bad[variant]) > 0);
+					else
+						assert (fputs (line, out) >= 0);
+					++index;
+				}
+				assert (!ferror (in) && fclose (in) == 0 && fclose (out) == 0);
+				assert (index > NUM_BASIC_SPAWN_PARMS + 4);
+				PR_SwitchQCVM (NULL);
+				Cmd_ExecuteString ("load invalid-header-fixture", src_command);
+				assert (qcvm == NULL && sv.active && sv.qcvm.progs == program &&
+					sv.qcvm.time == world_time && current_skill == skill &&
+					cls.netcon == connection && cls.state == ca_connected &&
+					cls.signon == SIGNONS && peer->active && peer->spawned &&
+					peer->edict == player && !player->free);
+				PR_SwitchQCVM (&sv.qcvm);
+			}
+	/* Refusals must not poison the retained save buffer or the next valid load. */
+	peer = LocalLoad ("load valid-header-fixture");
+	LocalMovement (peer, true, true);
+	puts ("INVALID_SAVE_NATIVE_PASSED legacy/KEX skill/time refusals and valid recovery");
+}
+
 int main (int argc, char **argv)
 {
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
@@ -267,7 +315,9 @@ int main (int argc, char **argv)
 	const qboolean selected = !public && !disabled;
 	assert (peer->private_pmove_walk_selected == selected);
 	LocalMovement (peer, !public, selected);
-	if (!strcmp (scenario, "local"))
+	if (!strcmp (scenario, "invalid-save"))
+		LocalInvalidSave (peer);
+	else if (!strcmp (scenario, "local"))
 	{
 		assert (svs.maxclients == 1);
 		if (SV_PrivateWalkTrialStockProgram ()) LocalOutstandingReplay (peer);

@@ -2606,13 +2606,13 @@ static void Host_Loadgame_f (void)
 	char		legacy_dir[MAX_OSPATH];
 	char		savename[MAX_OSPATH];
 	char		mapname[MAX_QPATH];
-	float		time, tfloat;
-	const char *data;
+	float		time = 0.0f, tfloat = 0.0f;
+	const char *data = NULL;
 	int			i;
 	edict_t	   *ent;
 	int			entnum;
 	int			version;
-	int			saved_maxclients;
+	int			saved_maxclients = 0;
 	int			header_version;
 	long		start_length;
 	size_t		inherited_offset;
@@ -2813,7 +2813,26 @@ static void Host_Loadgame_f (void)
 	}
 	// this silliness is so we can load 1.06 save files, which have float skill values
 	if (!inherited_load)
-		data = COM_ParseFloatNewline (data, &tfloat);
+	{
+		const char *next = COM_ParseFloatNewline (data, &tfloat);
+		if (next == data)
+		{
+			Mem_Free (start);
+			start = NULL;
+			Con_Printf ("ERROR: invalid skill in savegame header.\n");
+			return;
+		}
+		data = next;
+	}
+	/* A failed conversion must not become a default skill or an undefined cast. */
+	if (!isfinite (tfloat) || tfloat + 0.1 < (double)INT_MIN ||
+		tfloat + 0.1 > (double)INT_MAX)
+	{
+		Mem_Free (start);
+		start = NULL;
+		Con_Printf ("ERROR: invalid skill in savegame header.\n");
+		return;
+	}
 	current_skill = (int)(tfloat + 0.1);
 	Cvar_SetValue ("skill", (float)current_skill);
 
@@ -2821,7 +2840,22 @@ static void Host_Loadgame_f (void)
 	{
 		data = COM_ParseStringNewline (data);
 		q_strlcpy (mapname, com_token, sizeof (mapname));
-		data = COM_ParseFloatNewline (data, &time);
+		const char *next = COM_ParseFloatNewline (data, &time);
+		if (next == data)
+		{
+			Mem_Free (start);
+			start = NULL;
+			Con_Printf ("ERROR: invalid time in savegame header.\n");
+			return;
+		}
+		data = next;
+	}
+	if (!isfinite (time))
+	{
+		Mem_Free (start);
+		start = NULL;
+		Con_Printf ("ERROR: invalid time in savegame header.\n");
+		return;
 	}
 	if (inherited_load)
 		fastload = false;
@@ -2977,8 +3011,8 @@ static void Host_Loadgame_f (void)
 				else if (dialect == SAVEGAME_DIALECT_INHERITED7 &&
 					!strcmp (com_token, "client_spawnparm"))
 				{
-					int slot, parm;
-					float value;
+					int slot, parm = 0;
+					float value = 0.0f;
 					qboolean valid = true;
 
 					ext = COM_Parse (ext);

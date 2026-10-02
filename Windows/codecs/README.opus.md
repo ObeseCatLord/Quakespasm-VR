@@ -14,7 +14,7 @@ License: `LICENSE.opus.txt`, copied verbatim from upstream COPYING.
 To rebuild, obtain the official source archive and run from the repository root:
 
 ```sh
-windows/build-opus.sh /path/to/opus-1.5.2.tar.gz /new/private/output
+Windows/codecs/build-opus.sh /path/to/opus-1.5.2.tar.gz /new/private/output
 ```
 
 The script verifies the pinned hash, refuses an existing output directory and

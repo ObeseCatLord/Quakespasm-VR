@@ -624,7 +624,7 @@ static bool create_htcx_actions() {
 	info.countSubactionPaths=(uint32_t)subactions.size(); info.subactionPaths=subactions.data();
 	if(!ok("xrCreateAction tracker",g.xr.CreateAction(g.actions,&info,&g.trackerAction))) return false;
 	for(size_t i=0;i<g.trackerSources.size();++i) {
-		std::string text; XrPath binding;
+		std::string text; XrPath binding=XR_NULL_PATH;
 		if(!tracker_path_string(g.trackerSources[i].path,text) || !path((text+"/input/grip/pose").c_str(),&binding)) return false;
 		XrActionSuggestedBinding item={g.trackerAction,binding}; bindings.push_back(item);
 	}

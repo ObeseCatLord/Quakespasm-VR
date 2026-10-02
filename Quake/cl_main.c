@@ -2310,7 +2310,7 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 	qboolean private_replay;
 	qboolean prediction_samples_enabled = false;
 	playermove_t saved_pmove;
-	movevars_t saved_movevars;
+	movevars_t saved_movevars = {0};
 	usercmd_t preview;
 	vec3_t bounds[2];
 	vec3_t baseline_origin;

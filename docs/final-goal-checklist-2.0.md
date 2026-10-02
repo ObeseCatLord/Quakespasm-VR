@@ -350,3 +350,13 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   [Exact results and limits](room-monitor-native-current-2.0-results.md).
   Complete callback/device/timing/integration claims remain distinct; F08/F10
   are not closed.
+
+- F10: host storage recovered and full Windows compilation resumed. Native
+  strict compiler repairs preserve audio values/VR codec masks in9649; Linux
+  actual native graph recompiles/links0 and combined12audio markers pass. Full
+  Windows d50a13a3 reaches Release LTCG after repairing the decoder-only bundled
+  Opus DLL with one full official shared library. Native Windows CPU encoder/
+  decoder/reset plus unchanged Opusfile music ABI pass; [exact dependency result](windows-opus-2.0-results.md).
+  Release remains exit1 due guard-dependent lifetime warnings under LTCG; local
+  Astra review is in progress. No full Windows build or F10 closure yet. Main
+  branch remains untouched and GPU qualification stays stopped.

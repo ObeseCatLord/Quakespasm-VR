@@ -4387,7 +4387,7 @@ static void VR_InputPrepareAkimboPair (usercmd_t *pending,
 	vec3_t collision_torso;
 	qboolean collision_context, collision_torso_valid = false;
 	qboolean shared_pair_collision = false, collision_yaw_valid = false;
-	float presentation_yaw, mapping_yaw;
+	float presentation_yaw = 0.0f, mapping_yaw = 0.0f;
 	const qboolean roomscale_accepted = pending &&
 		VR_InputRoomscaleCommandAccepted (pending->vr_roomscalemove);
 

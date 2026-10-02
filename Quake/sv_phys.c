@@ -7053,16 +7053,17 @@ static qboolean SV_VRDwellPhysicalOutcomeContextValid (client_t *client,
 qboolean SV_VRDwellBerserkPhysicalOutcome (client_t *client, edict_t *ent,
 	const usercmd_t *cmd, int anatomical_hand, const trace_t *contact)
 {
-	globalvars_t saved_globals = {0}, *saved_global_struct;
+	globalvars_t saved_globals = {0};
+	globalvars_t *saved_global_struct = NULL;
 	float saved_call_globals[OFS_PARM7 + 3 - OFS_RETURN];
-	qcvm_t *saved_vm;
-	dprograms_t *saved_progs;
-	float *saved_vm_globals;
+	qcvm_t *saved_vm = NULL;
+	dprograms_t *saved_progs = NULL;
+	float *saved_vm_globals = NULL;
 	eval_t *customflags, *cooldown;
-	trace_t accepted_contact;
+	trace_t accepted_contact = {0};
 	vec3_t accepted_angles, saved_angles = {0}, body_origin;
 	float qctime, haste_value = 0, new_cooldown;
-	int saved_argc, axis, cursor_sequence;
+	int saved_argc = 0, axis, cursor_sequence;
 	qboolean has_contact = contact != NULL;
 	qboolean haste, context_saved = false, outcome_ok = false;
 	qboolean friendly_fire_scope = false;
@@ -7337,17 +7338,18 @@ static qboolean SV_VRDirectMeleeOutcome
 	qboolean first_outcome, int *stroke_subtype,
 	float *recovery_deadline)
 {
-	globalvars_t saved_globals, *saved_global_struct;
+	globalvars_t saved_globals = {0};
+	globalvars_t *saved_global_struct = NULL;
 	float saved_call_globals[OFS_PARM7 + 3 - OFS_RETURN];
-	qcvm_t *saved_vm;
-	dprograms_t *saved_progs;
-	edict_t *saved_edicts;
-	float *saved_vm_globals;
-	eval_t *cooldown, *hostile, *berserk_sound = NULL, *switchblock = NULL;
-	trace_t accepted_contact;
+	qcvm_t *saved_vm = NULL;
+	dprograms_t *saved_progs = NULL;
+	edict_t *saved_edicts = NULL;
+	float *saved_vm_globals = NULL;
+	eval_t *cooldown = NULL, *hostile, *berserk_sound = NULL, *switchblock = NULL;
+	trace_t accepted_contact = {0};
 	vec3_t accepted_angles, saved_angles = {0}, body_origin, org, dir;
 	float qctime, new_cooldown, new_hostile;
-	int axis, saved_argc, cursor_sequence, subtype;
+	int axis, saved_argc = 0, cursor_sequence, subtype = SV_VR_DIRECT_MELEE_NONE;
 	qboolean berserk, enyo, cursor_valid, context_saved = false;
 	qboolean friendly_fire_scope = false, outcome_ok = false;
 
@@ -9866,6 +9868,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	qboolean respawn_owner_valid;
 	int i;
 
+	command.buttons = 0;
+	trial_movevars.pground = false;
 	ED_Retain (ent);
 	host_client = client;
 	sv_player = ent;
@@ -10638,6 +10642,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	{
 		sv_vr_weapon_pose_scope_t weapon_scope;
 		usercmd_t movement_input;
+		const usercmd_t *saved_movement_input = NULL;
 		vec3_t movement_v_angle = {0}, movement_angles = {0};
 		const qboolean restore_qc_angles = shared_qc && !ent->v.fixangle &&
 			think_window->qc_epoch == client->private_move_discontinuity_epoch;
@@ -10645,6 +10650,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		{
 			host_frametime = think_window->world_frametime;
 			movement_input = client->cmd;
+			saved_movement_input = &movement_input;
 			client->cmd = think_window->qc_command;
 			client->cmd.impulse = ent->v.impulse; // retain actual QC consumption
 			if (restore_qc_angles)
@@ -10669,10 +10675,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		SV_EndPrivateVRWeaponPoseGuarded (ent, &weapon_scope,
 			!respawn_policy_started ||
 			SV_CoopRespawnPolicyOwnerLive (respawn_policy, client, ent));
-		if (shared_qc && (!respawn_policy_started ||
+		if (saved_movement_input && (!respawn_policy_started ||
 			SV_CoopRespawnPolicyOwnerLive (respawn_policy, client, ent)))
 		{
-			client->cmd = movement_input;
+			client->cmd = *saved_movement_input;
 			/* Keep authored rotations/teleports; restore only our temporary
 			 * input view when QC left it untouched. No second recoil update. */
 			if (restore_qc_angles && !ent->free && !ent->v.fixangle &&

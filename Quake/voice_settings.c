@@ -223,7 +223,7 @@ int VoiceSettings_Load(const char *path, voice_settings_t *settings)
 {
 	voice_settings_file_t *file;
 	unsigned char wire[VOICE_SETTINGS_FILE_BYTES];
-	voice_settings_t loaded;
+	voice_settings_t loaded = {0};
 	int result = -1;
 	size_t bytes;
 	unsigned char extra;
