@@ -10,8 +10,8 @@
 #include <limits.h>
 #include <stdlib.h>
 
-/* Loaded reflection, entity and surface fixtures use the actual host owner. */
-#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_ENTITY_NATIVE_HOST_FIXTURE) || defined(QC_SURFACE_NATIVE_HOST_FIXTURE)
+/* Loaded reflection, entity, surface and copy/player fixtures use the actual host owner. */
+#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_ENTITY_NATIVE_HOST_FIXTURE) || defined(QC_SURFACE_NATIVE_HOST_FIXTURE) || defined(QC_COPY_PLAYER_NATIVE_HOST_FIXTURE)
 extern void FixtureLoadCSProgsNative (void);
 #endif
 #ifdef QC_SURFACE_NATIVE_HOST_FIXTURE
@@ -78,6 +78,25 @@ static void FixtureQuery (const char *name, float expected)
 {
 	assert (FixtureFloat (name) == expected);
 }
+
+#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_COPY_PLAYER_NATIVE_HOST_FIXTURE)
+static link_t *FixtureReflectArea (edict_t *ent)
+{
+	link_t *owner = NULL;
+	for (int n = 0; n < qcvm->numareanodes; n++)
+		for (int trigger = 0; trigger < 2; trigger++)
+		{
+			link_t *head = trigger ? &qcvm->areanodes[n].trigger_edicts : &qcvm->areanodes[n].solid_edicts;
+			int steps = 0;
+			for (link_t *p = head->next; p != head; p = p->next)
+			{
+				assert (++steps <= qcvm->num_edicts);
+				if (p == &ent->area) { assert (!owner); owner = head; }
+			}
+		}
+	return owner;
+}
+#endif
 
 static void FixtureCheckEnabled (qboolean csqc)
 {
@@ -354,23 +373,6 @@ static qboolean FixtureReflectWrite (edict_t *ent, int index, const char *value,
 	return FixtureFloat ("fixture_reflect_put") != 0;
 }
 
-static link_t *FixtureReflectArea (edict_t *ent)
-{
-	link_t *owner = NULL;
-	for (int n = 0; n < qcvm->numareanodes; n++)
-		for (int trigger = 0; trigger < 2; trigger++)
-		{
-			link_t *head = trigger ? &qcvm->areanodes[n].trigger_edicts : &qcvm->areanodes[n].solid_edicts;
-			int steps = 0;
-			for (link_t *p = head->next; p != head; p = p->next)
-			{
-				assert (++steps <= qcvm->num_edicts);
-				if (p == &ent->area) { assert (!owner); owner = head; }
-			}
-		}
-	return owner;
-}
-
 static void FixtureReflectZone (edict_t *ent, const char *expected)
 {
 	assert (ent->v.classname < 0);
@@ -483,6 +485,457 @@ static void FixtureReflectionCases (void)
 	assert (sv.active && sv.qcvm.edicts && sv.qcvm.worldmodel);
 	FixtureReflectMetadata (complete); FixtureReflectBody (true);
 	puts ("QC_BINDING_REFLECTION_NATIVE_PASSED actual field maps, zoned aliases and native relinking");
+}
+#endif
+
+#ifdef QC_COPY_PLAYER_NATIVE_HOST_FIXTURE
+#define FIXTURE_COPY_BYTES 8192
+extern void Sbar_SortFrags (void);
+extern int fragsort[MAX_SCOREBOARD];
+extern int scoreboardlines;
+typedef struct
+{
+    int number; size_t payload_bytes, header_bytes, identity_bytes;
+    byte payload[FIXTURE_COPY_BYTES], header[1024], identity[32];
+} fixture_copy_snapshot_t;
+typedef struct { edict_t *ent; fixture_copy_snapshot_t state; } fixture_copy_guard_t;
+typedef struct { edict_t *ent; dprograms_t *program; fixture_copy_snapshot_t state; link_t *area, *prev, *next; } fixture_copy_witness_t;
+static size_t FixtureCopyPayloadBytes (void);
+static ddef_t *FixtureCopyField (const char *name, etype_t type)
+{
+	ddef_t *field = ED_FindField (name);
+	assert (field && (field->type & ~DEF_SAVEGLOBAL) == type);
+	return field;
+}
+static void FixtureCopySetEntity (const char *name, edict_t *ent)
+{ assert (ent && !ent->free); G_INT (FixtureGlobal (name, ev_entity)->ofs) = EDICT_TO_PROG (ent); }
+static void FixtureCopySetRawEntity (const char *name, int raw)
+{ G_INT (FixtureGlobal (name, ev_entity)->ofs) = raw; }
+static int FixtureCopyEntityRaw (const char *name)
+{ return G_INT (FixtureGlobal (name, ev_entity)->ofs); }
+static void FixtureCopyExec (const char *entry)
+{
+	char name[96]; q_snprintf (name, sizeof (name), "fixture_ref_%s", entry);
+	PR_ExecuteProgram (FixtureRef (name));
+}
+static void FixtureCopyCapture (edict_t *ent, fixture_copy_snapshot_t *state)
+{
+	size_t start = offsetof (edict_t, num_leafs);
+	state->number = NUM_FOR_EDICT (ent); state->identity_bytes = offsetof (edict_t, area);
+	state->header_bytes = offsetof (edict_t, v) - start; state->payload_bytes = FixtureCopyPayloadBytes ();
+	assert (state->identity_bytes <= sizeof (state->identity) && state->header_bytes <= sizeof (state->header));
+	memcpy (state->identity, ent, state->identity_bytes);
+	memcpy (state->header, (byte *)ent + start, state->header_bytes);
+	memcpy (state->payload, &ent->v, state->payload_bytes);
+}
+static void FixtureCopyAssert (edict_t *ent, const fixture_copy_snapshot_t *state)
+{
+	size_t start = offsetof (edict_t, num_leafs);
+	assert (NUM_FOR_EDICT (ent) == state->number && FixtureCopyPayloadBytes () == state->payload_bytes);
+	assert (state->header_bytes == offsetof (edict_t, v) - start && state->identity_bytes == offsetof (edict_t, area));
+	assert (!memcmp (ent, state->identity, state->identity_bytes));
+	assert (!memcmp ((byte *)ent + start, state->header, state->header_bytes));
+	assert (!memcmp (&ent->v, state->payload, state->payload_bytes));
+}
+static void FixtureCopyAssertCopiedHeader (edict_t *ent, const fixture_copy_snapshot_t *before, edict_t *source)
+{
+	size_t start = offsetof (edict_t, num_leafs), alpha = offsetof (edict_t, alpha) - start;
+	size_t end = offsetof (edict_t, sendinterval_default) + sizeof (ent->sendinterval_default) - start;
+	assert (NUM_FOR_EDICT (ent) == before->number && ent->alpha == source->alpha &&
+		ent->sendinterval == source->sendinterval && ent->sendinterval_default == source->sendinterval_default);
+	assert (!memcmp (ent, before->identity, before->identity_bytes));
+	assert (!memcmp ((byte *)ent + start, before->header, alpha));
+	assert (!memcmp ((byte *)ent + start + end, before->header + end, before->header_bytes - end));
+	if (ent == source)
+	{
+		unsigned char expected_alpha;
+		qboolean expected_interval, expected_default;
+		memcpy (&expected_alpha, before->header + alpha, sizeof (expected_alpha));
+		memcpy (&expected_interval, before->header + offsetof (edict_t, sendinterval) - start, sizeof (expected_interval));
+		memcpy (&expected_default, before->header + offsetof (edict_t, sendinterval_default) - start, sizeof (expected_default));
+		assert (ent->alpha == expected_alpha && ent->sendinterval == expected_interval && ent->sendinterval_default == expected_default);
+	}
+}
+static size_t FixtureCopyPayloadBytes (void)
+{
+	size_t bytes = (size_t)qcvm->progs->entityfields * 4;
+	assert (bytes && bytes <= FIXTURE_COPY_BYTES); return bytes;
+}
+static void FixtureCopyRemember (edict_t *ent, fixture_copy_witness_t *witness)
+{
+	witness->ent = ent; witness->program = qcvm->progs; FixtureCopyCapture (ent, &witness->state);
+	witness->area = FixtureReflectArea (ent); witness->prev = ent->area.prev; witness->next = ent->area.next;
+}
+static void FixtureCopyCheckWitness (const fixture_copy_witness_t *witness)
+{
+	assert (qcvm->progs == witness->program && !witness->ent->free); FixtureCopyAssert (witness->ent, &witness->state);
+	assert (FixtureReflectArea (witness->ent) == witness->area && witness->ent->area.prev == witness->prev && witness->ent->area.next == witness->next);
+}
+static void FixtureCopyGuardAdd (fixture_copy_guard_t *guards, int *count, edict_t *ent)
+{
+	size_t header_start = offsetof (edict_t, num_leafs);
+	size_t header_end = offsetof (edict_t, v);
+	for (int i = 0; i < *count; i++) if (guards[i].ent == ent) return;
+	assert (*count < 4 && header_end - header_start <= sizeof (guards[0].state.header));
+	fixture_copy_guard_t *guard = &guards[(*count)++];
+	guard->ent = ent; FixtureCopyCapture (ent, &guard->state);
+}
+static void FixtureCopyGuardNeighbours (edict_t *ent, edict_t *exclude, fixture_copy_guard_t *guards, int *count)
+{
+	int number = NUM_FOR_EDICT (ent);
+	if (number > 0 && EDICT_NUM (number - 1) != exclude && !EDICT_NUM (number - 1)->free) FixtureCopyGuardAdd (guards, count, EDICT_NUM (number - 1));
+	if (number + 1 < qcvm->num_edicts && EDICT_NUM (number + 1) != exclude && !EDICT_NUM (number + 1)->free) FixtureCopyGuardAdd (guards, count, EDICT_NUM (number + 1));
+}
+static void FixtureCopyGuardCheck (fixture_copy_guard_t *guards, int count)
+{
+	assert (count > 0);
+	for (int i = 0; i < count; i++)
+	{
+		fixture_copy_guard_t *guard = &guards[i];
+		assert (!guard->ent->free); FixtureCopyAssert (guard->ent, &guard->state);
+		if (guard->ent->area.prev) assert (guard->ent->area.prev->next == &guard->ent->area);
+		if (guard->ent->area.next) assert (guard->ent->area.next->prev == &guard->ent->area);
+	}
+}
+static void FixtureCopyCheckPayload (edict_t *src, edict_t *dst, const byte *source_bytes,
+	size_t bytes)
+{
+	size_t amin = offsetof (entvars_t, absmin), amax = offsetof (entvars_t, absmax);
+	assert (amin + sizeof (vec3_t) <= bytes && amax + sizeof (vec3_t) <= bytes);
+	for (size_t i = 0; i < bytes; i++)
+	{
+		if ((i >= amin && i < amin + sizeof (vec3_t)) ||
+			(i >= amax && i < amax + sizeof (vec3_t))) continue;
+		assert (((const byte *)&dst->v)[i] == source_bytes[i]);
+	}
+	assert (src->v.flags == 0 && dst->v.flags == 0);
+	for (int axis = 0; axis < 3; axis++)
+	{
+		assert (dst->v.absmin[axis] == dst->v.origin[axis] + dst->v.mins[axis] - 1);
+		assert (dst->v.absmax[axis] == dst->v.origin[axis] + dst->v.maxs[axis] + 1);
+		assert (dst->v.absmin[axis] == src->v.absmin[axis] && dst->v.absmax[axis] == src->v.absmax[axis]);
+	}
+}
+static void FixtureCopyPermission (qboolean csqc)
+{
+	FixtureCopyExec ("copy_permission");
+	assert (FixtureFloat ("fixture_copy_player_enabled") == (csqc ? 1 : 0) &&
+		FixtureFloat ("fixture_copy_player_float_enabled") == (csqc ? 1 : 0));
+}
+static void FixtureCopyPrime (int live_index)
+{
+	FixtureSetFloat ("fixture_copy_input_prime_index", (float)live_index);
+}
+static void FixtureCopyEdict (float index, edict_t *expected, int prime)
+{
+	FixtureCopyPrime (prime); FixtureSetFloat ("fixture_copy_input_index", index);
+	FixtureCopyExec ("copy_edict");
+	assert (FixtureCopyEntityRaw ("fixture_copy_prime_entity") == EDICT_TO_PROG (EDICT_NUM (prime)) && FixtureCopyEntityRaw ("fixture_copy_prime_entity") != 0);
+	assert (FixtureCopyEntityRaw ("fixture_copy_entity") == EDICT_TO_PROG (expected));
+}
+static void FixtureCopyEdictBounds (edict_t *prime_ent)
+{
+	int last_live = qcvm->num_edicts - 1;
+	while (last_live > 0 && EDICT_NUM (last_live)->free) last_live--;
+	assert (last_live > 0 && !EDICT_NUM (last_live)->free);
+	int prime = NUM_FOR_EDICT (prime_ent);
+	FixtureCopyEdict (-1, qcvm->edicts, prime); FixtureCopyEdict (0, qcvm->edicts, prime);
+	FixtureCopyEdict ((float)last_live, EDICT_NUM (last_live), prime);
+	FixtureCopyEdict ((float)qcvm->num_edicts, qcvm->edicts, prime); FixtureCopyEdict ((float)(qcvm->num_edicts + 7), qcvm->edicts, prime);
+}
+static void FixtureCopyPlayerString (float player, const char *key, const char *expected)
+{
+	FixtureSetFloat ("fixture_copy_input_player", player);
+	G_INT (FixtureGlobal ("fixture_copy_input_key", ev_string)->ofs) = PR_SetEngineString (key);
+	FixtureCopyExec ("copy_player_string");
+	assert (FixtureFloat ("fixture_copy_prime_scalar") == 17 && !strcmp (FixtureString ("fixture_copy_prime_string"), "copy-player-prime"));
+	if (expected)
+		assert (G_INT (FixtureGlobal ("fixture_copy_string", ev_string)->ofs) != 0 && !strcmp (FixtureString ("fixture_copy_string"), expected));
+	else
+		FixtureEmptyString ("fixture_copy_string");
+}
+static void FixtureCopyPlayerFloat (float player, const char *key, float expected)
+{
+	FixtureSetFloat ("fixture_copy_input_player", player);
+	G_INT (FixtureGlobal ("fixture_copy_input_key", ev_string)->ofs) = PR_SetEngineString (key);
+	FixtureCopyExec ("copy_player_float");
+	assert (FixtureFloat ("fixture_copy_prime_scalar") == 17 && !strcmp (FixtureString ("fixture_copy_prime_string"), "copy-player-prime"));
+	assert (FixtureFloat ("fixture_copy_scalar") == expected);
+}
+#define COPY_STRING(p,k,e) FixtureCopyPlayerString ((p), (k), (e))
+#define COPY_FLOAT(p,k,e) FixtureCopyPlayerFloat ((p), (k), (e))
+static void FixtureCopyPlayerQueries (void)
+{
+	COPY_STRING (0,"name","alpha"); COPY_STRING (0,"viewentity","1"); COPY_STRING (1,"name",NULL);
+	COPY_STRING (1,"viewentity","2"); COPY_STRING (-1,"name","bravo"); COPY_STRING (-2,"name","alpha");
+	COPY_STRING (-3,"name",NULL); COPY_STRING (3,"name",NULL); COPY_STRING (MAX_SCOREBOARD,"name",NULL);
+	COPY_STRING (0,"fixture_missing",NULL); COPY_STRING (0,"pl",NULL); COPY_STRING (0,"userid",NULL);
+	COPY_STRING (0,"fixture_text","native-extra");
+	COPY_FLOAT (0,"frags",17); COPY_FLOAT (0,"ping",43); COPY_FLOAT (0,"entertime",12.5f);
+	COPY_FLOAT (0,"topcolor",12); COPY_FLOAT (0,"bottomcolor",5); COPY_FLOAT (0,"team",6);
+	COPY_FLOAT (-1,"frags",31); COPY_FLOAT (-2,"frags",17); COPY_FLOAT (-3,"frags",0);
+	COPY_FLOAT (3,"frags",0); COPY_FLOAT (MAX_SCOREBOARD,"frags",0); COPY_FLOAT (0,"fixture_numeric",73.25f);
+	COPY_FLOAT (1,"name",0); COPY_FLOAT (0,"fixture_missing",0); COPY_FLOAT (0,"pl",0); COPY_FLOAT (0,"userid",0);
+	int first = fragsort[0]; fragsort[0] = cl.maxclients;
+	COPY_STRING (-1,"name",NULL); COPY_FLOAT (-1,"frags",0); fragsort[0] = first;
+}
+#undef COPY_STRING
+#undef COPY_FLOAT
+static void FixtureCopyPaletteQuery (const char *key, int color)
+{
+	byte *pal = (byte *)(d_8to24table + (color * 16 + 8));
+	char expected[96];
+	q_snprintf (expected, sizeof (expected), "%g %g %g", pal[0] / 255.0, pal[1] / 255.0, pal[2] / 255.0);
+	FixtureCopyPlayerString (0, key, expected);
+}
+static void FixtureCopyPrepareScores (void)
+{
+	assert (!cl.scores && !cl.maxclients);
+	cl.maxclients = 3;
+	cl.scores = (scoreboard_t *)Mem_Alloc (cl.maxclients * sizeof (*cl.scores));
+	q_strlcpy (cl.scores[0].name, "alpha", sizeof (cl.scores[0].name));
+	cl.scores[0].frags = 17; cl.scores[0].ping = 43; cl.scores[0].entertime = 12.5f; cl.scores[0].colors = (12 << 4) | 5;
+	q_strlcpy (cl.scores[2].name, "bravo", sizeof (cl.scores[2].name));
+	cl.scores[2].frags = 31; cl.scores[2].ping = 61; cl.scores[2].entertime = 8.25f; cl.scores[2].colors = (3 << 4) | 9;
+	Info_SetKey (cl.scores[0].userinfo, sizeof (cl.scores[0].userinfo), "fixture_text", "native-extra");
+	Info_SetKey (cl.scores[0].userinfo, sizeof (cl.scores[0].userinfo), "fixture_numeric", "73.25");
+	Sbar_SortFrags ();
+	assert (scoreboardlines == 2 && fragsort[0] == 2 && fragsort[1] == 0);
+}
+static void FixtureCopyNullScoreQueries (void)
+{
+	assert (!cl.scores && !cl.maxclients);
+	FixtureCopyPlayerString (0, "name", NULL); FixtureCopyPlayerFloat (0, "frags", 0);
+	cl.maxclients = 3;
+	FixtureCopyPlayerString (0, "name", NULL); FixtureCopyPlayerFloat (0, "frags", 0);
+	cl.maxclients = 0;
+}
+static void FixtureCopyTypedTail (edict_t *ent, edict_t *source)
+{
+	assert (GetEdictFieldValue (ent, ED_FindFieldOffset ("fixture_copy_tail_scalar"))->_float == 41.25f);
+	const float *v = GetEdictFieldValue (ent, ED_FindFieldOffset ("fixture_copy_tail_vector"))->vector;
+	assert (v[0] == 2 && v[1] == -3 && v[2] == 5);
+	assert (!strcmp (PR_GetString (GetEdictFieldValue (ent, ED_FindFieldOffset ("fixture_copy_tail_string"))->string), "copy-tail-string"));
+	assert (GetEdictFieldValue (ent, ED_FindFieldOffset ("fixture_copy_tail_entity"))->edict == EDICT_TO_PROG (source));
+	assert (GetEdictFieldValue (ent, ED_FindFieldOffset ("fixture_copy_tail_function"))->function == FixtureRef ("fixture_ref_copy_touch"));
+	assert (GetEdictFieldValue (ent, ED_FindFieldOffset ("fixture_copy_tail_field"))->_int == ED_FindFieldOffset ("health"));
+	assert (GetEdictFieldValue (ent, ED_FindFieldOffset ("fixture_copy_tail_last"))->_float == 83.5f);
+	ddef_t *terminal = ED_FindField ("colormod_z"), *vector = ED_FindField ("colormod");
+	assert (terminal && vector && (terminal->type & ~DEF_SAVEGLOBAL) == ev_float && (vector->type & ~DEF_SAVEGLOBAL) == ev_vector);
+	assert (terminal->ofs == qcvm->progs->entityfields - 1 && vector->ofs + 2 == terminal->ofs &&
+		GetEdictFieldValue (ent, terminal->ofs)->_float == 642.25f);
+}
+static void FixtureCopyPaletteReady (void)
+{
+	TexMgr_LoadPalette ();
+	byte *top = (byte *)(d_8to24table + 12 * 16 + 8), *bottom = (byte *)(d_8to24table + 5 * 16 + 8);
+	assert ((top[0] | top[1] | top[2]) && (bottom[0] | bottom[1] | bottom[2]) && memcmp (top, bottom, 3));
+}
+static void FixtureCopyLimitPreflight (edict_t **drained, edict_t *prime_ent)
+{
+	int count = 0, old_max = qcvm->max_edicts;
+	ED_RebuildFreeList (true);
+	while (qcvm->free_list.size)
+	{
+		assert (count < MAX_EDICTS);
+		drained[count] = ED_Alloc ();
+		assert (drained[count] && !drained[count]->free);
+		count++;
+	}
+	if (!count) { drained[count++] = ED_Alloc (); }
+	edict_t *source = drained[0]; int source_ref = EDICT_TO_PROG (source); float old_freetime = source->freetime;
+	ED_Free (source);
+	source->freetime = qcvm->time + 1;
+	qcvm->max_edicts = qcvm->num_edicts;
+	assert (qcvm->free_list.size && qcvm->free_list.circular_buffer[qcvm->free_list.head_index] == NUM_FOR_EDICT (source));
+	freelist_t list = qcvm->free_list;
+	byte before[FIXTURE_COPY_BYTES]; size_t bytes = FixtureCopyPayloadBytes ();
+	memcpy (before, &source->v, bytes);
+	FixtureCopyPrime (NUM_FOR_EDICT (prime_ent)); FixtureCopySetRawEntity ("fixture_copy_input_source", source_ref);
+	FixtureCopyExec ("copy_allocate");
+	assert (FixtureCopyEntityRaw ("fixture_copy_entity") == EDICT_TO_PROG (qcvm->edicts));
+	assert (qcvm->num_edicts == qcvm->max_edicts && qcvm->free_list.size == list.size &&
+		!memcmp (&qcvm->free_list, &list, sizeof (list)) && !memcmp (&source->v, before, bytes));
+	qcvm->max_edicts = old_max;
+	source->freetime = old_freetime;
+	for (int i = 1; i < count; i++) ED_Free (drained[i]);
+}
+static edict_t *FixtureCopyBody (qboolean csqc)
+{
+	edict_t *source = ED_Alloc (), *destination = ED_Alloc (), *trigger = ED_Alloc (), *probe = ED_Alloc ();
+	fixture_copy_guard_t guards[4]; int guard_count;
+	FixtureCopyPermission (csqc);
+	int axis = qcvm->areanodes[0].axis;
+	assert (axis >= 0 && axis < 2 && qcvm->worldmodel);
+#define COPY_FIELD(n,t) FixtureCopyField ((n), (t))
+	COPY_FIELD ("fixture_copy_tail_scalar",ev_float); COPY_FIELD ("fixture_copy_tail_vector",ev_vector);
+	COPY_FIELD ("fixture_copy_tail_string",ev_string); COPY_FIELD ("fixture_copy_tail_entity",ev_entity);
+	COPY_FIELD ("fixture_copy_tail_function",ev_function); COPY_FIELD ("fixture_copy_tail_field",ev_field);
+	COPY_FIELD ("fixture_copy_tail_last",ev_float); COPY_FIELD ("health",ev_float);
+#undef COPY_FIELD
+	ddef_t *terminal = ED_FindField ("colormod_z"), *terminal_vector = ED_FindField ("colormod");
+	assert (terminal && terminal_vector && (terminal->type & ~DEF_SAVEGLOBAL) == ev_float &&
+		(terminal_vector->type & ~DEF_SAVEGLOBAL) == ev_vector &&
+		terminal->ofs == qcvm->progs->entityfields - 1 && terminal_vector->ofs + 2 == terminal->ofs);
+	VectorSet (source->v.mins, -2, -3, -4); VectorSet (source->v.maxs, 2, 3, 4);
+	VectorSet (destination->v.mins, -1, -1, -1); VectorSet (destination->v.maxs, 1, 1, 1);
+	source->v.origin[axis] = qcvm->areanodes[0].dist - 128; destination->v.origin[axis] = qcvm->areanodes[0].dist + 128;
+	source->v.origin[2] = destination->v.origin[2] = qcvm->worldmodel->maxs[2] + 512;
+	source->v.solid = destination->v.solid = SOLID_BBOX;
+	source->v.health = 100; destination->v.health = 200; source->v.touch = FixtureRef ("fixture_ref_copy_touch");
+	source->alpha = 27; source->sendinterval = true; source->sendinterval_default = true;
+	source->freetime = 1.25f; source->baseline.modelindex = 1; source->baseline.frame = 9;
+	destination->alpha = 91; destination->sendinterval = false; destination->sendinterval_default = false;
+	destination->freetime = 2.5f; destination->baseline.modelindex = 3; destination->baseline.frame = 12;
+	GetEdictFieldValue (source, ED_FindFieldOffset ("fixture_copy_tail_scalar"))->_float = 41.25f;
+	VectorSet (GetEdictFieldValue (source, ED_FindFieldOffset ("fixture_copy_tail_vector"))->vector, 2, -3, 5);
+	GetEdictFieldValue (source, ED_FindFieldOffset ("fixture_copy_tail_string"))->string = PR_SetEngineString ("copy-tail-string");
+	GetEdictFieldValue (source, ED_FindFieldOffset ("fixture_copy_tail_entity"))->edict = EDICT_TO_PROG (source);
+	GetEdictFieldValue (source, ED_FindFieldOffset ("fixture_copy_tail_function"))->function = FixtureRef ("fixture_ref_copy_touch");
+	GetEdictFieldValue (source, ED_FindFieldOffset ("fixture_copy_tail_field"))->_int = ED_FindFieldOffset ("health");
+	GetEdictFieldValue (source, ED_FindFieldOffset ("fixture_copy_tail_last"))->_float = 83.5f;
+	GetEdictFieldValue (source, terminal->ofs)->_float = 642.25f;
+	SV_LinkEdict (source, false); SV_LinkEdict (destination, false);
+	link_t *source_area = FixtureReflectArea (source), *destination_area = FixtureReflectArea (destination);
+	assert (source_area && destination_area && source_area != destination_area);
+	trigger->v.solid = SOLID_TRIGGER; trigger->v.touch = FixtureRef ("fixture_ref_copy_touch");
+	VectorCopy (source->v.origin, trigger->v.origin);
+	VectorSet (trigger->v.mins, -16, -16, -16); VectorSet (trigger->v.maxs, 16, 16, 16);
+	SV_LinkEdict (trigger, false);
+	guard_count = 0; FixtureCopyGuardNeighbours (source, destination, guards, &guard_count);
+	FixtureCopyGuardNeighbours (destination, source, guards, &guard_count);
+	ED_Retain (source);
+	fixture_copy_snapshot_t source_before, destination_before, free_source_before;
+	size_t bytes = FixtureCopyPayloadBytes ();
+	FixtureCopyCapture (source, &source_before); FixtureCopyCapture (destination, &destination_before);
+	FixtureCopyPrime (NUM_FOR_EDICT (source));
+	int live_source_ref = EDICT_TO_PROG (source), live_destination_ref = EDICT_TO_PROG (destination);
+	FixtureCopySetEntity ("fixture_copy_input_source", source); FixtureCopySetEntity ("fixture_copy_input_destination", destination);
+	assert (FixtureCopyEntityRaw ("fixture_copy_input_source") == live_source_ref &&
+		FixtureCopyEntityRaw ("fixture_copy_input_destination") == live_destination_ref);
+	FixtureCopyExec ("copy_explicit");
+	assert (FixtureCopyEntityRaw ("fixture_copy_entity") == EDICT_TO_PROG (destination) &&
+		FixtureCopyEntityRaw ("fixture_copy_prime_entity") == EDICT_TO_PROG (source));
+	FixtureCopyAssert (source, &source_before);
+	FixtureCopyAssertCopiedHeader (destination, &destination_before, source);
+	FixtureCopyCheckPayload (source, destination, source_before.payload, bytes);
+	FixtureCopyTypedTail (destination, source);
+	assert (FixtureReflectArea (destination) == source_area && FixtureReflectArea (source) == source_area);
+	assert (FixtureFloat ("fixture_copy_touch_count") == 0 && destination->v.health == 100);
+	FixtureCopyGuardCheck (guards, guard_count);
+	SV_LinkEdict (destination, true);
+	assert (destination->v.health == 99 && FixtureFloat ("fixture_copy_touch_count") == 1);
+	link_t *stale_area = FixtureReflectArea (source);
+	source->v.origin[axis] = qcvm->areanodes[0].dist + 192;
+	FixtureCopyCapture (source, &source_before);
+	FixtureCopySetEntity ("fixture_copy_input_source", source); FixtureCopySetEntity ("fixture_copy_input_destination", source);
+	FixtureCopyExec ("copy_explicit");
+	assert (FixtureCopyEntityRaw ("fixture_copy_entity") == EDICT_TO_PROG (source));
+	assert (FixtureReflectArea (source) && FixtureReflectArea (source) != stale_area);
+	FixtureCopyCheckPayload (source, source, source_before.payload, bytes);
+	FixtureCopyAssertCopiedHeader (source, &source_before, source);
+	assert (FixtureFloat ("fixture_copy_touch_count") == 1);
+	FixtureCopyEdictBounds (source);
+	edict_t *expected_slot = ED_Alloc ();
+	int expected_raw = EDICT_TO_PROG (expected_slot);
+	expected_slot->baseline.modelindex = 37; expected_slot->baseline.frame = 14;
+	ED_Free (expected_slot);
+	expected_slot->freetime = qcvm->time - 2000;
+	ED_RebuildFreeList (false);
+	assert (qcvm->free_list.size && qcvm->free_list.circular_buffer[qcvm->free_list.head_index] == NUM_FOR_EDICT (expected_slot));
+	fixture_copy_snapshot_t allocation_before;
+	FixtureCopyCapture (expected_slot, &allocation_before);
+	qboolean expected_live = false;
+	memcpy (allocation_before.header + offsetof (edict_t, free) - offsetof (edict_t, num_leafs), &expected_live, sizeof (expected_live));
+	guard_count = 0; FixtureCopyGuardNeighbours (expected_slot, source, guards, &guard_count);
+	FixtureCopySetEntity ("fixture_copy_input_source", source); FixtureCopyPrime (NUM_FOR_EDICT (source));
+	FixtureCopyCapture (source, &source_before);
+	FixtureCopyExec ("copy_allocate");
+	int allocated_raw = FixtureCopyEntityRaw ("fixture_copy_entity");
+	assert (allocated_raw == expected_raw && allocated_raw != 0);
+	edict_t *allocated = PROG_TO_EDICT (allocated_raw);
+	assert (allocated == expected_slot && allocated_raw != EDICT_TO_PROG (source) && !allocated->free &&
+		FixtureCopyEntityRaw ("fixture_copy_prime_entity") == EDICT_TO_PROG (source));
+	FixtureCopyAssert (source, &source_before);
+	assert (allocated->alpha == source->alpha && allocated->sendinterval == source->sendinterval &&
+		allocated->sendinterval_default == source->sendinterval_default && !allocated->retain_count && source->retain_count == 1);
+	FixtureCopyAssertCopiedHeader (allocated, &allocation_before, source);
+	assert (FixtureReflectArea (allocated) && FixtureReflectArea (allocated) == FixtureReflectArea (source));
+	FixtureCopyGuardCheck (guards, guard_count);
+	FixtureCopyCheckPayload (source, allocated, source_before.payload, bytes);
+	assert (FixtureFloat ("fixture_copy_touch_count") == 1);
+	ED_Free (allocated);
+	ED_Release (source);
+	FixtureCopySetEntity ("fixture_copy_input_source", probe); FixtureCopySetEntity ("fixture_copy_input_destination", destination);
+	int free_probe_ref = EDICT_TO_PROG (probe), live_destination = EDICT_TO_PROG (destination);
+	ED_Free (probe);
+	FixtureCopySetRawEntity ("fixture_copy_input_source", free_probe_ref);
+	FixtureCopySetRawEntity ("fixture_copy_input_destination", live_destination);
+	FixtureCopyCapture (probe, &free_source_before); FixtureCopyCapture (destination, &destination_before);
+	FixtureCopyExec ("copy_explicit");
+	assert (FixtureCopyEntityRaw ("fixture_copy_entity") == EDICT_TO_PROG (qcvm->edicts));
+	assert (probe->free); FixtureCopyAssert (probe, &free_source_before);
+	assert (!destination->free); FixtureCopyAssert (destination, &destination_before);
+	FixtureCopySetEntity ("fixture_copy_input_source", source); FixtureCopySetEntity ("fixture_copy_input_destination", destination);
+	int freed_destination_ref = FixtureCopyEntityRaw ("fixture_copy_input_destination");
+	ED_Free (destination);
+	FixtureCopySetRawEntity ("fixture_copy_input_destination", freed_destination_ref);
+	FixtureCopyCapture (destination, &destination_before);
+	FixtureCopyExec ("copy_explicit");
+	assert (FixtureCopyEntityRaw ("fixture_copy_entity") == EDICT_TO_PROG (qcvm->edicts));
+	assert (destination->free); FixtureCopyAssert (destination, &destination_before);
+	assert (FixtureCopyEntityRaw ("fixture_copy_input_destination") == freed_destination_ref);
+	probe->freetime = qcvm->time - 1000;
+	ED_RebuildFreeList (false);
+	assert (qcvm->free_list.size && qcvm->free_list.circular_buffer[qcvm->free_list.head_index] == NUM_FOR_EDICT (probe));
+	freelist_t before_free_source = qcvm->free_list;
+	FixtureCopyCapture (probe, &free_source_before);
+	int num_before = qcvm->num_edicts;
+	FixtureCopySetRawEntity ("fixture_copy_input_source", free_probe_ref); FixtureCopyPrime (NUM_FOR_EDICT (source));
+	FixtureCopyExec ("copy_allocate");
+	assert (FixtureCopyEntityRaw ("fixture_copy_entity") == EDICT_TO_PROG (qcvm->edicts));
+	assert (qcvm->num_edicts == num_before && !memcmp (&qcvm->free_list, &before_free_source, sizeof (before_free_source)));
+	FixtureCopyAssert (probe, &free_source_before);
+	edict_t *drained[MAX_EDICTS];
+	FixtureCopyLimitPreflight (drained, source);
+	ED_Free (trigger);
+	return source;
+}
+static void FixtureCopyPlayerCases (void)
+{
+	qmodel_t *world;
+	fixture_copy_witness_t witness;
+	edict_t *server_entity;
+	FixtureSwitch (&sv.qcvm); server_entity = FixtureCopyBody (false);
+	FixtureCopyRemember (server_entity, &witness); world = sv.qcvm.worldmodel;
+	for (int load = 0; load < 2; load++)
+	{
+		FixtureSwitch (NULL); cl.worldmodel = world; cl.model_precache[1] = world; FixtureLoadCSProgsNative ();
+		assert (qcvm == NULL && cl.qcvm.progs && cl.qcvm.edicts && cl.qcvm.extfuncs.CSQC_Ent_Update);
+		FixtureSwitch (&cl.qcvm); FixtureCopyBody (true); PR_ClearProgs (&cl.qcvm);
+		FixtureSwitch (&sv.qcvm); FixtureCopyCheckWitness (&witness);
+	}
+	SV_SpawnServer ("e1m1");
+	FixtureSwitch (&sv.qcvm);
+	assert (sv.active && sv.qcvm.edicts && sv.qcvm.worldmodel);
+	server_entity = FixtureCopyBody (false); FixtureCopyRemember (server_entity, &witness); world = sv.qcvm.worldmodel;
+	FixtureCopyPrepareScores ();
+	FixtureSwitch (NULL); cl.worldmodel = world; cl.model_precache[1] = world; FixtureLoadCSProgsNative ();
+	assert (qcvm == NULL && cl.qcvm.progs && cl.qcvm.edicts && cl.qcvm.extfuncs.CSQC_Ent_Update);
+	FixtureSwitch (&cl.qcvm);
+	FixtureCopyBody (true); FixtureCopyPlayerQueries ();
+	FixtureCopyPaletteReady ();
+	FixtureCopyPaletteQuery ("topcolor_rgb", 12); FixtureCopyPaletteQuery ("bottomcolor_rgb", 5);
+	FixtureSwitch (&sv.qcvm); FixtureCopyCheckWitness (&witness); FixtureSwitch (&cl.qcvm);
+	assert (!cl.entities && !cl.static_entities && !cl.num_statics && cl.scores);
+	CL_FreeState (); assert (!cl.qcvm.progs && !cl.scores && !cl.maxclients);
+	FixtureSwitch (&sv.qcvm); FixtureCopyCheckWitness (&witness);
+	FixtureSwitch (NULL); cl.worldmodel = world; cl.model_precache[1] = world; FixtureLoadCSProgsNative ();
+	assert (qcvm == NULL && cl.qcvm.progs && cl.qcvm.edicts);
+	FixtureSwitch (&cl.qcvm);
+	FixtureCopyPermission (true); FixtureCopyNullScoreQueries (); PR_ClearProgs (&cl.qcvm);
+	FixtureSwitch (&sv.qcvm); FixtureCopyCheckWitness (&witness);
+	puts ("QC_BINDING_COPY_PLAYER_NATIVE_PASSED");
 }
 #endif
 
@@ -1655,6 +2108,13 @@ int main (int argc, char **argv)
 	if (COM_CheckParm ("-entities"))
 	{
 		FixtureEntityCases ();
+		return 0;
+	}
+#endif
+#ifdef QC_COPY_PLAYER_NATIVE_HOST_FIXTURE
+	if (COM_CheckParm ("-copy-player"))
+	{
+		FixtureCopyPlayerCases ();
 		return 0;
 	}
 #endif

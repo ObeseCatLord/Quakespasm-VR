@@ -137,7 +137,12 @@ receipts. These overlap intentionally; test shared boundaries once.
   Four actual shared-array inline quad witnesses pass; no unavailable witness.
   Native owners remain unchanged; no GPU work. [Exact results/limits](qc-surface-current-2.0-results.md).
   Rendered atlas/authored consumers, other shape/format/error boundaries and
-  remaining entity-copy/player/command families stay open; no full F03 closure.
+  remaining command/authored/error consumers stay open; no full F03 closure.
+- F03: loaded full-payload entity copy, exact native omitted-allocation slot,
+  self metadata/relinking, freed-source FIFO/limit refusal and prepared native
+  scoreboard queries pass across actual client loads/clears/server replacement.
+  Local Astra/xhigh caught two oracle gaps; main corrections and affected guards
+  pass. [Exact results/limits](qc-copy-player-current-2.0-results.md). No full F03 closure.
 - F07: repeated native mj4m1 loads observe actual indexed worker entries; all
   427881 surfaces match native serial extent recalculation on both loads, with
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).
@@ -214,6 +219,11 @@ receipts. These overlap intentionally; test shared boundaries once.
   Refresh affected final artifacts once required source fixes settle; do not
   claim current package acceptance yet.
   Current liquid-category repair also changes gl_rmain.c; include it in F10.
+- F10: native ARM b92f3741 build completed despite local logging interruption.
+  Native source/artifact/receipt hashes, staging, network-disabled static package
+  verification and retrieved transport checksum pass:45ELF/118contributors/651entries.
+  [Exact artifact scope](arm-package-recovered-2.0-results.md). Concurrent MSVC
+  portability changes require final matching artifacts; no current F10 closure.
 - F03–F08 and F10 remain open at their finite boundaries above.
 
 ## Senior dispositions and independent main checks

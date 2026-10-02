@@ -18,8 +18,10 @@ tail_vector(vector3), tail_string(string), tail_entity(entity), tail_function
 Twelve previous outputs/variants must remain byte-identical. Both generated
 SSQC/CSQC programs identical; no-op CSQC_Ent_Update for real native admission.
 
-Exact refs fixture_ref_copy_NAME for copy_explicit, copy_allocate, edict,
-player_string, player_float, permission and touch. Builtin ref namespace
+Exact refs fixture_ref_copy_explicit, fixture_ref_copy_allocate,
+fixture_ref_copy_edict, fixture_ref_copy_player_string,
+fixture_ref_copy_player_float, fixture_ref_copy_permission and
+fixture_ref_copy_touch. Builtin ref namespace
 copy_builtin_NAME must be separate. Native copyentity400, edict_num459,
 getplayerkeyvalue348, named getplayerkeyfloat, named checkbuiltin, strlen114,
 strcat115. Inputs fixture_copy_input_source/destination(entity), index(float),

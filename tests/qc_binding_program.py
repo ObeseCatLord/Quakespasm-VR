@@ -9,7 +9,7 @@ from cooperative_qc_program import source_program
 
 def assemble(program, resources=False, files=False, calls=False, tokens=False, events=False,
              reflection=False, reflection_fields_complete=False, entities=False,
-             entity_fingerprint="none", surfaces=False):
+             entity_fingerprint="none", surfaces=False, copy_player=False):
     if entity_fingerprint not in ("none", "complete", "missing"):
         raise ValueError("unknown entity fingerprint variant")
     if entity_fingerprint != "none" and not entities:
@@ -1112,6 +1112,121 @@ def assemble(program, resources=False, files=False, calls=False, tokens=False, e
             add_ref("surface_" + key, entry("fixture_surface_" + key, code))
         entry("CSQC_Ent_Update", [])
 
+    if copy_player:
+        original_fields = {}
+        for pos in range(0, len(fields), 8):
+            kind, offset, text_offset = struct.unpack_from("<HHi", fields, pos)
+            text = bytes(strings[text_offset:]).split(b"\0", 1)[0].decode("ascii", "replace")
+            original_fields.setdefault(text, (kind & 0x7fff, offset))
+        original_globals = {}
+        for pos in range(0, len(global_defs), 8):
+            kind, slot, text_offset = struct.unpack_from("<HHi", global_defs, pos)
+            text = bytes(strings[text_offset:]).split(b"\0", 1)[0].decode("ascii", "replace")
+            original_globals.setdefault(text, (kind & 0x7fff, slot))
+        if "health" not in original_fields or "other" not in original_globals:
+            raise ValueError("copy/player fixture requires original health field and other global")
+        health_type, health_offset = original_fields["health"]
+        other_type, other_slot = original_globals["other"]
+        if health_type != 2 or other_type != 4:
+            raise ValueError("copy/player fixture requires float health and entity other")
+
+        tail = (("scalar", 2, 1), ("vector", 3, 3), ("string", 1, 1),
+                ("entity", 4, 1), ("function", 6, 1), ("field", 5, 1),
+                ("last", 2, 1))
+        if any("fixture_copy_tail_" + key in original_fields for key, _, _ in tail):
+            raise ValueError("copy/player fixture fields already exist")
+        width = header[14]
+        for key, kind, words in tail:
+            fields.extend(struct.pack("<HHi", kind, width, name("fixture_copy_tail_" + key)))
+            width += words
+        header[14] = width
+
+        builtin_numbers = (("copyentity", 400), ("edict_num", 459),
+                           ("getplayerkeyvalue", 348), ("getplayerkeyfloat", 0),
+                           ("checkbuiltin", 0), ("strlen", 114), ("strcat", 115))
+        for builtin, number in builtin_numbers:
+            add_ref("copy_builtin_" + builtin,
+                    add_function(builtin, -number if number else 0))
+
+        inputs = {
+            "source": global_slot("fixture_copy_input_source", 4),
+            "destination": global_slot("fixture_copy_input_destination", 4),
+            "index": global_slot("fixture_copy_input_index"),
+            "prime_index": global_slot("fixture_copy_input_prime_index", value=1.0),
+            "player": global_slot("fixture_copy_input_player"),
+            "key": global_slot("fixture_copy_input_key", 1),
+        }
+        outputs = {
+            "entity": global_slot("fixture_copy_entity", 4),
+            "prime_entity": global_slot("fixture_copy_prime_entity", 4),
+            "scalar": global_slot("fixture_copy_scalar"),
+            "prime_scalar": global_slot("fixture_copy_prime_scalar"),
+            "string": global_slot("fixture_copy_string", 1),
+            "prime_string": global_slot("fixture_copy_prime_string", 1),
+            "player_enabled": global_slot("fixture_copy_player_enabled"),
+            "player_float_enabled": global_slot("fixture_copy_player_float_enabled"),
+            "touch_count": global_slot("fixture_copy_touch_count"),
+        }
+        prime_source = global_slot("fixture_copy_prime_source", 1, name("copy-player-prime"))
+        one = global_slot("fixture_copy_one", value=1.0)
+        health_field = global_slot("fixture_copy_health_field", 5, health_offset)
+        health_value = global_slot("fixture_copy_health_value")
+        health_next = global_slot("fixture_copy_health_next")
+        health_pointer = global_slot("fixture_copy_health_pointer", 7)
+
+        def copy_call(code, builtin, args=(), output=None, store=31):
+            for index, (slot, opcode) in enumerate(args):
+                code.append((opcode, slot, 4 + index * 3, 0))
+            code.append((51 + len(args), ref_slots["copy_builtin_" + builtin], 0, 0))
+            if output is not None:
+                code.append((store, 1, output, 0))
+
+        def copy_entry(key, code):
+            ref_name = key if key.startswith("copy_") else "copy_" + key
+            function_name = key[5:] if key.startswith("copy_") else key
+            add_ref(ref_name, entry("fixture_copy_" + function_name, code))
+
+        for key in ("explicit", "allocate", "edict"):
+            code = []
+            copy_call(code, "edict_num", ((inputs["prime_index"], 31),),
+                      outputs["prime_entity"], 34)
+            if key == "edict":
+                copy_call(code, "edict_num", ((inputs["index"], 31),), outputs["entity"], 34)
+            else:
+                args = ((inputs["source"], 34),)
+                if key == "explicit":
+                    args += ((inputs["destination"], 34),)
+                copy_call(code, "copyentity", args, outputs["entity"], 34)
+            copy_entry("copy_" + key, code)
+
+        for key, builtin, store in (("player_string", "getplayerkeyvalue", 33),
+                                    ("player_float", "getplayerkeyfloat", 31)):
+            code = []
+            if store == 33:
+                copy_call(code, "strlen", ((prime_source, 33),), outputs["prime_scalar"])
+                copy_call(code, "strcat", ((prime_source, 33),), outputs["prime_string"], 33)
+            else:
+                copy_call(code, "strcat", ((prime_source, 33),), outputs["prime_string"], 33)
+                copy_call(code, "strlen", ((prime_source, 33),), outputs["prime_scalar"])
+            copy_call(code, builtin, ((inputs["player"], 31), (inputs["key"], 33)),
+                      outputs["string"] if store == 33 else outputs["scalar"], store)
+            copy_entry(key, code)
+
+        code = []
+        for key, ref_name, output in (("player", "getplayerkeyvalue", "player_enabled"),
+                                      ("player_float", "getplayerkeyfloat", "player_float_enabled")):
+            copy_call(code, "checkbuiltin", ((ref_slots["copy_builtin_" + ref_name], 36),),
+                      outputs[output])
+        copy_entry("permission", code)
+
+        code = [(6, outputs["touch_count"], one, outputs["touch_count"]),
+                (24, other_slot, health_field, health_value),
+                (8, health_value, one, health_next),
+                (30, other_slot, health_field, health_pointer),
+                (37, health_next, health_pointer, 0)]
+        copy_entry("touch", code)
+        entry("CSQC_Ent_Update", [])
+
     strings.extend(b"\0" * (-len(strings) % 4))
     output = bytearray(60)
     for section, (slot, width) in zip(sections, ((2, 8), (4, 8), (6, 8),
@@ -1137,9 +1252,14 @@ def main():
                         help="supply missing native engine fields in reflection mode")
     parser.add_argument("--entities", action="store_true", help="append loaded entity-search callers")
     parser.add_argument("--surfaces", "-surfaces", action="store_true", help="append loaded native BSP surface callers")
+    parser.add_argument("--copy-player", action="store_true", help="append loaded entity-copy and CSQC player-query callers")
     parser.add_argument("--entity-fingerprint", choices=("none", "complete", "missing"), default="none",
                         help="client search fingerprint variant for entity mode")
     args = parser.parse_args()
+    if args.copy_player and (args.reflection or args.entities or args.surfaces or
+                             args.reflection_fields_complete or any((args.resources, args.files,
+                                 args.calls, args.tokens, args.events))):
+        parser.error("--copy-player is a separate fixture mode")
     existing_modes = (args.resources, args.files, args.calls, args.tokens, args.events)
     if sum(existing_modes) > 1:
         parser.error("--resources, --files, --calls, --tokens and --events are separate fixture modes")
@@ -1155,7 +1275,7 @@ def main():
         parser.error("--surfaces is a separate fixture mode")
     result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls,
                       args.tokens, args.events, args.reflection, args.reflection_fields_complete,
-                      args.entities, args.entity_fingerprint, args.surfaces)
+                      args.entities, args.entity_fingerprint, args.surfaces, args.copy_player)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)
