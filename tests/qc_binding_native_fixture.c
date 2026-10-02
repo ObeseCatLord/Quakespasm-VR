@@ -9,6 +9,11 @@
 #include <math.h>
 #include <stdlib.h>
 
+/* Reflection-only fixture links the actual host owner plus this narrow shim. */
+#ifdef QC_REFLECTION_NATIVE_HOST_FIXTURE
+extern void FixtureLoadCSProgsNative (void);
+#endif
+
 static void FixtureSwitch (qcvm_t *vm)
 {
 	PR_SwitchQCVM (NULL);
@@ -279,6 +284,202 @@ static void FixtureEventCases (void)
 	}
 	puts ("QC_BINDING_EVENTS_NATIVE_PASSED loaded hook, real parser continuation and CSQC reload");
 }
+
+#ifdef QC_REFLECTION_NATIVE_HOST_FIXTURE
+static void FixtureReflectExec (const char *entry)
+{
+	char name[96];
+	q_snprintf (name, sizeof (name), "fixture_ref_reflect_%s", entry);
+	PR_ExecuteProgram (FixtureRef (name));
+}
+
+static int FixtureReflectIndex (const char *name)
+{
+	for (int i = 0; i < qcvm->progs->numfielddefs; i++)
+		if (!strcmp (PR_GetString (qcvm->fielddefs[i].s_name), name)) return i;
+	assert (!"Expected loaded field missing");
+	return -1;
+}
+
+static void FixtureReflectMetadata (qboolean complete)
+{
+	ddef_t *original = (ddef_t *)((byte *)qcvm->progs + qcvm->progs->ofs_fielddefs);
+	assert ((qcvm->fielddefs == original) == complete);
+	for (int i = 1; i < qcvm->progs->numfielddefs; i++)
+	{
+		const char *name = PR_GetString (qcvm->fielddefs[i].s_name);
+		int first = FixtureReflectIndex (name);
+		G_INT (FixtureGlobal ("fixture_reflect_input_name", ev_string)->ofs) = qcvm->fielddefs[i].s_name;
+		FixtureReflectExec ("lookup");
+		if (FixtureFloat ("fixture_reflect_prime") != 12 || FixtureFloat ("fixture_reflect_index") != first)
+			fprintf (stderr, "Reflection lookup %s: prime %g, index %g, expected %d\n", name,
+				FixtureFloat ("fixture_reflect_prime"), FixtureFloat ("fixture_reflect_index"), first);
+		assert (FixtureFloat ("fixture_reflect_prime") == 12 && FixtureFloat ("fixture_reflect_index") == first);
+		assert (FixtureFloat ("fixture_reflect_count") == qcvm->progs->numfielddefs);
+		FixtureSetFloat ("fixture_reflect_input_index", i);
+		FixtureReflectExec ("metadata");
+		assert (!strcmp (FixtureString ("fixture_reflect_name"), name));
+		assert (FixtureFloat ("fixture_reflect_type") == (qcvm->fielddefs[i].type & ~DEF_SAVEGLOBAL));
+		assert (G_INT (FixtureGlobal ("fixture_reflect_offset", ev_field)->ofs) == qcvm->fielddefs[i].ofs);
+	}
+	int component = FixtureReflectIndex ("colormod_x");
+	assert ((qcvm->fielddefs[component].type & DEF_SAVEGLOBAL) == (complete ? 0 : DEF_SAVEGLOBAL));
+	int first = FixtureReflectIndex ("fixture_reflect_duplicate"), second = -1;
+	for (int i = first + 1; i < qcvm->progs->numfielddefs; i++)
+		if (!strcmp (PR_GetString (qcvm->fielddefs[i].s_name), "fixture_reflect_duplicate")) { second = i; break; }
+	assert (second > first && qcvm->fielddefs[first].ofs != qcvm->fielddefs[second].ofs);
+	G_INT (FixtureGlobal ("fixture_reflect_input_name", ev_string)->ofs) = PR_SetEngineString ("fixture_absent_field");
+	FixtureReflectExec ("lookup");
+	assert (FixtureFloat ("fixture_reflect_prime") == 12 && FixtureFloat ("fixture_reflect_index") == 0);
+	FixtureSetFloat ("fixture_reflect_input_index", qcvm->progs->numfielddefs + 7);
+	FixtureReflectExec ("metadata");
+	assert (FixtureFloat ("fixture_reflect_prime") == 12 && FixtureFloat ("fixture_reflect_type") == ev_void);
+	assert (G_INT (FixtureGlobal ("fixture_reflect_name", ev_string)->ofs) == 0);
+	assert (G_INT (FixtureGlobal ("fixture_reflect_offset", ev_field)->ofs) == 0);
+	assert (!strcmp (FixtureString ("fixture_reflect_string_prime"), "return-prime"));
+}
+
+static qboolean FixtureReflectWrite (edict_t *ent, int index, const char *value, string_t alias)
+{
+	FixtureSetFloat ("fixture_reflect_input_index", index);
+	G_INT (FixtureGlobal ("fixture_reflect_input_entity", ev_entity)->ofs) = EDICT_TO_PROG (ent);
+	G_INT (FixtureGlobal ("fixture_reflect_input_value", ev_string)->ofs) = alias ? alias : PR_SetEngineString (value);
+	FixtureReflectExec ("write");
+	assert (FixtureFloat ("fixture_reflect_prime") == 12);
+	return FixtureFloat ("fixture_reflect_put") != 0;
+}
+
+static link_t *FixtureReflectArea (edict_t *ent)
+{
+	link_t *owner = NULL;
+	for (int n = 0; n < qcvm->numareanodes; n++)
+		for (int trigger = 0; trigger < 2; trigger++)
+		{
+			link_t *head = trigger ? &qcvm->areanodes[n].trigger_edicts : &qcvm->areanodes[n].solid_edicts;
+			int steps = 0;
+			for (link_t *p = head->next; p != head; p = p->next)
+			{
+				assert (++steps <= qcvm->num_edicts);
+				if (p == &ent->area) { assert (!owner); owner = head; }
+			}
+		}
+	return owner;
+}
+
+static void FixtureReflectZone (edict_t *ent, const char *expected)
+{
+	assert (ent->v.classname < 0);
+	size_t id = (size_t)(-1 - ent->v.classname);
+	assert (id < qcvm->knownzonesize && (qcvm->knownzone[id >> 3] & (1u << (id & 7))));
+	assert (!strcmp (PR_GetString (ent->v.classname), expected));
+	FixtureSetFloat ("fixture_reflect_input_index", FixtureReflectIndex ("classname"));
+	G_INT (FixtureGlobal ("fixture_reflect_input_entity", ev_entity)->ofs) = EDICT_TO_PROG (ent);
+	FixtureReflectExec ("read");
+	assert (!strcmp (FixtureString ("fixture_reflect_get"), expected));
+}
+
+static edict_t *FixtureReflectBody (qboolean server)
+{
+	edict_t *ent = ED_Alloc (), *trigger = NULL;
+	int axis = qcvm->areanodes[0].axis;
+	char origin[128];
+	assert (axis >= 0 && axis < 2);
+	VectorSet (ent->v.mins, -2, -2, -2); VectorSet (ent->v.maxs, 2, 2, 2);
+	ent->v.origin[axis] = qcvm->areanodes[0].dist + 128;
+	ent->v.origin[2] = qcvm->worldmodel->maxs[2] + 512;
+	ent->v.solid = SOLID_BBOX; ent->v.health = 100;
+	if (server) SV_LinkEdict (ent, false);
+	link_t *initial = FixtureReflectArea (ent);
+	assert ((initial != NULL) == server);
+	int classname = FixtureReflectIndex ("classname"), think = FixtureReflectIndex ("think");
+	assert (FixtureReflectWrite (ent, classname, "native-zone", 0)); FixtureReflectZone (ent, "native-zone");
+	assert (FixtureReflectWrite (ent, classname, NULL, ent->v.classname)); FixtureReflectZone (ent, "native-zone");
+	string_t interior = PR_SetEngineString (PR_GetString (ent->v.classname) + 7);
+	assert (FixtureReflectWrite (ent, classname, NULL, interior)); FixtureReflectZone (ent, "zone");
+	assert (FixtureReflectWrite (ent, classname, "", 0)); FixtureReflectZone (ent, "");
+	assert (FixtureReflectWrite (ent, classname, "replacement", 0)); FixtureReflectZone (ent, "replacement");
+	FixtureSetFloat ("fixture_reflect_input_index", qcvm->progs->numfielddefs + 7);
+	FixtureReflectExec ("read");
+	assert (G_INT (FixtureGlobal ("fixture_reflect_get", ev_string)->ofs) == 0);
+	assert (!strcmp (FixtureString ("fixture_reflect_string_prime"), "return-prime"));
+	vec3_t target; VectorCopy (ent->v.origin, target); target[axis] = qcvm->areanodes[0].dist - 128;
+	if (server)
+	{
+		trigger = ED_Alloc (); trigger->v.solid = SOLID_TRIGGER;
+		VectorCopy (target, trigger->v.origin); VectorSet (trigger->v.mins, -16, -16, -16); VectorSet (trigger->v.maxs, 16, 16, 16);
+		trigger->v.touch = FixtureRef ("fixture_ref_reflect_touch"); SV_LinkEdict (trigger, false);
+	}
+	q_snprintf (origin, sizeof (origin), "%g %g %g", target[0], target[1], target[2]);
+	assert (FixtureReflectWrite (ent, FixtureReflectIndex ("origin"), origin, 0));
+	assert (VectorCompare (ent->v.origin, target));
+	link_t *moved = FixtureReflectArea (ent);
+	assert (server ? moved && moved != initial : moved == NULL);
+	assert (FixtureReflectWrite (ent, FixtureReflectIndex ("mins"), "-4 -5 -6", 0));
+	assert (FixtureReflectWrite (ent, FixtureReflectIndex ("maxs"), "4 5 6", 0));
+	for (int i = 0; i < 3; i++)
+	{
+		assert (ent->v.mins[i] == -4 - i && ent->v.maxs[i] == 4 + i);
+		assert (ent->v.absmin[i] == (server ? target[i] - 5 - i : 0));
+		assert (ent->v.absmax[i] == (server ? target[i] + 5 + i : 0));
+	}
+	assert (FixtureReflectWrite (ent, FixtureReflectIndex ("solid"), "0", 0));
+	assert (!FixtureReflectArea (ent) && !ent->area.prev);
+	assert (FixtureReflectWrite (ent, FixtureReflectIndex ("solid"), "2", 0));
+	assert ((FixtureReflectArea (ent) != NULL) == server);
+	assert (FixtureReflectWrite (ent, think, "fixture_reflect_touch", 0));
+	assert (ent->v.think == FixtureRef ("fixture_ref_reflect_touch"));
+	func_t saved_think = ent->v.think;
+	ent->v.origin[axis] = qcvm->areanodes[0].dist + 96; // Prepared stale spatial state.
+	link_t *prev = ent->area.prev, *next = ent->area.next;
+	byte before[4096]; size_t bytes = qcvm->progs->entityfields * 4;
+	assert (bytes <= sizeof (before)); memcpy (before, &ent->v, bytes);
+	assert (!FixtureReflectWrite (ent, qcvm->progs->numfielddefs + 7, "0 0 0", 0));
+	assert (!memcmp (before, &ent->v, bytes) && ent->area.prev == prev && ent->area.next == next);
+	assert (!FixtureReflectWrite (ent, think, "fixture_absent_function", 0) && ent->v.think == saved_think);
+	link_t *failed_parse_owner = FixtureReflectArea (ent);
+	assert (server ? failed_parse_owner && failed_parse_owner != moved : !failed_parse_owner);
+	assert (ent->v.absmin[axis] == (server ? ent->v.origin[axis] - 5 - axis : 0));
+	assert (ent->v.health == 100 && FixtureFloat ("fixture_reflect_touch_count") == 0);
+	if (server)
+	{
+		VectorCopy (ent->v.origin, trigger->v.origin); SV_LinkEdict (trigger, false);
+		SV_LinkEdict (ent, true);
+		assert (ent->v.health == 99 && FixtureFloat ("fixture_reflect_touch_count") == 1);
+	}
+	return ent;
+}
+
+static void FixtureReflectionCases (void)
+{
+	qboolean complete = COM_CheckParm ("-reflection-fields-complete") != 0;
+	dprograms_t *server_program = sv.qcvm.progs;
+	qmodel_t *world = sv.qcvm.worldmodel;
+	FixtureSwitch (&sv.qcvm); FixtureReflectMetadata (complete);
+	edict_t *server_entity = FixtureReflectBody (true);
+	link_t *prev = server_entity->area.prev, *next = server_entity->area.next;
+	for (int load = 0; load < 2; load++)
+	{
+		FixtureSwitch (NULL);
+		cl.worldmodel = world; cl.model_precache[1] = world;
+		FixtureLoadCSProgsNative ();
+		assert (qcvm == NULL && cl.qcvm.progs && cl.qcvm.edicts && cl.qcvm.extfuncs.CSQC_Ent_Update);
+		FixtureSwitch (&cl.qcvm);
+		FixtureReflectMetadata (complete); FixtureReflectBody (false);
+		PR_ClearProgs (&cl.qcvm);
+		assert (!cl.qcvm.progs && !cl.qcvm.knownzone && sv.qcvm.progs == server_program);
+		FixtureSwitch (&sv.qcvm);
+		assert (server_entity->area.prev == prev && server_entity->area.next == next && server_entity->v.health == 99);
+		FixtureReflectZone (server_entity, "replacement"); FixtureReflectMetadata (complete);
+	}
+	PR_ClearProgs (&sv.qcvm);
+	assert (!sv.qcvm.progs && !sv.qcvm.knownzone);
+	SV_SpawnServer ("e1m1");
+	FixtureSwitch (&sv.qcvm);
+	assert (sv.active && sv.qcvm.edicts && sv.qcvm.worldmodel);
+	FixtureReflectMetadata (complete); FixtureReflectBody (true);
+	puts ("QC_BINDING_REFLECTION_NATIVE_PASSED actual field maps, zoned aliases and native relinking");
+}
+#endif
 
 static void FixtureResourceOwn (qboolean csqc)
 {
@@ -871,6 +1072,13 @@ int main (int argc, char **argv)
 
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
 	assert (sv.active);
+#ifdef QC_REFLECTION_NATIVE_HOST_FIXTURE
+	if (COM_CheckParm ("-reflection"))
+	{
+		FixtureReflectionCases ();
+		return 0;
+	}
+#endif
 	if (COM_CheckParm ("-events"))
 	{
 		FixtureEventCases ();

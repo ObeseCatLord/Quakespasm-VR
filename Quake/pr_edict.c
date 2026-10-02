@@ -1945,6 +1945,8 @@ static void PR_MergeEngineFieldDefs (void)
 						qcvm->fielddefs[qcvm->progs->numfielddefs].type = ev_float | DEF_SAVEGLOBAL;
 						const char *fielddef_name = va ("%s_%c", extrafields[j].fname, 'x' + a);
 						qcvm->fielddefs[qcvm->progs->numfielddefs].s_name = ED_NewString (fielddef_name);
+						// Hash keys retain the pointer; va() storage is temporary.
+						fielddef_name = PR_GetString (qcvm->fielddefs[qcvm->progs->numfielddefs].s_name);
 						const ddef_t *def_ptr_v = &qcvm->fielddefs[qcvm->progs->numfielddefs];
 						HashMap_Insert (qcvm->fielddefs_map, &fielddef_name, &def_ptr_v);
 						qcvm->progs->numfielddefs++;

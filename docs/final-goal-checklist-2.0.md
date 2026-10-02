@@ -120,6 +120,12 @@ receipts. These overlap intentionally; test shared boundaries once.
   [Exact results/limits](qc-tokens-events-current-2.0-results.md). No production/GPU
   change; prepared flags do not prove real negotiation/transport. Reflection/
   entity/surface/authored consumers and GUI error cleanup remain open.
+- F03: loaded field reflection passes merged and complete tables, duplicate
+  winners/type masks, zoned aliases and actual SSQC spatial/no-touch behavior;
+  native client reloads/server reload preserve independent owners. A demonstrated
+  component hash-key lifetime bug is repaired using existing VM string storage.
+  [Exact results/limits](qc-reflection-current-2.0-results.md). GPU stays stopped;
+  entity-search/surface/authored consumers and GUI error cleanup remain open.
 - F07: repeated native mj4m1 loads observe actual indexed worker entries; all
   427881 surfaces match native serial extent recalculation on both loads, with
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).

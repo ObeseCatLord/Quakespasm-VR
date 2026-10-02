@@ -91,6 +91,25 @@ or socket proof; native EOF badread is expected. No graphics/audio/device work.
 [event plan](../docs/qc-event-handoff-final-2.0-plan.md),
 [actual results/limits](../docs/qc-tokens-events-current-2.0-results.md).
 
+## Loaded QC field reflection
+
+Generate the same private licensed profile with `--reflection`; optionally add
+`--reflection-fields-complete` to provide the native engine fields in the input.
+Runtime uses `-reflection` and matching optional `-reflection-fields-complete`.
+Compile the existing native fixture with `QC_REFLECTION_NATIVE_HOST_FIXTURE`,
+and compile `qc_reflection_host_fixture.c` using the same native host flags.
+Replace only the ordinary host object with that adapter object when linking;
+do not link both. This exposes the unchanged native client-QC bootstrap. Use
+normal `csprogs.dat` for the client input. Other fixture modes retain normal linkage.
+
+Require strict assertion-enabled compile/host-compile/link/run0 and
+`QC_BINDING_REFLECTION_NATIVE_PASSED`. Loaded QC exercises current/duplicate
+field lookups, metadata, zoned aliases and native server-only spatial relinking
+with an actual trigger positive control. Two native client loads/clears and
+server reload observe independent VM ownership. No device or renderer work.
+[Plan](../docs/qc-reflection-final-2.0-plan.md),
+[exact results/limits](../docs/qc-reflection-current-2.0-results.md).
+
 ## Native opposite liquid eye categories
 
 `openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled

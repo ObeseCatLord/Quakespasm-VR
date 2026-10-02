@@ -7,7 +7,8 @@ from pathlib import Path
 from cooperative_qc_program import source_program
 
 
-def assemble(program, resources=False, files=False, calls=False, tokens=False, events=False):
+def assemble(program, resources=False, files=False, calls=False, tokens=False, events=False,
+             reflection=False, reflection_fields_complete=False):
     header = list(struct.unpack_from("<15i", program))
     if header[0] != 6:
         raise ValueError("fixture requires classic version6 QC")
@@ -798,6 +799,156 @@ def assemble(program, resources=False, files=False, calls=False, tokens=False, e
         invoke(code, "fclose", (arg("writer"),))
         files_entry("close_writer", code)
 
+    if reflection:
+        def section_name(offset):
+            if offset < 0 or offset >= len(strings):
+                return ""
+            return bytes(strings[offset:]).split(b"\0", 1)[0].decode("ascii", "replace")
+
+        original_fields = {}
+        for pos in range(0, len(fields), 8):
+            kind, offset, text_offset = struct.unpack_from("<HHi", fields, pos)
+            original_fields.setdefault(section_name(text_offset), (kind, offset))
+        original_globals = {}
+        for pos in range(0, len(global_defs), 8):
+            kind, slot, text_offset = struct.unpack_from("<HHi", global_defs, pos)
+            original_globals.setdefault(section_name(text_offset), (kind, slot))
+        if "health" not in original_fields or "other" not in original_globals:
+            raise ValueError("reflection fixture requires original health field and other global")
+        health_type, health_offset = original_fields["health"]
+        other_type, other_slot = original_globals["other"]
+        if health_type & 0x7fff != 2 or other_type & 0x7fff != 4:
+            raise ValueError("reflection fixture requires float health and entity other")
+
+        entity_width = header[14]
+
+        def append_field(text, kind, offset):
+            if offset < 0 or offset > 32767:
+                raise ValueError("reflection field offset exceeds classic QC range")
+            fields.extend(struct.pack("<HHi", kind, offset, name(text)))
+
+        append_field("fixture_reflect_duplicate", 2, entity_width)
+        append_field("fixture_reflect_duplicate", 2, entity_width + 1)
+        entity_width += 2
+        if reflection_fields_complete:
+            for field_name in ("alpha", "scale", "emiteffectnum", "traileffectnum",
+                               "tag_entity", "tag_index", "modelflags"):
+                present = original_fields.get(field_name)
+                if present is not None:
+                    if present[0] & 0x7fff != 2:
+                        raise ValueError("existing engine field has unexpected type: " + field_name)
+                else:
+                    append_field(field_name, 2, entity_width)
+                    original_fields[field_name] = (2, entity_width)
+                    entity_width += 1
+
+            colormod = original_fields.get("colormod")
+            components = ("colormod_x", "colormod_y", "colormod_z")
+            if colormod is not None:
+                if colormod[0] & 0x7fff != 3:
+                    raise ValueError("existing engine field has unexpected type: colormod")
+                vector_offset = colormod[1]
+            else:
+                vector_offset = entity_width
+                for axis, component in enumerate(components):
+                    if component in original_fields:
+                        vector_offset = original_fields[component][1] - axis
+                        break
+                append_field("colormod", 3, vector_offset)
+                original_fields["colormod"] = (3, vector_offset)
+            entity_width = max(entity_width, vector_offset + 3)
+            for axis, component in enumerate(components):
+                present = original_fields.get(component)
+                expected_offset = vector_offset + axis
+                if present is not None:
+                    if present[0] & 0x7fff != 2 or present[1] != expected_offset:
+                        raise ValueError("existing engine field has unexpected layout: " + component)
+                else:
+                    append_field(component, 2, expected_offset)
+                    original_fields[component] = (2, expected_offset)
+        header[14] = entity_width
+
+        builtin_specs = (("findentityfield", 0), ("numentityfields", 496),
+                         ("entityfieldname", 497), ("entityfieldtype", 498),
+                         ("entityfieldref", 0), ("getentityfieldstring", 499),
+                         ("putentityfieldstring", 500), ("strlen", 114), ("strcat", 115))
+        for builtin, number in builtin_specs:
+            add_ref("reflect_builtin_" + builtin,
+                    add_function(builtin, -number if number else 0))
+
+        inputs = {
+            "name": global_slot("fixture_reflect_input_name", 1),
+            "index": global_slot("fixture_reflect_input_index"),
+            "entity": global_slot("fixture_reflect_input_entity", 4),
+            "value": global_slot("fixture_reflect_input_value", 1),
+        }
+        outputs = {
+            "index": global_slot("fixture_reflect_index"),
+            "count": global_slot("fixture_reflect_count"),
+            "name": global_slot("fixture_reflect_name", 1),
+            "type": global_slot("fixture_reflect_type"),
+            "offset": global_slot("fixture_reflect_offset", 5),
+            "get": global_slot("fixture_reflect_get", 1),
+            "put": global_slot("fixture_reflect_put"),
+            "prime": global_slot("fixture_reflect_prime"),
+            "string_prime": global_slot("fixture_reflect_string_prime", 1),
+        }
+        prime_source = global_slot("fixture_reflect_prime_source", 1, name("return-prime"))
+        touch_count = global_slot("fixture_reflect_touch_count")
+        one = global_slot("fixture_reflect_one", value=1.0)
+        health_field = global_slot("fixture_reflect_health_field", 5, health_offset)
+        health_value = global_slot("fixture_reflect_health_value")
+        health_next = global_slot("fixture_reflect_health_next")
+        health_pointer = global_slot("fixture_reflect_health_pointer", 7)
+        store_f, store_s, store_ent, store_fld = 31, 33, 34, 35
+
+        def reflect_call(code, builtin, args=(), output=None, output_store=store_f):
+            for index, (slot, store_op) in enumerate(args):
+                code.append((store_op, slot, 4 + index * 3, 0))
+            code.append((51 + len(args), ref_slots["reflect_builtin_" + builtin], 0, 0))
+            if output is not None:
+                code.append((output_store, 1, output, 0))
+
+        def reflect_entry(key, code):
+            add_ref("reflect_" + key, entry("fixture_reflect_" + key, code))
+
+        code = []
+        reflect_call(code, "strlen", ((prime_source, store_s),), outputs["prime"])
+        reflect_call(code, "findentityfield", ((inputs["name"], store_s),), outputs["index"])
+        reflect_call(code, "numentityfields", output=outputs["count"])
+        reflect_entry("lookup", code)
+
+        code = []
+        reflect_call(code, "strcat", ((prime_source, store_s),), outputs["string_prime"], store_s)
+        reflect_call(code, "entityfieldname", ((inputs["index"], store_f),), outputs["name"], store_s)
+        reflect_call(code, "strlen", ((prime_source, store_s),), outputs["prime"])
+        reflect_call(code, "entityfieldtype", ((inputs["index"], store_f),), outputs["type"])
+        reflect_call(code, "strlen", ((prime_source, store_s),), outputs["prime"])
+        reflect_call(code, "entityfieldref", ((inputs["index"], store_f),), outputs["offset"], store_fld)
+        reflect_entry("metadata", code)
+
+        code = []
+        reflect_call(code, "strcat", ((prime_source, store_s),), outputs["string_prime"], store_s)
+        reflect_call(code, "getentityfieldstring",
+                     ((inputs["index"], store_f), (inputs["entity"], store_ent)),
+                     outputs["get"], store_s)
+        reflect_entry("read", code)
+
+        code = []
+        reflect_call(code, "strlen", ((prime_source, store_s),), outputs["prime"])
+        reflect_call(code, "putentityfieldstring",
+                     ((inputs["index"], store_f), (inputs["entity"], store_ent),
+                      (inputs["value"], store_s)), outputs["put"])
+        reflect_entry("write", code)
+
+        code = [(6, touch_count, one, touch_count),
+                (24, other_slot, health_field, health_value),
+                (8, health_value, one, health_next),
+                (30, other_slot, health_field, health_pointer),
+                (37, health_next, health_pointer, 0)]
+        reflect_entry("touch", code)
+        entry("CSQC_Ent_Update", [])
+
     strings.extend(b"\0" * (-len(strings) % 4))
     output = bytearray(60)
     for section, (slot, width) in zip(sections, ((2, 8), (4, 8), (6, 8),
@@ -818,10 +969,19 @@ def main():
     parser.add_argument("--calls", action="store_true", help="append loaded named-call and CSQC reader cases")
     parser.add_argument("--tokens", "-tokens", action="store_true", help="append loaded token and shared-state cases")
     parser.add_argument("--events", action="store_true", help="append the native CSQC event hook")
+    parser.add_argument("--reflection", action="store_true", help="append loaded field reflection cases")
+    parser.add_argument("--reflection-fields-complete", action="store_true",
+                        help="supply missing native engine fields in reflection mode")
     args = parser.parse_args()
-    if sum((args.resources, args.files, args.calls, args.tokens, args.events)) > 1:
+    existing_modes = (args.resources, args.files, args.calls, args.tokens, args.events)
+    if sum(existing_modes) > 1:
         parser.error("--resources, --files, --calls, --tokens and --events are separate fixture modes")
-    result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls, args.tokens, args.events)
+    if args.reflection and any(existing_modes):
+        parser.error("--reflection is a separate fixture mode")
+    if args.reflection_fields_complete and not args.reflection:
+        parser.error("--reflection-fields-complete requires --reflection")
+    result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls,
+                      args.tokens, args.events, args.reflection, args.reflection_fields_complete)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)
