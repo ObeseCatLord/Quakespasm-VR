@@ -62,6 +62,10 @@ cvar_t wad_external_textures = {"wad_external_textures", "1", CVAR_NONE};
 // mdl_external_textures = 1 enable loading of external MDL textures, 0 to forbid it for debug purposes.
 cvar_t mdl_external_textures = {"mdl_external_textures", "1", CVAR_NONE};
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4200)
+#endif
 struct md5_skeleton_data_s
 {
 	size_t allocation_size;
@@ -71,6 +75,9 @@ struct md5_skeleton_data_s
 	qboolean from_rerelease;
 	md5_skeleton_joint_t joints[];
 };
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 static void Mod_FreeAvatarBindSurfaces (md5_avatar_bind_surface_t *surface)
 {

@@ -3943,7 +3943,7 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 		vr_weaponmenu_mode.value >= 0.0f && vr_weaponmenu_mode.value < 2.0f ?
 		(int)vr_weaponmenu_mode.value : 0;
 	const float crosshair_depth = M_VROptions_ClampFinite (vr_crosshair_depth.value, 0.0f, 0.0f, 4096.0f);
-	const float crosshair_size = M_VROptions_ClampFinite (vr_crosshair_size.value, 3.0f, 0.0f, 32.0f);
+	const float crosshair_pixel_size = M_VROptions_ClampFinite (vr_crosshair_size.value, 3.0f, 0.0f, 32.0f);
 	const float crosshair_opacity = M_VROptions_ClampFinite (vr_crosshair_alpha.value, 0.25f, 0.0f, 1.0f);
 	const float crosshair_offset = M_VROptions_ClampFinite (vr_crosshairy.value, 0.0f, -10.0f, 10.0f);
 
@@ -4026,7 +4026,7 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 		crosshair_depth == 0.0f ? "wall trace" : va ("%.1f m", crosshair_depth));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_SIZE, "Crosshair Size");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_SIZE, va ("%.1f px", crosshair_size));
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_SIZE, va ("%.1f px", crosshair_pixel_size));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OPACITY, "Crosshair Opacity");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_OPACITY, va ("%.2f", crosshair_opacity));

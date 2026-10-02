@@ -83,15 +83,15 @@ static qboolean PM_IsVRMove (void)
 qboolean PM_VRInstantStopNeutralInput (const usercmd_t *cmd,
 	qboolean block_teleport_backmove)
 {
-	float forward;
+	float forward_input;
 
 	if (!cmd)
 		return false;
-	forward = cmd->forwardmove;
-	if (block_teleport_backmove && forward < 0.0f)
-		forward = 0.0f;
+	forward_input = cmd->forwardmove;
+	if (block_teleport_backmove && forward_input < 0.0f)
+		forward_input = 0.0f;
 	/* WALK ignores upmove, and orthogonal forward/right vectors cannot cancel. */
-	return forward == 0.0f && cmd->sidemove == 0.0f;
+	return forward_input == 0.0f && cmd->sidemove == 0.0f;
 }
 
 static qboolean PM_VRInstantStopEligible (void)
@@ -766,7 +766,7 @@ int PM_StepSlideMove (qboolean in_air)
 {
 	vec3_t	dest;
 	trace_t	trace;
-	vec3_t	original, originalvel, down, up, downvel;
+	vec3_t	original, originalvel, down, step_up, downvel;
 	float	downdist, updist;
 	int		blocked;
 	float	stepsize;
@@ -849,13 +849,13 @@ int PM_StepSlideMove (qboolean in_air)
 	if (-DotProduct(pmove.gravitydir, pmove.origin) < -DotProduct(pmove.gravitydir, original))
 		goto usedown;
 
-	VectorCopy (pmove.origin, up);
+	VectorCopy (pmove.origin, step_up);
 
 	// decide which one went farther (in the forwards direction regardless of step values)
 	VectorSubtract(down, original, dest);
 	VectorMA(dest, -DotProduct(dest, pmove.gravitydir), pmove.gravitydir, dest); //z=0
 	downdist = DotProduct(dest, dest);
-	VectorSubtract(up, original, dest);
+	VectorSubtract(step_up, original, dest);
 	VectorMA(dest, -DotProduct(dest, pmove.gravitydir), pmove.gravitydir, dest); //z=0
 	updist = DotProduct(dest, dest);
 

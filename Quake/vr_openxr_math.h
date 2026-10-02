@@ -30,16 +30,16 @@ static inline int VRXR_ProjectHiddenAreaVertex(const vrxr_view_t *view,
 /* Pack unequal per-eye triangle lists for one multiview draw. Extra vertices
  * repeat each eye's last endpoint, producing degenerate triangles there. */
 static inline uint32_t VRXR_PackHiddenAreaVertices(const vrxr_view_t views[2],
-    const float *const source[2], const uint32_t triangles[2],
+    const float *const source[2], const uint32_t triangle_counts[2],
     float (*output)[4], uint32_t capacity) {
-  if (!views || !source || !triangles || !output ||
-      !source[0] || !source[1] || !triangles[0] || !triangles[1]) return 0;
-  const uint32_t max_triangles=triangles[0]>triangles[1] ? triangles[0] : triangles[1];
+  if (!views || !source || !triangle_counts || !output ||
+      !source[0] || !source[1] || !triangle_counts[0] || !triangle_counts[1]) return 0;
+  const uint32_t max_triangles=triangle_counts[0]>triangle_counts[1] ? triangle_counts[0] : triangle_counts[1];
   if (max_triangles>UINT32_MAX/3 || capacity<3*max_triangles) return 0;
   const uint32_t count=3*max_triangles;
   for (uint32_t i=0;i<count;++i)
     for (int eye=0;eye<2;++eye) {
-      const uint32_t index=i<3*triangles[eye] ? i : 3*triangles[eye]-1;
+      const uint32_t index=i<3*triangle_counts[eye] ? i : 3*triangle_counts[eye]-1;
       if (!VRXR_ProjectHiddenAreaVertex(&views[eye], source[eye]+2*index,
           output[i]+2*eye)) return 0;
     }

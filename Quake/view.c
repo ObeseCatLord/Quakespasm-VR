@@ -511,14 +511,14 @@ static qboolean V_TrackedHandBodyOffsetForYaw (int physical_hand, float yaw, vec
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const vrxr_device_t *hand;
-	float base_viewheight, head_eye_height;
+	float player_base_viewheight, head_eye_height;
 	vec3_t head_position, hand_position;
 
 	if (out)
 		VectorCopy (vec3_origin, out);
 	if (!out || physical_hand < 0 || physical_hand > 1 || !frame ||
 		!frame->should_render || !frame->devices[0].valid ||
-		!isfinite (yaw) || !V_TrackedPlayerBase (&base_viewheight))
+		!isfinite (yaw) || !V_TrackedPlayerBase (&player_base_viewheight))
 		return false;
 	hand = &frame->devices[physical_hand + 1];
 	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
@@ -530,7 +530,7 @@ static qboolean V_TrackedHandBodyOffsetForYaw (int physical_hand, float yaw, vec
 		if (!isfinite (head_position[i]) || !isfinite (hand_position[i]))
 			return false;
 	}
-	if (!R_TrackedHeadEyeHeight (base_viewheight, &head_eye_height))
+	if (!R_TrackedHeadEyeHeight (player_base_viewheight, &head_eye_height))
 		return false;
 	return VR_LocomotionHandBodyOffset (head_position, hand_position, yaw,
 		V_VRUnitsPerMetre (), head_eye_height, out);

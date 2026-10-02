@@ -1029,8 +1029,8 @@ static void R_MarkSurfacesPrepare (void *unused)
 					eye_vis = SV_FatPVS (r_stereo_origins[eye], cl.worldmodel);
 				else
 					eye_vis = Mod_LeafPVS (leaf, cl.worldmodel);
-				for (size_t i = 0; i < bytes; ++i)
-					combined[i] |= eye_vis[i];
+				for (size_t byte_index = 0; byte_index < bytes; ++byte_index)
+					combined[byte_index] |= eye_vis[byte_index];
 			}
 		}
 		mark_surfaces_state.vis = combined;

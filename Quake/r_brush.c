@@ -3239,9 +3239,9 @@ void R_BuildTopLevelAccelerationStructure (void *unused)
 		}
 
 		R_TLASWriteInstance (&instances[num_instances++], model_matrix, address);
-		for (uint32_t i = 0; i < attachment_count; ++i)
-			R_TLASWriteInstance (&instances[num_instances++], attachment_matrices[i],
-				attachment_addresses[i]);
+		for (uint32_t attachment_index = 0; attachment_index < attachment_count; ++attachment_index)
+			R_TLASWriteInstance (&instances[num_instances++], attachment_matrices[attachment_index],
+				attachment_addresses[attachment_index]);
 	}
 
 	ZEROED_STRUCT (VkAccelerationStructureGeometryKHR, tlas_geometry);

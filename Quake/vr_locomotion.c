@@ -508,12 +508,12 @@ qboolean VR_LocomotionMove (int mode, const float head[3], const float offhand[3
 	}
 	else
 	{
-		vec3_t vfwd, vright, vup;
+		vec3_t vfwd, move_right, move_up;
 		vec3_t player_yaw_only = {0.0f, selected_angles[VR_AIM_YAW], 0.0f};
 		vec3_t move = {0.0f, 0.0f, 0.0f};
 		float  factor, projected_forward, projected_right;
 
-		AngleVectors (player_yaw_only, vfwd, vright, vup);
+		AngleVectors (player_yaw_only, vfwd, move_right, move_up);
 
 		if (fabsf (lfwd[2]) > 0.8f)
 		{
@@ -549,7 +549,7 @@ qboolean VR_LocomotionMove (int mode, const float head[3], const float offhand[3
 		VectorMA (move, forward_axis, lfwd, move);
 		VectorMA (move, side_axis, lright, move);
 		projected_forward = DotProduct (move, vfwd);
-		projected_right = DotProduct (move, vright);
+		projected_right = DotProduct (move, move_right);
 		result[0] = forward_speed * projected_forward;
 		result[1] = forward_speed * projected_right;
 	}

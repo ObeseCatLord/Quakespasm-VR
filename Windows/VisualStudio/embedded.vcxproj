@@ -13,6 +13,17 @@
   <ItemGroup>
     <CustomBuild Include="..\..\Shaders\alias.vert">
       <FileType>Document</FileType>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;$(SolutionDir)..\..\Quake\alias_batch_limits.h;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;$(SolutionDir)..\..\Quake\alias_batch_limits.h;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\alias_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\alias_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\alias_stereo.vert.spv" alias_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\alias_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\alias_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\alias_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\alias_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\alias_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\alias_stereo.vert.spv" alias_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\alias_stereo.vert.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\fte_particles.frag">
       <FileType>Document</FileType>
@@ -24,31 +35,112 @@
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\basic.vert">
       <FileType>Document</FileType>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;$(SolutionDir)..\..\Shaders\ui_panel_push_constants.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;$(SolutionDir)..\..\Shaders\ui_panel_push_constants.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_stereo.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_ui_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_stereo.vert.spv" basic_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_stereo.vert.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_ui_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_ui_stereo.vert.spv" basic_ui_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_ui_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\basic_stereo.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_stereo.vert.spv" basic_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_stereo.vert.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui_stereo.vert.spv" basic_ui_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui_stereo.vert.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\basic_alphatest.frag">
       <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_alphatest_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_alphatest_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_alphatest_ui.frag.spv" basic_alphatest_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_alphatest_ui.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\basic_alphatest_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_alphatest_ui.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_alphatest_ui.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_alphatest_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_alphatest_ui.frag.spv" basic_alphatest_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_alphatest_ui.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\basic_notex.frag">
       <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_notex_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_notex_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_notex_ui.frag.spv" basic_notex_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_notex_ui.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\basic_notex_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_notex_ui.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_notex_ui.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_notex_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_notex_ui.frag.spv" basic_notex_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_notex_ui.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\draw_pic.frag">
       <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_ui.frag.spv" draw_pic_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_ui.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_ui.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_ui.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_ui.frag.spv" draw_pic_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_ui.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\draw_pic_alphatest.frag">
       <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_alphatest_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_alphatest_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_alphatest_ui.frag.spv" draw_pic_alphatest_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_alphatest_ui.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_alphatest_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_alphatest_ui.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_alphatest_ui.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_alphatest_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_alphatest_ui.frag.spv" draw_pic_alphatest_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_alphatest_ui.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\draw_pic_xbr.frag">
       <FileType>Document</FileType>
       <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\draw_pic_xbr_common.inc;%(AdditionalInputs)</AdditionalInputs>
       <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\draw_pic_xbr_common.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui.frag.spv" draw_pic_xbr_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui.frag.spv" draw_pic_xbr_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\draw_pic_xbr_alphatest.frag">
       <FileType>Document</FileType>
       <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\draw_pic_xbr_common.inc;%(AdditionalInputs)</AdditionalInputs>
       <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\draw_pic_xbr_common.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_alphatest_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_alphatest_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_alphatest_ui.frag.spv" draw_pic_xbr_alphatest_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_alphatest_ui.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_alphatest_ui.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_alphatest_ui.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_alphatest_ui.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_alphatest_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_alphatest_ui.frag.spv" draw_pic_xbr_alphatest_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_alphatest_ui.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\draw_pic_xbr.vert">
       <FileType>Document</FileType>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;$(SolutionDir)..\..\Shaders\ui_panel_push_constants.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;$(SolutionDir)..\..\Shaders\ui_panel_push_constants.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui_stereo.vert.spv" draw_pic_xbr_ui_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 -DUI_PANEL=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui_stereo.vert.spv" draw_pic_xbr_ui_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\draw_pic_xbr_ui_stereo.vert.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\cs_tex_warp.comp">
       <FileType>Document</FileType>
@@ -64,14 +156,41 @@
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\scene_upscale.frag">
       <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\scene_upscale_stereo.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\scene_upscale_stereo.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\scene_upscale_stereo.frag.spv" scene_upscale_stereo.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\scene_upscale_stereo.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\scene_upscale_stereo.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\scene_upscale_stereo.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\scene_upscale_stereo.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\scene_upscale_stereo.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\scene_upscale_stereo.frag.spv" scene_upscale_stereo.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\scene_upscale_stereo.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_composite.frag">
       <FileType>Document</FileType>
       <AdditionalInputs>$(SolutionDir)..\..\Shaders\ssao_composite.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_stereo.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_stereo.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_stereo.frag.spv" ssao_composite_stereo.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_stereo.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo.frag.spv" ssao_composite_stereo.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_composite_debug.frag">
       <FileType>Document</FileType>
       <AdditionalInputs>$(SolutionDir)..\..\Shaders\ssao_composite.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_stereo_debug.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_stereo_debug.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_stereo_debug.frag.spv" ssao_composite_stereo_debug.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_stereo_debug.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo_debug.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo_debug.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo_debug.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo_debug.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo_debug.frag.spv" ssao_composite_stereo_debug.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_stereo_debug.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_prepare.comp">
       <FileType>Document</FileType>
@@ -84,14 +203,30 @@
     <CustomBuild Include="..\..\Shaders\ssao_evaluate.comp">
       <AdditionalInputs>$(SolutionDir)..\..\Shaders\thread_group_tiling.inc;$(SolutionDir)..\..\Shaders\ssao_evaluate.inc;$(SolutionDir)..\..\Shaders\gtao.inc;%(AdditionalInputs)</AdditionalInputs>
       <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_evaluate_stereo.comp.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO_SSAO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_evaluate_stereo.comp.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_evaluate_stereo.comp.spv" ssao_evaluate_stereo.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_evaluate_stereo.comp.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_stereo.comp.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO_SSAO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_stereo.comp.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_stereo.comp.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_stereo.comp.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_stereo.comp.spv" ssao_evaluate_stereo.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_stereo.comp.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_evaluate_fp16.comp">
       <AdditionalInputs>$(SolutionDir)..\..\Shaders\thread_group_tiling.inc;$(SolutionDir)..\..\Shaders\ssao_evaluate.inc;$(SolutionDir)..\..\Shaders\gtao.inc;%(AdditionalInputs)</AdditionalInputs>
       <FileType>Document</FileType>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe --target-env vulkan1.1 -g -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\%(Filename)%(Extension).spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\%(Filename)%(Extension).spv" %(Filename)%(Extension)_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\%(Filename)%(Extension).c"</Command>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\%(Filename)%(Extension).spv" %(Filename)%(Extension)_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\%(Filename)%(Extension).c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO_SSAO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_evaluate_fp16_stereo.comp.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_evaluate_fp16_stereo.comp.spv" ssao_evaluate_fp16_stereo.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_evaluate_fp16_stereo.comp.c"</Command>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe --target-env vulkan1.1 -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).spv" %(Filename)%(Extension)_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).c"</Command>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).spv" %(Filename)%(Extension)_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO_SSAO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_fp16_stereo.comp.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_fp16_stereo.comp.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_fp16_stereo.comp.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_fp16_stereo.comp.spv" ssao_evaluate_fp16_stereo.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_fp16_stereo.comp.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_evaluate_fp16_stereo.comp.c</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_evaluate_fp16_stereo.comp.c</Outputs>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_mip.comp">
       <AdditionalInputs>$(SolutionDir)..\..\Shaders\ssao_mip.inc;$(SolutionDir)..\..\Shaders\gtao.inc;%(AdditionalInputs)</AdditionalInputs>
@@ -140,15 +275,33 @@
     <CustomBuild Include="..\..\Shaders\ssao_composite_msaa.frag">
       <AdditionalInputs>$(SolutionDir)..\..\Shaders\ssao_composite.inc;%(AdditionalInputs)</AdditionalInputs>
       <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo.frag.spv" ssao_composite_msaa_stereo.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo.frag.spv" ssao_composite_msaa_stereo.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_composite_msaa_debug.frag">
       <AdditionalInputs>$(SolutionDir)..\..\Shaders\ssao_composite.inc;%(AdditionalInputs)</AdditionalInputs>
       <FileType>Document</FileType>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo_debug.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo_debug.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo_debug.frag.spv" ssao_composite_msaa_stereo_debug.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo_debug.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo_debug.frag.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo_debug.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo_debug.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo_debug.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo_debug.frag.spv" ssao_composite_msaa_stereo_debug.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo_debug.frag.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\basic.frag">
       <FileType>Document</FileType>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\basic_common.inc;$(SolutionDir)..\..\Shaders\mboit.inc;$(SolutionDir)..\..\Shaders\wboit.inc;%(AdditionalInputs)</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\basic_common.inc;$(SolutionDir)..\..\Shaders\mboit.inc;$(SolutionDir)..\..\Shaders\wboit.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\basic_common.inc;$(SolutionDir)..\..\Shaders\mboit.inc;$(SolutionDir)..\..\Shaders\wboit.inc;$(SolutionDir)..\..\Shaders\ui_panel_clip.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\basic_common.inc;$(SolutionDir)..\..\Shaders\mboit.inc;$(SolutionDir)..\..\Shaders\wboit.inc;$(SolutionDir)..\..\Shaders\ui_panel_clip.inc;%(AdditionalInputs)</AdditionalInputs>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe -g -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic.frag.spv"
 "$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic.frag.spv" basic.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic.frag.c"
 $(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DWBOIT=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_oit.frag.spv"
@@ -158,7 +311,9 @@ $(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DMBOIT=1 "%(FullPath)" -o "$(Solut
 $(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DMBOIT=1 -DMBOIT_COMPOSITE=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite.frag.spv"
 "$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite.frag.spv" basic_mboit_composite.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite.frag.c"
 $(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DMBOIT=1 -DMBOIT_COMPOSITE=1 -DMSAA=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite_msaa.frag.spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite_msaa.frag.spv" basic_mboit_composite_msaa.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite_msaa.frag.c"</Command>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite_msaa.frag.spv" basic_mboit_composite_msaa.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite_msaa.frag.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_ui.frag.spv" basic_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_ui.frag.c"</Command>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic.frag.spv"
 $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\basic.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic.frag.spv"
 "$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic.frag.spv" basic.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic.frag.c"
@@ -173,9 +328,12 @@ $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(Solution
 "$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite.frag.spv" basic_mboit_composite.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite.frag.c"
 $(VULKAN_SDK)\bin\glslangValidator.exe -V -DMBOIT=1 -DMBOIT_COMPOSITE=1 -DMSAA=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.spv"
 $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.spv" basic_mboit_composite_msaa.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.c"</Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\Compiled\Debug\basic.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_oit.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_moment.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite_msaa.frag.c</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\Compiled\Release\basic.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_oit.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_moment.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.c</Outputs>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.spv" basic_mboit_composite_msaa.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DUI_PANEL=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui.frag.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui.frag.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui.frag.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui.frag.spv" basic_ui.frag_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui.frag.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\Compiled\Debug\basic.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_oit.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_moment.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_mboit_composite_msaa.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\basic_ui.frag.c</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\Compiled\Release\basic.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_oit.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_moment.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_mboit_composite_msaa.frag.c;$(SolutionDir)..\..\Shaders\Compiled\Release\basic_ui.frag.c</Outputs>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\world.frag">
       <FileType>Document</FileType>
@@ -328,15 +486,25 @@ $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(Solution
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe -g -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_8bit.comp.spv"
 "$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_8bit.comp.spv" screen_effects_8bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_8bit.comp.c"
 $(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DUSE_10BIT=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_10bit.comp.spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_10bit.comp.spv" screen_effects_10bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_10bit.comp.c"</Command>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_10bit.comp.spv" screen_effects_10bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_10bit.comp.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_stereo_8bit.comp.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_stereo_8bit.comp.spv" screen_effects_stereo_8bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_stereo_8bit.comp.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 -DUSE_10BIT=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_stereo_10bit.comp.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_stereo_10bit.comp.spv" screen_effects_stereo_10bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_stereo_10bit.comp.c"</Command>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_8bit.comp.spv"
 $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_8bit.comp.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_8bit.comp.spv"
 "$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_8bit.comp.spv" screen_effects_8bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_8bit.comp.c"
 $(VULKAN_SDK)\bin\glslangValidator.exe -V -DUSE_10BIT=1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.spv"
 $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.spv" screen_effects_10bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.c"</Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_8bit.comp.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_10bit.comp.c</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_8bit.comp.c;$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.c</Outputs>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.spv" screen_effects_10bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_8bit.comp.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_8bit.comp.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_8bit.comp.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_8bit.comp.spv" screen_effects_stereo_8bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_8bit.comp.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 -DUSE_10BIT=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_10bit.comp.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_10bit.comp.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_10bit.comp.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_10bit.comp.spv" screen_effects_stereo_10bit.comp_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_10bit.comp.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_8bit.comp.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_10bit.comp.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_stereo_8bit.comp.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\screen_effects_stereo_10bit.comp.c</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_8bit.comp.c;$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_10bit.comp.c;$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_8bit.comp.c;$(SolutionDir)..\..\Shaders\Compiled\Release\screen_effects_stereo_10bit.comp.c</Outputs>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\update_lightmap.comp">
       <FileType>Document</FileType>
@@ -373,6 +541,17 @@ $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(Solution
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\showtris.vert">
       <FileType>Document</FileType>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\showtris_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\showtris_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\showtris_stereo.vert.spv" showtris_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\showtris_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\showtris_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\showtris_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\showtris_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\showtris_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\showtris_stereo.vert.spv" showtris_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\showtris_stereo.vert.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\sky_box.frag">
       <FileType>Document</FileType>
@@ -382,42 +561,92 @@ $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(Solution
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\sky_cube.vert">
       <FileType>Document</FileType>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\sky_cube_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\sky_cube_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\sky_cube_stereo.vert.spv" sky_cube_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\sky_cube_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\sky_cube_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_cube_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_cube_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_cube_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_cube_stereo.vert.spv" sky_cube_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_cube_stereo.vert.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\sky_layer.frag">
       <FileType>Document</FileType>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\sky_layer.vert">
       <FileType>Document</FileType>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\sky_layer_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\sky_layer_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\sky_layer_stereo.vert.spv" sky_layer_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\sky_layer_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\sky_layer_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_layer_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_layer_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_layer_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_layer_stereo.vert.spv" sky_layer_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\sky_layer_stereo.vert.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\world.vert">
       <FileType>Document</FileType>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Debug\world_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\world_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\world_stereo.vert.spv" world_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\world_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Outputs);$(SolutionDir)..\..\Shaders\Compiled\Release\world_stereo.vert.c</Outputs>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">%(Command)
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\world_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\world_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\world_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\world_stereo.vert.spv" world_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\world_stereo.vert.c"</Command>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\md5.vert">
       <FileType>Document</FileType>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\skinning.inc;%(AdditionalInputs)</AdditionalInputs>
-      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\skinning.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\skinning.inc;$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\skinning.inc;$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe -g -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5.vert.spv"
 "$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5.vert.spv" md5.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5.vert.c"
 $(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DEIGHT_WEIGHT_SKINNING "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8.vert.spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8.vert.spv" md5_8.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8.vert.c"</Command>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8.vert.spv" md5_8.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8.vert.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_stereo.vert.spv" md5_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_stereo.vert.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DEIGHT_WEIGHT_SKINNING -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8_stereo.vert.spv" md5_8_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8_stereo.vert.c"</Command>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5.vert.spv"
 $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\md5.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5.vert.spv"
 "$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\md5.vert.spv" md5.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\md5.vert.c"
 $(VULKAN_SDK)\bin\glslangValidator.exe -V -DEIGHT_WEIGHT_SKINNING "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.spv"
 $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.spv" md5_8.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.c"</Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\Compiled\Debug\md5.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8.vert.c</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\Compiled\Release\md5.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.c</Outputs>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.spv" md5_8.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_stereo.vert.spv" md5_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_stereo.vert.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DEIGHT_WEIGHT_SKINNING -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8_stereo.vert.spv" md5_8_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\Compiled\Debug\md5.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_stereo.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_8_stereo.vert.c</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\Compiled\Release\md5.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Release\md5_stereo.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Release\md5_8_stereo.vert.c</Outputs>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\md5_debug.vert">
       <FileType>Document</FileType>
       <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe -g -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug.vert.spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug.vert.spv" md5_debug.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug.vert.c"</Command>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug.vert.spv" md5_debug.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug.vert.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -g -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug_stereo.vert.spv" md5_debug_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug_stereo.vert.c"</Command>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.spv"
 $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.spv"
-"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.spv" md5_debug.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.c"</Command>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug.vert.c</Outputs>
-      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.c</Outputs>
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.spv" md5_debug.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.c"
+$(VULKAN_SDK)\bin\glslangValidator.exe -V -DSTEREO=1 --target-env vulkan1.1 "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug_stereo.vert.spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug_stereo.vert.spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug_stereo.vert.spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug_stereo.vert.spv" md5_debug_stereo.vert_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug_stereo.vert.c"</Command>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Debug\md5_debug_stereo.vert.c</Outputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug.vert.c;$(SolutionDir)..\..\Shaders\Compiled\Release\md5_debug_stereo.vert.c</Outputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)..\..\Shaders\stereo.inc;%(AdditionalInputs)</AdditionalInputs>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\mesh_interpolate.comp">
       <FileType>Document</FileType>
@@ -466,6 +695,17 @@ $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(Solution
 "$(SolutionDir)Build-bintoc\$(Platform)\$(Configuration)\bintoc.exe" -c "$(SolutionDir)..\..\Quake\vkquake.pak" vkquake.pak "$(SolutionDir)..\..\Quake\embedded_pak.c"</Command>
       <Outputs>$(SolutionDir)..\..\Quake\vkquake.pak;$(SolutionDir)..\..\Quake\embedded_pak.c</Outputs>
       <AdditionalInputs>$(SolutionDir)..\..\Misc\vq_pak\gfx\conback.png;$(SolutionDir)..\..\Misc\vq_pak\gfx\crosshair-020.png;$(SolutionDir)..\..\Misc\vq_pak\gfx\crosshair-000.png;$(SolutionDir)..\..\Misc\vq_pak\gfx\crosshair-001.png;$(SolutionDir)..\..\Misc\vq_pak\gfx\crosshair-021.png;$(SolutionDir)..\..\Misc\vq_pak\gfx\crosshair-148.png;$(SolutionDir)..\..\Misc\vq_pak\gfx\mainmenu2.lmp;$(SolutionDir)..\..\Misc\vq_pak\gfx\p_mods.png;$(SolutionDir)..\..\Misc\vq_pak\gfx\sp_maps.lmp;$(SolutionDir)..\..\Misc\vq_pak\maps\e1m1@c49d.ent;$(SolutionDir)..\..\Misc\vq_pak\maps\e1m2@0caa.ent;$(SolutionDir)..\..\Misc\vq_pak\maps\e1m4@958e.ent;$(SolutionDir)..\..\Misc\vq_pak\maps\e2m2@fbfe.ent;$(SolutionDir)..\..\Misc\vq_pak\maps\e2m3@237a.ent;$(SolutionDir)..\..\Misc\vq_pak\maps\e2m7@10a8.ent;$(SolutionDir)..\..\Misc\vq_pak\maps\r2m3@63f4.ent;$(SolutionDir)..\..\Misc\vq_pak\maps\r2m3@76ec.ent;$(SolutionDir)..\..\Misc\vq_pak\default.cfg;$(SolutionDir)Build-mkpak\$(Platform)\$(Configuration)\mkpak.exe;$(SolutionDir)Build-bintoc\$(Platform)\$(Configuration)\bintoc.exe</AdditionalInputs>
+    </CustomBuild>
+    <CustomBuild Include="..\..\Shaders\hidden_area.vert">
+      <FileType>Document</FileType>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe --target-env vulkan1.1 -g -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Debug\%(Filename)%(Extension).spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Debug\%(Filename)%(Extension).spv" %(Filename)%(Extension)_spv "$(SolutionDir)..\..\Shaders\Compiled\Debug\%(Filename)%(Extension).c"</Command>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(VULKAN_SDK)\bin\glslangValidator.exe --target-env vulkan1.1 -V "%(FullPath)" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).spv"
+$(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).spv" -o "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).spv"
+"$(SolutionDir)\Build-bintoc\$(PlatformShortName)\$(Configuration)\bintoc.exe" "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).spv" %(Filename)%(Extension)_spv "$(SolutionDir)..\..\Shaders\Compiled\Release\%(Filename)%(Extension).c"</Command>
+    </CustomBuild>
+    <CustomBuild Include="..\..\Shaders\hidden_area.frag">
+      <FileType>Document</FileType>
     </CustomBuild>
   </ItemGroup>
   <PropertyGroup Label="Globals">

@@ -1772,7 +1772,7 @@ qboolean SV_PrivateWalkTrialBuildMoveVars (client_t *client, movevars_t *out)
 
 static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 {
-	movevars_t movevars;
+	movevars_t private_movevars;
 	int statsi[MAX_CL_STATS] = {0};
 	float statsf[MAX_CL_STATS] = {0};
 	size_t required = 1 + 1 + 4 + countof (sv_private_move_float_stats) * (1 + 1 + 4);
@@ -1786,11 +1786,11 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 		return false;
 	if (!SV_PrivateWalkStatsDisjoint ())
 		return false;
-	if (!SV_PrivateWalkTrialBuildMoveVars (client, &movevars))
+	if (!SV_PrivateWalkTrialBuildMoveVars (client, &private_movevars))
 		return false;
-	if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
+	if (private_movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
 		required += 1 + 1 + 4;
-	if (!PMSV_ExportMoveStats (&movevars, statsf, statsi))
+	if (!PMSV_ExportMoveStats (&private_movevars, statsf, statsi))
 		return false;
 	statsf[STAT_PRIVATE_JUMP_SECS] = client->private_pmove_jump_secs;
 	statsf[STAT_PRIVATE_WATERJUMP_SECS] = client->private_pmove_waterjump_secs;
@@ -1808,11 +1808,11 @@ static qboolean SVFTE_WritePrivateMoveStats (client_t *client, sizebuf_t *msg)
 		MSG_WriteByte (msg, stat);
 		MSG_WriteFloat (msg, statsf[stat]);
 	}
-	if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
+	if (private_movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
 	{
 		MSG_WriteByte (msg, svcfte_updatestatfloat);
 		MSG_WriteByte (msg, STAT_PRIVATE_QC_MAXVELOCITY);
-		MSG_WriteFloat (msg, movevars.qc_maxvelocity);
+		MSG_WriteFloat (msg, private_movevars.qc_maxvelocity);
 	}
 	return true;
 }

@@ -5567,23 +5567,23 @@ static xr_hidden_area_draw_t GL_PrepareHiddenAreaMesh (void)
 {
 	xr_hidden_area_draw_t draw = {0};
 	const float *source[2];
-	uint32_t triangles[2];
+	uint32_t triangle_counts[2];
 	if (!vulkan_globals.stereo_active || !vr_hidden_area.value)
 		return draw;
 	for (int eye = 0; eye < 2; ++eye)
 	{
-		triangles[eye] = VRXR_GetHiddenAreaMesh (eye, &source[eye]);
+		triangle_counts[eye] = VRXR_GetHiddenAreaMesh (eye, &source[eye]);
 		/* Avoid an unbounded per-frame upload from a broken runtime. */
-		if (!source[eye] || !triangles[eye] || triangles[eye] > 65536)
+		if (!source[eye] || !triangle_counts[eye] || triangle_counts[eye] > 65536)
 			return draw;
 	}
-	const uint32_t vertex_count = 3 * q_max (triangles[0], triangles[1]);
+	const uint32_t vertex_count = 3 * q_max (triangle_counts[0], triangle_counts[1]);
 	float (*vertices)[4] = (float (*)[4])R_VertexAllocate (
 		(int)(vertex_count * sizeof (*vertices)), &draw.buffer, &draw.offset);
 	if (!vertices)
 		return (xr_hidden_area_draw_t){0};
 	draw.vertex_count = VRXR_PackHiddenAreaVertices (openxr_frame.views, source,
-		triangles, vertices, vertex_count);
+		triangle_counts, vertices, vertex_count);
 	return draw;
 }
 

@@ -6874,7 +6874,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	eval_t *cooldown, *hostile;
 	int saved_argc;
 	vec3_t saved_angles;
-	qboolean rogue, friendly_fire_scope;
+	qboolean rogue_program, friendly_fire_scope;
 	qboolean alive = false;
 
 	if (!descriptor || !SV_VRStockAxeReady (client, ent, cmd) ||
@@ -6887,7 +6887,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 		ED_FindFieldOffset ("show_hostile"));
 	if (!cooldown || !hostile || !isfinite (hostile->_float))
 		return false;
-	rogue = descriptor->progscrc == 54028;
+	rogue_program = descriptor->progscrc == 54028;
 
 	saved_vm = qcvm;
 	saved_progs = qcvm->progs;
@@ -6915,7 +6915,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	hostile->_float = descriptor->alkaline ? 0.0f : qcvm->time + 1.0f;
 	if (descriptor->alkaline)
 		SV_StartSound (ent, ent->v.origin, 1, "weapons/ax1.wav", 255, 1);
-	if (!rogue && !descriptor->alkaline)
+	if (!rogue_program && !descriptor->alkaline)
 		cooldown->_float = qcvm->time + 0.5f;
 	if (!descriptor->alkaline)
 	{
@@ -6924,7 +6924,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 			saved_edicts, saved_global_struct, saved_vm_globals))
 			goto cleanup;
 	}
-	if (rogue)
+	if (rogue_program)
 	{
 		G_INT (OFS_PARM0) = EDICT_TO_PROG (ent);
 		qcvm->argc = 1;
@@ -6936,7 +6936,7 @@ static qboolean SV_VRStockAxeOutcome (client_t *client, edict_t *ent,
 	}
 	if (!descriptor->alkaline)
 		SV_StartSound (ent, ent->v.origin, 1, "weapons/ax1.wav", 255, 1);
-	if (rogue)
+	if (rogue_program)
 	{
 		G_FLOAT (OFS_PARM0) = 0.5f;
 		G_INT (OFS_PARM1) = EDICT_TO_PROG (ent);
@@ -8714,7 +8714,7 @@ qboolean SV_PrivateWalkTrialMotionHeld (client_t *client)
 
 static sv_private_move_state_t SV_PrivateWalkTrialQ30State (edict_t *ent)
 {
-	float prethink, postthink, chaoscount, skill, oskill;
+	float prethink, postthink, chaoscount, qc_skill, oskill;
 	float ladder, items, oldgravity, gravity;
 	int hook, ladderent;
 	qboolean held;
@@ -8725,7 +8725,7 @@ static sv_private_move_state_t SV_PrivateWalkTrialQ30State (edict_t *ent)
 		!SV_PrivateWalkTrialQ30Float (NULL, "prethink", &prethink) ||
 		!SV_PrivateWalkTrialQ30Float (NULL, "postthink", &postthink) ||
 		!SV_PrivateWalkTrialQ30Float (NULL, "chaoscount", &chaoscount) ||
-		!SV_PrivateWalkTrialQ30Float (NULL, "skill", &skill) ||
+		!SV_PrivateWalkTrialQ30Float (NULL, "skill", &qc_skill) ||
 		!SV_PrivateWalkTrialQ30Float (NULL, "oskill", &oskill) ||
 		!SV_PrivateWalkTrialQ30Float (ent, "onladder", &ladder) ||
 		!SV_PrivateWalkTrialQ30Float (ent, "moditems", &items) ||
@@ -8755,7 +8755,7 @@ static sv_private_move_state_t SV_PrivateWalkTrialQ30State (edict_t *ent)
 	 * aliases assigned by source-like decompilation: boots1048576, hook128,
 	 * super shotgun2. Qualify eligibility before any authored force runs. */
 	if (held || prethink == 0 || postthink == 0 || chaoscount <= 2 ||
-		skill != oskill || ladder != 0 || hook != 0 || *targetname ||
+		qc_skill != oskill || ladder != 0 || hook != 0 || *targetname ||
 		((int)items & (1048576 | 128)) || ent->v.weapon == 2 ||
 		ent->v.waterlevel != 0 || ((int)ent->v.flags & FL_WATERJUMP) ||
 		(oldgravity > 0 ? oldgravity : 1) != (gravity > 0 ? gravity : 1))
@@ -8897,7 +8897,7 @@ static const char *SV_PrivateWalkTrialOwnerStateError (edict_t *ent, client_t *c
 	if (!SV_PrivateWalkTrialStockProgram () &&
 		(!isfinite (ent->v.nextthink) ||
 		 (ent->v.nextthink > 0 &&
-		  (ent->v.think <= 0 || ent->v.think >= qcvm->progs->numfunctions))))
+		  (ent->v.think <= 0 || (unsigned int)ent->v.think >= qcvm->progs->numfunctions))))
 		return "invalid scheduled Think";
 	if (cmd && cmd->vr_gorilla_motion.flags)
 		return "trusted Gorilla motion is outside the raw trial";
@@ -8925,7 +8925,7 @@ static const char *SV_PrivateWalkTrialOwnerStateError (edict_t *ent, client_t *c
 	customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
 	if (customphysics && customphysics->function &&
 		(SV_PrivateWalkTrialStockProgram () || SV_PrivateWalkTrialQ30Program () ||
-		 customphysics->function < 0 || customphysics->function >= qcvm->progs->numfunctions))
+		 customphysics->function < 0 || (unsigned int)customphysics->function >= qcvm->progs->numfunctions))
 		return "unsupported or invalid customphysics";
 
 	groundprog = ent->v.groundentity; // QC entity slots are integer byte offsets
@@ -9704,7 +9704,7 @@ static qboolean SV_PrivateWalkTrialQ30WeaponThinkNeedsNative (edict_t *ent,
 	if (!window || !window->available || !isfinite (window->world_frametime) ||
 		window->world_frametime < 0 || ent->v.nextthink <= 0 ||
 		ent->v.nextthink > qcvm->time + window->world_frametime ||
-		ent->v.think <= 0 || ent->v.think >= qcvm->progs->numfunctions)
+		ent->v.think <= 0 || (unsigned int)ent->v.think >= qcvm->progs->numfunctions)
 		return false;
 	for (int i = 0; i < countof (attacks); ++i)
 		if (ED_FindFunction (attacks[i]) == &qcvm->functions[ent->v.think])

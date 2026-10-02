@@ -43,7 +43,7 @@ static void SDLCALL paint_audio (void *userdata, SDL_AudioStream *stream, int ad
 	if (Spatial_Active ())
 	{
 		float spatial[SA_BLOCK * 2];
-		int16_t mixed[SA_BLOCK * 2];
+		int16_t spatial_mixed[SA_BLOCK * 2];
 		int remaining_frames = additional_amount / (2 * (int)sizeof (int16_t));
 		/* Bound one callback after a long device stall; SDL will request the
 		 * remaining frames on its next stream refill. */
@@ -52,10 +52,10 @@ static void SDLCALL paint_audio (void *userdata, SDL_AudioStream *stream, int ad
 			const int frames = q_min (remaining_frames, SA_BLOCK);
 			Spatial_Render (spatial, frames);
 			for (int sample = 0; sample < frames * 2; ++sample)
-				mixed[sample] = (int16_t)(CLAMP (-1.0f, spatial[sample], 1.0f) * 32767.0f);
-			Voice_MixAudio ((unsigned char *)mixed, frames * 2 * sizeof (int16_t),
+				spatial_mixed[sample] = (int16_t)(CLAMP (-1.0f, spatial[sample], 1.0f) * 32767.0f);
+			Voice_MixAudio ((unsigned char *)spatial_mixed, frames * 2 * sizeof (int16_t),
 				16, 2, SA_RATE, false);
-			if (!SDL_PutAudioStreamData (stream, mixed, frames * 2 * sizeof (int16_t)))
+			if (!SDL_PutAudioStreamData (stream, spatial_mixed, frames * 2 * sizeof (int16_t)))
 				break;
 			remaining_frames -= frames;
 		}

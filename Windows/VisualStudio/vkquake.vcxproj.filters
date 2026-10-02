@@ -907,6 +907,192 @@
     <ClCompile Include="..\..\Shaders\Compiled\Release\mboit_resolve_msaa.frag.c">
       <Filter>Shaders\Release</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\addon_catalog.c">
+      <Filter>Main</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\player_avatar.c">
+      <Filter>Main</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\custom_avatar.c">
+      <Filter>Main</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\r_avatar.c">
+      <Filter>Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\basic_ui_stereo.vert.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui_stereo.vert.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\scene_upscale_stereo.frag.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_evaluate_stereo.comp.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_evaluate_fp16_stereo.comp.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_composite_stereo.frag.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo.frag.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_composite_stereo_debug.frag.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_composite_msaa_stereo_debug.frag.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\basic_ui.frag.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\basic_notex_ui.frag.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\basic_alphatest_ui.frag.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\draw_pic_ui.frag.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\draw_pic_alphatest_ui.frag.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\draw_pic_xbr_ui.frag.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\draw_pic_xbr_alphatest_ui.frag.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\hidden_area.vert.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\hidden_area.frag.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\basic_ui_stereo.vert.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\draw_pic_xbr_ui_stereo.vert.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\scene_upscale_stereo.frag.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_evaluate_stereo.comp.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_evaluate_fp16_stereo.comp.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_composite_stereo.frag.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo.frag.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_composite_stereo_debug.frag.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_composite_msaa_stereo_debug.frag.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\basic_ui.frag.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\basic_notex_ui.frag.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\basic_alphatest_ui.frag.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\draw_pic_ui.frag.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\draw_pic_alphatest_ui.frag.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\draw_pic_xbr_ui.frag.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\draw_pic_xbr_alphatest_ui.frag.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\hidden_area.vert.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\hidden_area.frag.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+      <ClCompile Include="..\..\Shaders\Compiled\Debug\alias_stereo.vert.c">
+      <Filter>Shaders\Debug\Alias</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\basic_stereo.vert.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\md5_8_stereo.vert.c">
+      <Filter>Shaders\Debug\Alias</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\md5_debug_stereo.vert.c">
+      <Filter>Shaders\Debug\Alias</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\md5_stereo.vert.c">
+      <Filter>Shaders\Debug\Alias</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\screen_effects_stereo_10bit.comp.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\screen_effects_stereo_8bit.comp.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\showtris_stereo.vert.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\sky_cube_stereo.vert.c">
+      <Filter>Shaders\Debug\Sky</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\sky_layer_stereo.vert.c">
+      <Filter>Shaders\Debug\Sky</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\world_stereo.vert.c">
+      <Filter>Shaders\Debug\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\alias_stereo.vert.c">
+      <Filter>Shaders\Release\Alias</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\basic_stereo.vert.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\md5_8_stereo.vert.c">
+      <Filter>Shaders\Release\Alias</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\md5_debug_stereo.vert.c">
+      <Filter>Shaders\Release\Alias</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\md5_stereo.vert.c">
+      <Filter>Shaders\Release\Alias</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\screen_effects_stereo_10bit.comp.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\screen_effects_stereo_8bit.comp.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\showtris_stereo.vert.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\sky_cube_stereo.vert.c">
+      <Filter>Shaders\Release\Sky</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\sky_layer_stereo.vert.c">
+      <Filter>Shaders\Release\Sky</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\world_stereo.vert.c">
+      <Filter>Shaders\Release\World</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\Quake\snd_codec.h">
