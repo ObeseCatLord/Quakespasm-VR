@@ -269,3 +269,13 @@ list. Main/reference and user-owned migration-2.0.md remain untouched.
   jobs have checked Windows Debug/Release generation/compile coverage. Linux
   rebuild passes; new matching ARM refresh runs. Root space prevents another VM
   build presently. [Exact current limits](windows-current-2.0-results.md).
+
+- F03: complete/missing/ordinary/complete program replacements in one native
+  process pass actual loaded enumeration and independent client-load checks,
+  including three real program-address reuses. Existing cache/loader owners stay.
+  [Exact results/limits](qc-fingerprint-reload-current-2.0-results.md). Authored
+  Shub/save-load/error/HUD boundaries remain distinct; no full F03 closure.
+- F10: additional actual MSVC syntax diagnostics corrected in3204aaba; all16
+  corrected/new owners pass strict output-free syntax checks under both Release
+  and Debug definitions. Linux rebuild passes. Full Windows build/link and final
+  artifact reconciliation remain required; root space still insufficient.

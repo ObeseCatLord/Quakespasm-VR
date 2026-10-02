@@ -8,6 +8,7 @@
 
 #include <math.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 /* Loaded reflection, entity, surface, copy/player and command fixtures use the actual host owner. */
@@ -1146,6 +1147,67 @@ static edict_t *FixtureEntityRounds (void)
 	return target;
 }
 
+static size_t FixtureEntityCycleWrite (const char *directory, const char *filename)
+{
+	char path[MAX_OSPATH]; FILE *file; long length; byte *data;
+	int path_length = q_snprintf (path, sizeof (path), "%s/%s", directory, filename);
+	assert (path_length > 0 && path_length < (int)sizeof (path));
+	file = fopen (path, "rb"); assert (file);
+	assert (!fseek (file, 0, SEEK_END)); length = ftell (file);
+	assert (length > 0 && length <= 16 * 1024 * 1024 && length <= INT_MAX);
+	assert (!fseek (file, 0, SEEK_SET));
+	data = malloc ((size_t)length); assert (data);
+	assert (fread (data, 1, (size_t)length, file) == (size_t)length);
+	assert (fgetc (file) == EOF && !ferror (file) && !fclose (file));
+	COM_WriteFile ("progs.dat", data, (int)length);
+	free (data);
+	return (size_t)length;
+}
+
+static void FixtureEntityReloadCycle (const char *directory)
+{
+	static const char *files[] = {"complete.dat", "missing.dat", "none.dat", "complete.dat"};
+	static const char *functions[] = {"centerprintlocal", "teleport_check_for_client", "teleport_enter_limbo", "spawn_tpush"};
+	unsigned short previous_crc = 0, complete_crc = 0;
+	uintptr_t previous_program = 0; int pointer_reuse = 0;
+	for (int step = 0; step < 4; step++)
+	{
+		size_t bytes = FixtureEntityCycleWrite (directory, files[step]);
+		SV_SpawnServer ("e1m1"); FixtureSwitch (&sv.qcvm);
+		assert (sv.active && sv.qcvm.edicts && sv.qcvm.worldmodel && sv.qcvm.progs);
+		int present = 0;
+		for (int i = 0; i < 4; i++) present += ED_FindFunction (functions[i]) != NULL;
+		assert (present == (step == 0 || step == 3 ? 4 : step == 1 ? 3 : 0));
+		qboolean fingerprint = step == 0 || step == 3;
+		if (step) assert (sv.qcvm.progscrc != previous_crc);
+		if (!step) complete_crc = sv.qcvm.progscrc;
+		if (step == 3) assert (sv.qcvm.progscrc == complete_crc);
+		assert (sv.qcvm.progssize == bytes);
+		if (previous_program && previous_program == (uintptr_t)sv.qcvm.progs) pointer_reuse++;
+		previous_program = (uintptr_t)sv.qcvm.progs;
+		FixtureEntityBody (true, fingerprint);
+		dprograms_t *program = sv.qcvm.progs; unsigned short crc = sv.qcvm.progscrc;
+		qmodel_t *world = sv.qcvm.worldmodel;
+		FixtureSwitch (NULL); cl.worldmodel = world; cl.model_precache[1] = world;
+		FixtureLoadCSProgsNative ();
+		assert (qcvm == NULL && cl.qcvm.progs && cl.qcvm.edicts);
+		FixtureSwitch (&cl.qcvm); FixtureEntityBody (false, fingerprint); PR_ClearProgs (&cl.qcvm);
+		assert (!cl.qcvm.progs && sv.qcvm.progs == program && sv.qcvm.progscrc == crc);
+		FixtureSwitch (&sv.qcvm);
+		/* Recheck the existing reserved-slot witnesses, without allocating
+		 * another body whose matching class would precede fresh entities. */
+		qboolean active0 = svs.clients[0].active, active1 = svs.clients[1].active;
+		svs.clients[0].active = false; svs.clients[1].active = true;
+		edict_t *expected = EDICT_NUM (fingerprint ? 2 : 1);
+		assert (FixtureEntityQuery ("find", sv.qcvm.edicts, "classname", "fixture-native-client", 0) == expected);
+		assert (FixtureEntityQuery ("nextent", sv.qcvm.edicts, "classname", "", 0) == expected);
+		svs.clients[0].active = active0; svs.clients[1].active = active1;
+		assert (sv.qcvm.progs == program && sv.qcvm.progscrc == crc);
+		previous_crc = crc;
+	}
+	printf ("QC_BINDING_ENTITY_RELOAD_NATIVE_PASSED pointer_reuse=%d\n", pointer_reuse);
+}
+
 static void FixtureEntityCases (void)
 {
 	int argument = COM_CheckParm ("-entity-fingerprint"), present = 0;
@@ -1179,6 +1241,12 @@ static void FixtureEntityCases (void)
 	SV_SpawnServer ("e1m1"); FixtureSwitch (&sv.qcvm);
 	assert (sv.active && sv.qcvm.edicts && sv.qcvm.worldmodel);
 	FixtureEntityBody (true, fingerprint);
+	int cycle = COM_CheckParm ("-entity-cycle-dir");
+	if (cycle)
+	{
+		assert (cycle + 1 < com_argc);
+		FixtureEntityReloadCycle (com_argv[cycle + 1]);
+	}
 	puts ("QC_BINDING_ENTITIES_NATIVE_PASSED loaded searches, chains, fingerprint and round predicates");
 }
 #endif
