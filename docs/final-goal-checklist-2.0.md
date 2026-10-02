@@ -375,3 +375,26 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   nine original stock save/load cases pass. Prior host_cmd native object fails
   the first legacy negative; [exact source/review/test limits](windows-ltcg-2.0-results.md).
   These close those bounded header/refusal cases, not all F02 saves/physics.
+
+
+2026-10-02 current cohort and resumed graphics:
+- F10: current0bd4ddb1 Windows Release/Debug builds, Linux x86-64 and native ARM
+  build/package/static verification and checksum retrieval pass. Main matches
+  every Linux/ARM651 inventoried entry and702 archived regular shipping inputs
+  outside docs/tests to current bytes. Interrupted ARM transfer recovered from
+  existing immutable archive with bounded IPv4/rsync, no rebuild/deployment.
+  [Exact cohort and limits](platform-cohort-current-2.0-results.md).
+- F05/F10: user reports GPU available. Actual packaged Linux desktop/native
+  screenshot, left/right OpenXR mirrors with MSAA4/stereo AO, and8controlled
+  6DoF phases pass with normal exits. Reused published probe now uses existing
+  StereoClip seam, explicit mirror1 and optional null-compositor captures.
+  Optimized opposite-liquid call-oracle remains incomplete; no weakened pass.
+  [Exact resumed results and limits](gpu-resumed-current-2.0-results.md).
+  Remaining renderer/foveation boundaries and whole-goal Astra signoff stay open.
+- F08: current combined13audio markers pass, including actual public Voice_Frame
+  handling of injected native SDL3 available/read failures, retained permission/
+  held PTT, END-only cleanup, no early retry, failed deadline open/backoff and
+  positive real dummy reopen/new PCM. Main reviews Luna output and independently
+  verifies recorded source/stable input/marker receipts.
+  [Exact boundary and limits](voice-device-fault-current-2.0-results.md).
+  No physical device, active headset-profile, live transport or whole F08 claim.

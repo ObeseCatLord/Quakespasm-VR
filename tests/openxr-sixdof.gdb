@@ -123,7 +123,8 @@ def observe():
   expected_eye=[expected_center[j]+offset[j]*units for j in range(3)]
   check(max(abs(a-b) for a,b in zip(item['eyes'][eye],expected_eye))<.01,'eye '+str(eye)+' '+label)
  samples.append(item)
- subprocess.run(['import','-window','Monado',str(root/(label+'.png'))],check=True,timeout=10)
+ if os.environ.get('XR_SIXDOF_NULL_COMPOSITOR') != '1':
+  subprocess.run(['import','-window','Monado',str(root/(label+'.png'))],check=True,timeout=10)
  check(iv('openxr_mirror_ready') and iv('vr_mirror.value')==1,'native left-eye mirror unavailable')
  windows=subprocess.run(['xprop','-root','_NET_CLIENT_LIST'],capture_output=True,text=True,check=True,timeout=5).stdout
  candidates=[]
@@ -135,7 +136,7 @@ def observe():
  (root/'result.json').write_text(json.dumps(dict(status='passed' if phase==len(phases)-1 else 'running',tracking='controlled injection after runtime location',samples=samples),indent=2)+'\n')
 end
 # Successful location, before production eye projection and camera preparation.
-break Quake/gl_vidsdl.c:5285 if $started && cls.signon == 4 && openxr_frame.should_render
+break VRXR_StereoClip if $started && cls.signon == 4 && openxr_frame.should_render
 commands 1
  silent
  python
@@ -153,11 +154,12 @@ commands 2
    python
 try:
  check(not iv('cls.demoplayback') and iv('key_dest')==iv('key_menu'),'default VR startup must be menu without demo')
- subprocess.run(['import','-window','Monado',str(root/'startup-menu.png')],check=True,timeout=10)
+ if os.environ.get('XR_SIXDOF_NULL_COMPOSITOR') != '1':
+  subprocess.run(['import','-window','Monado',str(root/'startup-menu.png')],check=True,timeout=10)
 except Exception as exc: fail(exc)
    end
    printf "SIXDOF_GPU_STARTUP_MENU_NO_DEMO_PASSED\n"
-   call (void)Cbuf_AddText("sv_qsvr_private 0\nvr_foveation 0\nvr_world_scale 1\nvr_floor_offset -16\nvr_aimmode 7\nvid_fsaa 4\nr_ssao 1\nmap e1m1\n")
+   call (void)Cbuf_AddText("vr_mirror 1\nsv_qsvr_private 0\nvr_foveation 0\nvr_world_scale 1\nvr_floor_offset -16\nvr_aimmode 7\nvid_fsaa 4\nr_ssao 1\nmap e1m1\n")
    set $started=1
   end
  else
