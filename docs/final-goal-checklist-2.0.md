@@ -420,3 +420,10 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   MSAA4/SSAO1, OIT reset and inspected eye images pass; no renderer edit.
   [Exact current results and limits](stereo-liquid-consumer-current-2.0-results.md).
   Lists remain empty; authored entity/water composition remains separate.
+
+- F05: bounded native test export and16alpha capture phases pass after reviewed
+  parser-fixture addition;310native water polygons/1646vertices and parsed alias
+  transforms independently checked. [Exact result/limits](stereo-alpha-geometry-current-2.0-results.md).
+  Local Astra catches notification expiry in earlier captures; recorded transfer
+  settings did not prove overlay stability. [Dispositions and smaller reference plan](stereo-alpha-reference-2.0-review.md).
+  Native common-pass equivalence, ordering and category-local influence stay open.

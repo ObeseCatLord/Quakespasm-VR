@@ -26,7 +26,7 @@ water/time associations, unique snapshot identities, transfer invariants and
 recipe hash. Actual native center/eye clip matrices are recorded for later
 independent projection; recording does not certify geometry coverage.
 
-Transfer/overlay inputs are identical across all captures: gamma1,contrast1,
+Recorded transfer/console inputs are identical across all captures: gamma1,contrast1,
 palette0,waterwarp0,polyblend1 with v_blend=(0,0,0,0),console0/not forced.
 Native extent320x240, mirror640x480. This remains an upscaled mirror and does not
 resolve the review's narrow source-footprint coverage warning. Successful native
@@ -44,6 +44,9 @@ The owned isolated service is normally stopped after the client exits. No human
 input, physical microphone/headset/gaze, benchmark or validation-layer pass.
 
 This closes the renewed native snapshot/presentation observation boundary.
-Full source-footprint/material coverage, independently bounded numerical
-composition and missing-layer alternatives remain open under F05. No production
+A subsequent Astra review finds realtime console notifications differ despite
+these recorded console/transfer settings and frozen game time. Overlay invariance
+and whole-image stability were not established. See [reference dispositions](stereo-alpha-reference-2.0-review.md).
+Targeted native common-pass comparison and missing-layer alternatives remain
+open under F05; a universal numerical composition oracle is deferred. No production
 renderer defect is established by these oracle gaps; no group/goal closure.

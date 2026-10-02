@@ -5,6 +5,7 @@
 #include "../Quake/cl_parse.c"
 
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 
 static const char *const fixture_alpha_paths[2] = {
@@ -14,6 +15,7 @@ static const char *const fixture_alpha_paths[2] = {
 static int fixture_alpha_models[2];
 static int fixture_alpha_static_indices[2] = {-1, -1};
 static int fixture_alpha_static_count;
+static void Fixture_AlphaGeometryCommand (void);
 
 static void Fixture_AlphaParseMessage (sizebuf_t *input, void (*parser) (void))
 {
@@ -146,4 +148,94 @@ void Fixture_AlphaSceneRegister (void)
 	assert (!Tasks_IsWorker () && fixture_alpha_static_count == 0);
 	Cmd_AddCommand ("fixture_alpha_init", Fixture_AlphaSceneInit);
 	Cmd_AddCommand ("fixture_alpha_opacity", Fixture_AlphaSceneOpacityCommand);
+	Cmd_AddCommand ("fixture_alpha_geometry", Fixture_AlphaGeometryCommand);
+}
+
+static void Fixture_AlphaGeometryCommand (void)
+{
+	qmodel_t *world = cl.worldmodel;
+	FILE *file;
+	const char *path;
+	int i, j;
+	qboolean ok = true;
+
+	assert (Cmd_Argc () == 2);
+	path = Cmd_Argv (1);
+	assert (path && *path);
+	assert (!Tasks_IsWorker () && cls.signon == SIGNONS && world &&
+		world == cl.model_precache[1] && !strcmp (world->name, "maps/e1m1.bsp"));
+	assert (fixture_alpha_static_count == 2);
+	assert (world->numsurfaces > 0 && world->surfaces &&
+		world->used_water_surfs > 0 && world->used_water_surfs <= 1024 && world->water_surfs);
+	for (i = 0; i < 2; ++i)
+	{
+		int index = fixture_alpha_static_indices[i];
+		entity_t *ent;
+		aliashdr_t *hdr;
+		assert (index >= 0 && index < cl.num_statics);
+		ent = cl.static_entities[index];
+		assert (ent && ent->is_static && ent->model == cl.model_precache[fixture_alpha_models[i]] &&
+			ent->model->type == mod_alias && !strcmp (ent->model->name, fixture_alpha_paths[i]));
+		assert (ent->angles[0] == 0 && ent->angles[1] == 0 && ent->angles[2] == 0);
+		assert (ENTSCALE_DECODE (ent->netstate.scale) == 1.0f);
+		hdr = (aliashdr_t *)ent->model->extradata[PV_QUAKE1];
+		assert (hdr);
+	}
+	for (i = 0; i < world->used_water_surfs; ++i)
+	{
+		int index = world->water_surfs[i], count = 0;
+		msurface_t *surf;
+		glpoly_t *poly, *seen[256];
+		assert (index >= 0 && index < world->numsurfaces);
+		for (j = 0; j < i; ++j) assert (world->water_surfs[j] != index);
+		surf = &world->surfaces[index];
+		assert ((surf->flags & SURF_DRAWTURB) && surf->plane && surf->polys);
+		for (poly = surf->polys; poly; poly = poly->next)
+		{
+			assert (count < 256);
+			for (j = 0; j < count; ++j) assert (seen[j] != poly);
+			assert (poly->numverts >= 3 && poly->numverts <= 256);
+			seen[count++] = poly;
+		}
+	}
+	file = fopen (path, "wx");
+	assert (file);
+#define ALPHA_JSON(...) do { if (ok && fprintf (file, __VA_ARGS__) < 0) ok = false; } while (0)
+	ALPHA_JSON ("{\"schema\":1,\"world\":\"%s\",\"entities\":[", world->name);
+	for (i = 0; i < 2; ++i)
+	{
+		int index = fixture_alpha_static_indices[i];
+		entity_t *ent = cl.static_entities[index];
+		aliashdr_t *hdr = (aliashdr_t *)ent->model->extradata[PV_QUAKE1];
+		ALPHA_JSON ("%s{\"name\":\"%s\",\"index\":%d,\"origin\":[%.9g,%.9g,%.9g],\"angles\":[%.9g,%.9g,%.9g],\"scale\":[%.9g,%.9g,%.9g],\"scale_origin\":[%.9g,%.9g,%.9g]}",
+			i ? "," : "", ent->model->name, index,
+			ent->origin[0], ent->origin[1], ent->origin[2], ent->angles[0], ent->angles[1], ent->angles[2],
+			hdr->scale[0], hdr->scale[1], hdr->scale[2],
+			hdr->scale_origin[0], hdr->scale_origin[1], hdr->scale_origin[2]);
+	}
+	ALPHA_JSON ("],\"water_surfs\":[");
+	for (i = 0; i < world->used_water_surfs; ++i)
+	{
+		int index = world->water_surfs[i], p = 0;
+		msurface_t *surf = &world->surfaces[index];
+		glpoly_t *poly;
+		ALPHA_JSON ("%s{\"index\":%d,\"flags\":%d,\"plane_normal\":[%.9g,%.9g,%.9g],\"plane_dist\":%.9g,\"polygons\":[",
+			i ? "," : "", index, surf->flags, surf->plane->normal[0], surf->plane->normal[1],
+			surf->plane->normal[2], surf->plane->dist);
+		for (poly = surf->polys; poly; poly = poly->next, ++p)
+		{
+			int v;
+			ALPHA_JSON ("%s[", p ? "," : "");
+			for (v = 0; v < poly->numverts; ++v)
+				ALPHA_JSON ("%s[%.9g,%.9g,%.9g]", v ? "," : "",
+					poly->verts[v][0], poly->verts[v][1], poly->verts[v][2]);
+			ALPHA_JSON ("]");
+		}
+		ALPHA_JSON ("]}");
+	}
+	ALPHA_JSON ("]}\n");
+	if (ferror (file)) ok = false;
+	if (fclose (file) != 0) ok = false;
+	assert (ok);
+#undef ALPHA_JSON
 }
