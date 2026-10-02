@@ -82,3 +82,13 @@ Storage-gate receipt and immutable3204aaba source archive/build script are
 prepared under windows3204aaba in the durable recovery directory. No full
 Release/Debug build was started with this insufficient storage. Full build and
 PE/link qualification remain open; no output-free check is substituted for them.
+
+Current prepared3204aaba archive is independently byte-reconciled against all
+672 tracked production/build/resource/license inputs under Quake, Shaders,
+Windows, Packaging, Misc, LICENSES and root build/license files. SHA256 matches
+the recorded immutable archive; selected tracked-path sets match with no
+missing/new paths and all file bytes match the current worktree. Receipt:
+windows3204aaba/shipping-byte-reconciliation-current.json in the durable
+recovery directory. Later docs/test-only commits do not invalidate these
+checked inputs. This is source freshness evidence, not Windows build/link,
+complete package acceptance or final F10 signoff.
