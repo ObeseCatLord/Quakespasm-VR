@@ -113,6 +113,13 @@ receipts. These overlap intentionally; test shared boundaries once.
   rejection exits pass. Local Astra/xhigh observations adopted; no production/GPU.
   [Exact results/limits](qc-calls-current-2.0-results.md). Full parser event handoff,
   token/entity/surface/authored consumers and GUI error cleanup remain open.
+- F03: loaded token text/offset/index/capacity and shared-scratch/per-VM-zone
+  lifetimes pass; verified local Astra console-oracle correction adopted.
+  Actual loaded CSQC_Parse_Event through CL_ParseServerMessage, all native read
+  results, later time/nop, NULL VM and clear/reload pass under both flag families.
+  [Exact results/limits](qc-tokens-events-current-2.0-results.md). No production/GPU
+  change; prepared flags do not prove real negotiation/transport. Reflection/
+  entity/surface/authored consumers and GUI error cleanup remain open.
 - F07: repeated native mj4m1 loads observe actual indexed worker entries; all
   427881 surfaces match native serial extent recalculation on both loads, with
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).

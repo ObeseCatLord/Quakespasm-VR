@@ -72,6 +72,25 @@ do not certify GUI recovery/resource unwind. No graphics/audio/devices/sockets.
 [Plan](../docs/qc-calls-final-2.0-plan.md),
 [results/limits](../docs/qc-calls-current-2.0-results.md).
 
+## Loaded QC tokens and native event handoff
+
+The existing generator/native fixture also support separate `--tokens`/`-tokens`
+and `--events`/`-events` modes in the same disposable licensed profile and strict
+assertion-enabled dedicated recipe. Require compile/link/run0 and the respective
+`QC_BINDING_TOKENS_NATIVE_PASSED` or `QC_BINDING_EVENTS_NATIVE_PASSED` marker.
+
+Tokens mode covers exact fitting/quoted/separated text and offsets, primed
+invalid indices, empty/replacement tokens, native wider input versus bounded
+temporary output, shared token scratch and per-VM zoned-copy lifetimes. Events
+mode loads a real named `CSQC_Parse_Event` hook; `CL_ParseServerMessage` executes
+its native message readers and then processes a following time/nop, with exact
+results, callback count, cursor and VM observations. Both coordinate/angle flag
+families and client-VM reload execute. Prepared flags are not real negotiation
+or socket proof; native EOF badread is expected. No graphics/audio/device work.
+[Plans](../docs/qc-tokens-final-2.0-plan.md),
+[event plan](../docs/qc-event-handoff-final-2.0-plan.md),
+[actual results/limits](../docs/qc-tokens-events-current-2.0-results.md).
+
 ## Native opposite liquid eye categories
 
 `openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled

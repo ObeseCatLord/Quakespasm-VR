@@ -194,7 +194,7 @@ static void FixtureCallsNamed (void)
 		!FixtureCallsFloat ("exists_missing") && FixtureCallsFloat ("exists_readbyte") && qcvm->argc == 1);
 }
 
-static void FixtureCallsRead (qboolean modern)
+static void FixtureCallsRead (qboolean modern, qboolean event)
 {
 	byte bytes[128];
 	sizebuf_t payload = {.data = bytes, .maxsize = sizeof (bytes)};
@@ -202,25 +202,50 @@ static void FixtureCallsRead (qboolean modern)
 	int saved_readcount = msg_readcount;
 	qboolean saved_badread = msg_badread;
 	unsigned saved_flags = cl.protocolflags;
+	unsigned saved_pext1 = cl.protocol_pext1, saved_pext2 = cl.protocol_pext2;
+	double saved_mtime[2];
+	memcpy (saved_mtime, cl.mtime, sizeof (saved_mtime));
 	unsigned flags = modern ? PRFL_FLOATCOORD | PRFL_SHORTANGLE : 0;
+	if (event) MSG_WriteByte (&payload, svcfte_cgamepacket);
 	MSG_WriteByte (&payload, 250); MSG_WriteChar (&payload, -12); MSG_WriteShort (&payload, -1234);
 	MSG_WriteLong (&payload, -1234567); MSG_WriteCoord (&payload, modern ? 123.125f : -12.25f, flags);
 	MSG_WriteAngle (&payload, modern ? -90 : 45, flags); MSG_WriteString (&payload, "fixture-calls-read");
-	MSG_WriteFloat (&payload, -3.25f); MSG_WriteByte (&payload, 0x5a);
+	MSG_WriteFloat (&payload, -3.25f);
+	if (event)
+	{
+		MSG_WriteByte (&payload, svc_time); MSG_WriteFloat (&payload, modern ? 43.5f : 17.25f);
+		MSG_WriteByte (&payload, svc_nop);
+	}
+	else MSG_WriteByte (&payload, 0x5a);
 	cl.protocolflags = flags;
 	net_message = payload;
 	MSG_BeginReading ();
-	FixtureCallsExec ("read");
+	if (event)
+	{
+		cl.protocol_pext1 = PEXT1_CSQC; cl.protocol_pext2 = 0;
+		FixtureSwitch (NULL);
+		CL_ParseServerMessage ();
+		assert (qcvm == NULL && msg_badread && msg_readcount == payload.cursize);
+		FixtureSwitch (&cl.qcvm);
+		assert (FixtureCallsFloat ("event_count") == 1 && cl.mtime[0] == (modern ? 43.5 : 17.25));
+	}
+	else FixtureCallsExec ("read");
 	assert (FixtureCallsFloat ("read_byte") == 250 && FixtureCallsFloat ("read_char") == -12 &&
 		FixtureCallsFloat ("read_short") == -1234 && FixtureCallsFloat ("read_long") == -1234567 &&
 		FixtureCallsFloat ("read_coord") == (modern ? 123.125f : -12.25f) &&
 		FixtureCallsFloat ("read_angle") == (modern ? -90 : 45) &&
 		!strcmp (FixtureString ("fixture_calls_read_string"), "fixture-calls-read") &&
-		FixtureCallsFloat ("read_float") == -3.25f && !msg_badread && msg_readcount == payload.cursize - 1);
-	assert (MSG_ReadByte () == 0x5a && !msg_badread && msg_readcount == payload.cursize);
+		FixtureCallsFloat ("read_float") == -3.25f);
+	if (!event)
+	{
+		assert (!msg_badread && msg_readcount == payload.cursize - 1);
+		assert (MSG_ReadByte () == 0x5a && !msg_badread && msg_readcount == payload.cursize);
+	}
 	FixtureCallsExec ("read_eof");
 	assert (FixtureCallsFloat ("read_eof") == -1 && msg_badread && msg_readcount == payload.cursize);
 	net_message = saved_message; msg_readcount = saved_readcount; msg_badread = saved_badread; cl.protocolflags = saved_flags;
+	cl.protocol_pext1 = saved_pext1; cl.protocol_pext2 = saved_pext2;
+	memcpy (cl.mtime, saved_mtime, sizeof (saved_mtime));
 }
 
 static void FixtureCallsCases (void)
@@ -229,14 +254,30 @@ static void FixtureCallsCases (void)
 	FixtureSwitch (&sv.qcvm); FixtureCallsNamed ();
 	FixtureSwitch (&cl.qcvm);
 	assert (PR_LoadProgs ("fixture-csqc.dat", true, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins));
-	FixtureCallsNamed (); FixtureCallsRead (false); FixtureCallsRead (true);
+	FixtureCallsNamed (); FixtureCallsRead (false, false); FixtureCallsRead (true, false);
 	PR_ClearProgs (&cl.qcvm); assert (sv.qcvm.progs == server_program);
 	FixtureSwitch (&sv.qcvm); FixtureCallsNamed ();
 	FixtureSwitch (&cl.qcvm);
 	assert (PR_LoadProgs ("fixture-csqc.dat", true, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins));
-	FixtureCallsNamed (); FixtureCallsRead (true);
+	FixtureCallsNamed (); FixtureCallsRead (true, false);
 	PR_ClearProgs (&cl.qcvm); assert (sv.qcvm.progs == server_program);
 	puts ("QC_BINDING_CALLS_NATIVE_PASSED SSQC/CSQC named calls, locals and native message readers");
+}
+
+static void FixtureEventCases (void)
+{
+	dprograms_t *server_program = sv.qcvm.progs;
+	for (int modern = 0; modern < 2; modern++)
+	{
+		FixtureSwitch (&cl.qcvm);
+		assert (PR_LoadProgs ("fixture-csqc.dat", true, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins));
+		assert (cl.qcvm.extfuncs.CSQC_Parse_Event == FixtureRef ("fixture_ref_calls_event"));
+		assert (FixtureCallsFloat ("event_count") == 0);
+		FixtureCallsRead (modern, true);
+		PR_ClearProgs (&cl.qcvm);
+		assert (sv.qcvm.progs == server_program);
+	}
+	puts ("QC_BINDING_EVENTS_NATIVE_PASSED loaded hook, real parser continuation and CSQC reload");
 }
 
 static void FixtureResourceOwn (qboolean csqc)
@@ -648,6 +689,180 @@ static void FixtureFilesCases (void)
 	puts ("QC_BINDING_FILES_NATIVE_PASSED SSQC/CSQC loaded file, buffer, search ownership and retirement");
 }
 
+static void FixtureTokensExec (const char *entry)
+{
+	char name[96];
+	q_snprintf (name, sizeof (name), "fixture_ref_tokens_%s", entry);
+	PR_ExecuteProgram (FixtureRef (name));
+}
+
+static float FixtureTokensFloat (const char *name)
+{
+	char global[96];
+	q_snprintf (global, sizeof (global), "fixture_tokens_%s", name);
+	return FixtureFloat (global);
+}
+
+static int FixtureTokensRaw (const char *name)
+{
+	char global[96];
+	q_snprintf (global, sizeof (global), "fixture_tokens_%s", name);
+	return G_INT (FixtureGlobal (global, ev_string)->ofs);
+}
+
+static const char *FixtureTokensString (const char *name)
+{
+	char global[96];
+	q_snprintf (global, sizeof (global), "fixture_tokens_%s", name);
+	return FixtureString (global);
+}
+
+static void FixtureTokensFinite (void)
+{
+	static const char *const modes[] = {"basic", "console", NULL};
+	for (const char *const *mode = modes; *mode; mode++)
+	{
+		char key[96];
+		if (!strcmp (*mode, "console"))
+		{
+			FixtureTokensExec ("shared_client"); FixtureTokensExec ("snapshot_client");
+			assert (FixtureTokensFloat ("shared_client_count") == 1 &&
+				!strcmp (FixtureTokensString ("shared_client_last"), "client"));
+		}
+		FixtureTokensExec (*mode);
+		q_snprintf (key, sizeof (key), "%s_result", *mode);
+		assert (FixtureTokensFloat (key) == 3);
+		q_snprintf (key, sizeof (key), "%s_argc", *mode);
+		assert (FixtureTokensFloat (key) == 3);
+		for (int i = 0; i < 3; i++)
+		{
+			static const char *const labels[] = {"zero", "one", "two"};
+			static const float starts[] = {2, 6, 18}, ends[] = {5, 17, 22};
+			q_snprintf (key, sizeof (key), "%s_argv_%s", *mode, labels[i]);
+			assert (!strcmp (FixtureTokensString (key), i == 0 ? "one" : i == 1 ? "two three" : "four"));
+			q_snprintf (key, sizeof (key), "%s_start_%s", *mode, labels[i]);
+			assert (FixtureTokensFloat (key) == starts[i]);
+			q_snprintf (key, sizeof (key), "%s_end_%s", *mode, labels[i]);
+			assert (FixtureTokensFloat (key) == ends[i]);
+		}
+		q_snprintf (key, sizeof (key), "%s_argv_last", *mode);
+		assert (!strcmp (FixtureTokensString (key), "four"));
+	}
+	for (const char *const *mode = (const char *const[]) {"comma", "multi", NULL}; *mode; mode++)
+	{
+		char key[96];
+		q_snprintf (key, sizeof (key), "%s", *mode);
+		FixtureTokensExec (key);
+		q_snprintf (key, sizeof (key), "%s_result", *mode);
+		assert (FixtureTokensFloat (key) == 3);
+		q_snprintf (key, sizeof (key), "%s_argc", *mode);
+		assert (FixtureTokensFloat (key) == 3);
+		for (int i = 0; i < 3; i++)
+		{
+			static const char *const labels[] = {"zero", "one", "two"};
+			static const char *const expected[] = {"aa", "bb", "cc"};
+			q_snprintf (key, sizeof (key), "%s_argv_%s", *mode, labels[i]);
+			assert (!strcmp (FixtureTokensString (key), expected[i]));
+			q_snprintf (key, sizeof (key), "%s_start_%s", *mode, labels[i]);
+			assert (FixtureTokensFloat (key) == i * (strcmp (*mode, "multi") ? 3 : 4));
+			q_snprintf (key, sizeof (key), "%s_end_%s", *mode, labels[i]);
+			assert (FixtureTokensFloat (key) == i * (strcmp (*mode, "multi") ? 3 : 4) + 2);
+		}
+	}
+	FixtureTokensExec ("invalid");
+	for (const char *const *index = (const char *const[]) {"three", "minus_four", NULL}; *index; index++)
+	{
+		char key[96];
+		q_snprintf (key, sizeof (key), "invalid_%s_witness", *index);
+		assert (FixtureTokensRaw (key) != 0);
+		q_snprintf (key, sizeof (key), "invalid_%s_prime", *index);
+		assert (FixtureTokensFloat (key) == 12);
+		q_snprintf (key, sizeof (key), "invalid_%s", *index);
+		assert (FixtureTokensRaw (key) == 0);
+		for (const char *const *edge = (const char *const[]) {"start", "end", NULL}; *edge; edge++)
+		{
+			q_snprintf (key, sizeof (key), "invalid_%s_%s_prime", *index, *edge);
+			assert (FixtureTokensFloat (key) == 12);
+			q_snprintf (key, sizeof (key), "invalid_%s_%s", *index, *edge);
+			assert (FixtureTokensFloat (key) == -1);
+		}
+	}
+	FixtureTokensExec ("empty");
+	assert (FixtureTokensFloat ("empty_prime") == 12 && FixtureTokensFloat ("empty_result") == 0 &&
+		FixtureTokensFloat ("empty_argc") == 0 && FixtureTokensRaw ("empty_argv_prime") != 0 &&
+		!strcmp (FixtureTokensString ("empty_argv_prime"), "return-prime") && FixtureTokensRaw ("empty_argv") == 0);
+	FixtureTokensExec ("repeat");
+	assert (FixtureTokensFloat ("repeat_result") == 2 && FixtureTokensFloat ("repeat_argc") == 2 &&
+		!strcmp (FixtureTokensString ("repeat_argv_zero"), "fresh") &&
+		!strcmp (FixtureTokensString ("repeat_argv_one"), "token"));
+	FixtureTokensExec ("long");
+	assert (FixtureTokensFloat ("long_result") == 2 && FixtureTokensFloat ("long_argc") == 2);
+	assert (FixtureTokensRaw ("long_argv_zero") != 0 && strlen (FixtureTokensString ("long_argv_zero")) == 1023);
+	for (int i = 0; i < 1023; i++) assert (FixtureTokensString ("long_argv_zero")[i] == 'a');
+	assert (FixtureTokensString ("long_argv_zero")[1023] == '\0' &&
+		FixtureTokensFloat ("long_argv_zero_length") == 1023 &&
+		FixtureTokensFloat ("long_start_zero") == 0 && FixtureTokensFloat ("long_end_zero") == 1024 &&
+		FixtureTokensFloat ("long_start_one") == 1025 && FixtureTokensFloat ("long_end_one") == 1026 &&
+		!strcmp (FixtureTokensString ("long_argv_one"), "b") &&
+		!strcmp (FixtureTokensString ("long_argv_last"), "b"));
+}
+
+static size_t FixtureTokensCheckZone (void)
+{
+	int handle = FixtureTokensRaw ("zone_handle");
+	size_t id;
+	assert (handle < 0);
+	id = (size_t)(-1 - handle);
+	assert (qcvm->knownzone && id < qcvm->knownzonesize &&
+		(qcvm->knownzone[id >> 3] & (1u << (id & 7))));
+	assert (!strcmp (FixtureTokensString ("zone_handle"), "two three"));
+	return id;
+}
+
+static void FixtureTokensCases (void)
+{
+	dprograms_t *server_program = sv.qcvm.progs;
+	size_t zone_id, client_zone_id;
+	FixtureSwitch (&sv.qcvm);
+	FixtureTokensFinite ();
+	FixtureTokensExec ("zone_make");
+	zone_id = FixtureTokensCheckZone ();
+	FixtureTokensExec ("retokenize");
+	assert (FixtureTokensFloat ("retokenize_result") == 2);
+	assert (FixtureTokensCheckZone () == zone_id);
+	FixtureTokensExec ("shared_server");
+	FixtureSwitch (&cl.qcvm);
+	assert (PR_LoadProgs ("fixture-csqc.dat", true, PROGHEADER_CRC,
+		pr_csqcbuiltins, pr_csqcnumbuiltins));
+	FixtureTokensExec ("snapshot_client");
+	assert (FixtureTokensFloat ("shared_client_count") == 2 &&
+		!strcmp (FixtureTokensString ("shared_client_last"), "tokens"));
+	FixtureTokensFinite ();
+	FixtureTokensExec ("zone_make");
+	client_zone_id = FixtureTokensCheckZone ();
+	FixtureTokensExec ("retokenize");
+	assert (FixtureTokensFloat ("retokenize_result") == 2 && FixtureTokensCheckZone () == client_zone_id);
+	FixtureTokensExec ("zone_free");
+	assert (!(qcvm->knownzone[client_zone_id >> 3] & (1u << (client_zone_id & 7))));
+	FixtureTokensExec ("shared_client");
+	FixtureSwitch (&sv.qcvm);
+	FixtureTokensExec ("snapshot_server");
+	assert (FixtureTokensFloat ("shared_server_count") == 1 &&
+		!strcmp (FixtureTokensString ("shared_server_last"), "client"));
+	FixtureSwitch (&cl.qcvm);
+	PR_ClearProgs (&cl.qcvm);
+	assert (sv.qcvm.progs == server_program);
+	FixtureSwitch (&sv.qcvm);
+	FixtureTokensExec ("after_clear");
+	assert (FixtureTokensRaw ("after_clear_prime") != 0 &&
+		!strcmp (FixtureTokensString ("after_clear_prime"), "return-prime") &&
+		FixtureTokensFloat ("after_clear_count") == 0 && FixtureTokensRaw ("after_clear_argv") == 0);
+	assert (FixtureTokensCheckZone () == zone_id);
+	FixtureTokensExec ("zone_free");
+	assert (!(qcvm->knownzone[zone_id >> 3] & (1u << (zone_id & 7))));
+	puts ("QC_BINDING_TOKENS_NATIVE_PASSED SSQC/CSQC loaded token calls, shared cleanup and zoned ownership");
+}
+
 int main (int argc, char **argv)
 {
 	dprograms_t *server_program;
@@ -656,6 +871,11 @@ int main (int argc, char **argv)
 
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
 	assert (sv.active);
+	if (COM_CheckParm ("-events"))
+	{
+		FixtureEventCases ();
+		return 0;
+	}
 	if (COM_CheckParm ("-calls-forbidden"))
 	{
 		puts ("QC_BINDING_CALLS_FORBIDDEN_BEGIN");
@@ -681,6 +901,11 @@ int main (int argc, char **argv)
 	if (COM_CheckParm ("-resources"))
 	{
 		FixtureResourceCases ();
+		return 0;
+	}
+	if (COM_CheckParm ("-tokens"))
+	{
+		FixtureTokensCases ();
 		return 0;
 	}
 	FixtureCheckEnabled (false);

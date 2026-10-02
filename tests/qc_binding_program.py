@@ -7,7 +7,7 @@ from pathlib import Path
 from cooperative_qc_program import source_program
 
 
-def assemble(program, resources=False, files=False, calls=False):
+def assemble(program, resources=False, files=False, calls=False, tokens=False, events=False):
     header = list(struct.unpack_from("<15i", program))
     if header[0] != 6:
         raise ValueError("fixture requires classic version6 QC")
@@ -138,7 +138,145 @@ def assemble(program, resources=False, files=False, calls=False):
     add_ref("named_dprint_entry", dprint_entry("fixture_named_dprint_entry", "dprint_named", "dprint_named"))
     add_ref("dprint_277_entry", dprint_entry("fixture_dprint_277_entry", "dprint_277", "dprint_277"))
 
-    if calls:
+    if tokens:
+        for builtin, number in (("tokenize", 441), ("argv", 442), ("argc", 0),
+                                ("tokenizebyseparator", 479), ("tokenize_console", 514),
+                                ("argv_start_index", 515), ("argv_end_index", 516),
+                                ("strlen", 114), ("strcat", 115), ("strzone", 118),
+                                ("strunzone", 119)):
+            add_ref("tokens_" + builtin, add_function(builtin, -number if number else 0))
+
+        values = {}
+
+        def tf(key, value=0.0):
+            values[key] = global_slot("fixture_tokens_" + key, value=value)
+            return values[key]
+
+        def ts(key, value):
+            values[key] = global_slot("fixture_tokens_" + key, 1, name(value))
+            return values[key]
+
+        def tr(key, string=False):
+            if key not in values:
+                values[key] = global_slot("fixture_tokens_" + key, 1 if string else 2)
+            return values[key]
+
+        for key, value in (("basic_input", '  one "two three"\tfour'),
+                           ("comma_input", "aa,bb,cc"), ("comma_separator", ","),
+                           ("multi_input", "aa::bb::cc"), ("multi_separator", "::"),
+                           ("empty_input", ""), ("repeat_input", "fresh token"),
+                           ("return_prime", "return-prime"), ("server_seed", "server tokens"),
+                           ("client_seed", "client")):
+            ts(key, value)
+        ts("long_input", "a" * 1024 + " b")
+        for key, value in (("index_zero", 0), ("index_one", 1), ("index_two", 2),
+                           ("index_last", -1), ("index_three", 3), ("index_minus_four", -4)):
+            tf(key, value)
+        ts("zone_handle", "")
+        ts("zone_source", "")
+
+        def tinvoke(code, builtin, args=(), output=None, string_result=False):
+            for index, (slot, is_string) in enumerate(args):
+                code.append((store_string if is_string else store_float, slot, 4 + index * 3, 0))
+            code.append((call_function - 1 + len(args), ref_slots["tokens_" + builtin], 0, 0))
+            if output is not None:
+                code.append((store_string if string_result else store_float, 1, output, 0))
+
+        def tentry(key, code):
+            add_ref("tokens_" + key, entry("fixture_tokens_" + key, code))
+
+        def capture(code, stem, indices=(0, 1, 2, -1), spans=(0, 1, 2)):
+            tinvoke(code, "argc", output=tr(stem + "_argc"))
+            for index, label in zip(indices, ("zero", "one", "two", "last")):
+                tinvoke(code, "argv", ((values["index_" + ("last" if index == -1 else label)], False),),
+                        tr(stem + "_argv_" + label, True), True)
+            for index in spans:
+                label = ("zero", "one", "two")[index]
+                arg = (values["index_" + label], False)
+                tinvoke(code, "argv_start_index", (arg,), tr(stem + "_start_" + label))
+                tinvoke(code, "argv_end_index", (arg,), tr(stem + "_end_" + label))
+
+        for mode, builtin in (("basic", "tokenize"), ("console", "tokenize_console")):
+            code = []
+            tinvoke(code, builtin, ((values["basic_input"], True),), tr(mode + "_result"))
+            capture(code, mode)
+            tentry(mode, code)
+
+        for mode, text_key, separator_key in (("comma", "comma_input", "comma_separator"),
+                                               ("multi", "multi_input", "multi_separator")):
+            code = []
+            tinvoke(code, "tokenizebyseparator", ((values[text_key], True), (values[separator_key], True)),
+                    tr(mode + "_result"))
+            capture(code, mode, indices=(0, 1, 2), spans=(0, 1, 2))
+            tentry(code=code, key=mode)
+
+        code = []
+        for label, bad_index in (("three", "index_three"), ("minus_four", "index_minus_four")):
+            tinvoke(code, "strlen", ((values["return_prime"], True),), tr("invalid_" + label + "_prime"))
+            tinvoke(code, "argv", ((values["index_zero"], False),), tr("invalid_" + label + "_witness", True), True)
+            tinvoke(code, "argv", ((values[bad_index], False),), tr("invalid_" + label, True), True)
+            for edge, builtin in (("start", "argv_start_index"), ("end", "argv_end_index")):
+                tinvoke(code, "strlen", ((values["return_prime"], True),),
+                        tr("invalid_" + label + "_" + edge + "_prime"))
+                tinvoke(code, builtin, ((values[bad_index], False),),
+                        tr("invalid_" + label + "_" + edge))
+        tentry("invalid", code)
+
+        code = []
+        tinvoke(code, "strlen", ((values["return_prime"], True),), tr("empty_prime"))
+        tinvoke(code, "tokenize", ((values["empty_input"], True),), tr("empty_result"))
+        tinvoke(code, "argc", output=tr("empty_argc"))
+        tinvoke(code, "strcat", ((values["return_prime"], True),), tr("empty_argv_prime", True), True)
+        tinvoke(code, "argv", ((values["index_zero"], False),), tr("empty_argv", True), True)
+        tentry("empty", code)
+
+        code = []
+        tinvoke(code, "tokenize", ((values["repeat_input"], True),), tr("repeat_result"))
+        capture(code, "repeat", indices=(0, 1), spans=())
+        tentry("repeat", code)
+
+        code = []
+        tinvoke(code, "tokenize", ((values["long_input"], True),), tr("long_result"))
+        tinvoke(code, "argc", output=tr("long_argc"))
+        tinvoke(code, "argv", ((values["index_zero"], False),), tr("long_argv_zero", True), True)
+        tinvoke(code, "strlen", ((tr("long_argv_zero", True), True),), tr("long_argv_zero_length"))
+        tinvoke(code, "argv", ((values["index_one"], False),), tr("long_argv_one", True), True)
+        tinvoke(code, "argv_start_index", ((values["index_zero"], False),), tr("long_start_zero"))
+        tinvoke(code, "argv_end_index", ((values["index_zero"], False),), tr("long_end_zero"))
+        tinvoke(code, "argv_start_index", ((values["index_one"], False),), tr("long_start_one"))
+        tinvoke(code, "argv_end_index", ((values["index_one"], False),), tr("long_end_one"))
+        tinvoke(code, "argv", ((values["index_last"], False),), tr("long_argv_last", True), True)
+        tentry("long", code)
+
+        code = []
+        tinvoke(code, "tokenize", ((values["basic_input"], True),), tr("zone_tokenize_result"))
+        tinvoke(code, "argv", ((values["index_one"], False),), tr("zone_source", True), True)
+        tinvoke(code, "strzone", ((tr("zone_source", True), True),), values["zone_handle"], True)
+        tentry("zone_make", code)
+        tentry("zone_free", [(store_string, values["zone_handle"], 4, 0),
+                              (call_function, ref_slots["tokens_strunzone"], 0, 0)])
+
+        code = []
+        tinvoke(code, "tokenize", ((values["repeat_input"], True),), tr("retokenize_result"))
+        tentry("retokenize", code)
+
+        for side in ("server", "client"):
+            code = []
+            tinvoke(code, "tokenize", ((values[side + "_seed"], True),), tr("shared_" + side + "_result"))
+            tentry("shared_" + side, code)
+            code = []
+            tinvoke(code, "argc", output=tr("shared_" + side + "_count"))
+            tinvoke(code, "argv", ((values["index_last"], False),),
+                    tr("shared_" + side + "_last", True), True)
+            tentry("snapshot_" + side, code)
+
+        code = []
+        tinvoke(code, "argc", output=tr("after_clear_count"))
+        tinvoke(code, "strcat", ((values["return_prime"], True),), tr("after_clear_prime", True), True)
+        tinvoke(code, "argv", ((values["index_zero"], False),), tr("after_clear_argv", True), True)
+        tentry("after_clear", code)
+
+    if calls or events:
         for function_name, first_statement, ref_name in (
                 ("callfunction", 0, "calls_callfunction"), ("isfunction", 0, "calls_isfunction"),
                 ("fabs", 0, "calls_fabs"), ("min", 0, "calls_min"), ("strcat", 0, "calls_strcat"),
@@ -253,6 +391,10 @@ def assemble(program, resources=False, files=False, calls=False):
                                     ("calls_readstring", "read_string", True), ("calls_readfloat", "read_float", False)):
             invoke(code, ref, result, string)
         add_ref("calls_read_entry", entry("fixture_calls_read", code))
+        if events:
+            event_count = global_slot("fixture_calls_event_count")
+            add_ref("calls_event", entry("CSQC_Parse_Event",
+                    [(6, event_count, values["arg1"], event_count)] + code))
         code = []
         invoke(code, "calls_readbyte", "read_eof")
         add_ref("calls_read_eof_entry", entry("fixture_calls_read_eof", code))
@@ -674,10 +816,12 @@ def main():
     parser.add_argument("--resources", action="store_true", help="append the finite loaded buffer/string cases")
     parser.add_argument("--files", "-files", action="store_true", help="append loaded file/search ownership cases")
     parser.add_argument("--calls", action="store_true", help="append loaded named-call and CSQC reader cases")
+    parser.add_argument("--tokens", "-tokens", action="store_true", help="append loaded token and shared-state cases")
+    parser.add_argument("--events", action="store_true", help="append the native CSQC event hook")
     args = parser.parse_args()
-    if sum((args.resources, args.files, args.calls)) > 1:
-        parser.error("--resources, --files and --calls are separate fixture modes")
-    result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls)
+    if sum((args.resources, args.files, args.calls, args.tokens, args.events)) > 1:
+        parser.error("--resources, --files, --calls, --tokens and --events are separate fixture modes")
+    result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls, args.tokens, args.events)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)

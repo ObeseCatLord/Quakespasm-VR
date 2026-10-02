@@ -1,6 +1,6 @@
 # F03 loaded token boundary plan
 
-2026-10-01. Next finite CPU-only F03 subset. Implementation has not started.
+2026-10-01. Finite CPU-only F03 subset. Plan preceded implementation.
 Reuse existing qc_binding_program.py/native fixture helpers, loaded licensed
 program append and native dedicated bootstrap. Native pr_ext.c1510–1686 token
 wrappers use shared qctoken state, COM_Parse and temporary-string owners;
@@ -38,3 +38,27 @@ private inputs, source integration, strict dedicated CPU execution after the
 slice is implemented, section/default-mode comparison and bounded receipt.
 Stop/report expansion instead of adding another assembler/VM framework.
 GPU/audio/OpenXR remain stopped. No new feature enumeration or whole F03 closure.
+
+Main verified native registrations: tokenize441, argv442, argc name-only0,
+separator479, console514, start515, end516, strlen114, strcat115, strzone118,
+strunzone119. Ordinary primary pr_cmds.c4730–4904 has the same token traversal,
+separator increment and negative-index conventions,1024 temporary copy.
+Current COM_Parse delegates its4096-capacity parser; preserve the improvement.
+Verified expected inputs: two leading spaces plus one, quoted two three, tab,
+four produce spans2..5/6..17/18..22; aa,bb,cc gives0..2/3..5/6..8;
+aa::bb::cc gives0..2/4..6/8..10. Avoid inventing semantics for adjacent/empty
+separators; those retained quirks are outside this finite slice.
+
+Main reopened the estimate at handoff: C assertions/helper overhead exceeds
+the100line estimate. Existing native bootstrap/VM/parser/memory owners remain;
+no duplicate production state or new architecture appeared. Retain readable
+bounded assertions instead of compressing them merely for the estimate; revised
+C ceiling180, Python180 unchanged. Main integrated the partial Luna/xhigh draft,
+fixed memoization/index reuse/expected text/priming, and completed both VM zone
+cases. Final source slice implemented before any CPU execution. Actual strict
+native compile/link/dedicated run0;43functions342statements appended, all original
+prefixes/version/CRC/entity width and other four modes byte-identical.
+Verified local Astra/xhigh found the same-scratch console oracle; main reused
+the existing one-token seed/snapshot as a positive control before console.
+Final affected token strict run0. [Actual results/limits](qc-tokens-events-current-2.0-results.md),
+[source/evidence dispositions](qc-tokens-events-final-2.0-review-brief.md#final-disposition).
