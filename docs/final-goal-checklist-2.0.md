@@ -151,6 +151,14 @@ receipts. These overlap intentionally; test shared boundaries once.
   pass. Attached-XR startup uses the menu; native desktop demo startup passes.
   [Exact camera evidence and limits](sixdof-current-qualification-2.0.md),
   [senior dispositions](sixdof-final-2.0-review.md). Other input/render owners remain open.
+- F05: local Astra/xhigh confirms valid-but-untracked pose incorrectly bypassed
+  per-eye liquid categories. One-condition native repair retains stricter
+  canonical tracking policy. Native actual water/empty and reversed leaves,
+  masks1/2, complementary stage selectors and inspected eye mirrors pass;
+  OIT1 resets category state, MSAA4/SSAO1 retained, validation/normal exits clean.
+  [Exact results/limits](stereo-liquid-current-2.0-results.md). Alpha-entity counts
+  are zero here; authored overlapping composition and either-eye culling remain
+  distinct existing F05 work, not inferred from water tint/stage calls.
 - F10: production482cd9f5 changes cl_main.c and4ef67790 changes gl_rmisc.c;
   07f83e6e changes host_cmd.c;8071a46b changes gl_rmain.c/glquake.h/view.c.
   aa828629 changes gl_vidsdl.c for foveation OFF/recovery.
@@ -160,6 +168,7 @@ receipts. These overlap intentionally; test shared boundaries once.
   existing ff83e66a packages remain accepted only for their earlier input.
   Refresh affected final artifacts once required source fixes settle; do not
   claim current package acceptance yet.
+  Current liquid-category repair also changes gl_rmain.c; include it in F10.
 - F03–F08 and F10 remain open at their finite boundaries above.
 
 ## Senior dispositions and independent main checks

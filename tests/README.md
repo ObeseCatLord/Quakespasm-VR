@@ -35,6 +35,27 @@ covered. Files/search/callback/entity/full resource lifecycles remain distinct.
 [Plan](../docs/qc-buffer-final-2.0-plan.md),
 [actual results/limits](../docs/qc-buffer-current-2.0-results.md).
 
+## Native opposite liquid eye categories
+
+`openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled
+rigid located head/eye matrices; validity/tracking flags stay runtime-provided.
+Run an assertion-enabled current Linux client under an isolated simulated
+Monado with licensed stock e1m1, `-openxr -validation 2 -nosteamapi`, private
+basedir/userdir, tasks enabled. Prepare private config: `cl_startdemos 0`,
+`sv_qsvr_private 0`, `vr_foveation 0`, `vr_world_scale 1`, `vr_floor_offset -16`,
+`vr_aimmode 7`, `vr_mirror 1`, `vid_fsaa 4`, `r_ssao 1`, `r_oit 0`,
+`r_wateralpha 0.5`, `r_tasks 1`. Set `XR_STEREO_LIQUID_OUTPUT` to a writable
+directory. X11 `xprop`/ImageMagick `import` captures only the owned mirror.
+
+Require native exit0, `STEREO_LIQUID_NATIVE_VALID_UNTRACKED_PASSED`, passed JSON:
+actual leaf categories water/empty and reversed, masks1/2 and four complementary
+alpha-stage selectors despite valid1/tracked0; canonical basis stays0. Ordinary
+OIT1 retires category state; MSAA4/SSAO1 remain throughout. Inspect native eye
+images and clean validation. This scene contains no translucent entities, so
+these checks do not certify overlapping alpha composition or whole F05.
+[Plan/senior dispositions](../docs/stereo-liquid-final-2.0-review-brief.md),
+[actual results/limits](../docs/stereo-liquid-current-2.0-results.md).
+
 ## Native pending screenshot request
 
 `screenshot_pending_native.gdb` uses normal native commands/rendering/encoders

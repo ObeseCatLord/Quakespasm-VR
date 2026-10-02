@@ -1010,7 +1010,7 @@ void R_PrepareStereoFrame (void)
 		}
 	}
 	if (R_UseAlphaSort () && vulkan_globals.stereo_active && frame->should_render && !con_forcedup && cl.worldmodel &&
-		!cl.worldmodel->needload && stereo_tracking_basis_valid &&
+		!cl.worldmodel->needload &&
 		R_VectorIsFinite (r_stereo_origins[0]) && R_VectorIsFinite (r_stereo_origins[1]))
 	{
 		for (int eye = 0; eye < 2; ++eye)
