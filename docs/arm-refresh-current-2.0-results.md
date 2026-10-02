@@ -1,5 +1,9 @@
 # Native ARM refresh: retrieved results
 
+**Later current refresh:** [3204aaba native build/package and independent static
+verification](arm-3204aaba-current-2.0-results.md) are complete. The32f7f777
+results below remain evidence for their earlier exact input.
+
 2026-10-02. Existing immutable build-foundry.sh/build-native.sh/package.py owners
 were reused unchanged, in a fresh private Foundry Docker/work directory. No
 server deployment, game/device launch, existing checkout change or GPU operation.

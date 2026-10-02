@@ -304,3 +304,10 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   ELF. [Exact artifact/results/limits](arm-refresh-current-2.0-results.md).
   Later3204aaba portability edits are outside that immutable archive; no final
   reconciled shipping-artifact or whole-goal signoff is claimed.
+
+- F10: current shipping3204aaba native ARM build/install/stage/static verification,
+  checksummed retrieval and independent offline/read-only verification pass;
+  all697 tracked regular non-doc/test files, including Nix/workflow/root inputs,
+  match the embedded source archive. [Exact results/limits](arm-3204aaba-current-2.0-results.md).
+  Later source fixes would require affected refresh; Windows/full integration
+  signoff and other finite boundaries remain open.
