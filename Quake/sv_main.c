@@ -894,6 +894,8 @@ void SV_CalcStats(client_t *client, int *statsi, float *statsf, const char **sta
 	else
 	{
 		val = GetEdictFieldValueByName(ent, "items_dwell");
+		if (!val)
+			val = GetEdictFieldValueByName(ent, "items_snack");
 		if (val)
 			statsi[STAT_VR_MODITEMS] = (int)val->_float;
 	}
