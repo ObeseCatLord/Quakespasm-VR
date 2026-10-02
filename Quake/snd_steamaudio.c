@@ -284,6 +284,8 @@ void SA_ResetSelf(sa_renderer_t *r)
 {
     memset(&r->self, 0, sizeof(r->self));
     r->self_gain = r->render_self_gain = r->last_self_gain = 0;
+    /* A revoked monitor must not survive in the downstream water filter. */
+    memset(r->underwater_accum, 0, sizeof(r->underwater_accum));
     r->remainder = 0; SAR_Reset(r->room, 0);
 }
 int SA_WriteSelf(sa_renderer_t *r, const int16_t *pcm, int frames)
