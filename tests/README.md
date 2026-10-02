@@ -3849,3 +3849,15 @@ or complete client reconnect/map reset. Use the existing builder unchanged.
 See [byte/busy plan](../docs/voice-budget-final-2.0-plan.md),
 [fatal plan](../docs/voice-fatal-send-final-2.0-plan.md) and
 [reviewed results/limits](../docs/voice-transport-current-2.0-results.md).
+
+
+Add `-client-send` for actual public voice-only heartbeat busy0→success1 queue
+preservation/consumption and exact server packet plus decoded/mixed signal.
+The final queued-speech/PCM/jitter witnesses then reach actual fatal common
+client disconnect and hosted-server/native-loop close with native PTT held.
+Combine with `-vad -routing -recovery -budgets -fatal-send`; require all seven
+markers and exit0. The endpoint association is prepared on an already-admitted
+sender, and send results are controlled. This does not certify private movement
+framing, new client admission/reconnect/map reset or OS socket failure. Existing
+builder unchanged. See [plan](../docs/voice-client-send-final-2.0-plan.md) and
+[reviewed results/limits](../docs/voice-client-send-current-2.0-results.md).

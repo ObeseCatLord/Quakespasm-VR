@@ -394,8 +394,10 @@ implementation/evidence brief, spot-check its findings and record dispositions.
 If effective settings cannot be verified, label source advice rather than
 certification. Resolve required findings before claiming implementation complete.
 
-User live headset/eye tracking/multiplayer/performance trials and Windows builds
-remain outside this pass. General live incompatible VkDevice/device-loss rebuild,
+User live headset/eye tracking/multiplayer/performance trials remain outside
+this pass. The later user request makes full native Windows Release/Debug builds
+required as well; native MSVC syntax-only checks do not close that obligation.
+The Windows VM image is root-backed and full compilation remains space-blocked. General live incompatible VkDevice/device-loss rebuild,
 skyrooms, quad views, Gorilla/swim propulsion, instant stop, physical-contact
 melee/parry, Mjolnir hybrids, imagedump, revival, VR demos and additional demo
 features do not become hidden gates.

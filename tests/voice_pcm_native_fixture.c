@@ -13,14 +13,18 @@
 #include "../Quake/voice.c"
 
 static int voice_fixture_send_result = 1;
+static qboolean voice_fixture_keep_first_capture;
 
 int __wrap_NET_SendUnreliableMessage(qsocket_t *socket, sizebuf_t *message)
 {
 	assert(socket && message->cursize >= 0 &&
 		message->cursize <= (int)sizeof(captured));
 	captured_sends++;
-	memcpy(captured, message->data, message->cursize);
-	captured_length = message->cursize;
+	if (!voice_fixture_keep_first_capture || captured_sends == 1)
+	{
+		memcpy(captured, message->data, message->cursize);
+		captured_length = message->cursize;
+	}
 	return voice_fixture_send_result;
 }
 
@@ -360,6 +364,7 @@ static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
 #include "voice_vad_native_fixture.h"
 #include "voice_budget_native_fixture.h"
 #include "voice_fatal_send_native_fixture.h"
+#include "voice_client_send_native_fixture.h"
 
 int main (int argc, char **argv)
 {
@@ -447,6 +452,8 @@ int main (int argc, char **argv)
 	}
 	if (COM_CheckParm ("-fatal-send"))
 		Voice_FatalSendNativeChecks (peers, states, public_offer);
+	if (COM_CheckParm ("-client-send"))
+		Voice_ClientSendNativeChecks (peers[0], states[0], peers[1], states[1]);
 	/* Leave real PCM buffered, then real jitter queued, without consuming either. */
 	for (int burst = 0; burst < 2; ++burst)
 	{
@@ -469,26 +476,35 @@ int main (int argc, char **argv)
 			pcm[i] = (i / 96) & 1 ? 12000 : -12000;
 		Voice_PTTKeyEvent (K_F12, true);
 		Voice_EncodeCaptureFrame (pcm);
-		Voice_PTTKeyEvent (K_F12, false);
+		if (!COM_CheckParm ("-client-send"))
+			Voice_PTTKeyEvent (K_F12, false);
 	}
 	assert (cl.voice_outgoing_count > 0 && CL_VoiceTransportAvailable ());
-	CL_ResetVoiceTransportState ();
-	Voice_ResetConnection ();
-	assert (!CL_VoiceTransportAvailable () && !cl.voice_outgoing_count);
-	assert (!voice_speakers[0].have_generation &&
-		!voice_speakers[0].jitter.count &&
-		Voice_AtomicGet (&voice_speakers[0].pcm_read) ==
-		Voice_AtomicGet (&voice_speakers[0].pcm_write));
+	if (COM_CheckParm ("-client-send"))
+		Voice_ClientFatalDisconnect (peers, states);
+	else
+	{
+		CL_ResetVoiceTransportState ();
+		Voice_ResetConnection ();
+		assert (!CL_VoiceTransportAvailable () && !cl.voice_outgoing_count);
+		assert (!voice_speakers[0].have_generation &&
+			!voice_speakers[0].jitter.count &&
+			Voice_AtomicGet (&voice_speakers[0].pcm_read) ==
+			Voice_AtomicGet (&voice_speakers[0].pcm_write));
+	}
 	Voice_Shutdown ();
 	assert (!voice_initialized && !voice_encoder && !voice_capture_device);
 	keybindings[K_F12] = saved_binding;
 	shm = saved_shm;
 	for (int slot = 0; slot < 2; ++slot)
 	{
-		/* No driver owns these fixture-only endpoints (Loop_Init is held). */
-		NET_FreeQSocket (peers[slot]->netconnection);
-		host_client = peers[slot];
-		SV_DropClient (false);
+		if (peers[slot]->active)
+		{
+			/* Ordinary fixture endpoints have no driver owner. */
+			NET_FreeQSocket (peers[slot]->netconnection);
+			host_client = peers[slot];
+			SV_DropClient (false);
+		}
 		assert (!peers[slot]->active && !peers[slot]->netconnection);
 	}
 	PR_SwitchQCVM (NULL);
@@ -510,6 +526,8 @@ int main (int argc, char **argv)
 		puts ("VOICE_ROUTING_NATIVE_PASSED stored VR defaults/opt-out; desktop dummy routes");
 	if (COM_CheckParm ("-fatal-send"))
 		puts ("VOICE_FATAL_SEND_NATIVE_PASSED native loop ctor/admission/close/QC drop/slot reuse; controlled fatal send");
+	if (COM_CheckParm ("-client-send"))
+		puts ("VOICE_CLIENT_SEND_NATIVE_PASSED public heartbeat queue preservation/consumption/decoded signal; native fatal close and hosted shutdown");
 	puts ("VOICE_PCM_NATIVE_PASSED native negotiated codec/relay/PCM/mute/reset; captured transport/dummy capture");
 	return 0;
 }
