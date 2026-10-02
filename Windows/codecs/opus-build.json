@@ -1,0 +1,48 @@
+{
+  "version": "1.5.2",
+  "source_url": "https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz",
+  "source_sha256": "65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1",
+  "previous_decoder_only_dll_sha256": "57f00fd04e7b62fc26a24b7d5af8ed35532ce0a92da3a6aab565714f853be131",
+  "compiler": "x86_64-w64-mingw32-gcc 16.2.0",
+  "cflags": "-O2 -g0 -mcrtdll=msvcrt-os",
+  "ldflags": "-static-libgcc -mcrtdll=msvcrt-os",
+  "configure_args": [
+    "--host=x86_64-w64-mingw32",
+    "--enable-shared",
+    "--disable-static",
+    "--disable-doc",
+    "--disable-extra-programs",
+    "--disable-dred",
+    "--disable-osce"
+  ],
+  "build_command": "make -j2 libopus.la",
+  "msvc_import_tool": "lib.exe 14.44.35207 /def:libopus.def /machine:x64 /out:libopus.lib /nologo",
+  "dependencies": [
+    "KERNEL32.dll",
+    "msvcrt.dll"
+  ],
+  "preserved_decoder_exports": 23,
+  "new_export_count": 80,
+  "products": {
+    "libopus-0.dll": {
+      "bytes": 786618,
+      "sha256": "6465f52a4e51b34c5e9276964a4e1dab5965aa34997bc336403f179f7470abee"
+    },
+    "libopus.def": {
+      "bytes": 2261,
+      "sha256": "b9604c6b2e01434779c43dd5b6d0f6f183ae21ee675f13d76d58234719590ae9"
+    },
+    "libopus.dll.a": {
+      "bytes": 56442,
+      "sha256": "663f93dcc664e54e469087d796789388e3b41f7e44ec242b7ff88c669244c378"
+    },
+    "LICENSE.opus.txt": {
+      "bytes": 1945,
+      "sha256": "01e1167d54a096d123cf6dfbbeb19587278845c6481d2d66d545669846079551"
+    },
+    "libopus.lib": {
+      "bytes": 21704,
+      "sha256": "8fc56d4499e1844674587a88bd1dfad8299b6eece0de5c37ccf4f416922d83bc"
+    }
+  }
+}

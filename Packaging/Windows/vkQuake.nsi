@@ -56,6 +56,7 @@ Section "Game" GAME
 	File "${SRCDIR}\vkQuake.pdb"
 	File "${SRCDIR}\*.dll"
 	File "..\..\LICENSE.txt"
+	File "${SRCDIR}\LICENSE.opus.txt"
 	
 	!insertmacro MUI_STARTMENU_WRITE_BEGIN Application
 		CreateDirectory "$SMPROGRAMS\$StartMenuFolder"

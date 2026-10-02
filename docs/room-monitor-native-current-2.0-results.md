@@ -69,3 +69,14 @@ reads; no GPU/OpenXR/window/physical audio or system settings. Frozen F08 device
 retry/live callback/music timing and other F01–F08/F10 boundaries remain open.
 Prior3204 ARM/Windows shipping reconciliation is historical after production fix;
 final source/artifacts must be refreshed. This is not final goal acceptance.
+
+Post-review portability refresh:9649cb2f changes only explicit existing room
+float conversions, positional boolean1.0f/0.0f and constant-complement uint8
+mask tests for strict MSVC. All four affected native compile/link jobs pass,
+then combined12 audio checks pass again with377 stable inputs/28 current selected
+sources. Current runner executable SHA256: 1cb670030e9607c9a85516ba16cd6932b7bfb787d56b0ce0791e98f3a7308161.
+Exact portability-post-run-summary.json adds actual VR codec source/object hashes;
+no separate codec roundtrip fixture executed. Mask semantics source-verified from
+uint8 operands. Earlier Astra-reviewed9650d778 receipt/old-owner negative remain
+historical correction evidence; no repeated negative mutation is needed for
+conversion-only edits. Windows/ARM final artifacts must use current shipping inputs.

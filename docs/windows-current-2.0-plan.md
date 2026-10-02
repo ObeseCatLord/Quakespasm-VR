@@ -44,3 +44,36 @@ still requires reconciling Linux/ARM/Windows shipping source and artifact hashes
 
 Official SDK copy-only/--root documentation:
 https://vulkan.lunarg.com/doc/view/1.4.341.1/windows/getting_started.html
+
+2026-10-02 resumed with about1.9GB host root available. Main committed the narrow
+room filter reset as f814a05d; old3204 archive is historical. New immutable archive
+5b6aee34d3f75c13fbb5a46701212b852190062449fc47ed33333a18b96e2013
+includes current production. Build Release then Debug separately in fresh guest
+source-f814a05d. Existing initial source/build footprint is only83.6MB; native SDK
+reused. Before each configuration require1.5GiB root available; monitor host free
+space every2s and stop only our recorded MSBuild process tree if below750MiB.
+Validate process name, immutable source argument and creation ticks before stop;
+never stop another build or VM. Keep receipts/artifacts. This permits bounded
+qualification with recovered space rather than assuming guest sparse free space
+is host capacity. Process-level CL_MPCount=2 plus MSBuild/m:2 avoids default-wide
+compiler fanout; no project warning/graphics/driver changes. Full compile/link/
+shader/PE evidence still required, no device runtime execution.
+Microsoft official /MP and build parallelism guidance:
+https://learn.microsoft.com/en-us/cpp/build/reference/mp-build-with-multiple-processes
+https://devblogs.microsoft.com/cppblog/improved-parallelism-in-msbuild/
+
+Actual f814 native Release attempt reaches strict compiler/shader pipeline and
+reports C4244 in three existing bounded(int→float) room arguments and the
+position-valid boolean→float assignment; C4310 in eight constant VRIK complement
+mask casts. Narrow fixes: explicit float conversion at original bounded boundary,
+ternary1.0f/0.0f, omit uint8 cast only on constant-complement bitwise tests with
+uint8 left operand (same low8 mask; variable casts unchanged). No warning weakening
+or codec/mixer/protocol rewrite. Luna/xhigh owns precisely these three files; main
+handles wrapper/docs/shipping/MSVC. Keep accumulated filter reset intact. Existing
+codec checks plus affected native graph/audio qualification after implementation.
+Wrapper's PS Start-Process exit property was null after native job completed; keep
+the process handle alive before waiting, record actual native exit, never infer
+success from outer SSH status. First launcher denied .ps1 under default policy;
+per-process child PowerShell ExecutionPolicy only, no persistent setting changed.
+Official Microsoft process scope documentation:
+https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1

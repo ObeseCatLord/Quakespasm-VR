@@ -92,3 +92,11 @@ windows3204aaba/shipping-byte-reconciliation-current.json in the durable
 recovery directory. Later docs/test-only commits do not invalidate these
 checked inputs. This is source freshness evidence, not Windows build/link,
 complete package acceptance or final F10 signoff.
+
+2026-10-02 read-only WinBoat availability recheck: private channel returns0,
+MSBuild and private glslangValidator present, no task-owned MSBuild process. Guest
+C free space is about110.6GB, but backing host root has only44.4MB. Sparse guest
+free space does not provide host allocation capacity. No full build started.
+Private exact receipt: qsvr-room-native-_1heinas/windows-prerequisites-readonly.json
+on FastGames. Prepared3204 Release/Debug job remains pending the existing host
+space request; no credentials/VM/driver/system settings changed.
