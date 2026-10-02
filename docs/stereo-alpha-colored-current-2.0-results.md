@@ -57,3 +57,10 @@ identities/inputs/time/quality/leaf assertions pass; engine/GDB exit0 and main
 independently verifies16entries/files plus recipe hash. A read-only bounded
 kernel-log observation reports no new NVIDIA fault events. The owned isolated
 Monado service is then normally stopped; unrelated runtimes/apps are untouched.
+
+Local Astra/xhigh independently reproduces the8diagnostic order/material rows,
+but identifies single-column upscaled witness coverage, unproven current-frame
+presentation association and weak missing-layer alternatives. These are oracle
+gaps, not demonstrated renderer failures. [Senior dispositions and next proof](stereo-alpha-composition-2.0-review.md)
+retain composition as inconclusive and reuse native renderer/snapshot ownership.
+Observed0..2byte order residuals are not used to fit a universal threshold.
