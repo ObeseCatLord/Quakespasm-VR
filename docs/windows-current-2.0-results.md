@@ -1,5 +1,53 @@
 # Windows build qualification: current results
 
+## Current full-build acceptance
+
+2026-10-02: **x64 Release and Debug both build successfully**, actual native
+MSBuild exit0 at0bd4ddb1cf495b4d6f055ad37fcedf275485def9. Strict warnings and
+Release whole-program/LTCG optimization stay enabled. Both configurations have
+all110 generated/compiled shader objects and230 total compiled objects, including
+the actual OpenXR, migrated gameplay/voice, stereo/AO/UI/particle/avatar owners.
+MSVC14.44/v143 override, Windows SDK10.0.26100, pinned LunarG1.4.341.1 and
+Steam Audio4.8.1 are enabled; the repository's native v145 default is unchanged.
+
+Source archive SHA256:
+5e8a396158a4f4dbcc94006651023e5b7935912dae25fba4bb385cf4e3f652cc.
+Main independently reconciles689 selected production/build/shader/packaging/license
+input files against current bytes. All retrieved binaries/engine PDB/notices
+match their native build hashes. Both actual engine import tables contain all
+four required Opus encoder symbols and have no static OpenXR-loader import.
+
+| Configuration | Native exit | Engine bytes | Engine SHA256 |
+| --- | --- | --- | --- |
+| Release | 0 | 4198400 | 3a4f191413e555d8433bea597216e2374571693383c5e6d2ed4e6ebb6034c9a7 |
+| Debug | 0 | 9756160 | d69d6c8514938dc8c4fcf56d49e0d2c055caafc518a3de192f75653daaf76d38 |
+
+All13 output PE files per configuration are x64. Required normal direct imports
+resolve to the bundled DLLs, guest system DLLs or Windows API-set contracts.
+This checks every bundled DLL's normal imports, not a redistributable Windows
+installer, every OS dependency transitively, dynamic-runtime discovery or
+headset/gameplay/audio-device behavior. Debug CRT providers are present in this
+development guest; no standalone Debug redistribution is claimed.
+
+The first checker incorrectly treated Steam Audio's delay-import section as
+normal dependencies. Actual dumpbin output separates OpenCL.dll/GPUUtilities.dll/
+TrueAudioNext.dll as delay loads; the latter two are absent from the output. The
+existing game code selects CPU DEFAULT scenes and PARAMETRIC/HYBRID reflections,
+never the OpenCL/Radeon/TrueAudioNext backend. The corrected checker records them
+explicitly as unavailable delay loads and preserves all normal-import failures.
+No extra GPU library installation or graphics/runtime setting change is needed
+for this compile boundary. [Microsoft's official delay-load semantics](https://learn.microsoft.com/en-us/cpp/build/reference/linker-support-for-delay-loaded-dlls?view=msvc-170).
+Runtime calls that exercise a delay-loaded backend are not certified.
+
+Durable compiled outputs and detailed source/argv/native exits/PE/import/hash
+receipts: FastGames/qsvr-windows-0bd4-p_zrkd1v, build-artifacts/{Release,Debug}.
+No engine, GPU, physical audio or headset launch occurred. Earlier failed builds
+and storage/launcher/diagnostic receipts below remain historical. Final matching
+Linux/ARM artifacts, remaining frozen acceptance boundaries and whole-goal local
+Astra integration signoff remain F10 work.
+
+## Historical attempts
+
 2026-10-02. The user explicitly requested Windows compilation using running
 WinBoat. Follow the existing [plan](windows-current-2.0-plan.md); no Windows
 runtime/game/headset or host GPU test is part of this compile boundary.

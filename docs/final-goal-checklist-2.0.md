@@ -360,3 +360,18 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   Release remains exit1 due guard-dependent lifetime warnings under LTCG; local
   Astra review is in progress. No full Windows build or F10 closure yet. Main
   branch remains untouched and GPU qualification stays stopped.
+
+- F10: full x64 Windows Release **and** Debug now pass at0bd4ddb1, with strict
+  warnings/Release LTCG retained,110 actual shader objects each and all13 bundled
+  PE files x64. Required normal imports resolve; explicit unused Steam Audio
+  GPU delay imports remain recorded, not silently treated as normal dependencies.
+  Retrieved outputs match native hashes and689 selected shipping inputs match
+  current bytes. [Exact current Windows acceptance/limits](windows-current-2.0-results.md).
+  The current Linux common graph builds/links0 and all12audio markers pass.
+  Source/artifact cohort refresh and final whole-goal Astra signoff remain open.
+- F02/F10: senior review caught unchecked classic/KEX float-conversion outputs.
+  Main's local consumer repair rejects malformed/nonfinite skill/time, preserving
+  valid native parsing; ten refusal cases + subsequent valid recovery and all
+  nine original stock save/load cases pass. Prior host_cmd native object fails
+  the first legacy negative; [exact source/review/test limits](windows-ltcg-2.0-results.md).
+  These close those bounded header/refusal cases, not all F02 saves/physics.
