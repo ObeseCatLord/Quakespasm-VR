@@ -252,6 +252,13 @@ receipts. These overlap intentionally; test shared boundaries once.
   This closes visible test-input preparation, not yet the independent pixel
   composition oracle or either-eye-only bounds. No production renderer change.
 
+- F05: senior-reviewed native snapshot/presentation observations now pass all16
+  alpha-layer captures with112distinct matching receipts and unchanged native
+  quality. Transfer/overlay inputs are stable; no renderer change.
+  [Exact results/limits](stereo-alpha-presentation-current-2.0-results.md).
+  Source-footprint coverage and bounded composition/missing-layer alternatives
+  remain open; no group or final integration signoff is inferred.
+
 ## Senior dispositions and independent main checks
 
 | Recommendation | Disposition / evidence |

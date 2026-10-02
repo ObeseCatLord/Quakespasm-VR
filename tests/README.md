@@ -223,11 +223,16 @@ Require exit0, `ALPHA_LAYER_CAPTURE_NATIVE_PASSED`, passed layers.json and all16
 native B/E/W/C captures: two mirrored eyes and reversed wet/dry arrangements.
 The probe checks actual identities, skin/fullbright/leaf/alpha inputs, frozen
 native time, MSAA4/SSAO1/OIT0 and native formats. Inspect visibly red/blue models.
+Each phase now also requires at least3distinct matching native snapshot and
+successful presentation receipts; unobservable/missing provenance fails after
+120frames. Effective transfer/overlay/extents and native clip matrices are
+recorded; matrices alone do not certify source-pixel coverage.
 This is capture/premise acceptance; a separate pixel-order oracle is required
 for composition acceptance. No validation-layer or hardware pass is inferred.
 The GPU is available again and isolated null-compositor captures pass; earlier
 faults/failures remain retained. [Plan](../docs/stereo-alpha-output-final-2.0-plan.md),
 [current visible-input evidence](../docs/stereo-alpha-colored-current-2.0-results.md),
+[native presentation receipts](../docs/stereo-alpha-presentation-current-2.0-results.md),
 [earlier partial evidence](../docs/stereo-alpha-current-2.0-results.md).
 
 ## Native pending screenshot request

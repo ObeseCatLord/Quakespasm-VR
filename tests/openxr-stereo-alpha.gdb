@@ -22,6 +22,51 @@ def iv(s):return int(gdb.parse_and_eval(s))
 def write(s,values):gdb.selected_inferior().write_memory(int(gdb.parse_and_eval('&('+s+')')),struct.pack('='+str(len(values))+'f',*values))
 injected=False
 samples=[]
+snapshot_serial=0
+snapshots={}
+presentations={}
+def phase_inputs():
+ phase=iv('$phase')
+ if not iv('$armed') or not 0<=phase<16:return None
+ group=phase//8;eye=(phase//4)%2;layer=phase%4
+ alpha=128 if layer in (1,3) else 1
+ water=.5 if layer in (2,3) else 0.0
+ if iv('fixture_alpha_static_count')!=2:return None
+ if iv('vr_mirror.value')!=eye+1 or float(gdb.parse_and_eval('r_wateralpha.value'))!=water:return None
+ if iv('stereo_wet_eye_mask')!=(1 if group==0 else 2):return None
+ for j in range(2):
+  if iv('cl.static_entities[fixture_alpha_static_indices[%d]]->alpha'%j)!=alpha:return None
+ return dict(phase=phase,eye=eye,water=water,alpha=alpha,wet_mask=iv('stereo_wet_eye_mask'),cl_time=float(gdb.parse_and_eval('cl.time')))
+class SnapshotReceipt(gdb.Breakpoint):
+ def stop(self):
+  global snapshot_serial
+  inputs=phase_inputs()
+  if inputs is not None:
+   slot=iv('slot');assert 0<=slot<2
+   snapshot_serial+=1
+   snapshots[slot]=dict(inputs,slot=slot,snapshot_id=snapshot_serial)
+  return False
+class PresentReturn(gdb.FinishBreakpoint):
+ def __init__(self,slot,index,acquired,receipt):
+  super().__init__(gdb.newest_frame(),internal=True)
+  self.silent=True;self.slot=slot;self.index=index;self.acquired=acquired;self.receipt=receipt
+ def stop(self):
+  # A decrement plus no restart selects the native successful-present branch.
+  inputs=phase_inputs()
+  if self.receipt is not None and inputs is not None:
+   r=self.receipt
+   if all(r[k]==inputs[k] for k in inputs) and iv('num_images_acquired')==self.acquired-1 and iv('openxr_mirror_ready') and iv('openxr_mirror_submitted[%d]'%self.slot) and not iv('vid.restart_next_frame') and not iv('surface_lost'):
+    presentations.setdefault(r['phase'],{})[r['snapshot_id']]=dict(r,image_index=self.index)
+  return False
+class PresentEntry(gdb.Breakpoint):
+ def stop(self):
+  if phase_inputs() is not None:
+   slot=iv('slot');index=iv('image_index');assert 0<=slot<2
+   PresentReturn(slot,index,iv('num_images_acquired'),snapshots.get(slot))
+  return False
+def capture_ready():
+ return iv('$frames')>=8 and len(presentations.get(iv('$phase'),{}))>=3
+
 def inject():
  global injected
  # A rigid 90-degree roll places the left eye below this actual water plane.
@@ -68,7 +113,11 @@ def observe():
  subprocess.run(['import','-window',owned[0],str(root/name)],check=True,timeout=10)
  time=float(gdb.parse_and_eval('cl.time'))
  if samples:assert time==samples[0]['cl_time']
- samples.append(dict(phase=phase,group=group,eye=eye,layer=layer,image=name,identities=identities,cl_time=time,formats=dict(scene=iv('vulkan_globals.color_format'),xr=iv('vulkan_globals.stereo_color_format'),mirror=iv('vulkan_globals.swap_chain_format')),wet_mask=iv('stereo_wet_eye_mask'),alpha_under=iv('cl_numvisedicts_alpha_underwater'),alpha_over=iv('cl_numvisedicts_alpha_overwater')))
+ receipts=list(presentations.get(phase,{}).values());assert len(receipts)>=3
+ transfer=dict(gamma=float(gdb.parse_and_eval('vid_gamma.value')),contrast=float(gdb.parse_and_eval('vid_contrast.value')),palette=iv('vid_palettize.value'),waterwarp=iv('r_waterwarp.value'),polyblend=iv('gl_polyblend.value'),blend=[float(gdb.parse_and_eval('v_blend[%d]'%i)) for i in range(4)],console=float(gdb.parse_and_eval('scr_con_current')),forced_console=iv('con_forcedup'),native_extent=[iv('vid.width'),iv('vid.height')],mirror_extent=[iv('openxr_mirror_extent.width'),iv('openxr_mirror_extent.height')])
+ assert transfer['gamma']==1 and transfer['contrast']==1 and transfer['palette']==0 and transfer['waterwarp']==0
+ matrices=dict(center_clip=[float(gdb.parse_and_eval('vulkan_globals.view_projection_matrix[%d]'%i)) for i in range(16)],eye_clip=[[float(gdb.parse_and_eval('vulkan_globals.stereo_clip_from_center[%d][%d]'%(eye,i))) for i in range(16)] for eye in range(2)])
+ samples.append(dict(phase=phase,group=group,eye=eye,layer=layer,image=name,identities=identities,cl_time=time,presentations=receipts,transfer=transfer,matrices=matrices,formats=dict(scene=iv('vulkan_globals.color_format'),xr=iv('vulkan_globals.stereo_color_format'),mirror=iv('vulkan_globals.swap_chain_format')),wet_mask=iv('stereo_wet_eye_mask'),alpha_under=iv('cl_numvisedicts_alpha_underwater'),alpha_over=iv('cl_numvisedicts_alpha_overwater')))
  (root/'layers.json').write_text(json.dumps(dict(status='passed' if phase==15 else 'running',samples=samples),indent=2)+'\n')
  print('ALPHA_LAYER_CAPTURE',phase,name,flush=True)
 
@@ -102,7 +151,11 @@ commands 2
      set $armed=1
     end
    else
-    if $frames == 8
+    if $frames >= 120
+     python assert capture_ready(), "native matching presentation receipts unavailable"
+    end
+    python gdb.set_convenience_variable("capture_ready",int(capture_ready()))
+    if $capture_ready
      python observe()
      set $frames=0
      set $phase=$phase+1
@@ -125,6 +178,13 @@ gdb.execute('call (void)Cbuf_AddText(%s)'%json.dumps(command))
 end
 break Host_Error
 break Sys_Error
+python
+# Optimized snapshot helper is inlined; its successful copy/barrier tail is observable.
+snapshot_observer=SnapshotReceipt("gl_vidsdl.c:5700",internal=True)
+snapshot_observer.silent=True
+present_observer=PresentEntry("*GL_SubmitXRMirror",internal=True)
+present_observer.silent=True
+end
 run
 python
 if gdb.selected_inferior().pid or iv('$phase')!=16 or iv('$_exitcode')!=0:gdb.execute('quit 1')

@@ -58,3 +58,11 @@ C-independent signed material reconstructions from B/E/W. Max channel error is
 2bytes for both authored palette colors in every cell. Same-side cells occupy
 one mirror column, while opposite-side cells occupy15columns, confirming the
 reviewer's coverage warning. These are diagnostics, not fitted acceptance bounds.
+
+Bounded implementation disposition: the delegated worker was closed without a
+patch after a narrowed retry. Main implements only the60-line native receipt
+observer plus transfer/matrix observations; polygon extraction remains deferred.
+Actual native execution passes16phases/112unique matching receipts, with stable
+transfer/overlay inputs. [Exact results and limits](stereo-alpha-presentation-current-2.0-results.md).
+Coverage/numerical/missing-layer acceptance remains inconclusive; no threshold
+is weakened and no production renderer rewrite is introduced.
