@@ -184,6 +184,11 @@ basedir/userdir, tasks enabled. Prepare private config: `cl_startdemos 0`,
 `r_wateralpha 0.5`, `r_tasks 1`. Set `XR_STEREO_LIQUID_OUTPUT` to a writable
 directory. X11 `xprop`/ImageMagick `import` captures only the owned mirror.
 
+The optimized-build observer checks the actual `R_DrawEntitiesOnList` consumer
+and native chain/context/eye descriptor plus dynamic offset. Uniform allocations
+may share a descriptor; the complete pair selects the eye. Inline helper source
+locations can be skipped by the compiler and are not the call oracle.
+
 Require native exit0, `STEREO_LIQUID_NATIVE_VALID_UNTRACKED_PASSED`, passed JSON:
 actual leaf categories water/empty and reversed, masks1/2 and four complementary
 alpha-stage selectors despite valid1/tracked0; canonical basis stays0. Ordinary

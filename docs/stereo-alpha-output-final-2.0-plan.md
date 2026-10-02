@@ -58,3 +58,27 @@ texture loading executes through normal engine command scheduling, avoiding a
 blocking renderer/driver inferior call. Bound fixture becomes~155lines instead
 of130; no second queue/policy or production command is introduced. This small
 adapter reuses Cmd_AddCommand/Cbuf_AddText and remains inside the test module.
+
+
+2026-10-02 resumed geometry preparation: keep the existing parser/static helper
+and two known wet/dry origins. Reconstruct only its lost private test inputs
+with a small reusable Python emitter matching native modelgen.h/gl_model.c.
+Two v6 MDLs have a single8x8 uniform fullbright paletted skin (wet250 red,
+dry244 blue), four vertices in a12x1 vertical XZ plane at local Y0, four
+triangles with paired opposite windings, one bounded frame and no flags/seams.
+Native alias backface culling selects one pair, preventing winding ambiguity.
+Fixed scale1/16, origin(-6,0,-0.5), byte vertices(0,0,0),(192,0,0),
+(192,0,16),(0,0,16); normal index0, bbox from these actual vertices.
+Header/skin/UV/triangle/frame bytes follow existing structures; expected308bytes.
+The licensed stock palette is checked locally:250=(215,0,0),244=(127,191,255).
+No asset bytes or user game/config changes are committed.
+
+Luna/xhigh coding owns only new tests/prepare_stereo_alpha_native.py. Exact
+output names remain progs/vr_alpha_wet.mdl and progs/vr_alpha_dry.mdl under a
+caller-supplied **empty** output directory. Emit assets.json with dimensions,
+geometry/palette indices/file hashes for retained setup provenance; refuse an
+existing output/model path instead of overwriting. Do not run a game/GPU, edit
+production/other fixtures/docs or commit. Main integrates at the existing native
+parser helper, owns actual geometry/visibility/composition analysis and retains
+all prior failed runs. Generator correctness/actual visible output must be
+observed; emitted bytes alone are not F05 acceptance.

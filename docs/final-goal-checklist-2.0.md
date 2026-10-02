@@ -398,3 +398,10 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   verifies recorded source/stable input/marker receipts.
   [Exact boundary and limits](voice-device-fault-current-2.0-results.md).
   No physical device, active headset-profile, live transport or whole F08 claim.
+
+- F05: renewed current optimized-package opposite-liquid check passes all5phases,
+  observing the native downstream alpha draw consumer and exact descriptor/offset
+  eye pairs instead of incomplete inline debugger locations. Both masks/stages,
+  MSAA4/SSAO1, OIT reset and inspected eye images pass; no renderer edit.
+  [Exact current results and limits](stereo-liquid-consumer-current-2.0-results.md).
+  Lists remain empty; authored entity/water composition remains separate.

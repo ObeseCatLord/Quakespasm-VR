@@ -32,6 +32,19 @@ def inject():
   gdb.execute('call (void)V_ResetTrackedAim()')
   gdb.execute('call (void)R_InvalidateStereoReference()')
   injected=True
+def record_alpha_consumer():
+ chain=iv('chain')
+ stage=int(chain==iv('chain_alpha_model'))
+ expected='vulkan_globals.secondary_cb_contexts[%s]'%('SCBX_ALPHA_ENTITIES' if stage else 'SCBX_ALPHA_ENTITIES_ACROSS_WATER')
+ assert iv('cbx')==iv(expected),'alpha stage uses wrong native context'
+ selector=(iv('cbx->scene_descriptor_override'),iv('cbx->scene_uniform_offset_override'))
+ selectors=[(iv('stereo_alpha_eye_descriptor_set[%d]'%eye),iv('stereo_alpha_eye_uniform_offset[%d]'%eye)) for eye in range(2)]
+ assert all(pair[0] for pair in selectors) and selectors[0]!=selectors[1],'native eye selector pairs missing/aliased'
+ assert selector in selectors,'alpha consumer lacks the native eye descriptor/offset pair'
+ eye=selectors.index(selector)
+ assert iv('alphapass') in (1,2) and not iv('use_tasks'),'alpha consumer pass/task mismatch'
+ alpha_calls[(stage,iv('alphapass'),1<<eye)]+=1
+
 def observe():
  phase=iv('$phase');wet=1 if phase<2 else 2
  item=dict(phase=phase,head_valid=iv('openxr_frame.devices[0].valid'),head_tracked=iv('openxr_frame.devices[0].tracked'),
@@ -109,10 +122,11 @@ commands 2
 end
 break Host_Error
 break Sys_Error
-break R_DrawStereoAlphaListAtStage if $started && cls.signon == 4 && stereo_alpha_exceptional
+# Inspect the actual downstream consumer; inline helper locations can be skipped.
+break *R_DrawEntitiesOnList if $started && cls.signon == 4 && stereo_alpha_exceptional && alphapass && (chain == chain_alpha_model || chain == chain_alpha_model_across_water)
 commands 5
  silent
- python alpha_calls[(iv('stage'),iv('alphapass'),iv('eye_mask'))]+=1
+ python record_alpha_consumer()
  continue
 end
 run

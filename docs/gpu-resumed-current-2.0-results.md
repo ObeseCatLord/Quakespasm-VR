@@ -71,3 +71,8 @@ either-eye-only authored geometry, UI/avatar/effect/resource lifetimes and
 remaining F06 foveation boundaries stay on the frozen list. Physical headset,
 gaze/provider FB/META, high-resolution Frame/Beyond behavior and performance
 remain user tests. No whole-goal completion follows.
+
+The subsequent actual optimized-consumer probe resolves the debugger-location
+gap with all5 phases and exact native selector pairs;
+[renewed acceptance and limits](stereo-liquid-consumer-current-2.0-results.md).
+Actual alpha-entity composition remains distinct.
