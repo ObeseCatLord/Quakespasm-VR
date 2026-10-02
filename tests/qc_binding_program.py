@@ -9,7 +9,7 @@ from cooperative_qc_program import source_program
 
 def assemble(program, resources=False, files=False, calls=False, tokens=False, events=False,
              reflection=False, reflection_fields_complete=False, entities=False,
-             entity_fingerprint="none"):
+             entity_fingerprint="none", surfaces=False):
     if entity_fingerprint not in ("none", "complete", "missing"):
         raise ValueError("unknown entity fingerprint variant")
     if entity_fingerprint != "none" and not entities:
@@ -1053,6 +1053,65 @@ def assemble(program, resources=False, files=False, calls=False, tokens=False, e
             entry(function_name, [])
         entry("CSQC_Ent_Update", [])
 
+    if surfaces:
+        builtins = ("getsurfacenumpoints", "getsurfacepoint", "getsurfacenormal",
+                    "getsurfacetexture", "getsurfacenearpoint", "getsurfaceclippedpoint",
+                    "getsurfacepointattribute", "getsurfacenumtriangles", "getsurfacetriangle")
+        numbers = (434, 435, 436, 437, 438, 439, 486, 628, 629)
+        for key, builtin, number in zip(("numpoints", "point", "normal", "texture",
+                                         "nearpoint", "clippedpoint", "attribute",
+                                         "numtriangles", "triangle"), builtins, numbers):
+            add_ref("surface_builtin_" + key, add_function(builtin, -number))
+        for builtin, number in (("strlen", 114), ("normalize", 9), ("strcat", 115)):
+            add_ref("surface_builtin_" + builtin, add_function(builtin, -number))
+        inputs = {
+            "entity": global_slot("fixture_surface_input_entity", 4),
+            "surface": global_slot("fixture_surface_input_surface"),
+            "index": global_slot("fixture_surface_input_index"),
+            "attribute": global_slot("fixture_surface_input_attribute"),
+            "point": global_slot("fixture_surface_input_point", 3, (0, 0, 0)),
+        }
+        outputs = {
+            "scalar": global_slot("fixture_surface_scalar"),
+            "vector": global_slot("fixture_surface_vector", 3, (0, 0, 0)),
+            "string": global_slot("fixture_surface_string", 1),
+            "prime_scalar": global_slot("fixture_surface_prime_scalar"),
+            "prime_vector": global_slot("fixture_surface_prime_vector", 3, (0, 0, 0)),
+            "prime_string": global_slot("fixture_surface_prime_string", 1),
+        }
+        prime = global_slot("fixture_surface_prime_source", 1, name("surface-prime"))
+        normalize_input = global_slot("fixture_surface_normalize_input", 3, (1, 2, 3))
+
+        def surface_call(code, ref, args, output, store):
+            for index, (slot, opcode) in enumerate(args):
+                code.append((opcode, slot, 4 + index * 3, 0))
+            code.append((51 + len(args), ref_slots[ref], 0, 0))
+            code.append((store, 1, output, 0))
+
+        specs = (
+            ("numpoints", ((inputs["entity"], 34), (inputs["surface"], 31)), "scalar", 31, "scalar"),
+            ("point", ((inputs["entity"], 34), (inputs["surface"], 31), (inputs["index"], 31)), "vector", 32, "vector"),
+            ("normal", ((inputs["entity"], 34), (inputs["surface"], 31)), "vector", 32, "vector"),
+            ("texture", ((inputs["entity"], 34), (inputs["surface"], 31)), "string", 33, "string"),
+            ("nearpoint", ((inputs["entity"], 34), (inputs["point"], 32)), "scalar", 31, "scalar"),
+            ("clippedpoint", ((inputs["entity"], 34), (inputs["surface"], 31), (inputs["point"], 32)), "vector", 32, "vector"),
+            ("attribute", ((inputs["entity"], 34), (inputs["surface"], 31), (inputs["index"], 31), (inputs["attribute"], 31)), "vector", 32, "vector"),
+            ("numtriangles", ((inputs["entity"], 34), (inputs["surface"], 31)), "scalar", 31, "scalar"),
+            ("triangle", ((inputs["entity"], 34), (inputs["surface"], 31), (inputs["index"], 31)), "vector", 32, "vector"),
+        )
+        for key, args, shape, store, prime_shape in specs:
+            code = []
+            primer = {"scalar": "strlen", "vector": "normalize", "string": "strcat"}[prime_shape]
+            prime_output = outputs["prime_" + prime_shape]
+            prime_store = {"scalar": 31, "vector": 32, "string": 33}[prime_shape]
+            prime_args = ((prime, 33),)
+            if prime_shape == "vector":
+                prime_args = ((normalize_input, 32),)
+            surface_call(code, "surface_builtin_" + primer, prime_args, prime_output, prime_store)
+            surface_call(code, "surface_builtin_" + key, args, outputs[shape], store)
+            add_ref("surface_" + key, entry("fixture_surface_" + key, code))
+        entry("CSQC_Ent_Update", [])
+
     strings.extend(b"\0" * (-len(strings) % 4))
     output = bytearray(60)
     for section, (slot, width) in zip(sections, ((2, 8), (4, 8), (6, 8),
@@ -1077,6 +1136,7 @@ def main():
     parser.add_argument("--reflection-fields-complete", action="store_true",
                         help="supply missing native engine fields in reflection mode")
     parser.add_argument("--entities", action="store_true", help="append loaded entity-search callers")
+    parser.add_argument("--surfaces", "-surfaces", action="store_true", help="append loaded native BSP surface callers")
     parser.add_argument("--entity-fingerprint", choices=("none", "complete", "missing"), default="none",
                         help="client search fingerprint variant for entity mode")
     args = parser.parse_args()
@@ -1091,9 +1151,11 @@ def main():
         parser.error("--entities is a separate fixture mode")
     if args.entity_fingerprint != "none" and not args.entities:
         parser.error("--entity-fingerprint requires --entities")
+    if args.surfaces and (args.reflection or args.entities or any(existing_modes)):
+        parser.error("--surfaces is a separate fixture mode")
     result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls,
                       args.tokens, args.events, args.reflection, args.reflection_fields_complete,
-                      args.entities, args.entity_fingerprint)
+                      args.entities, args.entity_fingerprint, args.surfaces)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)

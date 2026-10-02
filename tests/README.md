@@ -127,6 +127,25 @@ reuse existing owners; no device/GPU work or actual mod-gameplay claim.
 [Plan](../docs/qc-entity-search-final-2.0-plan.md),
 [exact results/limits](../docs/qc-entity-search-current-2.0-results.md).
 
+## Loaded QC BSP surface queries
+
+Generate the disposable licensed SSQC/CSQC profile with `--surfaces`; runtime
+uses `-surfaces`. Compile the existing fixture with
+`QC_SURFACE_NATIVE_HOST_FIXTURE`, reuse `qc_reflection_host_fixture.c` for the
+actual host loader, and compile `qc_surface_owner_fixture.c` with native pr_ext
+flags. Replace exactly the host/pr_ext objects in this isolated fixture link;
+all other native owners and existing mode linkage remain unchanged.
+
+Require assertion-enabled strict assembly/compile/host-compile/surface-compile/
+link/run0 and `QC_BINDING_SURFACES_NATIVE_COMPLETED`. Also inspect availability:
+the e1m1 receipt must contain four `QC_SURFACE_INLINE_QUAD_WITNESS_PASSED` markers
+and no `UNAVAILABLE`; the completion marker alone does not certify an optional
+inline witness. Loaded queries exercise actual geometry/index guards, prepared
+metadata, native clipping/nearest cache state and VM reloads. Prepared lightmap
+metadata is not rendered atlas output; this is a finite CPU-only F03 subset.
+[Plan](../docs/qc-surface-final-2.0-plan.md),
+[exact results/limits](../docs/qc-surface-current-2.0-results.md).
+
 ## Native opposite liquid eye categories
 
 `openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled

@@ -7,11 +7,16 @@
 #undef main
 
 #include <math.h>
+#include <limits.h>
 #include <stdlib.h>
 
-/* Reflection-only fixture links the actual host owner plus this narrow shim. */
-#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_ENTITY_NATIVE_HOST_FIXTURE)
+/* Loaded reflection, entity and surface fixtures use the actual host owner. */
+#if defined(QC_REFLECTION_NATIVE_HOST_FIXTURE) || defined(QC_ENTITY_NATIVE_HOST_FIXTURE) || defined(QC_SURFACE_NATIVE_HOST_FIXTURE)
 extern void FixtureLoadCSProgsNative (void);
+#endif
+#ifdef QC_SURFACE_NATIVE_HOST_FIXTURE
+extern qboolean FixtureSurfaceCacheValid (void);
+extern int FixtureSurfaceCacheCount (void);
 #endif
 
 static void FixtureSwitch (qcvm_t *vm)
@@ -725,6 +730,336 @@ static void FixtureEntityCases (void)
 }
 #endif
 
+#ifdef QC_SURFACE_NATIVE_HOST_FIXTURE
+static float FixtureSurfaceResult (void) { return FixtureFloat ("fixture_surface_scalar"); }
+static int FixtureSurfaceRawString (void)
+{
+	return G_INT (FixtureGlobal ("fixture_surface_string", ev_string)->ofs);
+}
+static void FixtureSurfaceVector (const float *expected, float epsilon)
+{
+	const float *actual = G_VECTOR (FixtureGlobal ("fixture_surface_vector", ev_vector)->ofs);
+	for (int axis = 0; axis < 3; axis++) assert (fabsf (actual[axis] - expected[axis]) <= epsilon);
+}
+static void FixtureSurfaceRun (const char *key, edict_t *entity, float surface, float index,
+	float attribute, const vec3_t point)
+{
+	char ref[96];
+	G_INT (FixtureGlobal ("fixture_surface_input_entity", ev_entity)->ofs) = EDICT_TO_PROG (entity);
+	FixtureSetFloat ("fixture_surface_input_surface", surface);
+	FixtureSetFloat ("fixture_surface_input_index", index);
+	FixtureSetFloat ("fixture_surface_input_attribute", attribute);
+	VectorCopy (point, G_VECTOR (FixtureGlobal ("fixture_surface_input_point", ev_vector)->ofs));
+	q_snprintf (ref, sizeof (ref), "fixture_ref_surface_%s", key);
+	PR_ExecuteProgram (FixtureRef (ref));
+	if (!strcmp (key, "texture"))
+		assert (!strcmp (FixtureString ("fixture_surface_prime_string"), "surface-prime"));
+	else if (!strcmp (key, "numpoints") || !strcmp (key, "nearpoint") || !strcmp (key, "numtriangles"))
+		assert (FixtureFloat ("fixture_surface_prime_scalar") == 13);
+	else
+	{
+		const float expected[3] = {1.0f / sqrtf (14), 2.0f / sqrtf (14), 3.0f / sqrtf (14)};
+		const float *prime = G_VECTOR (FixtureGlobal ("fixture_surface_prime_vector", ev_vector)->ofs);
+		for (int axis = 0; axis < 3; axis++) assert (fabsf (prime[axis] - expected[axis]) < .0001f);
+	}
+}
+static qboolean FixtureSurfaceScalar (const char *key)
+{
+	return !strcmp (key, "numpoints") || !strcmp (key, "nearpoint") || !strcmp (key, "numtriangles");
+}
+static void FixtureSurfaceExpectZero (const char *key)
+{
+	if (FixtureSurfaceScalar (key)) assert (FixtureSurfaceResult () == 0);
+	else if (!strcmp (key, "texture")) assert (FixtureSurfaceRawString () == 0);
+	else { const float zero[3] = {0, 0, 0}; FixtureSurfaceVector (zero, .0001f); }
+}
+static void FixtureSurfaceVertex (qmodel_t *model, msurface_t *surface, int index, vec3_t out)
+{
+	int signed_edge = model->surfedges[surface->firstedge + index];
+	assert (signed_edge != INT_MIN);
+	int edge = signed_edge < 0 ? -signed_edge : signed_edge;
+	assert (edge >= 0 && edge < model->numedges);
+	unsigned vertex = model->edges[edge].v[signed_edge >= 0 ? 0 : 1];
+	assert (vertex < (unsigned)model->numvertexes);
+	VectorCopy (model->vertexes[vertex].position, out);
+}
+static int FixtureSurfaceFindFace (qmodel_t *model, qboolean quad)
+{
+	for (int i = 0; i < model->nummodelsurfaces; i++)
+	{
+		msurface_t *face = &model->surfaces[model->firstmodelsurface + i];
+		if ((quad ? face->numedges == 4 : face->numedges >= 3) && face->plane &&
+			(quad || (face->texinfo && face->texinfo->texture))) return i;
+	}
+	return -1;
+}
+static void FixtureSurfaceBadFace (edict_t *entity, float surface, const vec3_t input)
+{
+	FixtureSurfaceRun ("numpoints", entity, surface, 0, 0, input); FixtureSurfaceExpectZero ("numpoints");
+	FixtureSurfaceRun ("point", entity, surface, 0, 0, input); FixtureSurfaceExpectZero ("point");
+	FixtureSurfaceRun ("normal", entity, surface, 0, 0, input); FixtureSurfaceExpectZero ("normal");
+	FixtureSurfaceRun ("texture", entity, surface, 0, 0, input); FixtureSurfaceExpectZero ("texture");
+	FixtureSurfaceRun ("attribute", entity, surface, 0, 0, input); FixtureSurfaceExpectZero ("attribute");
+	FixtureSurfaceRun ("numtriangles", entity, surface, 0, 0, input); FixtureSurfaceExpectZero ("numtriangles");
+	FixtureSurfaceRun ("triangle", entity, surface, 0, 0, input); FixtureSurfaceExpectZero ("triangle");
+	FixtureSurfaceRun ("clippedpoint", entity, surface, 0, 0, input); FixtureSurfaceVector (input, .0001f);
+}
+static void FixtureSurfaceRefusals (qmodel_t *model, edict_t *entity, int face_index, msurface_t *face)
+{
+	vec3_t input = {9, -3, 5};
+	FixtureSurfaceBadFace (entity, model->nummodelsurfaces, input);
+	FixtureSurfaceBadFace (entity, model->nummodelsurfaces + 7, input);
+	FixtureSurfaceRun ("clippedpoint", entity, -1, 0, 0, input); FixtureSurfaceVector (input, .0001f);
+	for (int extra = 0; extra <= 7; extra += 7)
+	{
+		FixtureSurfaceRun ("point", entity, face_index, face->numedges + extra, 0, input);
+		FixtureSurfaceExpectZero ("point");
+		FixtureSurfaceRun ("attribute", entity, face_index, face->numedges + extra, 0, input);
+		FixtureSurfaceExpectZero ("attribute");
+		FixtureSurfaceRun ("triangle", entity, face_index, face->numedges - 2 + extra, 0, input);
+		FixtureSurfaceExpectZero ("triangle");
+	}
+	int base = model->firstmodelsurface, count = model->nummodelsurfaces;
+	model->firstmodelsurface = -1; model->nummodelsurfaces = 2; FixtureSurfaceBadFace (entity, 1, input);
+	model->firstmodelsurface = model->numsurfaces; model->nummodelsurfaces = 2; FixtureSurfaceBadFace (entity, 1, input);
+	model->firstmodelsurface = model->numsurfaces - 1; model->nummodelsurfaces = 2; FixtureSurfaceBadFace (entity, 1, input);
+	model->firstmodelsurface = base; model->nummodelsurfaces = 0; FixtureSurfaceBadFace (entity, 0, input);
+	model->firstmodelsurface = base; model->nummodelsurfaces = count;
+	float saved_modelindex = entity->v.modelindex;
+	entity->v.modelindex = 0; FixtureSurfaceBadFace (entity, face_index, input);
+	FixtureSurfaceRun ("nearpoint", entity, 0, 0, 0, input); assert (FixtureSurfaceResult () == -1);
+	entity->v.modelindex = saved_modelindex;
+}
+static void FixtureSurfaceInlineWitness (qmodel_t *world, qmodel_t *model, edict_t *entity)
+{
+	int relative = FixtureSurfaceFindFace (model, true);
+	if (relative < 0)
+	{
+		puts ("QC_SURFACE_INLINE_QUAD_WITNESS_UNAVAILABLE no loaded four-edge inline face");
+		return;
+	}
+	msurface_t *actual = &model->surfaces[model->firstmodelsurface + relative];
+	msurface_t *unrelated = &world->surfaces[relative];
+	assert (model->firstmodelsurface > 0 && model->surfaces == world->surfaces &&
+		actual->numedges == 4 && unrelated != actual);
+	int saved = world->surfaces[relative].numedges;
+	vec3_t input = {3, 4, 5}, expected;
+	FixtureSurfaceVertex (model, actual, 3, expected);
+	world->surfaces[relative].numedges = 3;
+	FixtureSurfaceRun ("point", entity, relative, 3, 0, input); FixtureSurfaceVector (expected, .0001f);
+	FixtureSurfaceRun ("triangle", entity, relative, 1, 0, input);
+	const float triangle_one[3] = {0, 2, 3}; FixtureSurfaceVector (triangle_one, .0001f);
+	world->surfaces[relative].numedges = 5;
+	FixtureSurfaceRun ("point", entity, relative, 4, 0, input); FixtureSurfaceExpectZero ("point");
+	FixtureSurfaceRun ("triangle", entity, relative, 2, 0, input); FixtureSurfaceExpectZero ("triangle");
+	world->surfaces[relative].numedges = saved;
+	int actual_edges = actual->numedges;
+	actual->numedges = 2;
+	FixtureSurfaceRun ("numtriangles", entity, relative, 0, 0, input); FixtureSurfaceExpectZero ("numtriangles");
+	FixtureSurfaceRun ("triangle", entity, relative, 0, 0, input); FixtureSurfaceExpectZero ("triangle");
+	actual->numedges = actual_edges;
+	puts ("QC_SURFACE_INLINE_QUAD_WITNESS_PASSED real shared-array four-edge face and restored prepared metadata");
+}
+static void FixtureSurfaceGeometry (qmodel_t *model, edict_t *entity, int relative)
+{
+	msurface_t *face = &model->surfaces[model->firstmodelsurface + relative];
+	int edges = face->numedges;
+	vec3_t first, last, normal, center = {0, 0, 0}, input, expected;
+	FixtureSurfaceVertex (model, face, 0, first); FixtureSurfaceVertex (model, face, edges - 1, last);
+	FixtureSurfaceRun ("numpoints", entity, relative, 0, 0, first); assert (FixtureSurfaceResult () == edges);
+	FixtureSurfaceRun ("point", entity, relative, edges - 1, 0, first); FixtureSurfaceVector (last, .0001f);
+	FixtureSurfaceRun ("point", entity, relative, edges, 0, first); FixtureSurfaceExpectZero ("point");
+	FixtureSurfaceRun ("normal", entity, relative, 0, 0, first);
+	VectorCopy (face->plane->normal, normal); if (face->flags & SURF_PLANEBACK) VectorInverse (normal);
+	FixtureSurfaceVector (normal, .0001f);
+	FixtureSurfaceRun ("texture", entity, relative, 0, 0, first);
+	assert (!strcmp (FixtureString ("fixture_surface_string"), face->texinfo->texture->name));
+	FixtureSurfaceRun ("numtriangles", entity, relative, 0, 0, first); assert (FixtureSurfaceResult () == edges - 2);
+	FixtureSurfaceRun ("triangle", entity, relative, 0, 0, first);
+	const float first_triangle[3] = {0, 1, 2}; FixtureSurfaceVector (first_triangle, .0001f);
+	FixtureSurfaceRun ("triangle", entity, relative, edges - 3, 0, first);
+	float last_triangle[3] = {0, (float)edges - 2, (float)edges - 1}; FixtureSurfaceVector (last_triangle, .0001f);
+	FixtureSurfaceRun ("triangle", entity, relative, edges - 2, 0, first); FixtureSurfaceExpectZero ("triangle");
+	for (int i = 0; i < edges; i++) { FixtureSurfaceVertex (model, face, i, expected); VectorAdd (center, expected, center); }
+	VectorScale (center, 1.0f / edges, center);
+	for (int attribute = 0; attribute <= 6; attribute++)
+	{
+		if (attribute == 5)
+		{
+			byte saved_mins[sizeof (face->texturemins)];
+			byte saved_s[sizeof (face->light_s)], saved_t[sizeof (face->light_t)];
+			vec3_t actual;
+			/* Dedicated loading leaves these bytes uninitialized; test metadata math, not a GPU atlas. */
+			memcpy (saved_mins, &face->texturemins, sizeof saved_mins);
+			memcpy (saved_s, &face->light_s, sizeof saved_s); memcpy (saved_t, &face->light_t, sizeof saved_t);
+			face->texturemins[0] = 16; face->texturemins[1] = 32;
+			face->light_s = 7; face->light_t = 11;
+			FixtureSurfaceRun ("attribute", entity, relative, 0, attribute, first);
+			VectorCopy (G_VECTOR (FixtureGlobal ("fixture_surface_vector", ev_vector)->ofs), actual);
+			expected[0] = (DotProduct (first, face->texinfo->vecs[0]) + face->texinfo->vecs[0][3] - 16 + 7.5f) / LMBLOCK_WIDTH;
+			expected[1] = (DotProduct (first, face->texinfo->vecs[1]) + face->texinfo->vecs[1][3] - 32 + 11.5f) / LMBLOCK_HEIGHT;
+			expected[2] = 0;
+			memcpy (&face->texturemins, saved_mins, sizeof saved_mins);
+			memcpy (&face->light_s, saved_s, sizeof saved_s); memcpy (&face->light_t, saved_t, sizeof saved_t);
+			for (int axis = 0; axis < 3; axis++) assert (fabsf (actual[axis] - expected[axis]) < .0001f);
+			continue;
+		}
+		FixtureSurfaceRun ("attribute", entity, relative, 0, attribute, first);
+		if (attribute == 0) FixtureSurfaceVector (first, .0001f);
+		else if (attribute == 1 || attribute == 2)
+		{
+			VectorCopy (face->texinfo->vecs[attribute - 1], expected);
+			VectorMA (expected, -DotProduct (face->plane->normal, expected), face->plane->normal, expected);
+			VectorNormalize (expected); FixtureSurfaceVector (expected, .0001f);
+		}
+		else if (attribute == 3)
+		{
+			VectorCopy (normal, expected); FixtureSurfaceVector (expected, .0001f);
+		}
+		else if (attribute == 4)
+		{
+			texture_t *texture = face->texinfo->texture;
+			expected[0] = (DotProduct (first, face->texinfo->vecs[0]) + face->texinfo->vecs[0][3]) / texture->width;
+			expected[1] = (DotProduct (first, face->texinfo->vecs[1]) + face->texinfo->vecs[1][3]) / texture->height;
+			expected[2] = 0; FixtureSurfaceVector (expected, .0001f);
+		}
+		else { const float white[3] = {1, 1, 1}; FixtureSurfaceVector (white, .0001f); }
+	}
+	mtexinfo_t *texinfo = face->texinfo; texture_t *texture = texinfo->texture;
+	face->texinfo = NULL;
+	FixtureSurfaceRun ("texture", entity, relative, 0, 0, first); assert (FixtureSurfaceRawString () == 0);
+	face->texinfo = texinfo; texinfo->texture = NULL;
+	FixtureSurfaceRun ("texture", entity, relative, 0, 0, first); assert (FixtureSurfaceRawString () == 0);
+	FixtureSurfaceRun ("attribute", entity, relative, 0, 4, first);
+	expected[0] = DotProduct (first, texinfo->vecs[0]) + texinfo->vecs[0][3];
+	expected[1] = DotProduct (first, texinfo->vecs[1]) + texinfo->vecs[1][3]; expected[2] = 0;
+	FixtureSurfaceVector (expected, .0001f); texinfo->texture = texture;
+	VectorCopy (center, input); VectorMA (input, 2, face->plane->normal, input);
+	FixtureSurfaceRun ("clippedpoint", entity, relative, 0, 0, input); FixtureSurfaceVector (center, .02f);
+	assert (fabsf (DotProduct (G_VECTOR (FixtureGlobal ("fixture_surface_vector", ev_vector)->ofs), face->plane->normal) - face->plane->dist) < .02f);
+	FixtureSurfaceRefusals (model, entity, relative, face);
+}
+static void FixtureSurfaceNearest (qmodel_t *world, edict_t *entity, vec3_t warm_point)
+{
+	int relative = -1;
+	vec3_t center = {0, 0, 0}, vertex;
+	for (int i = 0; i < world->nummodelsurfaces && relative < 0; i++)
+	{
+		msurface_t *face = &world->surfaces[world->firstmodelsurface + i];
+		if (!face->plane || face->numedges < 3) continue;
+		vec3_t normal; VectorCopy (face->plane->normal, normal);
+		if (fabsf (normal[0]) < .999f && fabsf (normal[1]) < .999f && fabsf (normal[2]) < .999f) continue;
+		VectorClear (center);
+		for (int j = 0; j < face->numedges; j++) { FixtureSurfaceVertex (world, face, j, vertex); VectorAdd (center, vertex, center); }
+		VectorScale (center, 1.0f / face->numedges, center);
+		if (fabsf (DotProduct (center, normal) - face->plane->dist) < .001f) relative = i;
+	}
+	assert (relative >= 0);
+	FixtureSurfaceRun ("nearpoint", entity, 0, 0, 0, center);
+	float selected = FixtureSurfaceResult (); assert (selected >= 0 && selected < world->nummodelsurfaces);
+	assert (selected == (int)selected);
+	msurface_t *face = &world->surfaces[world->firstmodelsurface + (int)selected];
+	assert (face->plane && face->numedges >= 3);
+	assert (fabsf (DotProduct (center, face->plane->normal) - face->plane->dist) < .001f);
+	/* Independent convex containment: do not ask the production clipper to certify itself. */
+	int side = 0;
+	for (int i = 0; i < face->numedges; i++)
+	{
+		vec3_t a, b, edge, delta, cross;
+		FixtureSurfaceVertex (world, face, i, a);
+		FixtureSurfaceVertex (world, face, (i + 1) % face->numedges, b);
+		VectorSubtract (b, a, edge); VectorSubtract (center, a, delta);
+		CrossProduct (edge, delta, cross);
+		float value = DotProduct (cross, face->plane->normal);
+		if (fabsf (value) > .001f * VectorLength (edge))
+		{
+			int edge_side = value > 0 ? 1 : -1;
+			assert (!side || side == edge_side); side = edge_side;
+		}
+	}
+	assert (FixtureSurfaceCacheValid () && FixtureSurfaceCacheCount () > 0);
+	int count = FixtureSurfaceCacheCount ();
+	FixtureSurfaceRun ("nearpoint", entity, 0, 0, 0, center);
+	assert (FixtureSurfaceResult () == selected && FixtureSurfaceCacheValid () && FixtureSurfaceCacheCount () == count);
+	FixtureSurfaceRun ("clippedpoint", entity, selected, 0, 0, center); FixtureSurfaceVector (center, .02f);
+	vec3_t far = {1048576, 1048576, 1048576};
+	FixtureSurfaceRun ("nearpoint", entity, 0, 0, 0, far); assert (FixtureSurfaceResult () == -1);
+	FixtureSurfaceRun ("nearpoint", entity, 0, 0, 0, center);
+	assert (FixtureSurfaceResult () == selected && FixtureSurfaceCacheValid () && FixtureSurfaceCacheCount () == count);
+	VectorCopy (center, warm_point);
+}
+static qmodel_t *FixtureSurfaceInline (int *modelindex)
+{
+	qmodel_t *first = NULL;
+	assert (qcvm->GetModel);
+	for (int i = 2; i < MAX_MODELS; i++)
+	{
+		qmodel_t *model = qcvm->GetModel (i);
+		if (!model || model->type != mod_brush || model->needload || model->firstmodelsurface <= 0 || model->nummodelsurfaces <= 0) continue;
+		if (!first) { first = model; *modelindex = i; }
+		if (FixtureSurfaceFindFace (model, true) >= 0) { *modelindex = i; return model; }
+	}
+	return first;
+}
+static void FixtureSurfaceRunLoadedVM (vec3_t warm_point)
+{
+	qmodel_t *world = qcvm->worldmodel;
+	assert (world && world->type == mod_brush && !world->needload && world->nummodelsurfaces > 0);
+	assert (qcvm->GetModel && qcvm->GetModel (1) == world);
+	int inline_index = 0;
+	qmodel_t *inline_model = FixtureSurfaceInline (&inline_index);
+	assert (!FixtureSurfaceCacheValid ());
+	edict_t *world_entity = qcvm->edicts;
+	assert (world_entity && world_entity->v.modelindex == 1);
+	int world_face = FixtureSurfaceFindFace (world, false); assert (world_face >= 0);
+	FixtureSurfaceGeometry (world, world_entity, world_face);
+	if (inline_model)
+	{
+		edict_t *entity = ED_Alloc (); entity->v.modelindex = inline_index;
+		FixtureSurfaceInlineWitness (world, inline_model, entity);
+		int face = FixtureSurfaceFindFace (inline_model, false);
+		if (face >= 0) FixtureSurfaceGeometry (inline_model, entity, face);
+		else puts ("QC_SURFACE_INLINE_GEOMETRY_UNAVAILABLE no loaded queryable inline face");
+	}
+	else puts ("QC_SURFACE_INLINE_MODEL_UNAVAILABLE no loaded positive-range inline brush model");
+	assert (!FixtureSurfaceCacheValid ());
+	FixtureSurfaceNearest (world, world_entity, warm_point);
+}
+static void FixtureSurfaceCases (void)
+{
+	dprograms_t *server_program = sv.qcvm.progs;
+	vec3_t warm_point;
+	FixtureSwitch (&sv.qcvm); FixtureSurfaceRunLoadedVM (warm_point);
+	for (int load = 0; load < 2; load++)
+	{
+		FixtureSwitch (NULL); cl.worldmodel = sv.qcvm.worldmodel;
+		for (int i = 0; i < MAX_MODELS; i++) cl.model_precache[i] = sv.models[i];
+		FixtureLoadCSProgsNative ();
+		assert (qcvm == NULL && cl.qcvm.progs && cl.qcvm.edicts && cl.qcvm.extfuncs.CSQC_Ent_Update);
+		FixtureSwitch (&cl.qcvm); FixtureSurfaceRunLoadedVM (warm_point);
+		assert (cl.qcvm.worldmodel == sv.qcvm.worldmodel);
+		float selected = FixtureSurfaceResult (); int count = FixtureSurfaceCacheCount ();
+		FixtureSwitch (&sv.qcvm);
+		FixtureSurfaceRun ("nearpoint", qcvm->edicts, 0, 0, 0, warm_point);
+		assert (FixtureSurfaceResult () == selected && FixtureSurfaceCacheValid () && FixtureSurfaceCacheCount () == count);
+		FixtureSwitch (&cl.qcvm);
+		FixtureSurfaceRun ("nearpoint", qcvm->edicts, 0, 0, 0, warm_point);
+		assert (FixtureSurfaceResult () == selected && FixtureSurfaceCacheValid () && FixtureSurfaceCacheCount () == count);
+		PR_ClearProgs (&cl.qcvm);
+		assert (!cl.qcvm.progs && !cl.qcvm.knownzone && sv.qcvm.progs == server_program);
+		FixtureSwitch (&sv.qcvm);
+		FixtureSurfaceRun ("nearpoint", qcvm->edicts, 0, 0, 0, warm_point);
+		assert (FixtureSurfaceResult () == selected && FixtureSurfaceCacheValid () && FixtureSurfaceCacheCount () == count);
+	}
+	cl.worldmodel = NULL; for (int i = 0; i < MAX_MODELS; i++) cl.model_precache[i] = NULL;
+	FixtureSwitch (&sv.qcvm); PR_ClearProgs (&sv.qcvm);
+	SV_SpawnServer ("e1m1"); FixtureSwitch (&sv.qcvm);
+	assert (sv.active && sv.qcvm.progs && sv.qcvm.edicts && sv.qcvm.worldmodel);
+	FixtureSurfaceRunLoadedVM (warm_point);
+	puts ("QC_BINDING_SURFACES_NATIVE_COMPLETED loaded VM geometry, metadata, cache and lifecycle checks; inline availability is reported separately");
+}
+#endif /* QC_SURFACE_NATIVE_HOST_FIXTURE */
+
 static void FixtureResourceOwn (qboolean csqc)
 {
 	const char *seed = csqc ? "CSQC_OWNER" : "SSQC_OWNER";
@@ -1320,6 +1655,13 @@ int main (int argc, char **argv)
 	if (COM_CheckParm ("-entities"))
 	{
 		FixtureEntityCases ();
+		return 0;
+	}
+#endif
+#ifdef QC_SURFACE_NATIVE_HOST_FIXTURE
+	if (COM_CheckParm ("-surfaces"))
+	{
+		FixtureSurfaceCases ();
 		return 0;
 	}
 #endif

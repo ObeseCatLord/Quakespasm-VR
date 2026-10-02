@@ -132,6 +132,12 @@ receipts. These overlap intentionally; test shared boundaries once.
   [Exact results/limits](qc-entity-search-current-2.0-results.md). Authored gameplay,
   changed-program fingerprint cache/lifecycle and remaining entity/surface/command/
   error consumers stay open; no broad closure from prepared query inputs.
+- F03: loaded world/inline surface queries pass actual geometry, index guards,
+  clipping, prepared metadata and cache state across both VMs/native reloads.
+  Four actual shared-array inline quad witnesses pass; no unavailable witness.
+  Native owners remain unchanged; no GPU work. [Exact results/limits](qc-surface-current-2.0-results.md).
+  Rendered atlas/authored consumers, other shape/format/error boundaries and
+  remaining entity-copy/player/command families stay open; no full F03 closure.
 - F07: repeated native mj4m1 loads observe actual indexed worker entries; all
   427881 surfaces match native serial extent recalculation on both loads, with
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).
