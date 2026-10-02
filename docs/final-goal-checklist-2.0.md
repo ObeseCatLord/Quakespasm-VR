@@ -106,6 +106,13 @@ receipts. These overlap intentionally; test shared boundaries once.
   verified local Astra/xhigh oracle corrections; no production edit or GPU.
   [Exact results/limits](qc-files-current-2.0-results.md). Callback/entity/surface/
   error/authored consumers and other finite distinctions remain open.
+- F03: loaded SSQC/CSQC named core/lazy/QC targets, scalar/string/vector returns,
+  zero/two/seven forwarding with exact positional witnesses, native saved locals
+  and distinct nested counts pass. Actual legacy/modern writer-to-CSQC reads,
+  native cursor sentinel/EOF and CSQC reload pass; two exact dedicated native
+  rejection exits pass. Local Astra/xhigh observations adopted; no production/GPU.
+  [Exact results/limits](qc-calls-current-2.0-results.md). Full parser event handoff,
+  token/entity/surface/authored consumers and GUI error cleanup remain open.
 - F07: repeated native mj4m1 loads observe actual indexed worker entries; all
   427881 surfaces match native serial extent recalculation on both loads, with
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).

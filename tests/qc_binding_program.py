@@ -7,7 +7,7 @@ from pathlib import Path
 from cooperative_qc_program import source_program
 
 
-def assemble(program, resources=False, files=False):
+def assemble(program, resources=False, files=False, calls=False):
     header = list(struct.unpack_from("<15i", program))
     if header[0] != 6:
         raise ValueError("fixture requires classic version6 QC")
@@ -26,16 +26,24 @@ def assemble(program, resources=False, files=False):
 
     def global_slot(text, kind=2, value=0):
         slot = len(globals_data) // 4
-        if slot >= 32768:
+        if slot + (3 if kind == 3 else 1) > 32768:
             raise ValueError("fixture exceeds classic signed statement offsets")
         global_defs.extend(struct.pack("<HHi", kind, slot, name(text)))
-        globals_data.extend(struct.pack("<i", value) if kind != 2 else struct.pack("<f", value))
+        if kind == 3:
+            if len(value) != 3:
+                raise ValueError("fixture vector globals need three words")
+            globals_data.extend(struct.pack("<3f", *value))
+        else:
+            globals_data.extend(struct.pack("<i", value) if kind != 2 else struct.pack("<f", value))
         return slot
 
-    def add_function(text, first_statement, parm_start=0, locals_count=0):
+    def add_function(text, first_statement, parm_start=0, locals_count=0, parm_sizes=()):
         index = len(functions) // 36
+        if len(parm_sizes) > 8:
+            raise ValueError("fixture function has too many parameters")
         functions.extend(struct.pack("<7i8B", first_statement, parm_start, locals_count,
-                                     0, name(text), 0, 0, *([0] * 8)))
+                                     0, name(text), 0, len(parm_sizes),
+                                     *parm_sizes, *([0] * (8 - len(parm_sizes)))))
         return index
 
     def emit(code):
@@ -95,6 +103,7 @@ def assemble(program, resources=False, files=False):
                     for key, value in texts.items()}
     call_function = 52  # OP_CALL1
     store_string = 33   # OP_STORE_S
+    store_vector = 32   # OP_STORE_V
     store_function = 36 # OP_STORE_FNC
     store_float = 31    # OP_STORE_F
 
@@ -128,6 +137,131 @@ def assemble(program, resources=False, files=False):
 
     add_ref("named_dprint_entry", dprint_entry("fixture_named_dprint_entry", "dprint_named", "dprint_named"))
     add_ref("dprint_277_entry", dprint_entry("fixture_dprint_277_entry", "dprint_277", "dprint_277"))
+
+    if calls:
+        for function_name, first_statement, ref_name in (
+                ("callfunction", 0, "calls_callfunction"), ("isfunction", 0, "calls_isfunction"),
+                ("fabs", 0, "calls_fabs"), ("min", 0, "calls_min"), ("strcat", 0, "calls_strcat"),
+                ("normalize", 0, "calls_normalize"), ("strlen", 0, "calls_strlen"),
+                ("readbyte", 0, "calls_readbyte"), ("readchar", 0, "calls_readchar"),
+                ("readshort", 0, "calls_readshort"), ("readlong", 0, "calls_readlong"),
+                ("readcoord", 0, "calls_readcoord"), ("readangle", 0, "calls_readangle"),
+                ("readstring", 0, "calls_readstring"), ("readfloat", 0, "calls_readfloat"),
+                ("fixture_calls_zero", 0, "calls_zero"),
+                ("fixture_calls_badbuiltin", -2147483648, "calls_badbuiltin")):
+            add_ref(ref_name, add_function(function_name, first_statement))
+        nested = [global_slot("fixture_calls_nested_%d" % i) for i in range(3)]
+        nested_seen = [global_slot("fixture_calls_nested_seen_%d" % i) for i in range(2)]
+        nested_min = global_slot("fixture_calls_nested_min", 1, name("min"))
+        nested_fabs = global_slot("fixture_calls_nested_fabs", 1, name("fabs"))
+        nested_start = emit([(store_float, nested[0], nested_seen[0], 0),
+                             (store_float, nested[1], nested_seen[1], 0),
+                             (store_float, nested[0], 4, 0),
+                             (store_float, nested[1], 7, 0),
+                             (store_string, nested_min, 10, 0),
+                             (54, ref_slots["calls_callfunction"], 0, 0),
+                             (store_float, 1, 4, 0),
+                             (store_string, nested_fabs, 7, 0),
+                             (53, ref_slots["calls_callfunction"], 0, 0),
+                             (store_float, 1, nested[2], 0), (43, nested[2], 0, 0)])
+        add_ref("calls_nested", add_function("fixture_calls_nested", nested_start,
+                                               nested[0], 3, (1, 1)))
+        total = [global_slot("fixture_calls_sum_%d" % i) for i in range(8)]
+        total_seen = [global_slot("fixture_calls_sum_seen_%d" % i) for i in range(7)]
+        total_code = [(store_float, total[i], total_seen[i], 0) for i in range(7)]
+        total_code.append((6, total[0], total[1], total[7]))
+        for i in range(2, 7):
+            total_code.append((6, total[7], total[i], total[7]))
+        total_code.append((43, total[7], 0, 0))
+        add_ref("calls_sum", add_function("fixture_calls_sum", emit(total_code),
+                                            total[0], 8, (1,) * 7))
+        call_values = {"minus": -2.5, "three": 3, "five": 5}
+        call_values.update({"arg%d" % i: i for i in range(1, 8)})
+        values = {key: global_slot("fixture_calls_" + key, value=value)
+                  for key, value in call_values.items()}
+        add_ref("calls_noargs_body", add_function("fixture_calls_noargs_body",
+                                                 emit([(43, values["three"], 0, 0)])))
+        string_input = global_slot("fixture_calls_string_arg", 1, name("qc-name"))
+        prime_input = global_slot("fixture_calls_prime_arg", 1, name("return-prime"))
+        vector_input = global_slot("fixture_calls_vector_arg", 3, (0, 3, 4))
+        string_result = global_slot("fixture_calls_string_result", 1)
+        vector_result = global_slot("fixture_calls_vector_result", 3, (0, 0, 0))
+        targets = {key: global_slot("fixture_calls_name_" + key, 1, name(value)) for key, value in (
+            ("fabs", "fabs"), ("min", "min"), ("nested", "fixture_calls_nested"),
+            ("sum", "fixture_calls_sum"), ("missing", "fixture_calls_missing"),
+            ("zero", "fixture_calls_zero"), ("readbyte", "readbyte"),
+            ("badbuiltin", "fixture_calls_badbuiltin"), ("strcat", "strcat"),
+            ("normalize", "normalize"), ("noargs", "fixture_calls_noargs_body"))}
+        results = {key: global_slot("fixture_calls_" + key, 1 if key == "read_string" else 2) for key in (
+            "fabs", "min", "nested", "sum", "noarg", "missing", "zero", "exists_nested",
+            "exists_zero", "exists_missing", "exists_readbyte", "read_byte", "read_char", "read_short",
+            "read_long", "read_coord", "read_angle", "read_string", "read_float", "read_eof", "noargs")}
+
+        def named(code, target, args=(), output=None):
+            for i, slot in enumerate(args):
+                code.append((store_float, slot, 4 + i * 3, 0))
+            code.append((store_string, targets[target], 4 + len(args) * 3, 0))
+            code.append((51 + len(args) + 1, ref_slots["calls_callfunction"], 0, 0))
+            if output:
+                code.append((store_float, 1, results[output], 0))
+
+        def invoke(code, ref, output, string=False):
+            code.extend(((51, ref_slots[ref], 0, 0),
+                         (store_string if string else store_float, 1, results[output], 0)))
+
+        code = []
+        named(code, "fabs", (values["minus"],), "fabs")
+        named(code, "min", (values["five"], values["three"]), "min")
+        add_ref("calls_core_entry", entry("fixture_calls_core", code))
+        code = [(store_string, string_input, 4, 0), (store_string, targets["strcat"], 7, 0),
+                (53, ref_slots["calls_callfunction"], 0, 0), (store_string, 1, string_result, 0),
+                (store_vector, vector_input, 4, 0), (store_string, targets["normalize"], 7, 0),
+                (53, ref_slots["calls_callfunction"], 0, 0), (store_vector, 1, vector_result, 0)]
+        add_ref("calls_shapes_entry", entry("fixture_calls_shapes", code))
+        code = []
+        named(code, "nested", (values["three"], values["five"]), "nested")
+        add_ref("calls_nested_entry", entry("fixture_calls_nested_entry", code))
+        code = []
+        named(code, "sum", tuple(values["arg%d" % i] for i in range(1, 8)), "sum")
+        add_ref("calls_sum_entry", entry("fixture_calls_sum_entry", code))
+        code = []
+        named(code, "noargs", output="noargs")
+        add_ref("calls_noargs_entry", entry("fixture_calls_noargs_entry", code))
+        for stem, target, argc in (("noarg", None, 0), ("missing", "missing", 1), ("zero", "zero", 1)):
+            primed = global_slot("fixture_calls_" + stem + "_prime")
+            code = [(store_string, prime_input, 4, 0),
+                    (52, ref_slots["calls_strlen"], 0, 0),
+                    (store_float, 1, primed, 0)]
+            if target is None:
+                code.append((51, ref_slots["calls_callfunction"], 0, 0))
+            else:
+                code.extend(((store_string, targets[target], 4, 0),
+                             (51 + argc, ref_slots["calls_callfunction"], 0, 0)))
+            code.append((store_float, 1, results[stem], 0))
+            add_ref("calls_%s_entry" % stem, entry("fixture_calls_" + stem + "_entry", code))
+        code = []
+        for stem, target in (("exists_nested", "nested"), ("exists_zero", "zero"),
+                             ("exists_missing", "missing"), ("exists_readbyte", "readbyte")):
+            code.extend(((store_string, targets[target], 4, 0),
+                         (52, ref_slots["calls_isfunction"], 0, 0),
+                         (store_float, 1, results[stem], 0)))
+        add_ref("calls_isfunction_entry", entry("fixture_calls_isfunction", code))
+        code = []
+        for ref, result, string in (("calls_readbyte", "read_byte", False), ("calls_readchar", "read_char", False),
+                                    ("calls_readshort", "read_short", False), ("calls_readlong", "read_long", False),
+                                    ("calls_readcoord", "read_coord", False), ("calls_readangle", "read_angle", False),
+                                    ("calls_readstring", "read_string", True), ("calls_readfloat", "read_float", False)):
+            invoke(code, ref, result, string)
+        add_ref("calls_read_entry", entry("fixture_calls_read", code))
+        code = []
+        invoke(code, "calls_readbyte", "read_eof")
+        add_ref("calls_read_eof_entry", entry("fixture_calls_read_eof", code))
+        code = []
+        named(code, "readbyte")
+        add_ref("calls_forbidden_entry", entry("fixture_calls_forbidden", code))
+        code = []
+        named(code, "badbuiltin")
+        add_ref("calls_badbuiltin_entry", entry("fixture_calls_badbuiltin_entry", code))
 
     if resources:
         for builtin, number in (("buf_create", 460), ("buf_del", 461), ("buf_getsize", 462),
@@ -539,10 +673,11 @@ def main():
     parser.add_argument("--csqc-output", type=Path, required=True)
     parser.add_argument("--resources", action="store_true", help="append the finite loaded buffer/string cases")
     parser.add_argument("--files", "-files", action="store_true", help="append loaded file/search ownership cases")
+    parser.add_argument("--calls", action="store_true", help="append loaded named-call and CSQC reader cases")
     args = parser.parse_args()
-    if args.resources and args.files:
-        parser.error("--resources and --files are separate fixture modes")
-    result = assemble(source_program(args.source_pack), args.resources, args.files)
+    if sum((args.resources, args.files, args.calls)) > 1:
+        parser.error("--resources, --files and --calls are separate fixture modes")
+    result = assemble(source_program(args.source_pack), args.resources, args.files, args.calls)
     for output in (args.output, args.csqc_output):
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(result)

@@ -136,6 +136,109 @@ static void FixtureCheckDisabledSSQC (void)
 	assert (FixtureFloat ("fixture_float_qc_random_body") == 0.25f);
 }
 
+static void FixtureCallsExec (const char *entry)
+{
+	char name[96];
+	q_snprintf (name, sizeof (name), "fixture_ref_calls_%s_entry", entry);
+	PR_ExecuteProgram (FixtureRef (name));
+}
+
+static float FixtureCallsFloat (const char *name)
+{
+	char global[96];
+	q_snprintf (global, sizeof (global), "fixture_calls_%s", name);
+	return FixtureFloat (global);
+}
+
+static void FixtureCallsNamed (void)
+{
+	dfunction_t *nested = FixtureFunction ("fixture_ref_calls_nested");
+	dfunction_t *sum = FixtureFunction ("fixture_ref_calls_sum");
+	assert (nested->numparms == 2 && nested->locals == 3 && nested->parm_size[0] == 1 && nested->parm_size[1] == 1);
+	assert (sum->numparms == 7 && sum->locals == 8);
+	for (int i = 0; i < sum->numparms; i++) assert (sum->parm_size[i] == 1);
+	for (int i = 0; i < nested->locals; i++) G_FLOAT (nested->parm_start + i) = 100 + i;
+	for (int i = 0; i < sum->locals; i++) G_FLOAT (sum->parm_start + i) = 200 + i;
+	FixtureCallsExec ("core");
+	assert (FixtureCallsFloat ("fabs") == 2.5f && FixtureCallsFloat ("min") == 3 && qcvm->argc == 3);
+	FixtureCallsExec ("shapes");
+	assert (!strcmp (FixtureString ("fixture_calls_string_result"), "qc-name") && qcvm->argc == 2);
+	float *normalized = G_VECTOR (FixtureGlobal ("fixture_calls_vector_result", ev_vector)->ofs);
+	assert (fabsf (normalized[0]) < .000001f && fabsf (normalized[1] - .6f) < .000001f &&
+		fabsf (normalized[2] - .8f) < .000001f);
+	FixtureCallsExec ("nested");
+	assert (FixtureCallsFloat ("nested") == 3 && qcvm->argc == 3);
+	assert (FixtureCallsFloat ("nested_seen_0") == 3 && FixtureCallsFloat ("nested_seen_1") == 5);
+	for (int i = 0; i < nested->locals; i++) assert (G_FLOAT (nested->parm_start + i) == 100 + i);
+	FixtureCallsExec ("sum");
+	assert (FixtureCallsFloat ("sum") == 28 && qcvm->argc == 8);
+	for (int i = 0; i < 7; i++)
+	{
+		char seen[64];
+		q_snprintf (seen, sizeof (seen), "sum_seen_%d", i);
+		assert (FixtureCallsFloat (seen) == i + 1);
+	}
+	for (int i = 0; i < sum->locals; i++) assert (G_FLOAT (sum->parm_start + i) == 200 + i);
+	FixtureCallsExec ("noargs");
+	assert (FixtureCallsFloat ("noargs") == 3 && qcvm->argc == 1);
+	for (const char *const *entry = (const char *const[]){"noarg", "missing", "zero", NULL}; *entry; entry++)
+	{
+		char prime[64];
+		FixtureCallsExec (*entry);
+		q_snprintf (prime, sizeof (prime), "%s_prime", *entry);
+		assert (FixtureCallsFloat (prime) == 12 && FixtureCallsFloat (*entry) == 12 &&
+			qcvm->argc == (!strcmp (*entry, "noarg") ? 0 : 1));
+	}
+	FixtureCallsExec ("isfunction");
+	assert (FixtureCallsFloat ("exists_nested") && FixtureCallsFloat ("exists_zero") &&
+		!FixtureCallsFloat ("exists_missing") && FixtureCallsFloat ("exists_readbyte") && qcvm->argc == 1);
+}
+
+static void FixtureCallsRead (qboolean modern)
+{
+	byte bytes[128];
+	sizebuf_t payload = {.data = bytes, .maxsize = sizeof (bytes)};
+	sizebuf_t saved_message = net_message;
+	int saved_readcount = msg_readcount;
+	qboolean saved_badread = msg_badread;
+	unsigned saved_flags = cl.protocolflags;
+	unsigned flags = modern ? PRFL_FLOATCOORD | PRFL_SHORTANGLE : 0;
+	MSG_WriteByte (&payload, 250); MSG_WriteChar (&payload, -12); MSG_WriteShort (&payload, -1234);
+	MSG_WriteLong (&payload, -1234567); MSG_WriteCoord (&payload, modern ? 123.125f : -12.25f, flags);
+	MSG_WriteAngle (&payload, modern ? -90 : 45, flags); MSG_WriteString (&payload, "fixture-calls-read");
+	MSG_WriteFloat (&payload, -3.25f); MSG_WriteByte (&payload, 0x5a);
+	cl.protocolflags = flags;
+	net_message = payload;
+	MSG_BeginReading ();
+	FixtureCallsExec ("read");
+	assert (FixtureCallsFloat ("read_byte") == 250 && FixtureCallsFloat ("read_char") == -12 &&
+		FixtureCallsFloat ("read_short") == -1234 && FixtureCallsFloat ("read_long") == -1234567 &&
+		FixtureCallsFloat ("read_coord") == (modern ? 123.125f : -12.25f) &&
+		FixtureCallsFloat ("read_angle") == (modern ? -90 : 45) &&
+		!strcmp (FixtureString ("fixture_calls_read_string"), "fixture-calls-read") &&
+		FixtureCallsFloat ("read_float") == -3.25f && !msg_badread && msg_readcount == payload.cursize - 1);
+	assert (MSG_ReadByte () == 0x5a && !msg_badread && msg_readcount == payload.cursize);
+	FixtureCallsExec ("read_eof");
+	assert (FixtureCallsFloat ("read_eof") == -1 && msg_badread && msg_readcount == payload.cursize);
+	net_message = saved_message; msg_readcount = saved_readcount; msg_badread = saved_badread; cl.protocolflags = saved_flags;
+}
+
+static void FixtureCallsCases (void)
+{
+	dprograms_t *server_program = sv.qcvm.progs;
+	FixtureSwitch (&sv.qcvm); FixtureCallsNamed ();
+	FixtureSwitch (&cl.qcvm);
+	assert (PR_LoadProgs ("fixture-csqc.dat", true, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins));
+	FixtureCallsNamed (); FixtureCallsRead (false); FixtureCallsRead (true);
+	PR_ClearProgs (&cl.qcvm); assert (sv.qcvm.progs == server_program);
+	FixtureSwitch (&sv.qcvm); FixtureCallsNamed ();
+	FixtureSwitch (&cl.qcvm);
+	assert (PR_LoadProgs ("fixture-csqc.dat", true, PROGHEADER_CRC, pr_csqcbuiltins, pr_csqcnumbuiltins));
+	FixtureCallsNamed (); FixtureCallsRead (true);
+	PR_ClearProgs (&cl.qcvm); assert (sv.qcvm.progs == server_program);
+	puts ("QC_BINDING_CALLS_NATIVE_PASSED SSQC/CSQC named calls, locals and native message readers");
+}
+
 static void FixtureResourceOwn (qboolean csqc)
 {
 	const char *seed = csqc ? "CSQC_OWNER" : "SSQC_OWNER";
@@ -553,6 +656,23 @@ int main (int argc, char **argv)
 
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
 	assert (sv.active);
+	if (COM_CheckParm ("-calls-forbidden"))
+	{
+		puts ("QC_BINDING_CALLS_FORBIDDEN_BEGIN");
+		FixtureCallsExec ("forbidden");
+		return 0;
+	}
+	if (COM_CheckParm ("-calls-badbuiltin"))
+	{
+		puts ("QC_BINDING_CALLS_BADBUILTIN_BEGIN");
+		FixtureCallsExec ("badbuiltin");
+		return 0;
+	}
+	if (COM_CheckParm ("-calls"))
+	{
+		FixtureCallsCases ();
+		return 0;
+	}
 	if (COM_CheckParm ("-files"))
 	{
 		FixtureFilesCases ();

@@ -53,6 +53,25 @@ SDL window, GPU/OpenXR, sockets or microphone. Preserve failures and precise
 limits; this is a finite F03 subset. [Actual results](../docs/qc-files-current-2.0-results.md),
 [local Astra dispositions](../docs/qc-files-final-2.0-review-brief.md#final-disposition).
 
+## Loaded QC named callbacks and message readers
+
+Generate the same private SSQC/CSQC outputs with `qc_binding_program.py --calls`
+instead of `--files`/`--resources`. Compile the existing assertion-enabled native
+fixture and run `-calls -game binding -dedicated 3 -noudp -nosound -nosteamapi` in
+that disposable profile. Require compile/link/run0 and
+`QC_BINDING_CALLS_NATIVE_PASSED`. Actual interpreter consumers cover builtin and
+QC targets, scalar/string/vector returns, genuine parameter/local metadata,
+nested and seven-argument calls, no-op/existence queries, legacy/modern native
+writer-to-CSQC reads, unread-byte conservation, EOF and CSQC reload.
+
+Run `-calls-forbidden` and `-calls-badbuiltin` as separate dedicated processes
+using the calls program. Require each matching BEGIN marker, native target
+diagnostic (`#360 - readbyte` or `#2147483648 - fixture_calls_badbuiltin`),
+Program error and exit1. A nonzero exit alone is insufficient. These error exits
+do not certify GUI recovery/resource unwind. No graphics/audio/devices/sockets.
+[Plan](../docs/qc-calls-final-2.0-plan.md),
+[results/limits](../docs/qc-calls-current-2.0-results.md).
+
 ## Native opposite liquid eye categories
 
 `openxr-stereo-liquid.gdb` reuses the real Vulkan/OpenXR renderer with controlled
