@@ -3906,3 +3906,16 @@ decode, bounded initial-loop rewinds, aligned stop and format restart. Native
 clock cadence/physical callback/listening are outside this check; see the
 [plan](../docs/music-native-final-2.0-plan.md) and
 [results/limits](../docs/music-native-current-2.0-results.md).
+
+### Native room and wet-only self monitoring
+
+With the same complete enabled Steam Audio graph and optional audio fixture, add
+`-room-monitor` alongside the prior eleven options. Actual native capture policy/
+producer, loaded e1m1 BSP exporter, CPU room worker, self queue and public renderer
+are retained. Dummy capture remains independent of transmission; no-room self
+output is silent, parametric/hybrid room output is positive, native reset/off is
+S16-zero for4096frames after live reset/revoke; named task membership returns
+to baseline on replacement/clear/shutdown. This
+is bounded CPU software qualification, not microphone/listening/callback/race
+qualification. [Plan](../docs/room-monitor-native-final-2.0-plan.md),
+[results and limits](../docs/room-monitor-native-current-2.0-results.md).

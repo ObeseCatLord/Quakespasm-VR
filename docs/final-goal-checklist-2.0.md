@@ -339,3 +339,14 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   mpg123/tag source provenance. [Exact results/dispositions](music-native-current-2.0-results.md).
   Full EOF-tail completeness, live clock/device callbacks, wet-only monitor/room
   worker and other frozen F08/F10 boundaries remain distinct.
+
+2026-10-02 native room/monitor component:
+- F08: real loaded e1m1 exports13911 triangles to native CPU SDK worker; both
+  room modes consume self PCM with finite-positive wet-only output. Independent
+  monitor permission with TX off/no session, no-room silence,1920-frame bound,
+  phase/converted-PCM controls and4096frame post-reset/live-revoke S16 silence
+  pass; named-task membership returns to baseline. Senior-reviewed f814a05d
+  clears underwater filter history; old-owner PCM negative/current pass verified.
+  [Exact results and limits](room-monitor-native-current-2.0-results.md).
+  Complete callback/device/timing/integration claims remain distinct; F08/F10
+  are not closed.

@@ -369,6 +369,7 @@ static void VoiceLossReorderChecks (client_t **peers, client_state_t **states)
 #include "spatial_callback_native_fixture.h"
 #include "voice_hrtf_native_fixture.h"
 #include "music_native_fixture.h"
+#include "room_monitor_native_fixture.h"
 
 int main (int argc, char **argv)
 {
@@ -467,9 +468,11 @@ int main (int argc, char **argv)
 		Voice_HRTFNativeChecks (peers[0], states[0], peers[1], states[1]);
 	if (COM_CheckParm ("-music-native"))
 		Music_NativeChecks ();
+	if (COM_CheckParm ("-room-monitor"))
+		Room_MonitorNativeChecks ();
 #else
 	assert (!COM_CheckParm ("-spatial-callback") && !COM_CheckParm ("-voice-hrtf") &&
-		!COM_CheckParm ("-music-native"));
+		!COM_CheckParm ("-music-native") && !COM_CheckParm ("-room-monitor"));
 #endif
 	/* Leave real PCM buffered, then real jitter queued, without consuming either. */
 	for (int burst = 0; burst < 2; ++burst)
@@ -558,6 +561,10 @@ int main (int argc, char **argv)
 #ifdef USE_STEAMAUDIO
 	if (COM_CheckParm ("-music-native"))
 		puts ("MUSIC_NATIVE_PASSED seven native codecs/formats/EOF drain; pause/resume/initial loop window/aligned stop/restart");
+#endif
+#ifdef USE_STEAMAUDIO
+	if (COM_CheckParm ("-room-monitor"))
+		puts ("ROOM_MONITOR_NATIVE_PASSED native BSP/CPU room/self-only output; independent capture permission and observed worker retirement");
 #endif
 	puts ("VOICE_PCM_NATIVE_PASSED native negotiated codec/relay/PCM/mute/reset; captured transport/dummy capture");
 	return 0;
