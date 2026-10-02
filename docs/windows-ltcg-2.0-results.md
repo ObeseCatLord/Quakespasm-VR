@@ -39,4 +39,11 @@ acceptance, artifacts and static limits](windows-current-2.0-results.md).
 Current native common graph + all12 combined voice/spatial/HRTF/music/room
 markers also compile/link/run0 with stable inputs after this complete source
 implementation. Private receipt: FastGames/qsvr-audio-0bd4-p3u_ogkx.
+A subsequent focused native fixture extracts the same owned header-copy helper
+for negative mutations and a positive KEX6 conversion of the actual classic
+writer body. All ten refusals then valid KEX6 and valid classic reload/movement
+pass; compile/link/run each0. Private receipt: FastGames/qsvr-save-kex-current-qhx8b5sw.
+The test change adds a dialect positive control without changing production
+parsing or claiming all dialect/save/physics behavior.
+
 No full F01/F02/F08/F10 or whole-goal signoff is claimed from these bounded runs.

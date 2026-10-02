@@ -252,6 +252,28 @@ static client_t *LocalLoad (const char *command)
 	return peer;
 }
 
+static void LocalRewriteSaveHeader (const char *name, qboolean kex,
+	int field, const char *bad)
+{
+	FILE *in = fopen (va ("%s/valid-header-fixture.sav", com_gamedir), "r");
+	FILE *out = fopen (va ("%s/%s.sav", com_gamedir, name), "w");
+	assert (in && out);
+	char line[4096];
+	int index = 0;
+	while (fgets (line, sizeof (line), in))
+	{
+		if (!index && kex)
+			assert (fprintf (out, "6\nid1\n") > 0);
+		else if (bad && index == NUM_BASIC_SPAWN_PARMS + 2 + field * 2)
+			assert (fprintf (out, "%s\n", bad) > 0);
+		else
+			assert (fputs (line, out) >= 0);
+		++index;
+	}
+	assert (!ferror (in) && fclose (in) == 0 && fclose (out) == 0);
+	assert (index > NUM_BASIC_SPAWN_PARMS + 4);
+}
+
 /* Mutate only owned native save headers; retain the real writer's body. */
 static void LocalInvalidSave (client_t *peer)
 {
@@ -268,23 +290,7 @@ static void LocalInvalidSave (client_t *peer)
 		for (int field = 0; field < 2; ++field)
 			for (int variant = 0; variant < (field ? 2 : 3); ++variant)
 			{
-				FILE *in = fopen (va ("%s/valid-header-fixture.sav", com_gamedir), "r");
-				FILE *out = fopen (va ("%s/invalid-header-fixture.sav", com_gamedir), "w");
-				assert (in && out);
-				char line[4096];
-				int index = 0;
-				while (fgets (line, sizeof (line), in))
-				{
-					if (!index && kex)
-						assert (fprintf (out, "6\nid1\n") > 0);
-					else if (index == NUM_BASIC_SPAWN_PARMS + 2 + field * 2)
-						assert (fprintf (out, "%s\n", bad[variant]) > 0);
-					else
-						assert (fputs (line, out) >= 0);
-					++index;
-				}
-				assert (!ferror (in) && fclose (in) == 0 && fclose (out) == 0);
-				assert (index > NUM_BASIC_SPAWN_PARMS + 4);
+				LocalRewriteSaveHeader ("invalid-header-fixture", kex, field, bad[variant]);
 				PR_SwitchQCVM (NULL);
 				Cmd_ExecuteString ("load invalid-header-fixture", src_command);
 				assert (qcvm == NULL && sv.active && sv.qcvm.progs == program &&
@@ -294,7 +300,10 @@ static void LocalInvalidSave (client_t *peer)
 					peer->edict == player && !player->free);
 				PR_SwitchQCVM (&sv.qcvm);
 			}
-	/* Refusals must not poison the retained save buffer or the next valid load. */
+	/* Refusals must not poison either supported dialect's next valid load. */
+	LocalRewriteSaveHeader ("valid-kex-fixture", true, 0, NULL);
+	peer = LocalLoad ("load valid-kex-fixture");
+	LocalMovement (peer, true, true);
 	peer = LocalLoad ("load valid-header-fixture");
 	LocalMovement (peer, true, true);
 	puts ("INVALID_SAVE_NATIVE_PASSED legacy/KEX skill/time refusals and valid recovery");
