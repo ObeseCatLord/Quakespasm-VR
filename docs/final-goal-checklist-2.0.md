@@ -104,6 +104,17 @@ receipts. These overlap intentionally; test shared boundaries once.
   clean Vulkan validation and natural exit. [Exact results/limits](large-map-extents-current-2.0-results.md).
   No screenshot artifact was produced, so inspected output remains open.
   mfxsp17 is not installed; its available public repack is not tested yet.
+- F05/F07: native screenshot command→worker publication race repaired with the
+  existing end-task join and local metadata validation. Actual native capture,
+  invalid format/quality/filename-exhaustion preservation during unavailable
+  acquisition, JPEG recovery and later PNG pass; local Astra/xhigh source
+  dispositions accepted. [Current source/results/limits](screenshot-order-current-2.0-results.md).
+  No broad fatal-wait/device-loss or full scene/UI claim.
+- F07: public authorized mfxsp17/Quoth assets prepared privately; two native
+  loads, worker observation and exact serial equality for all29421surfaces pass,
+  clean validation/normal exit, two inspected PNGs with world/weapon/HUD.
+  [Named-map results/limits](mfxsp17-current-2.0-results.md). This supersedes its
+  earlier missing-asset status; full texture/loader/stereo/effect boundaries remain.
 - F06: prepared META setter/center transitions and actual KHR fixed/menu/
   unavailable-eye/off GPU phases pass, preserving native4xMSAA and SSAO1.
   Actual submission found and repaired static depth-replay shading-rate state;
@@ -139,6 +150,9 @@ receipts. These overlap intentionally; test shared boundaries once.
 - F10: production482cd9f5 changes cl_main.c and4ef67790 changes gl_rmisc.c;
   07f83e6e changes host_cmd.c;8071a46b changes gl_rmain.c/glquake.h/view.c.
   aa828629 changes gl_vidsdl.c for foveation OFF/recovery.
+  Current screenshot publication/metadata repair also changes gl_vidsdl.c;
+  include it in the final Linux/ARM artifact refresh. Native host build/affected
+  capture tests pass, not a refreshed portable package acceptance.
   existing ff83e66a packages remain accepted only for their earlier input.
   Refresh affected final artifacts once required source fixes settle; do not
   claim current package acceptance yet.

@@ -35,6 +35,25 @@ covered. Files/search/callback/entity/full resource lifecycles remain distinct.
 [Plan](../docs/qc-buffer-final-2.0-plan.md),
 [actual results/limits](../docs/qc-buffer-current-2.0-results.md).
 
+## Native pending screenshot request
+
+`screenshot_pending_native.gdb` uses normal native commands/rendering/encoders
+with controlled acquire and candidate-filename availability. Run the current
+assertion-enabled Linux client in a private Quoth/mfxsp17 profile, native tasks
+enabled; set `QSVR_SCREENSHOT_RESULT` to a writable JSON path. Use the ordinary
+`-hipnotic -game quoth -novr +map mfxsp17` setup and `-nosteamapi` for private
+disk files. Failed-acquire inputs avoid actual presentation calls; no invented
+Vulkan handles or renderer result is supplied. Command strings use owned scratch
+storage, short nonblocking GDB calls, and engine command-queue execution.
+
+Require exit0, `SCREENSHOT_PENDING_NATIVE_PASSED`, matching JSON, all three
+refusals preserving the pending JPEG metadata,100unavailable candidate names,
+two actual writes/JPEG+PNG headers, pending0, clean validation and natural exit.
+This does not test actual condition-wait failure, deterministic encoding overlap,
+VR screenshots or every screenshot codec. [Plan](../docs/large-map-output-final-2.0-plan.md),
+[current results](../docs/screenshot-order-current-2.0-results.md),
+[senior dispositions](../docs/screenshot-order-final-2.0-review-brief.md#final-disposition).
+
 ## Explicit OpenXR session recovery
 
 `openxr_session_recovery_fixture.cpp` reuses the Vulkan boundary fixture's

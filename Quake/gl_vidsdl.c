@@ -4684,7 +4684,8 @@ void GL_SynchronizeEndRenderingTask (void)
 	// Wait until the CPU has submitted the frame. The GPU may still be drawing it.
 	if (prev_end_rendering_task != INVALID_TASK_HANDLE)
 	{
-		Task_Join (prev_end_rendering_task, TASK_TIMEOUT_INFINITE);
+		if (!Task_Join (prev_end_rendering_task, TASK_TIMEOUT_INFINITE))
+			Sys_Error ("Task_Join failed while synchronizing the end rendering task");
 		prev_end_rendering_task = INVALID_TASK_HANDLE;
 	}
 }
@@ -7322,14 +7323,16 @@ void SCR_ScreenShot_f (void)
 		return;
 	}
 
-	memcpy (screenshot_ext, "png", sizeof (screenshot_ext));
+	char requested_format[4] = "png";
+	int requested_quality = 90;
+	char requested_filename[MAX_OSPATH];
 
 	if (Cmd_Argc () >= 2)
 	{
 		const char *requested_ext = Cmd_Argv (1);
 
 		if (!q_strcasecmp ("png", requested_ext) || !q_strcasecmp ("tga", requested_ext) || !q_strcasecmp ("jpg", requested_ext))
-			memcpy (screenshot_ext, requested_ext, sizeof (screenshot_ext));
+			memcpy (requested_format, requested_ext, sizeof (requested_format));
 		else
 		{
 			SCR_ScreenShot_Usage ();
@@ -7338,10 +7341,9 @@ void SCR_ScreenShot_f (void)
 	}
 
 	// read quality as the 3rd param (only used for JPG)
-	screenshot_quality = 90;
 	if (Cmd_Argc () >= 3)
-		screenshot_quality = atoi (Cmd_Argv (2));
-	if (screenshot_quality < 1 || screenshot_quality > 100)
+		requested_quality = atoi (Cmd_Argv (2));
+	if (requested_quality < 1 || requested_quality > 100)
 	{
 		SCR_ScreenShot_Usage ();
 		return;
@@ -7353,6 +7355,9 @@ void SCR_ScreenShot_f (void)
 		Con_Printf ("SCR_ScreenShot_f: Unsupported surface format\n");
 		return;
 	}
+
+	// Retire the previous writer before probing names it may have created.
+	GL_SynchronizeEndRenderingTask ();
 
 	// find a file name to save it to
 	int i;
@@ -7372,12 +7377,12 @@ void SCR_ScreenShot_f (void)
 	for (i = 0; i < 100; i++)
 	{
 		q_snprintf (
-			screenshot_imagename, sizeof (screenshot_imagename), "%s-%s%s-%04d%02d%02d-%02d%02d%02d-%02i.%s", SCREENSHOT_PREFIX,
+			requested_filename, sizeof (requested_filename), "%s-%s%s-%04d%02d%02d-%02d%02d%02d-%02i.%s", SCREENSHOT_PREFIX,
 			(have_map_title ? va ("%s-", map_title) : ""), cl.mapname, lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday, lt->tm_hour, lt->tm_min, lt->tm_sec, i,
-			screenshot_ext); // "vkQuake%04scbx_index.tga"
+			requested_format); // "vkQuake%04scbx_index.tga"
 
 		char checkname[MAX_OSPATH];
-		q_snprintf (checkname, sizeof (checkname), "%s/%s", com_gamedir, screenshot_imagename);
+		q_snprintf (checkname, sizeof (checkname), "%s/%s", com_gamedir, requested_filename);
 		if (Sys_FileType (checkname) == FS_ENT_NONE)
 			break; // file doesn't exist
 	}
@@ -7387,6 +7392,9 @@ void SCR_ScreenShot_f (void)
 		return;
 	}
 
+	memcpy (screenshot_ext, requested_format, sizeof (screenshot_ext));
+	screenshot_quality = requested_quality;
+	q_strlcpy (screenshot_imagename, requested_filename, sizeof (screenshot_imagename));
 	take_screenshot = true;
 }
 

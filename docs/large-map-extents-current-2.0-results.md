@@ -41,3 +41,9 @@ compile-argv.json/link-argv.json/build.log/client; final run-final.log and
 result-final.json; earlier run.log/run-corrected.log/run-command-corrected.log
 and their retained probes. Main/reference, real assets, server, preferences and
 user-owned migration doc untouched. [Before-code plan](large-map-extents-final-2.0-plan.md).
+
+Later follow-up separately obtains/tests the named mfxsp17 release and repairs
+the native screenshot publication race. The earlier no-PNG/missing-asset facts
+remain historical; see [named-map results](mfxsp17-current-2.0-results.md) and
+[capture results/limits](screenshot-order-current-2.0-results.md). This receipt's
+mj4m1 surface-extents proof is unchanged; no broader output claim is backdated.
