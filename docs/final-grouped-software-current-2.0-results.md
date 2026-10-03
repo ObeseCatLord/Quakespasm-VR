@@ -356,3 +356,28 @@ FastGames/qsvr-cpu-desktop-nativequit-f7_wf0n_/main-verified.json and result.jso
 initial observer failure root qsvr-cpu-desktop-final-e029gx62. This qualifies
 ordinary desktop gameplay/quit and public compatibility, not XR lifecycle,
 client between-send prediction, all desktop content or uninspected output.
+
+## Available desktop content and built-in demos
+
+Current native079f4431 executes three CPU-rendered desktop profiles with actual
+licensed id1/Hipnotic/Rogue packs linked read-only into private game directories.
+Each completes signon, native held-input movement/firing/release, ordinary map
+replacement (e1m1→start, start→hip1m1, start→r1m1), native menu frames and quit0.
+No copied graphics implementation or hardware driver is used.
+
+The id1 profile records a real native desktop demo, stops recording, plays it
+through the native demo reader, pauses with decoder time unchanged, and seeks
+forward0.5seconds with real message time advancing1.8→2.4 before stopping playback.
+It then loads the next map and exits normally. All profiles verify postcfg
+sensitivity4.125 after initial config2.75, and the ordinary quit-time native
+vkQuake.cfg writer preserves4.125. An attempted observer-only writeconfig command
+is unsupported by both this engine and native vkQuake; it proves nothing and
+requires no new command. Acceptance uses the actual native config files.
+
+Main verifies every normal terminal/state receipt, config value and demo file,
+then inspects all three real320x240 menu/HUD images for native readable menu and
+underlying world/HUD output. This is finite desktop content/record-play-pause-seek/
+config/menu acceptance, not all paths/catalogue/assets/cache/classic-quads.
+No VR demo or campaign/benchmark claim. All owned Xvfb/game processes are stopped.
+Receipts: FastGames/qsvr-cpu-content-final-vjiawsyf/main-verified.json, result.json,
+per-profile state receipts and PNGs. Shipping input/source remains079f4431.
