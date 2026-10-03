@@ -787,3 +787,61 @@ attachment, provider availability or physical headset output. Main verifies all
 result/state predicates and hashes at FastGames/qsvr-cpu-xr-fallback-5bur7loy/
 main-verified.json. Existing native renderer/cache/input acceptance remains
 credited at its documented scope.
+
+
+## Native paired ranged calibration and model retirement
+
+Authored Enyo QC/model input with the existing controlled inventory grant and
+supplied initialized action/pose sample reaches actual V_PrepareAkimboPair:
+negotiated identity4 produces distinct generated left/right models, each492
+vertices and independent native mesh buffers. R_AliasModelMatrix queries the
+same source calibration for both hands (3.5/24.6/29.8, scale0.2); matrices differ
+with the hands. Ranged pair freezing stays disabled. Normal game id1→map e1m1
+retires both model-owned headers through GLMesh_DeleteMeshBuffers; both buffer
+handles/allocations become zero. Optional Enyo half lookups are null and native
+desktop fallback uses progs/v_shot.mdl/sign-on4 with pair/tracked state cleared.
+Native quit/observer0. Main reads the193-line private fixture, reruns offline
+verification and checks all717artifact hashes at FastGames/qsvr-pair-vq9Z1P/
+{validation.json,main-verified.json}, attempt05. Immutable source079/native225.
+
+Limits: supplied action samples/scoped provider flag, native software matrices;
+no physical tracking/rendered-pose, same-mod hot removal, or required missing
+server-model reconnect-cancellation claim. OpenVR reference checkout is read-only
+master bd923e924410fd210248c0cd9e4d966e62eaf9e3, with its inherited pair implementation;
+no local main ref. No reference checkout/branch/source edits.
+
+## Native texture and skin worker/serial equivalence
+
+Authored stock start.bsp texture lump (81textures) and armor.mdl (three skins)
+run actual Mod_LoadTextures/Mod_LoadAllSkins/native indexed tasks. Main-caller
+parallel jobs and the native worker's serial fallback produce104identical
+TexMgr_LoadImage requests:572256serialized metadata/pixel bytes each, exact
+SHA256db63bc688df77f1df64fdafcc8240a0e534285e8243b3ffef046defbcb260cab.
+Native model texture/skin/framegroup/fullbright/animation metadata and pixels
+agree; transient sky addresses alone normalize to zero. A private in-memory
+corrupt copy of the authored BSP makes the native loader refuse invalid lump2
+before texture allocation. The fatal is intercepted at the explicit fixture
+seam, not a fatal-process proof; ordinary native quit afterward exits0.
+
+Main reviews the159-line fixture, verifies manifest/source/binary/log hashes and
+byte equality. FastGames/qsvr-cpu-asset-native-4yjgj41t/{final-receipt.json,
+main-verified.json}, attempt04. Asset/task source owners match current source;
+unrelated V06 changes are outside this witness. This is native upload-request
+equivalence, not texture-manager conversion/GPU output or every asset format.
+Earlier renderer/load/source acceptance remains credited at its documented
+scope. No production edits, asset writes, benchmarks or broad matrix.
+
+
+## Native model filename precedence and canonical cache
+
+Actual Mod_ForName under loaded native desktop/CPU Vulkan loads a private copy
+of authored armor.mdl whose filename ends with a space. That exact existing file
+wins and has its own model-owned name/cache entry. A missing exact tab-suffixed
+filename falls back to the installed canonical armor.mdl; repeated lookup returns
+the same canonical model/cache pointer. Missing both exact and trimmed names
+returns null. No filename/network/QC string policy is seeded or replaced.
+Native quit/observer/Xvfb0. Private licensed copy stays local; original game
+assets/read-only references and source remain unchanged. Main independently
+verifies state predicates and hashes at FastGames/qsvr-cpu-model-path-haj_bcp9/
+main-verified.json. Required server-model failure cancellation remains a separate
+case; this is exact-file-first/native fallback/cache ownership coverage.

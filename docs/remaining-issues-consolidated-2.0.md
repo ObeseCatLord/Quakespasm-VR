@@ -61,11 +61,13 @@ evidence; unavailable parts no longer gate completion.
   at captured transport; actual native typed cursor/weapon producer/parser/loaded
   QC now passes at the documented captured-delivery boundary.
 - Teleport/frozen native physics boundaries now pass with actual authored
-  stock QC and ordinary quit0. Remaining input consumer: paired ranged identity
-  and shared calibration distinctions. Authored Shub and native music EOF tail are now accepted at
+  stock QC and ordinary quit0. Paired ranged identity/shared calibration and
+  normal model-resource retirement/native desktop fallback now pass. Authored
+  Shub and native music EOF tail are accepted at
   the exact bounded outcomes in the grouped results.
-- Pending attainable desktop residuals: missing-model retirement cleanup,
-  and remaining CPU asset/worker consumers. Actual unavailable-XR bootstrap/
+- Pending attainable desktop residual: required missing server-model automatic
+  reconnect cancellation. Optional paired-model retirement and native texture/
+  skin worker/serial request equivalence now pass. Actual unavailable-XR bootstrap/
   retry/disable keeps native desktop movement and diagnostics correct, quit0.
   Listen-server RCON error recovery now passes through the available CPU route.
 - Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug/Release
