@@ -413,7 +413,10 @@ Main verifies the exact079f4431 source archive SHA
 changed shipping files against the current worktree. Fresh Linux653 and native
 ARM650 inventory entries match actual bytes/symlink targets; each package has45
 ELF records and matching079revision/archive. Native builds/stage/verify all exit0.
-Windows Debug MSBuild/staging succeeds. Main compares all13PE files to native\nartifact receipts and both license files to the accepted unchanged0f277 cohort.\nAll16staged files are hashed in windows/main-debug-inventory.json; the remaining\nPDB hash is recorded, without an independent PE/PDB GUID-match claim.
+Windows Debug MSBuild/staging succeeds. Main compares all13PE files to native
+artifact receipts and both license files to the accepted unchanged0f277 cohort.
+All16staged files are hashed in windows/main-debug-inventory.json; the remaining
+PDB hash is recorded, without an independent PE/PDB GUID-match claim.
 Root: FastGames/qsvr-platform-discovery-079f4431-20261002,
 main-inventory-current.json and platform receipts.
 
