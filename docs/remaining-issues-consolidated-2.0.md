@@ -40,15 +40,20 @@ evidence; unavailable parts no longer gate completion.
   connected public15/RCON/gameplay, real lost-ACK recovery, living v6 restore,
   RCON map/reconnect/quit and both expected error exits; CPU-rendered fork/public
   desktop gameplay/quit; id1/Hipnotic/Rogue transitions, built-in desktop
-  record/play/pause/seek, postcfg/native saved configuration and inspected menus.
-- Running/pending native consumers: metadata lifecycle/loaded AUTOCVAR, two-player
-  co-op save/reverse-rejoin, CSQC entity lifecycle; remaining native input/
-  calibration/physics distinctions and audio socket/playback-callback boundary.
+  record/play/pause/seek, postcfg/native saved configuration and inspected menus;
+  metadata multi-packet/mid-signon/retire/reuse/reset and loaded AUTOCVAR admission;
+  initialized native input lifecycle, neutral-rearm and command/QC gameplay.
+- Running/pending native consumers: two-player co-op save/reverse-rejoin, CSQC
+  entity lifecycle; remaining calibration/physics/paired-melee distinctions and
+  audio socket/playback-callback boundary.
 - Pending attainable desktop residuals: paths/catalogue/cleanup, remaining CPU
   asset/worker consumers, desktop fallback/diagnostics/cache/classic quads.
   Listen-server RCON error recovery now passes through the available CPU route.
-- Final: affected079f4431 Windows Release/Debug, Linux x86-64 and native ARM
-  shipping engine/package freshness, then the same Astra integration signoff.
+- Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug build/
+  package/source/inventory freshness accepted. Windows Release has a retained
+  MSVC LTCG internal compiler/linker failure; a fresh engine-object build is
+  running to isolate reused-object IR. Final same-Astra integration signoff
+  remains after runnable checks and artifacts settle.
 
 D01 retains bounded client-prediction evidence and the separate incompatible
 short-jump-oracle failure; current server displacement does not replace client
