@@ -97,7 +97,7 @@ static void RunCrossing (client_t *peer, client_state_t *state, const vec3_t sta
 	GapSnapshot (peer, state);
 	assert (state->ackedmovemessages == peer->private_completed_move &&
 		state->ackedmovemessages > baseline_ack && state->move_ack_prediction_allowed);
-	LiquidDisposablePreview (state);
+	LiquidDisposablePreview (state, false);
 	printf ("STOCK_LIQUID_TRANSIT enter=%d frames=%d vr=%d water=%g ack=%d->%d\n",
 		enter, frames, vr, peer->edict->v.waterlevel, baseline_ack, state->ackedmovemessages);
 }
@@ -135,7 +135,7 @@ static void RunQueuedCrossing (client_t *peer, client_state_t *state,
 	GapSnapshot (peer, state);
 	assert (state->ackedmovemessages == peer->private_completed_move &&
 		state->move_ack_prediction_allowed);
-	LiquidDisposablePreview (state);
+	LiquidDisposablePreview (state, false);
 	printf ("STOCK_LIQUID_QUEUED_TRANSIT commands=%d water=%g ack=%d->%d\n",
 		commands, peer->edict->v.waterlevel, baseline_ack, state->ackedmovemessages);
 }
@@ -202,7 +202,7 @@ static void RunDrowning (client_t *peer, client_state_t *state, const vec3_t dee
 			return;
 		}
 		assert (state->move_ack_prediction_allowed == peer->private_pmove_walk_selected);
-		LiquidDisposablePreview (state);
+		LiquidDisposablePreview (state, false);
 	}
 	assert (!"prepared expired-air drowning did not reach terminal state");
 }
@@ -228,9 +228,10 @@ static int LiquidCaptureSnapshot (client_t *peer, byte *bytes, size_t capacity)
 	SV_PresendClientDatagram (peer);
 	net_message.data = bytes; net_message.maxsize = capacity;
 	SZ_Clear (&net_message);
-	SVFTE_WriteStats (peer, &net_message);
+	struct deltaframe_s *packet_frame = SVFTE_BeginFrame (peer);
+	SVFTE_WriteStats (peer, &net_message, packet_frame);
 	assert (SVFTE_WritePrivateMoveStats (peer, &net_message));
-	assert (SVFTE_WriteEntitiesToClient (peer, &net_message, capacity, false));
+	assert (SVFTE_WriteEntitiesToClient (peer, &net_message, capacity, false, packet_frame));
 	return net_message.cursize;
 }
 
