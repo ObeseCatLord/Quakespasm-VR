@@ -612,3 +612,47 @@ All owned build jobs are terminal. No Windows runtime/headset/GPU test or
 deployment is claimed. Linux x86-64, native ARM and Windows Debug prior079
 artifacts remain credited. V06's pending production repair is absent from this
 archive and requires affected artifact refresh after integration/review.
+
+
+## Authored stock Shub lifecycle — production079f4431
+
+Luna uses the unchanged assertion-enabled native225 engine, installed stock
+end.bsp and stock QC, dedicated one-slot/no connected player, normal v5 saves.
+Native authored monster_oldone spawns at[-752,2032,80], settles to72.03125Z,
+health40000, and executes idle callbacks. Loaded stock spawn_tdeath is supplied
+as the explicit debugger stimulus: native SV_TouchLinks→tdeath_touch→T_Damage→
+Killed→finale_1 executes once per death, twice, with stock intermission latch1.
+Native restart noload restores health40000/latch0; normal same-map load and load
+after replacing the world with e1m1 restore the saved boss fields/model/QC owner.
+Native resave preserves all serialized boss fields; idle callbacks resume.
+
+Main reviews observer assertions and independently checks all33 private artifact
+hashes and unchanged binary SHA256936635e2b4c9a82eca39e08b55c66e06baf93cf8b1b8dded05eafdca36b3fba8.
+Observer0/native quit0, five world clear/spawn/QC-load generations, four authored
+spawns and two normal loads. No health/model/latch is seeded. Loop_Init return0
+is the existing headless bootstrap seam; loaded-world pause is released after
+state/resave comparison. No player teleport traversal, full finale/campaign,
+v7 co-op or new reference-repair qualification is claimed.
+Receipts: FastGames/qsvr-shub-native-zboxse0_/{final-receipt.json,main-verified.json,
+attempt-06/observations.json}. Earlier observer failures remain retained.
+Workspace source edits during execution are distinguished from binary079.
+
+## Native music EOF tail through actual SDL playback callback
+
+Luna's finite generated stereo WAV contains4410frames/17640PCMbytes at44.1kHz.
+Actual native codec returns all source bytes then EOF once. Native converter
+flush supplies the final7frames, completing4800frames at48kHz. BGM closes with
+4032frames still queued. The authored final960outputframes/1920nonzero samples
+are accepted by four actual SDL dummy playback callbacks after EOF; the final
+converter7frames reach the last of those callbacks. Subsequent accepted output
+contains23616silentframes, no stale/resurrected music, final ring cursors4800.
+
+Main reviews and reruns the offline byte audit: exit0, all503artifact files checked,
+exact native float-to-PCM callback conversion and full queued signal accepted once.
+Existing native225 binary/source079 remains unchanged; no rebuild, source change
+or hardware microphone/speaker use. Actual default Steam Audio/native BGM/
+converter/ring/paint_audio/SDL_PutAudioStreamData owners run. This closes the
+bounded EOF-tail/callback gap, not physical listening or every codec/duration.
+Receipts: FastGames/qsvr-music-eof-sdl-v21-9aXz9UPJ/{validation.json,
+main-verified.json,attempt-03/result.json}. Observer/native quit0, owned processes
+terminal; attempts01–02 retain bookkeeping/start-boundary failures.
