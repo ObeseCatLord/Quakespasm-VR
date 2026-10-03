@@ -1,5 +1,18 @@
 # Final grouped software verification — current progress
 
+## Final completion — 2026-10-03
+
+Implementation and attainable verification are complete on2.0. A01 and A02
+are closed by the [final local Astra review and main disposition](attainable-final-signoff-2.0-review.md).
+All185IDs remain reconciled at their documented source/behavior boundaries;
+this is not individual runtime certification of every feature. Linux x86-64,
+native Linux ARM and Windows Debug/Release shipping builds/packages match
+source d5cfff6c. Available native consumers and matching Linux/ARM startups
+are accepted. No required software item remains. Unavailable headset/gaze/
+provider/listening/performance checks are excluded, never counted as passes.
+Historical failures and acceptance limits below remain unchanged; dated
+pending statements describe their original execution stage, not current work.
+
 2026-10-02. Executed only after all confirmed D03/D04 production repairs were
 reviewed and committed at0f277d1f. The [reviewed remaining list](remaining-issues-consolidated-2.0.md)
 is unchanged. These are bounded results, not whole F01–F08/F10 acceptance.
@@ -920,5 +933,7 @@ same-process evidence at FastGames/qsvr-d5-arm-startup-x5lqff67/main-verified.js
 Buffered-output/attach observer exits1/1 and helper137 remain recorded separately:
 commands reached the same live native stdin pipe; none of those failed observers
 is reported as successful. This proves dedicated map/status/quit, not graphics
-or network gameplay. No active owned build/test processes remain. Final same
-Astra integration review is pending; this is not whole-goal signoff alone.
+or network gameplay. No active owned build/test processes remain. Final local
+Astra integration review and main disposition are now accepted; A01/A02 and
+the attainable goal are complete at the documented bounds. See the
+[final disposition](attainable-final-signoff-2.0-review.md).

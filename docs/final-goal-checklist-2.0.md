@@ -1,5 +1,18 @@
 # Final goal checklist — scope frozen
 
+## Final completion — 2026-10-03
+
+Implementation and attainable verification are complete on2.0. A01 and A02
+are closed by the [final local Astra review and main disposition](attainable-final-signoff-2.0-review.md).
+All185IDs remain reconciled at their documented source/behavior boundaries;
+this is not individual runtime certification of every feature. Linux x86-64,
+native Linux ARM and Windows Debug/Release shipping builds/packages match
+source d5cfff6c. Available native consumers and matching Linux/ARM startups
+are accepted. No required software item remains. Unavailable headset/gaze/
+provider/listening/performance checks are excluded, never counted as passes.
+Historical failures and acceptance limits below remain unchanged; dated
+pending statements describe their original execution stage, not current work.
+
 ## Completion scope update — user instruction, 2026-10-02
 
 The user now excludes things this agent cannot do or test from the goal.
@@ -65,7 +78,7 @@ Current native RCON/discovery/real-UDP-loss/living-v6 and world-replacement/erro
 checks pass. CPU-rendered fork/public desktop gameplay and normal exits pass;
 id1/Hipnotic/Rogue content/transitions, built-in desktop demos, postcfg/config
 and inspected menus also pass. The [current remaining actions](remaining-issues-consolidated-2.0.md#current-attainable-work)
-are final Astra integration disposition/signoff. The affected d5cfff6c four-
+are closed by the [final senior disposition](attainable-final-signoff-2.0-review.md). The affected d5cfff6c four-
 platform source/package/freshness and matching Linux/ARM startups pass. Planned
 attainable native/desktop/audio consumers now have bounded current acceptance
 in the grouped ledger; unavailable parts remain excluded rather than passed. No unavailable device/provider/runtime outcome gates

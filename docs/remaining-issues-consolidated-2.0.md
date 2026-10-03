@@ -1,5 +1,18 @@
 # Consolidated remaining issues — reviewed final work list
 
+## Final completion — 2026-10-03
+
+Implementation and attainable verification are complete on2.0. A01 and A02
+are closed by the [final local Astra review and main disposition](attainable-final-signoff-2.0-review.md).
+All185IDs remain reconciled at their documented source/behavior boundaries;
+this is not individual runtime certification of every feature. Linux x86-64,
+native Linux ARM and Windows Debug/Release shipping builds/packages match
+source d5cfff6c. Available native consumers and matching Linux/ARM startups
+are accepted. No required software item remains. Unavailable headset/gaze/
+provider/listening/performance checks are excluded, never counted as passes.
+Historical failures and acceptance limits below remain unchanged; dated
+pending statements describe their original execution stage, not current work.
+
 ## Completion scope update — user instruction, 2026-10-02
 
 The user now excludes things this agent cannot do or test from the goal.
@@ -57,7 +70,7 @@ evidence; unavailable parts no longer gate completion.
   guard pass affected lifecycle/cancellation
   checks under the [reviewed plan](coop-save-reference-final-2.0-review-brief.md).
   Shipping refresh/source/package reconciliation and matching native startup
-  now pass; final integration review remains.
+  now pass; final integration review and main disposition are accepted.
 - Accepted CSQC create/update/split-ACK recovery/re-enable/lost-removal/ID reuse
   at captured transport; actual native typed cursor/weapon producer/parser/loaded
   QC now passes at the documented captured-delivery boundary.
@@ -78,9 +91,10 @@ evidence; unavailable parts no longer gate completion.
   /O2 /GL and LTCG. Matching Linux packaged desktop movement/fire/sign-on/quit
   and native ARM dedicated map/status/quit pass. Failed earlier observers remain
   retained separately from native terminal outcomes.
-- Only final same-local-Astra integration disposition/signoff remains. Planned
-  runnable software checks are settled at bounded outcomes in the grouped
-  ledger; unavailable parts remain excluded rather than reported as pass.
+- Final same-local-Astra integration review and main disposition are accepted.
+  A01/A02 are complete and no required software work remains. Runnable checks
+  have bounded outcomes in the grouped ledger; unavailable parts remain excluded
+  rather than reported as pass.
 
 D01 retains bounded client-prediction evidence and the separate incompatible
 short-jump-oracle failure; current server displacement does not replace client
