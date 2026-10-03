@@ -187,3 +187,43 @@ no shipping input. Receipts: FastGames/qsvr-platform-final-2mx9pur9,
 source-comparison.json, scope-results.json, main-inventory-verified.json and
 platform-specific manifests. New production discovery repairs will require
 affected engine/source reconciliation before final A01 closure.
+
+## NET-020 startup and request repair
+
+Local Astra/xhigh source review confirmed existing discovery/public-master/RCON
+handlers lacked their startup cvar registrations and identified adjacent
+RCON prefix admission and OOB challenge framing defects. Main accepted these
+within V01/F01, inspected the handlers/readers, and reviewed Luna's two-file
+implementation. Committed58fb8864 reuses existing SV_Init cvar objects/UDP
+handlers, preserves public0/empty-password defaults, rejects unterminated or
+2048-byte RCON fields before execution, and admits one bounded printable
+challenge while preserving native terminal-NUL and newline query forms. No
+parallel discovery service, protocol, heartbeat clock or state owner is added.
+
+All405 recorded native graph inputs are compared; only net_dgrm.c/sv_main.c
+change. Their objects compile and the225-object graph relinks0. Ten actual
+headless native UDP cases pass: default public0/empty RCON password; explicit
+controlled local-master heartbeat; getinfo/getstatus exact challenge/dialects;
+seven normal optional-challenge termination forms; eight unsafe/overlong query
+refusals; complete rule enumeration without password disclosure; wrong/valid
+RCON controls; four incomplete/oversized RCON non-effects; actual native
+hostname mutation. Both owned servers quit0. External masters are explicitly
+cleared before publication; licensed assets remain read-only.
+
+Receipts: FastGames/qsvr-native-discovery-requalified-4xs5e4m8/result.json and
+profile logs/argv, plus qsvr-native-discovery-repaired-bq1zanaw/native-build-status.json.
+Initial post-fix probe encountered delayed duplicate rule responses on its
+shared observer socket. Separate request sockets preserve framing predicates
+and establish the final result; the failed run remains retained. This does not
+close all NET-020 connected gameplay/challenge/ProQuake/master-client obligations.
+Current shipping refresh is underway for this production commit.
+
+## Latest controlled Nvidia attempt
+
+After the user reported recovery, the current58fb8864 native graph again fails
+vkCreateDevice in the desktop peer. Contemporaneous kernel allocation logs
+report NV_ERR_RESET_REQUIRED. The connected aggregate fails; no rendered XR or
+protected-output success follows. All owned peers stop and isolated null runtime
+exits0. No resets, driver reloads, system graphics changes or unrelated process
+termination. Receipts: FastGames/qsvr-final-gpu-current-kyud4ace, connected
+result/logs and runtime exit.json. Further GPU qualification stays paused.

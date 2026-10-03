@@ -108,9 +108,12 @@ A01 refreshed Linux and Windows Release/Debug builds succeed from production
 Protected-output inputs/capture/checker are reviewed and compile/link against
 current native renderer; no GPU execution pass. Additional V03 producer refusal/retry and V06 autosave rotation/open-failure/retry
 boundaries pass; their broader stated obligations remain. A new verified V01/NET-020
-startup registration gap and adjacent RCON/query admission defects are under the
+startup registration gap and adjacent RCON/query admission defects are repaired
+at58fb8864; ten actual native UDP cases pass under the
 [reviewed narrow repair plan](discovery-startup-final-2.0-plan.md). All V rows and A02
-retain their stated completion boundaries. Tests/docs-only commits need no engine rebuild.
+retain their stated completion boundaries. Tests/docs-only commits need no engine rebuild. Shipping engines are refreshing
+for58fb8864. The latest controlled Nvidia allocation still reports reset required;
+owned GPU test peers/runtime are stopped.
 
 ## Execution order
 
