@@ -468,3 +468,31 @@ Private script adaptations use short native startup args and native quit rather
 than killing a successful inferior. Receipt `FastGames/qsvr-cpu-native-input-hq06s44u/
 main-verified.json` records exact scripts, result and log hashes. Earlier input
 component and actual6DoF proofs remain credited at their recorded scope.
+
+
+## Native calibration filesystem, restart and authored AD-mod defaults
+
+Current079f4431 native engine: four CPU-rendered cases run0/ordinary native quit0.
+Main reviews results and hashes scripts/logs/files in `FastGames/qsvr-cpu-calibration-final-mqr4n9z4/
+main-verified.json`. An isolated authored schema loads through the real search path;
+controlled public `VR_WeaponCalibrationApplySchema` changes the enhanced held
+X1.25→9.25. The ordinary `vrweaponsave` command runs through native Cbuf/host,
+COM_WriteFile writes the active-game file, COM_LoadFile/reload reads the same9.25
+held and4/5/6muzzle, and a fresh native process reads those exact values. The
+selected viewmodel is native MD5: its enhanced keys are written while authored
+classic keys remain intact; no `mp_` keys are emitted. It does not force classic
+geometry or alter renderer/model defaults. Calibration accept/cancel via tracking
+and projectile placement are outside this filesystem witness.
+
+Two separate processes load the installed authored q30a1024 start map/QC using
+read-only asset links, with no private or installed `vr_weapons.txt` carried over.
+The default fallback is AD: shotgun held1.5/1.7/17.5, scale.33, muzzle0/0/17.5.
+Native AD preset/reload and process restart preserve these values. Original game
+assets/configuration/calibration are not written. This checks the existing AD
+root rule, not new mod-specific behavior.
+
+Failed private observer attempts remain retained: optimized-out private helper,
+transient direct-console token observation, classic-format expectation against
+the actual MD5 model, and an incorrectly escaped cleanup string. Final checks
+use registered/native public owners, normal command-buffer execution and actual
+selected model format; production source was not changed for these attempts.

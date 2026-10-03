@@ -42,7 +42,8 @@ evidence; unavailable parts no longer gate completion.
   desktop gameplay/quit; id1/Hipnotic/Rogue transitions, built-in desktop
   record/play/pause/seek, postcfg/native saved configuration and inspected menus;
   metadata multi-packet/mid-signon/retire/reuse/reset and loaded AUTOCVAR admission;
-  initialized native input lifecycle, neutral-rearm and command/QC gameplay.
+  initialized native input lifecycle, neutral-rearm and command/QC gameplay;
+  native calibration file save/reload/restart and authored q30 AD defaults.
 - Running/pending native consumers: two-player co-op save/reverse-rejoin, CSQC
   entity lifecycle; remaining calibration/physics/paired-melee distinctions and
   audio socket/playback-callback boundary.
