@@ -749,3 +749,41 @@ Earlier twelve load cases/default negotiation remain accepted at their exact
 scope; immutable original artifacts are untouched. Current source/binary/log
 hashes: FastGames/qsvr-v06-retained-free-pq5rxsak/receipts/main-verified.json.
 Four-platform refresh/final integration approval remain required.
+
+
+## Authored teleport and frozen world ownership
+
+Actual stock e1m3 teleport_touch runs via native SV_TouchLinks in real host
+frames. Ordinary Cbuf setpos/noclip setup and the authored teleport produce
+three native relocation epochs (false,false,true preserve-deadline flags);
+actual destination differs from the trigger, fixangle and authored teleport
+deadline survive native link completion, and private jump/waterjump timers reset.
+The authored exit executes execute_changelevel from SV_RunThink, publishes real
+intermission, and the next world frame delegates the MOVETYPE_NONE player to
+native physics. Held forward input for0.8seconds leaves its origin unchanged
+and queue empty; negotiated private capability remains intact. Native quit0,
+observer0 and owned Xvfb0 through CPU rendering.
+
+Main verifies observations/result hashes and exact native ownership fields.
+Receipts: FastGames/qsvr-cpu-frozen-owner-f6ubu_8y/main-verified.json. No shipping
+patch. Prior private observer failures are retained: direct debugger command
+execution did not exercise normal Cbuf forwarding; Host_SetPos_f stack label was
+optimized away; private_pmove_walk_selected is negotiation, not current physics
+owner. Final observer checks actual private_move_native_frame after native
+dispatch, without altering destination/reset/frozen behavior predicates.
+
+
+## Actual unavailable-XR desktop fallback and diagnostics
+
+A child-only XR_RUNTIME_JSON deliberately names an absent private runtime file.
+Actual -openxr startup logs runtime discovery failure and continues desktop
+Vulkan; native vr_enable1 through Cbuf retries and logs keeping desktop output.
+Observed stereo/XR-available/density-active/shading-rate-active flags remain zero
+at startup, retry and disable. Native held-forward input moves the loaded e1m1
+player, followed by disable and normal quit0/observer0/Xvfb0. Available CPU Vulkan
+executes independently; no system runtime configuration, GPU reset or source
+change. This proves graceful failure and actual diagnostics, not successful XR
+attachment, provider availability or physical headset output. Main verifies all
+result/state predicates and hashes at FastGames/qsvr-cpu-xr-fallback-5bur7loy/
+main-verified.json. Existing native renderer/cache/input acceptance remains
+credited at its documented scope.

@@ -51,26 +51,29 @@ evidence; unavailable parts no longer gate completion.
   precedence, real HTTPS catalogue install/cancel/failure cleanup and native
   catalogue/installed-mod filtering; native typed cursor/weapon parser/QC alignment
   and stock immersive-melee input/QC/ready-pose consumers.
-- V06 observed failure: reverse reconnect restores inventory correctly but a
-  saved typed QC reference aliases the wrong player after slot reuse. Same local
-  Astra approved the narrow native typed-reference/lifetime adapter; Luna is
-  implementation and retained-free guard now pass affected lifecycle/cancellation
+- V06 repaired at d5cfff6c: the saved typed QC reference now follows its named
+  player across reconnect slot reuse. Same local Astra approved the narrow
+  native typed-reference/lifetime adapter; implementation and retained-free
+  guard pass affected lifecycle/cancellation
   checks under the [reviewed plan](coop-save-reference-final-2.0-review-brief.md).
   Shipping refresh remains required.
 - Accepted CSQC create/update/split-ACK recovery/re-enable/lost-removal/ID reuse
   at captured transport; actual native typed cursor/weapon producer/parser/loaded
   QC now passes at the documented captured-delivery boundary.
-- Pending native consumers: remaining calibration/paired-melee distinctions
-  and teleport/frozen-reset behavior. Authored Shub and native music EOF tail are now accepted at
+- Teleport/frozen native physics boundaries now pass with actual authored
+  stock QC and ordinary quit0. Remaining input consumer: paired ranged identity
+  and shared calibration distinctions. Authored Shub and native music EOF tail are now accepted at
   the exact bounded outcomes in the grouped results.
 - Pending attainable desktop residuals: missing-model retirement cleanup,
-  remaining CPU asset/worker consumers and desktop fallback/diagnostics.
+  and remaining CPU asset/worker consumers. Actual unavailable-XR bootstrap/
+  retry/disable keeps native desktop movement and diagnostics correct, quit0.
   Listen-server RCON error recovery now passes through the available CPU route.
 - Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug/Release
   build/package/source/inventory freshness accepted. The clean Windows Release
   build passed with /O2, /GL and LTCG; main verified all16 staged files including
   all13 x64 PEs. Earlier compiler/linker failures remain historical evidence.
-  The pending V06 production fix will require affected engines to refresh.
+  The committed V06 production fix d5cfff6c requires affected engines to refresh;
+  all four platform refreshes are now underway.
   Final same-Astra integration signoff remains after runnable checks settle.
 
 D01 retains bounded client-prediction evidence and the separate incompatible
