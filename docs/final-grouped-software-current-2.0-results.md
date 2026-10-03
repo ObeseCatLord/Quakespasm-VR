@@ -54,9 +54,44 @@ Receipts: FastGames/qsvr-final-audio-f0n61m8q, build/signals/run argv/log/status
 markers.json and main-verified-summary.json. No real microphone recording,
 GPU/runtime/service/driver/system changes.
 
+## Native request regressions
+
+All12targeted D03/D04 cases pass through actual SV_RunClients and
+SV_ReadClientMessage, loaded SSQC and native dropclient/spawnclient. Freed
+numbered entity references reach present handlers or absent-handler refusal
+without reviving the slot; out-of-range requests use world fallback and following
+commands retain alignment. Unterminated capability/QC/native prefixes have no
+effects. Self-drop and immediate replacement retire old messages exactly once
+without delivering trailing opcodes to the replacement. Ordinary QC/native
+terminated controls remain admitted.
+
+The assertion-enabled graph compiles/links/runs successfully. A supplemental
+-O2/-DNDEBUG sv_user object passes the same12cases with assertion-enabled fixture
+and Debug support objects; it is explicitly not a full Release engine run.
+Offline message/socket seams remain bounded. Main checks exact markers and source
+hashes in FastGames/server-request-final.9ftBEN/main-verified-summary.json.
+
+## Connected graphics qualification
+
+Two controlled native NVIDIA attempts fail Vulkan device creation; NVML responds
+but kernel channel allocation reports NV_ERR_RESET_REQUIRED. Both owned isolated
+null runtimes are cleanly stopped. No GPU reset, driver reload, system graphics
+change or unrelated process termination is attempted. GPU-dependent acceptance
+remains open.
+
+A separately signed official Mesa CPU driver, private Xvfb and isolated simulated
+Monado null runtime provide diagnostic connected execution without NVIDIA. The
+default profile admits movement, shots, replay and ACKs but observes no stable
+ACK/sent pairs between sends, so the original prediction oracle fails without a
+rendering opportunity. No production prediction bug or pass is inferred.
+Explicit lower-resolution/command-rate software qualification remains underway;
+original thresholds remain unchanged. Receipts: FastGames/qsvr-final-cpu-vulkan-
+bdm_i5vc and qsvr-final-gpu-resumed-khdhlxgs. The driver is private and selected
+only in child environments; no system installation or global runtime setting.
+
 ## Still running or awaiting final execution
 
-Targeted D03/D04 loaded-QC regressions and final shipping artifacts are underway;
+Final shipping artifacts are underway;
 protected-output test inputs/capture/checker are in preparation. Remaining V rows,
 D01/D02 connected oracle/terminal evidence and final local Astra integration
 signoff stay open until their actual outcomes are recorded. These results must
