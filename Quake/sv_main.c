@@ -3064,10 +3064,22 @@ void SV_Init (void)
 	extern cvar_t sv_idealpitchscale;
 	extern cvar_t sv_aim;
 	extern cvar_t sv_altnoclip; // johnfitz
+	extern cvar_t sv_reportheartbeats;
+	extern cvar_t sv_public;
+	extern cvar_t com_protocolname;
+	extern cvar_t net_masters[];
+	extern cvar_t rcon_password;
 
 	// FTE optimized world geometry checks
 	extern cvar_t sv_fte_recursivehullckeck;
 	extern cvar_t sv_fte_createareanode;
+
+	Cvar_RegisterVariable (&sv_reportheartbeats);
+	Cvar_RegisterVariable (&sv_public);
+	Cvar_RegisterVariable (&com_protocolname);
+	for (i = 0; net_masters[i].name; i++)
+		Cvar_RegisterVariable (&net_masters[i]);
+	Cvar_RegisterVariable (&rcon_password);
 
 	Cvar_RegisterVariable (&sv_maxvelocity);
 	Cvar_RegisterVariable (&sv_gravity);

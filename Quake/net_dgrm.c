@@ -49,7 +49,7 @@ static int droppedDatagrams;
 // ccreq_server_info requests. we are not visible to DarkPlaces users - dp does not support fitz666 so that's not a viable option, at least by default, feel
 // free to switch the order if you also change sv_protocol back to 15.
 cvar_t sv_reportheartbeats = {"sv_reportheartbeats", "0"};
-cvar_t sv_public = {"sv_public", NULL};
+cvar_t sv_public = {"sv_public", "0"};
 cvar_t com_protocolname = {"com_protocolname", "FTE-Quake DarkPlaces-Quake"};
 cvar_t net_masters[] = {
 	{"net_master1", ""},
@@ -1460,6 +1460,91 @@ void Datagram_Listen (qboolean state)
 static struct qsockaddr rcon_response_address;
 static sys_socket_t		rcon_response_socket;
 static sys_socket_t		rcon_response_landriver;
+
+static qboolean Datagram_ReadRconString (char *string)
+{
+	size_t length = 0;
+	int	 c;
+
+	for (;;)
+	{
+		c = MSG_ReadByte ();
+		if (c < 0)
+			return false;
+		if (!c)
+		{
+			string[length] = 0;
+			return true;
+		}
+		if (length >= MSG_READSTRING_SIZE - 1)
+			return false;
+		string[length++] = c;
+	}
+}
+
+static qboolean Datagram_ParseInfoRequest (const byte *query, size_t query_length, qboolean *full, char *cookie, size_t cookie_size)
+{
+	size_t command_length, challenge_length, i;
+	qboolean stripped_nul = false, stripped_line_ending = false;
+	if (!cookie_size)
+		return false;
+
+	while (query_length)
+	{
+		if (!stripped_nul && query[query_length - 1] == 0)
+		{
+			query_length--;
+			stripped_nul = true;
+		}
+		else if (!stripped_line_ending && query[query_length - 1] == '\n')
+		{
+			query_length--;
+			if (query_length && query[query_length - 1] == '\r')
+				query_length--;
+			stripped_line_ending = true;
+		}
+		else
+			break;
+	}
+
+	// Strip only final terminators, then validate every payload byte so embedded ones cannot hide a tail.
+	if (query_length > sizeof ("getstatus") - 1 + 1 + cookie_size - 1)
+		return false;
+	for (i = 0; i < query_length; i++)
+		if (query[i] < 0x20 || query[i] > 0x7e || query[i] == '\\')
+			return false;
+
+	if (query_length >= sizeof ("getinfo") - 1 && !memcmp (query, "getinfo", sizeof ("getinfo") - 1))
+	{
+		*full = false;
+		command_length = sizeof ("getinfo") - 1;
+	}
+	else if (query_length >= sizeof ("getstatus") - 1 && !memcmp (query, "getstatus", sizeof ("getstatus") - 1))
+	{
+		*full = true;
+		command_length = sizeof ("getstatus") - 1;
+	}
+	else
+		return false;
+
+	cookie[0] = 0;
+	if (query_length == command_length)
+		return true;
+	if (query[command_length] != ' ')
+		return false;
+
+	challenge_length = query_length - command_length - 1;
+	if (!challenge_length || challenge_length >= cookie_size)
+		return false;
+	for (i = command_length + 1; i < query_length; i++)
+		if (query[i] <= ' ')
+			return false;
+
+	memcpy (cookie, query + command_length + 1, challenge_length);
+	cookie[challenge_length] = 0;
+	return true;
+}
+
 void					Datagram_Rcon_Flush (const char *text)
 {
 	sizebuf_t msg;
@@ -1495,26 +1580,20 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 	control = BigLong (*((int *)data));
 	if (control == -1)
 	{
+		qboolean full;
+		char	 cookie[128];
+
 		if (!sv_public.value)
 			return;
-		if (length == NET_DATAGRAMSIZE)
-			return; // data[length] below needs one byte for a terminator
-		data[length] = 0;
-		Cmd_TokenizeString ((char *)data + 4);
-		if (!strcmp (Cmd_Argv (0), "getinfo") || !strcmp (Cmd_Argv (0), "getstatus"))
+		if (!Datagram_ParseInfoRequest (data + sizeof (int), length - sizeof (int), &full, cookie, sizeof (cookie)))
+			return;
 		{
 			// master, as well as other clients, may send us one of these two packets to get our serverinfo data
 			// masters only really need gamename and player counts. actual clients might want player names too.
-			qboolean	 full = !strcmp (Cmd_Argv (0), "getstatus");
-			char		 cookie[128];
-			const char	*str = Cmd_Args ();
 			const char	*gamedir = COM_GetGameNames (false);
 			unsigned int numclients = 0, numbots = 0;
 			int			 i;
 			size_t		 j;
-			if (!str)
-				str = "";
-			q_strlcpy (cookie, str, sizeof (cookie));
 
 			for (i = 0; i < svs.maxclients; i++)
 			{
@@ -1720,8 +1799,12 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 
 	if (command == CCREQ_RCON)
 	{
-		const char *password = MSG_ReadString (); // FIXME: this really needs crypto
+		char		 password[MSG_READSTRING_SIZE]; // FIXME: this really needs crypto
+		char		 command_string[MSG_READSTRING_SIZE];
 		const char *response;
+
+		if (!Datagram_ReadRconString (password) || !Datagram_ReadRconString (command_string))
+			return;
 
 		rcon_response_address = *clientaddr;
 		rcon_response_socket = acceptsock;
@@ -1732,7 +1815,7 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 		else if (!strcmp (password, rcon_password.string))
 		{
 			Con_Redirect (Datagram_Rcon_Flush);
-			Cmd_ExecuteString (MSG_ReadString (), src_command);
+			Cmd_ExecuteString (command_string, src_command);
 			Con_Redirect (NULL);
 			return;
 		}
