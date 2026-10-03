@@ -305,3 +305,54 @@ actual save and pumps the existing native peer during bounded ordinary quit.
 No production workaround or weakened gameplay/exit predicate accompanies these
 observer corrections. Successful RCON map/reconnect and expected error exits
 remain a separate final lifecycle check.
+
+## Current RCON world replacement and error exits
+
+Production079f4431 passes three actual native dedicated lifecycle cases.
+The positive case completes connected public15 signon/gameplay, sends one
+admitted authenticated map-start command, observes the native empty replacement
+world, retires its old UDP peer, binds a distinct fresh peer and completes a
+second real signon/gameplay plus interleaved status/discovery/rule/RCON controls.
+Both phases receive all five client reliable ACKs. Ordinary stdin quit exits0,
+with actual native shutdown ACKs pumped by the existing peer handler.
+
+Failed map and failed changelevel commands are sent once in separate connected
+native processes. Both exit1 and ACK shutdown, with no nested-QCVM error. The
+map failure flushes its actual Couldn't-spawn-server diagnostic in the RCON
+response before the inactive-server Host_EndGame guard; changelevel takes the
+ordinary Host_Error path and names its missing map. Native abort1 and quit0 are
+different expected outcomes. Main verifies all receipts and the exact engine
+SHA against production079f4431. No listen-server recovery claim follows yet.
+
+Receipts: FastGames/qsvr-rcon-lifecycle-requalified-g24kbgh_/main-verified.json and
+qualification-20261002-225523-734099/qualification.json. Luna's initial probe
+mistakenly looked up server_protocol in a result dictionary and required
+Host_Error for both commands. Main corrects the observation to the existing
+module field and the actual distinct native abort diagnostics; all original
+wire/ACK/movement/map/exit predicates remain. Initial failure receipts remain
+under qsvr-rcon-lifecycle-final-xb247oxg. No production changes were necessary.
+
+## Available CPU desktop gameplay and terminal outcome
+
+The current native079f4431 fork client and unchanged public vkQuake desktop
+peer each connect independently to the current native dedicated server through
+real UDP with public negotiation. Each reaches signon4, uses held native forward/
+attack input, moves266.981units, consumes four shells, advances ACKs and settles.
+Both client inferiors and both dedicated servers exit0 through native quit;
+no recurring public allocator abort occurs in this bounded desktop run.
+D02's historical mixed-XR failure is retained separately and its unavailable
+mixed-XR reproduction is excluded by the user; no attribution is invented.
+
+Signed private Mesa CPU Vulkan driver, new private Xvfb, child-only environment,
+320x240 and8Hz render cap; no hardware GPU/runtime/system changes or measurements.
+The existing public gameplay probe's predicates are unchanged. A private test
+extension queues native quit and observes GDB's inferior-exited event; main
+corrects its initial internal-breakpoint disable to use actual Python breakpoint
+objects. The initial run proved gameplay then stopped on an observer breakpoint,
+not a production shutdown defect, and remains retained. No production edits.
+
+Main verifies both result/terminal receipts and source/binary hashes:
+FastGames/qsvr-cpu-desktop-nativequit-f7_wf0n_/main-verified.json and result.json;
+initial observer failure root qsvr-cpu-desktop-final-e029gx62. This qualifies
+ordinary desktop gameplay/quit and public compatibility, not XR lifecycle,
+client between-send prediction, all desktop content or uninspected output.
