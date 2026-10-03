@@ -69,3 +69,47 @@ Return read-only review, max1400words, claim/evidence table, ranked decision,
 recommended implementation boundary or justified disposition, required tests,
 and residual risks. Do not edit files or repeat a185-feature audit. Main will
 spot-check and record disposition before any production implementation.
+
+
+## Main senior disposition and concrete implementation plan
+
+Local Astra/xhigh Kant independently verifies the v7 file, native failure and
+source/donor paths. The ordinary typed reference oracle is required V06 behavior.
+This review approves the design boundary, not implementation or final signoff.
+
+| Recommendation | Main disposition and verified basis |
+| --- | --- |
+| Fix references while preserving existing named payload restore. | Adopt. Main reads target snapshot/free/spawn owners and the saved beta2→live1 failure. |
+| Sequential or delayed reference permutation is ambiguous. | Adopt. First spawn resumes the world; saved alpha1 and new beta1 would otherwise share an offset. |
+| Use inert pending identity anchors with native lifetime helpers. | Adopt narrowly: only referenced identities, one snapshot-associated offset array, typed fields/globals/snapshots; no active proxy players or per-frame work. |
+| Correct the intermediate test expectation of still-freed beta2. | Adopt. The repaired boundary must resolve beta immediately, then keep still-pending alpha distinct. |
+| Fresh native allocation must avoid saved free/forward-reference targets. | Adopt. Main reads ED_ParseEpair1400–1448: references can expose targets past the final body; load shrinks num_edicts again. Native ED_Alloc77–121 already has a complete fresh-tail branch. |
+| Reopen a tiny allocator write boundary if necessary. | Main explicitly expands the write set to pr_edict.c/progs.h: extract/reuse the existing fresh-tail branch as ED_AllocFresh; normal ED_Alloc retains the FIFO reuse branch and calls that helper for its previous tail case. Do not duplicate allocator internals in host_cmd.c. |
+| Ordinary v5/KEX and slot/transport policy stay native. | Adopt. Only inherited multiplayer pending restoration enters the adapter; anonymous matching stays existing policy. |
+| Verify collisions, allocator lifetime, typed coverage and actual QC consumption. | Adopt in the existing opt-in native case and affected default/load guards. Preserve earlier positive markers and precise endpoint limits. |
+
+Implementation ownership: `Quake/host_cmd.c`, `Quake/server.h`,
+`Quake/pr_edict.c`, `Quake/progs.h`, and the existing opt-in
+`tests/local_load_native_fixture.c`/`tests/run_local_load_native.py` only.
+Main owns documentation/integration and reviews the complete diff. Native
+fresh-tail code is reused, not a second allocator or temporary FIFO manipulation.
+The helper keeps baseline/debug initialization and the original allocation hook.
+A load-time typed scan finds referenced saved players and the highest admitted
+entity offset across native global definitions/current QC payloads and pending
+snapshot payloads. Preflight space for fresh indices strictly beyond both final
+body and that highest reference before any relocation. If gaps must be exposed,
+use the native fresh-tail initialization/free helpers, then retain each selected
+anchor before freeing it. Store only its offset alongside the existing snapshot.
+Use existing byte offsets in `qcvm->entityfieldofs`; do not scan arbitrary words.
+Resolve the matching offset after successful living/dead restore, before snapshot
+consumption/publication, then release its retained free edict. Resolve any
+existing in-world pending-discard path to world before release; whole VM/map
+teardown remains the existing owner. Do not add a discard command.
+
+Expected120–180 production lines plus the small extracted helper; reopen before
+approximately220 production lines, parallel lifetime policy, callback/connection
+admission changes, active proxies or interpreter interception. No implementation
+beyond those limits is authorized by this plan without a main architecture
+reassessment. Tests run after the complete bounded edit, and any production
+change refreshes affected source/engine artifacts on all four platforms. Earlier
+unaffected rendering/audio/input proof retains its exact documented scope.
