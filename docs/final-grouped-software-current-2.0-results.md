@@ -429,3 +429,23 @@ preserving source, pinned dependencies and Release/LTCG optimizations. It is an
 explicit toolchain diagnostic, not an observation-timeout restart or a presumed
 memory-pressure diagnosis. Its result remains pending. No system installation,
 source workaround or deployment.
+
+
+## Attainable metadata lifecycle and loaded AUTOCVAR — current production source
+
+Luna Lovelace implemented the opt-in lifecycle fixture; main reviewed its native
+producer/parser and real loaded QC calls, and checked final logs. Private receipts:
+`FastGames/qsvr-metadata-v02v03-20261002-wzSp80`, `main-verified.json` binds reviewed
+file and log hashes. Default-compatible and opt-in native links both succeed.
+The two opt-in runs exit0: QSMI reaches signon4, changes metadata mid-signon,
+16 occupied slots publish complete envelopes over two reliable packets, QC retires
+and reuses a slot, empty-full reset and subsequent update clear stale keys.
+Five live refused operations preserve queued bytes, flags and the bound SSQC
+AUTOCVAR; five admitted retries update native state, with exact AUTOCVAR call/value
+checks where applicable. PREDINFO downgrade initializes serverinfo after two
+empty snapshots and62updates. Existing six-profile acceptance remains credited.
+This proves the local reliable native transport and loaded SSQC boundary; it is
+not external UDP or graphical outcome proof. Generated SSQC recipe is preserved
+as `tests/make_metadata_lifecycle_qc_fixture.py`, reusing the existing QC assembler.
+Production files are unchanged. Failed observer attempts remain in the receipt
+root; only final run logs count as passes.

@@ -30,9 +30,19 @@ static qboolean name_pressure_observed, begin_pressure_observed;
 static qboolean limit_applied, limit_followup_applied, metadata_wait_observed;
 static qboolean signon_capacity_restored;
 static qboolean live_admission, live_capture_autocvar, live_capture_commands;
+static qboolean metadata_lifecycle, metadata_downgrade;
 static unsigned live_autocvar_calls, live_native_command_count, live_failures;
 static qboolean live_native_command_overflow;
 static char live_native_commands[16][2048];
+static qboolean lifecycle_capture_publication;
+static unsigned lifecycle_publication_packets, lifecycle_publication_commands;
+#ifdef METADATA_LIVE_ADMISSION_FIXTURE
+static qboolean lifecycle_capture_retirement;
+static unsigned lifecycle_retirement_commands;
+static char lifecycle_retirement_command[CLIENT_USER_INFO_STRING_SIZE + 128];
+#endif
+static float lifecycle_expected_autocvar;
+static qboolean lifecycle_loaded_autocvar;
 static int signon_restore_capacity;
 static char signon_limit[16] = "none";
 
@@ -56,6 +66,14 @@ void __wrap_PR_AutoCvarChanged (cvar_t *var)
 qboolean __real_Cmd_ExecuteString (const char *text, cmd_source_t src);
 qboolean __wrap_Cmd_ExecuteString (const char *text, cmd_source_t src)
 {
+	if (lifecycle_capture_retirement && src == src_server &&
+		!strncmp (text, "fui 1 ", 6))
+	{
+		if (lifecycle_retirement_commands < 1)
+			q_strlcpy (lifecycle_retirement_command, text,
+				sizeof (lifecycle_retirement_command));
+		++lifecycle_retirement_commands;
+	}
 	if (live_capture_commands && src == src_client &&
 		host_client == &svs.clients[0])
 	{
@@ -160,6 +178,15 @@ static void ReceiveClientPackets (void)
 		empty_full_count += CountText (net_message.data, net_message.cursize, "//fullserverinfo \"\"");
 		increment_count += CountText (net_message.data, net_message.cursize, "//svi ");
 		userinfo_count += CountText (net_message.data, net_message.cursize, "//fui ");
+		if (lifecycle_capture_publication)
+		{
+			unsigned commands = CountText (net_message.data, net_message.cursize, "//fui ");
+			if (commands)
+			{
+				++lifecycle_publication_packets;
+				lifecycle_publication_commands += commands;
+			}
+		}
 		const int before = cls.signon;
 		/* This first packet is the native cmd pext query. The test chooses a
 		 * bounded offer directly through Cmd_ExecuteString below; later packets,
@@ -227,6 +254,31 @@ static void RunServerFrame (void)
 	PR_SwitchQCVM (NULL);
 }
 
+#ifdef METADATA_LIVE_ADMISSION_FIXTURE
+/* The lifecycle profile registers the native client userinfo cvars before
+ * loading SSQC, so its generated AUTOCVAR binds to the real native cvar. */
+static void Fixture_InitMetadataLifecycleEngine (int argc, char **argv,
+	const char *map)
+{
+	static quakeparms_t parms;
+	parms.basedir = ".";
+	parms.argc = argc;
+	parms.argv = argv;
+	host_parms = &parms;
+	COM_InitArgv (argc, argv);
+	isDedicated = COM_CheckParm ("-dedicated") != 0;
+	assert (isDedicated && COM_CheckParm ("-noudp"));
+	assert (SDL_Init (0));
+	Sys_Init ();
+	Host_Init ();
+	Cvar_SetQuick (&sv_coop_autosave, "0");
+	CL_Init ();
+	PR_SwitchQCVM (&sv.qcvm);
+	SV_SpawnServer (map);
+	assert (sv.active && qcvm == &sv.qcvm);
+}
+#endif
+
 typedef struct
 {
 	cvar_t *var;
@@ -244,6 +296,19 @@ static void LiveCheck (qboolean condition, const char *name)
 		return;
 	++live_failures;
 	fprintf (stderr, "METADATA_LIVE_CHECK_FAILED %s\n", name);
+}
+
+static float LiveBoundTopcolor (qboolean *found)
+{
+	qcvm_t *oldvm = qcvm;
+	float value = 0;
+	PR_SwitchQCVM (&sv.qcvm);
+	ddef_t *global = ED_FindGlobal ("autocvar_topcolor");
+	*found = global && (global->type & ~DEF_SAVEGLOBAL) == ev_float;
+	if (*found)
+		value = G_FLOAT (global->ofs);
+	PR_SwitchQCVM (oldvm);
+	return value;
 }
 
 static void LiveCvarSnapshot (live_cvar_snapshot_t *snapshot, cvar_t *var)
@@ -339,6 +404,13 @@ static void LiveCheckDeniedState (client_t *peer,
 		"refusal preserved every queued reliable byte");
 	LiveCheck (live_autocvar_calls == autocvar_calls,
 		"refusal produced no QC autocvar update");
+	if (lifecycle_loaded_autocvar)
+	{
+		qboolean found = false;
+		float value = LiveBoundTopcolor (&found);
+		LiveCheck (found && value == lifecycle_expected_autocvar,
+			"refusal preserved the real loaded SSQC AUTOCVAR value");
+	}
 }
 
 static void LiveAttemptRefusal (const char *label, const char *command,
@@ -362,10 +434,28 @@ static void LiveAttemptRefusal (const char *label, const char *command,
 }
 
 static void LiveRetry (const char *stage, const char *command,
-	const char *const *expected, unsigned expected_count)
+	const char *const *expected, unsigned expected_count,
+	qboolean expect_autocvar, float expected_bound_value)
 {
-	qboolean handled = Cmd_ExecuteString (command, src_command);
+	unsigned autocvar_calls = live_autocvar_calls;
+	qboolean handled;
+	live_capture_autocvar = true;
+	handled = Cmd_ExecuteString (command, src_command);
+	live_capture_autocvar = false;
 	LiveCheck (handled, va ("%s retry reached native console command owner", stage));
+	if (lifecycle_loaded_autocvar)
+	{
+		LiveCheck (live_autocvar_calls == autocvar_calls + (expect_autocvar ? 1 : 0),
+			va ("%s retry reached real PR_AutoCvarChanged exactly once", stage));
+		if (expect_autocvar)
+		{
+			qboolean found = false;
+			float bound_value = LiveBoundTopcolor (&found);
+			LiveCheck (found && bound_value == expected_bound_value,
+				va ("%s retry updated the loaded SSQC AUTOCVAR", stage));
+			lifecycle_expected_autocvar = expected_bound_value;
+		}
+	}
 	LiveCheck (cls.message.cursize > 0,
 		va ("%s retry queued native reliable command bytes", stage));
 	CL_SendCmd ();
@@ -385,6 +475,7 @@ static void VerifyLiveAdmission (client_t *peer)
 	byte queued[NET_MAXMESSAGE];
 	int queued_size, queued_maxsize, peer_colors;
 	unsigned autocvar_calls;
+	qboolean bound_autocvar_found = false;
 	const char *expected[3];
 	char value[CLIENT_USER_INFO_STRING_SIZE];
 
@@ -395,6 +486,19 @@ static void VerifyLiveAdmission (client_t *peer)
 	LiveCvarSnapshot (&name, &cl_name);
 	LiveCvarSnapshot (&top, &cl_topcolor);
 	LiveCvarSnapshot (&bottom, &cl_bottomcolor);
+	if (metadata_lifecycle)
+	{
+		cvar_t *registered = Cvar_FindVar ("topcolor");
+		lifecycle_expected_autocvar = LiveBoundTopcolor (&bound_autocvar_found);
+		lifecycle_loaded_autocvar = bound_autocvar_found;
+		LiveCheck (registered == &cl_topcolor && (registered->flags &
+			(CVAR_REGISTERED | CVAR_USERINFO | CVAR_AUTOCVAR)) ==
+			(CVAR_REGISTERED | CVAR_USERINFO | CVAR_AUTOCVAR),
+			"loaded AUTOCVAR is bound to the registered native topcolor userinfo cvar");
+		LiveCheck (bound_autocvar_found &&
+			lifecycle_expected_autocvar == cl_topcolor.value,
+			"loaded AUTOCVAR starts with the native topcolor value");
+	}
 	q_strlcpy (client_info, cls.userinfo, sizeof (client_info));
 	q_strlcpy (server_info, svs.serverinfo, sizeof (server_info));
 	q_strlcpy (peer_name, peer->name, sizeof (peer_name));
@@ -440,11 +544,11 @@ static void VerifyLiveAdmission (client_t *peer)
 		"pressure drain contained no fabricated client commands");
 
 	expected[0] = "color \"5\" \"0\"\n";
-	LiveRetry ("set", "set topcolor 5", expected, 1);
+	LiveRetry ("set", "set topcolor 5", expected, 1, true, 5);
 	LiveCheck (!strcmp (cl_topcolor.string, "5") && peer->colors == 0x50,
 		"set retry updated native peer color state");
 	expected[0] = "color \"6\" \"0\"\n";
-	LiveRetry ("seta", "seta topcolor 6", expected, 1);
+	LiveRetry ("seta", "seta topcolor 6", expected, 1, true, 6);
 	LiveCheck (!strcmp (cl_topcolor.string, "6") && peer->colors == 0x60 &&
 		(cl_topcolor.flags & CVAR_SETA),
 		"seta retry updated native peer and persistence flag");
@@ -452,19 +556,19 @@ static void VerifyLiveAdmission (client_t *peer)
 	 * two complete name commands and three ordered color commands. */
 	expected[0] = "name \"retry_name\"\n";
 	expected[1] = "name \"retry_name\"\n";
-	LiveRetry ("name", "name retry_name", expected, 2);
+	LiveRetry ("name", "name retry_name", expected, 2, false, 0);
 	LiveCheck (!strcmp (cl_name.string, "retry_name") &&
 		!strcmp (peer->name, "retry_name"),
 		"name retry updated native peer name");
 	expected[0] = "color \"3\" \"0\"\n";
 	expected[1] = "color \"3\" \"4\"\n";
 	expected[2] = "color \"3\" \"4\"\n";
-	LiveRetry ("color", "color 3 4", expected, 3);
+	LiveRetry ("color", "color 3 4", expected, 3, true, 3);
 	LiveCheck (!strcmp (cl_topcolor.string, "3") &&
 		!strcmp (cl_bottomcolor.string, "4") && peer->colors == 0x34,
 		"color retry updated both native peer color nibbles");
 	expected[0] = "setinfo \"fixture_key\" \"retry_info\"\n";
-	LiveRetry ("setinfo", "setinfo fixture_key retry_info", expected, 1);
+	LiveRetry ("setinfo", "setinfo fixture_key retry_info", expected, 1, false, 0);
 	Info_GetKey (cls.userinfo, "fixture_key", value, sizeof (value));
 	LiveCheck (!strcmp (value, "retry_info"),
 		"setinfo retry updated local userinfo store");
@@ -513,6 +617,288 @@ static void VerifyUserinfoPublication (client_t *peer)
 	Info_GetKey (cl.scores[0].userinfo, "quoted", value, sizeof (value));
 	assert (!*value && skin_translation_calls > 0);
 }
+
+#ifdef METADATA_LIVE_ADMISSION_FIXTURE
+static void LifecycleDrainSlots (client_t *peer);
+
+static void LifecycleServerinfoReset (client_t *peer)
+{
+	char saved[sizeof (svs.serverinfo)], saved_blob[SERVER_INFO_STRING_SIZE];
+	char value[SERVER_INFO_STRING_SIZE];
+	q_strlcpy (saved, svs.serverinfo, sizeof (saved));
+	Info_GetKey (saved, "c02_blob", saved_blob, sizeof (saved_blob));
+	assert (!peer->metadata_serverinfo_pending);
+	svs.serverinfo[0] = 0;
+	SV_MetadataServerinfoChanged ();
+	LifecycleDrainSlots (peer);
+	LiveCheck (!peer->metadata_serverinfo_pending && cl.serverinfo_received &&
+		!cl.serverinfo[0], "empty full snapshot reset initialized serverinfo");
+
+	Info_SetKey (svs.serverinfo, sizeof (svs.serverinfo), "lifecycle_reset", "updated");
+	SV_MetadataServerinfoChanged ();
+	LifecycleDrainSlots (peer);
+	Info_GetKey (cl.serverinfo, "lifecycle_reset", value, sizeof (value));
+	LiveCheck (!strcmp (value, "updated") && !peer->metadata_serverinfo_pending,
+		"native metadata update after empty reset reached the client store");
+
+	q_strlcpy (svs.serverinfo, saved, sizeof (svs.serverinfo));
+	SV_MetadataServerinfoChanged ();
+	LifecycleDrainSlots (peer);
+	Info_GetKey (cl.serverinfo, "lifecycle_reset", value, sizeof (value));
+	qboolean reset_key_removed = !*value;
+	Info_GetKey (cl.serverinfo, "c02_blob", value, sizeof (value));
+	LiveCheck (reset_key_removed && !strcmp (value, saved_blob),
+		"restored public producer state replaced reset-era metadata without stale keys");
+}
+
+static int LifecycleSpawnQCSlot (client_t *recipient)
+{
+	qcvm_t *oldvm = qcvm;
+	ddef_t *reference, *entity_global;
+	func_t function;
+	int entity_reference, entity_number, slot;
+	host_client = recipient;
+	PR_SwitchQCVM (&sv.qcvm);
+	reference = ED_FindGlobal ("fixture_ref_lifecycle_spawn");
+	entity_global = ED_FindGlobal ("fixture_lifecycle_bot");
+	assert (reference && entity_global &&
+		(reference->type & ~DEF_SAVEGLOBAL) == ev_function &&
+		(entity_global->type & ~DEF_SAVEGLOBAL) == ev_entity);
+	function = G_INT (reference->ofs);
+	assert (function && function < (func_t)qcvm->progs->numfunctions);
+	PR_ExecuteProgram (function);
+	entity_reference = G_INT (entity_global->ofs);
+	assert (entity_reference > 0 && entity_reference % qcvm->edict_size == 0);
+	entity_number = entity_reference / qcvm->edict_size;
+	assert (entity_number >= 1 && entity_number <= svs.maxclients);
+	slot = entity_number - 1;
+	PR_SwitchQCVM (oldvm);
+	return slot;
+}
+
+static void LifecycleDropQCSlot (client_t *recipient)
+{
+	qcvm_t *oldvm = qcvm;
+	ddef_t *reference;
+	func_t function;
+	host_client = recipient;
+	PR_SwitchQCVM (&sv.qcvm);
+	reference = ED_FindGlobal ("fixture_ref_lifecycle_drop");
+	assert (reference && (reference->type & ~DEF_SAVEGLOBAL) == ev_function);
+	function = G_INT (reference->ofs);
+	assert (function && function < (func_t)qcvm->progs->numfunctions);
+	PR_ExecuteProgram (function);
+	PR_SwitchQCVM (oldvm);
+}
+
+static void LifecycleUpdateInfo (int edict, const char *key, const char *value)
+{
+	qcvm_t *oldvm = qcvm;
+	PR_SwitchQCVM (&sv.qcvm);
+	SV_UpdateInfo (edict, key, value);
+	PR_SwitchQCVM (oldvm);
+}
+
+static void LifecycleSetSlot (int slot, const char *name, int colors,
+	const char *payload, const char *private_value)
+{
+	client_t *source = &svs.clients[slot];
+	char top[4], bottom[4], actual[CLIENT_USER_INFO_STRING_SIZE];
+	assert (source->active && slot >= 0 && slot < MAX_SCOREBOARD);
+	LifecycleUpdateInfo (slot + 1, "name", name);
+	q_snprintf (top, sizeof (top), "%u", ((unsigned int)colors >> 4) & 15);
+	q_snprintf (bottom, sizeof (bottom), "%u", (unsigned int)colors & 15);
+	LifecycleUpdateInfo (slot + 1, "topcolor", top);
+	LifecycleUpdateInfo (slot + 1, "bottomcolor", bottom);
+	Info_SetKey (source->userinfo, sizeof (source->userinfo), "payload", payload);
+	Info_SetKey (source->userinfo, sizeof (source->userinfo), "_private", private_value);
+	Info_GetKey (source->userinfo, "payload", actual, sizeof (actual));
+	assert (!strcmp (actual, payload));
+	SV_MetadataUserinfoChanged (slot);
+}
+
+static void LifecycleDrainSlots (client_t *peer)
+{
+	for (int send = 0; send < 16; ++send)
+	{
+		char reason[128] = "metadata envelope cannot be published";
+		int drained = SV_MetadataDrain (peer, true, reason, sizeof (reason));
+		if (drained < 0)
+		{
+			fprintf (stderr, "METADATA_LIFECYCLE_DRAIN_REFUSED %s\n", reason);
+			break;
+		}
+		if (peer->message.cursize)
+		{
+			if (!NET_CanSendMessage (peer->netconnection))
+			{
+				ReceiveClientPackets ();
+				continue;
+			}
+			int sent = NET_SendMessage (peer->netconnection, &peer->message);
+			if (sent == -1)
+			{
+				LiveCheck (false, "native local reliable transport admitted metadata output");
+				break;
+			}
+			SZ_Clear (&peer->message);
+			ReceiveClientPackets ();
+		}
+		if (drained > 0 && !peer->metadata_serverinfo_pending &&
+			!peer->metadata_userinfo_dirty && !peer->message.cursize)
+			break;
+	}
+	LiveCheck (!peer->metadata_serverinfo_pending && !peer->metadata_userinfo_dirty &&
+		!peer->message.cursize && !peer->message.overflowed,
+		"native sender drained all logical slot envelopes through reliable messages");
+}
+
+static void LifecycleCheckSlot (int slot, const char *name, int colors,
+	const char *payload, const char *owned)
+{
+	char value[CLIENT_USER_INFO_STRING_SIZE], expected_top[4], expected_bottom[4];
+	scoreboard_t *score = &cl.scores[slot];
+	Info_GetKey (score->userinfo, "payload", value, sizeof (value));
+	LiveCheck (!strcmp (value, payload), va ("slot %i retained its complete payload", slot));
+	Info_GetKey (score->userinfo, "qc_owned", value, sizeof (value));
+	LiveCheck (!strcmp (value, owned), va ("slot %i retained the QC-written value", slot));
+	Info_GetKey (score->userinfo, "_private", value, sizeof (value));
+	LiveCheck (!*value, va ("slot %i omitted its private userinfo", slot));
+	Info_GetKey (score->userinfo, "name", value, sizeof (value));
+	LiveCheck (!strcmp (score->name, name) && !strcmp (value, name),
+		va ("slot %i native name companion matches its metadata store", slot));
+	q_snprintf (expected_top, sizeof (expected_top), "%u",
+		((unsigned int)colors >> 4) & 15);
+	q_snprintf (expected_bottom, sizeof (expected_bottom), "%u",
+		(unsigned int)colors & 15);
+	Info_GetKey (score->userinfo, "topcolor", value, sizeof (value));
+	LiveCheck (!strcmp (value, expected_top), va ("slot %i topcolor retained", slot));
+	Info_GetKey (score->userinfo, "bottomcolor", value, sizeof (value));
+	LiveCheck (!strcmp (value, expected_bottom) && score->colors == colors,
+		va ("slot %i bottomcolor and native color companion retained", slot));
+}
+
+static void VerifyMetadataLifecycle (client_t *peer)
+{
+	static char payload[MAX_SCOREBOARD][4800];
+	char name[MAX_SCOREBOARD][32];
+	int colors[MAX_SCOREBOARD];
+	unsigned before_commands, multi_packet_count;
+	int reused_slot = 1;
+	assert (cls.signon == SIGNONS && peer->spawned && !peer->message.cursize &&
+		!peer->metadata_serverinfo_pending && !peer->metadata_userinfo_dirty);
+	LifecycleServerinfoReset (peer);
+
+	for (int slot = MAX_SCOREBOARD - 1; slot > 0; --slot)
+	{
+		int occupied = LifecycleSpawnQCSlot (peer);
+		LiveCheck (occupied == slot && svs.clients[occupied].active &&
+			svs.clients[occupied].spawned,
+			"loaded QC spawnclient occupied the expected native slot");
+	}
+
+	for (int slot = 0; slot < MAX_SCOREBOARD; ++slot)
+	{
+		client_t *source = &svs.clients[slot];
+		if (slot == 0)
+		{
+			q_strlcpy (name[slot], source->name, sizeof (name[slot]));
+			colors[slot] = source->colors;
+		}
+		else
+		{
+			q_snprintf (name[slot], sizeof (name[slot]), "qcbot_%02i", slot);
+			colors[slot] = ((slot % 14) << 4) | ((slot + 2) % 14);
+			LifecycleUpdateInfo (slot + 1, "name", name[slot]);
+			char top[4], bottom[4];
+			q_snprintf (top, sizeof (top), "%i", (colors[slot] >> 4) & 15);
+			q_snprintf (bottom, sizeof (bottom), "%i", colors[slot] & 15);
+			LifecycleUpdateInfo (slot + 1, "topcolor", top);
+			LifecycleUpdateInfo (slot + 1, "bottomcolor", bottom);
+		}
+		memset (payload[slot], 'A' + slot, sizeof (payload[slot]) - 1);
+		payload[slot][sizeof (payload[slot]) - 1] = 0;
+		Info_SetKey (source->userinfo, sizeof (source->userinfo), "payload", payload[slot]);
+		Info_SetKey (source->userinfo, sizeof (source->userinfo), "_private", "never-published");
+		if (slot == 0)
+			Info_SetKey (source->userinfo, sizeof (source->userinfo), "qc_owned", "native-peer");
+		SV_MetadataUserinfoChanged (slot);
+	}
+
+	lifecycle_publication_packets = lifecycle_publication_commands = 0;
+	lifecycle_capture_publication = true;
+	before_commands = userinfo_count;
+	LifecycleDrainSlots (peer);
+	lifecycle_capture_publication = false;
+	LiveCheck (lifecycle_publication_packets >= 2 &&
+		lifecycle_publication_commands == MAX_SCOREBOARD &&
+		userinfo_count - before_commands == MAX_SCOREBOARD,
+		"all 16 complete userinfo envelopes crossed at least two reliable packets");
+	multi_packet_count = lifecycle_publication_packets;
+	for (int slot = 0; slot < MAX_SCOREBOARD; ++slot)
+		LifecycleCheckSlot (slot, name[slot], colors[slot], payload[slot],
+			slot ? "occupied" : "native-peer");
+
+	LifecycleDropQCSlot (peer);
+	LiveCheck (!svs.clients[reused_slot].active &&
+		(peer->metadata_userinfo_dirty & (1u << reused_slot)),
+		"native QC drop retired the occupied slot and queued an empty envelope");
+	lifecycle_publication_packets = lifecycle_publication_commands = 0;
+	lifecycle_retirement_commands = 0;
+	lifecycle_retirement_command[0] = 0;
+	lifecycle_capture_publication = true;
+	lifecycle_capture_retirement = true;
+	LifecycleDrainSlots (peer);
+	lifecycle_capture_retirement = false;
+	lifecycle_capture_publication = false;
+	char retired_value[CLIENT_USER_INFO_STRING_SIZE];
+	Info_GetKey (cl.scores[reused_slot].userinfo, "payload", retired_value,
+		sizeof (retired_value));
+	qboolean payload_cleared = !*retired_value;
+	Info_GetKey (cl.scores[reused_slot].userinfo, "qc_owned", retired_value,
+		sizeof (retired_value));
+	qboolean qc_key_cleared = !*retired_value;
+	Info_GetKey (cl.scores[reused_slot].userinfo, "_private", retired_value,
+		sizeof (retired_value));
+	qboolean private_key_cleared = !*retired_value;
+	Info_GetKey (cl.scores[reused_slot].userinfo, "name", retired_value,
+		sizeof (retired_value));
+	qboolean name_key_cleared = !*retired_value;
+	Info_GetKey (cl.scores[reused_slot].userinfo, "topcolor", retired_value,
+		sizeof (retired_value));
+	qboolean zero_topcolor = !strcmp (retired_value, "0");
+	Info_GetKey (cl.scores[reused_slot].userinfo, "bottomcolor", retired_value,
+		sizeof (retired_value));
+	qboolean zero_bottomcolor = !strcmp (retired_value, "0");
+	LiveCheck (lifecycle_publication_commands == 1 &&
+		!cl.scores[reused_slot].name[0] && !cl.scores[reused_slot].colors &&
+		payload_cleared && qc_key_cleared && private_key_cleared &&
+		name_key_cleared && zero_topcolor && zero_bottomcolor &&
+		lifecycle_retirement_commands == 1 &&
+		!strstr (lifecycle_retirement_command, "payload") &&
+		!strstr (lifecycle_retirement_command, "qc_owned") &&
+		!strstr (lifecycle_retirement_command, "never-published") &&
+		strlen (lifecycle_retirement_command) < sizeof (retired_value),
+		"retirement cleared the complete prior occupant from the native scoreboard");
+
+	int new_slot = LifecycleSpawnQCSlot (peer);
+	LiveCheck (new_slot == reused_slot && svs.clients[new_slot].active,
+		"loaded QC reused the retired native slot");
+	q_snprintf (name[new_slot], sizeof (name[new_slot]), "qc_reused_%02i", new_slot);
+	colors[new_slot] = 0x35;
+	LifecycleSetSlot (new_slot, name[new_slot], colors[new_slot], "replacement", "private-new");
+	lifecycle_publication_packets = lifecycle_publication_commands = 0;
+	lifecycle_capture_publication = true;
+	LifecycleDrainSlots (peer);
+	lifecycle_capture_publication = false;
+	LifecycleCheckSlot (new_slot, name[new_slot], colors[new_slot], "replacement", "occupied");
+	LiveCheck (lifecycle_publication_commands == 1,
+		"reused slot published only the replacement occupant envelope");
+
+	printf ("METADATA_LIFECYCLE_PASSED midsignon=1 slots=%i reliable_userinfo_packets=%u reset_empty=1 retire_reuse=1 loaded_autocvar=1\n",
+		MAX_SCOREBOARD, multi_packet_count);
+}
+#endif /* METADATA_LIVE_ADMISSION_FIXTURE */
 
 void __real_SZ_Write (sizebuf_t *buf, const void *data, int length);
 void __wrap_SZ_Write (sizebuf_t *buf, const void *data, int length)
@@ -607,6 +993,7 @@ static void ReleaseClientPressure (void)
 int main (int argc, char **argv)
 {
 	const char *mode = NULL;
+	qboolean mid_signon_changed = false;
 	for (int i = 1; i + 1 < argc; ++i)
 	{
 		if (!strcmp (argv[i], "-metadata-offer")) mode = argv[i + 1];
@@ -616,14 +1003,21 @@ int main (int argc, char **argv)
 	for (int i = 1; i < argc; ++i)
 		if (!strcmp (argv[i], "-control-pressure")) control_pressure = true;
 		else if (!strcmp (argv[i], "-live-admission")) live_admission = true;
+		else if (!strcmp (argv[i], "-metadata-lifecycle")) metadata_lifecycle = true;
+		else if (!strcmp (argv[i], "-metadata-downgrade")) metadata_downgrade = true;
+	if (metadata_lifecycle) live_admission = true;
 	assert (mode);
 #ifndef METADATA_LIVE_ADMISSION_FIXTURE
 	/* Historical default links need no additional observers. Fail closed if
 	 * the opt-in case is requested without its two native observer wrappers. */
-	assert (!live_admission);
+	assert (!live_admission && !metadata_lifecycle && !metadata_downgrade);
 #endif
 	assert (!strcmp (mode, "qsmi") || !strcmp (mode, "predinfo"));
 	assert (!live_admission || (!strcmp (mode, "qsmi") &&
+		!strcmp (signon_limit, "none") && !control_pressure));
+	assert (!metadata_lifecycle || (!strcmp (mode, "qsmi") &&
+		!strcmp (signon_limit, "none") && !control_pressure));
+	assert (!metadata_downgrade || (!strcmp (mode, "predinfo") &&
 		!strcmp (signon_limit, "none") && !control_pressure));
 	assert (!strcmp (signon_limit, "none") || !strcmp (signon_limit, "exact") ||
 		!strcmp (signon_limit, "pressure") || !strcmp (signon_limit, "permanent"));
@@ -638,8 +1032,19 @@ int main (int argc, char **argv)
 		puts ("METADATA_NATIVE_PASSED offer=qsmi limit=permanent native-drop-disconnect-host-abort");
 		return 0;
 	}
-	Fixture_InitNativeEngine (argc, argv, "e1m1", false);
-	CL_Init (); /* Registers the native client metadata command handlers headlessly. */
+	if (metadata_lifecycle)
+	{
+#ifdef METADATA_LIVE_ADMISSION_FIXTURE
+		Fixture_InitMetadataLifecycleEngine (argc, argv, "e1m1");
+#else
+		assert (!"metadata lifecycle fixture was not compiled");
+#endif
+	}
+	else
+	{
+		Fixture_InitNativeEngine (argc, argv, "e1m1", false);
+		CL_Init (); /* Registers native client metadata handlers headlessly. */
+	}
 	PR_SwitchQCVM (NULL);
 	SetServerInfo (mode);
 	cls.state = ca_connected;
@@ -664,6 +1069,15 @@ int main (int argc, char **argv)
 		{
 			SendSelectedOffer (mode);
 			offer_sent = true;
+		}
+		if (metadata_lifecycle && !mid_signon_changed && cls.signon == 2)
+		{
+			assert (!peer->metadata_serverinfo_pending);
+			Info_SetKey (svs.serverinfo, sizeof (svs.serverinfo), "c02_blob",
+				"mid-signon-latest");
+			SV_MetadataServerinfoChanged ();
+			assert (peer->metadata_serverinfo_pending);
+			mid_signon_changed = true;
 		}
 		if (peer->pextknown && !offer_sent)
 			assert (!"server accepted an offer before the test response");
@@ -705,11 +1119,26 @@ int main (int argc, char **argv)
 		assert (limit_applied && metadata_wait_observed && signon_capacity_restored);
 	if (control_pressure)
 		assert (name_pressure_observed && begin_pressure_observed);
+	if (metadata_lifecycle)
+	{
+		char value[SERVER_INFO_STRING_SIZE];
+		assert (mid_signon_changed && cls.signon == SIGNONS &&
+			!peer->metadata_serverinfo_pending);
+		Info_GetKey (cl.serverinfo, "c02_blob", value, sizeof (value));
+		LiveCheck (!strcmp (value, "mid-signon-latest") && full_count >= 2,
+			"mid-signon producer change crossed the next complete native snapshot");
+	LiveCheck (!strcmp (Info_GetKey (cl.serverinfo, "c02_blob", value, sizeof (value)),
+		"mid-signon-latest"),
+		"server and client expose the same mid-signon public value");
+	}
 	for (int slot = 0; slot < MAX_SCOREBOARD; ++slot)
 		assert (!cl.scores[slot].colors || slot == 0);
 	if (live_admission)
 		VerifyLiveAdmission (peer);
 	if (!strcmp (mode, "qsmi")) VerifyUserinfoPublication (peer);
+#ifdef METADATA_LIVE_ADMISSION_FIXTURE
+	if (metadata_lifecycle) VerifyMetadataLifecycle (peer);
+#endif
 	if (!strcmp (mode, "predinfo"))
 	{
 		char expected[760], actual[760];
@@ -720,6 +1149,12 @@ int main (int argc, char **argv)
 		Info_GetKey (cl.serverinfo, "c02_second", actual, sizeof (actual));
 		assert (!strcmp (actual, expected) && empty_full_count &&
 			increment_count >= 2 && full_count >= 1);
+		if (metadata_downgrade)
+		{
+			assert (cl.serverinfo_received);
+			printf ("METADATA_DOWNGRADE_INIT_PASSED empty_full=%u updates=%u serverinfo_received=%d\n",
+				empty_full_count, increment_count, cl.serverinfo_received);
+		}
 	}
 	printf ("METADATA_NATIVE_PASSED offer=%s limit=%s control=%d frames=%d query=%u pextknown=%d predinfo=%d metadata=%u full=%u empty=%u svi=%u fui=%u signon2=%u signon3=%u spawned=%d scoreboard=%s graphics=excluded\n",
 		mode, signon_limit, control_pressure, frame, query_count, peer->pextknown,
