@@ -449,3 +449,22 @@ not external UDP or graphical outcome proof. Generated SSQC recipe is preserved
 as `tests/make_metadata_lifecycle_qc_fixture.py`, reusing the existing QC assembler.
 Production files are unchanged. Failed observer attempts remain in the receipt
 root; only final run logs count as passes.
+
+
+## Initialized native input lifecycle and gameplay — current source079f4431
+
+Main reuses the existing `vr_input_lifecycle_smoke.gdb` and
+`vr_input_gameplay_smoke.gdb` in separate isolated CPU-rendered desktop profiles.
+Both run0 and ordinary native quit0. Lifecycles preserve original predicates:
+ALT-bound key ownership/releases, shared keys, handedness changes, focus and
+menu/context neutral-rearm, same-sample menu transitions and real native binding
+capture. Gameplay supplies only the completed action-frame boundary, then native
+keys/Cbuf/movement/transport/loaded stock QC produce displacement and ammunition
+consumption. Focus loss releases forward/attack; held controls on return remain
+released until a fresh edge, which fires again. No kbutton/usercmd/packet fields
+are manufactured in these input probes. Renderer uses the private signed CPU
+Vulkan driver and Xvfb, with sound disabled; no XR runtime/device proof follows.
+Private script adaptations use short native startup args and native quit rather
+than killing a successful inferior. Receipt `FastGames/qsvr-cpu-native-input-hq06s44u/
+main-verified.json` records exact scripts, result and log hashes. Earlier input
+component and actual6DoF proofs remain credited at their recorded scope.
