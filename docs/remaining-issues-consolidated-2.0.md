@@ -57,11 +57,12 @@ evidence; unavailable parts no longer gate completion.
 - Pending attainable desktop residuals: paths/catalogue/cleanup, remaining CPU
   asset/worker consumers and desktop fallback/diagnostics.
   Listen-server RCON error recovery now passes through the available CPU route.
-- Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug build/
-  package/source/inventory freshness accepted. Windows Release has a retained
-  MSVC LTCG internal compiler/linker failure; a fresh engine-object build is
-  running to isolate reused-object IR. Final same-Astra integration signoff
-  remains after runnable checks and artifacts settle.
+- Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug/Release
+  build/package/source/inventory freshness accepted. The clean Windows Release
+  build passed with /O2, /GL and LTCG; main verified all16 staged files including
+  all13 x64 PEs. Earlier compiler/linker failures remain historical evidence.
+  The pending V06 production fix will require affected engines to refresh.
+  Final same-Astra integration signoff remains after runnable checks settle.
 
 D01 retains bounded client-prediction evidence and the separate incompatible
 short-jump-oracle failure; current server displacement does not replace client

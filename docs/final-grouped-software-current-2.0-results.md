@@ -585,3 +585,30 @@ and physical GPU performance are excluded unavailable outcomes.
 runner/GDB/log/results and retained valid/damaged/saved cache bytes. A private
 runner string-generation syntax error was corrected before any inferior started;
 no test predicate or production source changed.
+
+
+## Clean Windows Release — production079f4431, 2026-10-03
+
+Luna platform worker completed one fresh HostX64 native Release build of the
+exact079f4431 archive (SHA25638bb21884f6a33150024bec8d2abcc189d9038435b2228665f29566ec99c9b44).
+Native MSBuild exits0, all232 objects are fresh including110 generated shader
+objects; no prior engine object/PCH/PDB/ILK cache is copied. Pinned dependency
+libraries/headers remain reused. Normal /O2, /GL and /LTCG:incremental are retained.
+The unchanged gl_model.c compiles/links successfully; this closes the current
+build failure without attributing a definitive cause to the earlier MSVC faults.
+
+Main independently reads the native build log/manifest/cohort result and verifies
+all16 local stage hashes/sizes and all13 PE x64 machine headers. Engine build and
+stage SHA256f2a079543a9386bc178aee71ed9d4f421b36acbed0a47b05f8d59380384611a5
+match; PDB hash/freshness is verified, PE/PDB GUID association is not checked.
+The initial launcher exits4 after native build success because its temporary
+stage includes an extra vc143.pdb; that failed17-file stage is preserved. The
+separate verified16-file stage uses the same build output, without rebuilding.
+
+Receipts: FastGames/qsvr-platform-discovery-079f4431-20261002/windows/
+release-x64-clean/{cohort-result-final.json,main-release-inventory.json,
+guest-receipts-final/receipts/verified-artifact-manifest.json}.
+All owned build jobs are terminal. No Windows runtime/headset/GPU test or
+deployment is claimed. Linux x86-64, native ARM and Windows Debug prior079
+artifacts remain credited. V06's pending production repair is absent from this
+archive and requires affected artifact refresh after integration/review.
