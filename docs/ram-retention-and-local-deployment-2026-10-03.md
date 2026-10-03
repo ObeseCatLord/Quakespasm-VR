@@ -32,6 +32,6 @@ To restore a backup, replace the `.bin` symlink with a regular copy of the backe
 
 ARM runtime prepared from the exact same shipping source; native engine SHA256 `c1860ecf4be0e73a0e0c9b91228eeb0e2148efc37f1e5b3517e92019d90e44c3`. Existing verified package is reused, without rebuilding or copying game content.
 
-The user supplied `ssh steamos@frame`. At the time of this record, that name does not resolve locally, and `frame.local` lookup also times out. Device deployment remains pending the current address/reachable SSH connection; no remote files have been changed.
+The user supplied the home SSH address `steamos@192.168.0.21` and hotspot address `steamos@10.35.78.1`. Home SSH reports “No route to host”; hotspot SSH times out. The hostname `frame` also does not resolve here. Device deployment remains pending a reachable SSH connection; no remote files have been changed.
 
 Local deployment, loader, launcher, transfer and reviewer receipts: `/home/obesecatlord/FastGames/qsvr-deploy-2.0-mtpuw_db`.
