@@ -656,3 +656,27 @@ bounded EOF-tail/callback gap, not physical listening or every codec/duration.
 Receipts: FastGames/qsvr-music-eof-sdl-v21-9aXz9UPJ/{validation.json,
 main-verified.json,attempt-03/result.json}. Observer/native quit0, owned processes
 terminal; attempts01–02 retain bookkeeping/start-boundary failures.
+
+
+## Remaining Toss support and successful pusher relink — production079f4431
+
+Main uses the unchanged assertion-enabled native225 binary, actual stock e1m1
+BSP/QC and existing Loop_Init return0 bootstrap, private headless one-slot
+profile. Two explicit prepared native physics-owner probes, no renderer/input/
+transport replacement: a MOVETYPE_TOSS entity with valid recorded bbox support
+stays still/grounded; native ED_Free removes that support and actual
+SV_Physics_Toss releases FL_ONGROUND/ground reference and resumes falling
+(Z136→134.722229, velocityZ-40). The actual loaded func_plat model*7 moves
+3.19999695units through native SV_PushMove; bounds shift by the same amount,
+area links remain valid, and actual SV_Move hits that moved platform at fraction
+0.05038624. These close the specific removed-support/relink gaps, not complete
+client prediction or authored interaction traversal.
+
+Observer0 and normal native quit0, native arguments88bytes, binary unchanged
+SHA256936635e2b4c9a82eca39e08b55c66e06baf93cf8b1b8dded05eafdca36b3fba8.
+Receipts: FastGames/qsvr-native-physics-relink-_z6uwsbo/{result.json,
+main-verified.json,physics.gdb}. Prior qsvr-native-physics-residual-i1k8z1qk failure
+is retained: physics predicates passed until the observer tried to use the
+compile-time MOVE_NORMAL macro as a GDB symbol; source world.h defines it0,
+corrected in the passing observer. No production change/assertion weakening.
+Available teleport/frozen-reset distinctions remain separate from this probe.
