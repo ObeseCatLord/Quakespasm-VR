@@ -65,9 +65,10 @@ evidence; unavailable parts no longer gate completion.
   normal model-resource retirement/native desktop fallback now pass. Authored
   Shub and native music EOF tail are accepted at
   the exact bounded outcomes in the grouped results.
-- Pending attainable desktop residual: required missing server-model automatic
-  reconnect cancellation. Optional paired-model retirement and native texture/
-  skin worker/serial request equivalence now pass. Actual unavailable-XR bootstrap/
+- Accepted final desktop residuals: required missing server-model automatic
+  reconnect cancellation, optional paired-model retirement, native filename
+  precedence/canonical-cache fallback, and native texture/skin worker/serial
+  request equivalence. No further software implementation issue is established. Actual unavailable-XR bootstrap/
   retry/disable keeps native desktop movement and diagnostics correct, quit0.
   Listen-server RCON error recovery now passes through the available CPU route.
 - Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug/Release
@@ -76,7 +77,9 @@ evidence; unavailable parts no longer gate completion.
   all13 x64 PEs. Earlier compiler/linker failures remain historical evidence.
   The committed V06 production fix d5cfff6c requires affected engines to refresh;
   all four platform refreshes are now underway.
-  Final same-Astra integration signoff remains after runnable checks settle.
+  Planned runnable software checks are settled at the bounded outcomes in the
+  grouped ledger. Final same-Astra integration signoff follows current artifact
+  reconciliation; unavailable parts remain excluded rather than reported as pass.
 
 D01 retains bounded client-prediction evidence and the separate incompatible
 short-jump-oracle failure; current server displacement does not replace client

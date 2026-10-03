@@ -845,3 +845,26 @@ assets/read-only references and source remain unchanged. Main independently
 verifies state predicates and hashes at FastGames/qsvr-cpu-model-path-haj_bcp9/
 main-verified.json. Required server-model failure cancellation remains a separate
 case; this is exact-file-first/native fallback/cache ownership coverage.
+
+
+## Required missing server model: native reconnect cancellation
+
+Actual Cbuf qs_reconnect_game id1 local60/1/120 arms the timed native scheduler.
+Its command-driven local-server shutdown is followed by a native server respawn
+at the explicit setup seam; one required sv.model_precache filename is replaced
+with an absent private filename. The normal scheduler establishes one new
+loopback connection after60seconds. Actual SV_SendServerinfo produces3022bytes;
+Loop_SendMessage/Loop_GetMessage succeed with the same length/SHA256. No packet
+construction, cancellation-state seeding or direct cleanup calls.
+
+Native Mod_ForName returns null. The parser invokes cancel→disconnect→loading
+cleanup→main menu, leaving socket/schedule/interval zero and state idle. The
+source's true-to-abort branch is inlined; observer verifies the compiled jump
+to the menu tail call, leaving140bytes unread and sign-on incomplete. Across
+3.00088seconds/3709native Host entries state is unchanged, with no second
+connection attempt. Native quit/observer0. Main reads the102-line observer,
+reruns offline validation and verifies all279artifact hashes and identical
+actual transport receipts. FastGames/qsvr-c06-qBqclD/{validation.json,
+main-verified.json}, attempt02. Immutable source079/native225, no production
+edits. This is native required-model cancellation, distinct from optional
+paired-model retirement and canonical filename lookup.

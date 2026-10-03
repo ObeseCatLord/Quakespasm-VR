@@ -65,8 +65,9 @@ Current native RCON/discovery/real-UDP-loss/living-v6 and world-replacement/erro
 checks pass. CPU-rendered fork/public desktop gameplay and normal exits pass;
 id1/Hipnotic/Rogue content/transitions, built-in desktop demos, postcfg/config
 and inspected menus also pass. The [current remaining actions](remaining-issues-consolidated-2.0.md#current-attainable-work)
-are shared native/desktop/audio consumers, affected079f4431 platform freshness
-and final Astra signoff. No unavailable device/provider/runtime outcome gates
+are affected d5cfff6c platform freshness and final Astra signoff. Planned
+attainable native/desktop/audio consumers now have bounded current acceptance
+in the grouped ledger; unavailable parts remain excluded rather than passed. No unavailable device/provider/runtime outcome gates
 completion. Historical F rows below describe the surviving implemented contract
 and original acceptance boundaries; their unavailable parts are overridden.
 
