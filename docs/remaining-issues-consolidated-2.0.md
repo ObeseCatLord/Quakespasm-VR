@@ -30,6 +30,32 @@ reference checkouts, game assets and user-owned migration-2.0.md stay untouched.
 The [frozen F01–F10 scope](final-goal-checklist-2.0.md) remains authoritative.
 This reconciles progress into current actions, not new feature authorization.
 
+## Current attainable work
+
+The [final attainable-scope review and shared execution plan](attainable-final-integration-2.0-review.md)
+governs remaining runnable checks. Historical rows below retain their original
+evidence; unavailable parts no longer gate completion.
+
+- Accepted current: D03/D04 repairs/regressions; native discovery/admission,
+  connected public15/RCON/gameplay, real lost-ACK recovery, living v6 restore,
+  RCON map/reconnect/quit and both expected error exits; CPU-rendered fork/public
+  desktop gameplay/quit; id1/Hipnotic/Rogue transitions, built-in desktop
+  record/play/pause/seek, postcfg/native saved configuration and inspected menus.
+- Running/pending native consumers: metadata lifecycle/loaded AUTOCVAR, two-player
+  co-op save/reverse-rejoin, CSQC entity lifecycle; remaining native input/
+  calibration/physics distinctions and audio socket/playback-callback boundary.
+- Pending attainable desktop residuals: paths/catalogue/cleanup, remaining CPU
+  asset/worker consumers, desktop fallback/diagnostics/cache/classic quads.
+  Listen-server RCON error recovery is running through the available CPU route.
+- Final: affected079f4431 Windows Release/Debug, Linux x86-64 and native ARM
+  shipping engine/package freshness, then the same Astra integration signoff.
+
+D01 retains bounded client-prediction evidence and the separate incompatible
+short-jump-oracle failure; current server displacement does not replace client
+prediction proof. D02's ordinary public desktop terminal check now passes0;
+unavailable mixed-XR reproduction is excluded, historical attribution unknown.
+Neither row establishes an unresolved production defect.
+
 ## Evidence and classification
 
 [Verified: current CSV read] migration-feature-map.csv and original senior
@@ -47,7 +73,7 @@ final test attaches to its existing frozen owner and gets a bounded repair; no
 silent product-scope expansion. Each row has one completion boundary rather than
 an exhaustive mods/settings/builtin/device matrix.
 
-## Current unresolved failures
+## Retained historical failure evidence
 
 | Item | Type / frozen owner | Issue and required resolution |
 | --- | --- | --- |
@@ -55,7 +81,7 @@ an exhaustive mods/settings/builtin/device matrix.
 | D02 | D / F01,F10 | Newest unchanged public-vkQuake peer exits with corrupted double-linked list/SIGABRT at quit after the crossplay/map/slot phases. Earlier public run exits normally. Root cause and whether current fork shares it are unestablished. Do not attribute to fork/driver/renderer or demand unconditional repair of the read-only baseline. Current fork clean exits remain valid bounded evidence. Record each process outcome during final mixed-peer qualification; a recurring abort requires a contemporaneous stack/ownership diagnosis. Historical raw logs are unavailable after targeted relocation lookup; do not require recreating them or claim the failed aggregate a pass. |
 
 
-## Confirmed production issues — resolve before final tests
+## Confirmed production issues — repaired and qualified
 
 | Item | Type / frozen owner | Verified path and smallest repair |
 | --- | --- | --- |

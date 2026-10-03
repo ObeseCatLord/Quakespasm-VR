@@ -57,6 +57,19 @@ During this audit main also qualified9stock and5cooperative local-load cases,
 plus7loaded cooperative-QC profiles without code edits:
 [current lifecycle evidence](local-qc-load-current-qualification-2.0.md).
 
+## Latest attainable execution
+
+The [attainable final integration review](attainable-final-integration-2.0-review.md)
+applies the latest user exclusions and credits unaffected earlier proof.
+Current native RCON/discovery/real-UDP-loss/living-v6 and world-replacement/error
+checks pass. CPU-rendered fork/public desktop gameplay and normal exits pass;
+id1/Hipnotic/Rogue content/transitions, built-in desktop demos, postcfg/config
+and inspected menus also pass. The [current remaining actions](remaining-issues-consolidated-2.0.md#current-attainable-work)
+are shared native/desktop/audio consumers, affected079f4431 platform freshness
+and final Astra signoff. No unavailable device/provider/runtime outcome gates
+completion. Historical F rows below describe the surviving implemented contract
+and original acceptance boundaries; their unavailable parts are overridden.
+
 ## Current execution list and work order
 
 2026-10-02: [consolidated reviewed remaining issues](remaining-issues-consolidated-2.0.md)
