@@ -46,7 +46,7 @@ evidence; unavailable parts no longer gate completion.
   calibration/physics distinctions and audio socket/playback-callback boundary.
 - Pending attainable desktop residuals: paths/catalogue/cleanup, remaining CPU
   asset/worker consumers, desktop fallback/diagnostics/cache/classic quads.
-  Listen-server RCON error recovery is running through the available CPU route.
+  Listen-server RCON error recovery now passes through the available CPU route.
 - Final: affected079f4431 Windows Release/Debug, Linux x86-64 and native ARM
   shipping engine/package freshness, then the same Astra integration signoff.
 

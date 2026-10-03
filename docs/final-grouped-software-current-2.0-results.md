@@ -381,3 +381,48 @@ config/menu acceptance, not all paths/catalogue/assets/cache/classic-quads.
 No VR demo or campaign/benchmark claim. All owned Xvfb/game processes are stopped.
 Receipts: FastGames/qsvr-cpu-content-final-vjiawsyf/main-verified.json, result.json,
 per-profile state receipts and PNGs. Shipping input/source remains079f4431.
+
+## Listen-server RCON recovery and packaged startup
+
+Available CPU-rendered native079f4431 listen-server recovery passes. An actual
+authenticated UDP changelevel-missing command enters native Host_Error with
+borrowed SSQC suspended and redirect active. Ordinary unwind returns to the
+main frame with server/signon retired, VM clear and redirect clear; the actual
+RCON response contains the missing-map error. Ordinary map-e1m1 starts a fresh
+world/signon, a new RCON echo succeeds, and native quit exits0. The Debug
+Sys_DebugBreak SIGTRAP is observed at its expected Host_Error stack and resumed
+without delivering a fatal signal. Main independently verifies each predicate.
+No listen recovery is inferred merely from dedicated exit1.
+
+Receipt: FastGames/qsvr-cpu-listen-postcfg-_232esbw/main-verified.json and result.json.
+Earlier private observers are retained: oversized reconstructed native argv
+and uninitialized private RCON setting prevented the intended server/error path.
+The final observer verifies actual native231-byte cmdline, real active listen
+server and postcfg-initialized password before sending the single error command.
+This is observer setup correction; no source setting/default was changed.
+
+The fresh079f4431 Linux shipping package also loads e1m1, reports native status
+and quits0 using its packaged relative runtime search paths with inherited
+LD_LIBRARY_PATH removed from that child. No GPU or external SDK loader override.
+Receipt: FastGames/qsvr-packaged-linux-079-startup-xl1m2js5/result.json.
+
+## Current079 platform inventory reconciliation
+
+Main verifies the exact079f4431 source archive SHA
+38bb21884f6a33150024bec8d2abcc189d9038435b2228665f29566ec99c9b44 and all three
+changed shipping files against the current worktree. Fresh Linux653 and native
+ARM650 inventory entries match actual bytes/symlink targets; each package has45
+ELF records and matching079revision/archive. Native builds/stage/verify all exit0.
+Windows Debug MSBuild/staging succeeds; its independent inventory check follows.
+Root: FastGames/qsvr-platform-discovery-079f4431-20261002,
+main-inventory-current.json and platform receipts.
+
+Windows Release fails twice during LTCG Generating-code with MSVC C1001/LNK1000
+in unchanged gl_model.c, using HostX86/x64 c2.dll. Main does not classify a
+runnable build failure as unavailable merely because it failed. One new bounded
+build selects the installed x64-host tools using Microsoft's documented
+[PreferredToolArchitecture property](https://learn.microsoft.com/en-us/cpp/build/reference/msbuild-visual-cpp-overview?view=msvc-170),
+preserving source, pinned dependencies and Release/LTCG optimizations. It is an
+explicit toolchain diagnostic, not an observation-timeout restart or a presumed
+memory-pressure diagnosis. Its result remains pending. No system installation,
+source workaround or deployment.
