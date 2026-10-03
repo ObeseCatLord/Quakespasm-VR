@@ -680,3 +680,35 @@ is retained: physics predicates passed until the observer tried to use the
 compile-time MOVE_NORMAL macro as a GDB symbol; source world.h defines it0,
 corrected in the passing observer. No production change/assertion weakening.
 Available teleport/frozen-reset distinctions remain separate from this probe.
+
+
+## Native Unicode roots, catalogue transfer and mod filtering
+
+Main runs actual CPU-rendered desktop e1m1 with private UTF-8 base/preference
+roots and native -multiuser selection. COM_LoadFile reads the preference-root
+witness over the conflicting base-root file. The normal main menu, native
+M_Keydown navigation and M_Charinput search select the Mods catalogue and filter
+"fresh" to one entry; native installed-list rebuild/search later finds exactly
+the newly installed native-addon directory.
+
+The existing CURL worker performs real HTTPS requests to an owned loopback
+server with finite generated manifests/PACK payloads. The explicit test seam
+adds the private server CA to each native CURL handle and suppresses proxy use
+for that owned loopback request; native HTTPS-only, peer/hostname verification,
+worker/download/size/pack/rename/cancellation policy remains unchanged. Invalid
+HTTP URL is refused before a worker. The valid106-byte PACK is installed with
+exact expected SHA256fad8e73e4c77622016b9acd243c14866006cc7aa5b7ec8e393f75fb063e58962,
+temporary file absent and native installed discovery true. Native addon_cancel
+interrupts an actual partial HTTPS transfer; neither final nor temporary file
+survives and installed stays false. A transferred invalid PACK is rejected with
+both files absent; worker handles are polled/joined before native quit.
+
+All seven boundaries pass, observer0/native quit0 and owned Xvfb0. Immutable
+assertion-enabled native225 engine/source079f4431, short138-byte native command
+line, child-only signed CPU driver/XDG roots. No installed assets/system trust
+store or source changes, physical GPU/headset or public-service outcome claims.
+Receipts: FastGames/qsvr-cpu-catalogue-multiuser-bcdmv1h2/{result.json,
+main-verified.json,catalogue.gdb,run.py}. Prior catalogue-final-1nh5pkjk observer
+failure is retained: that graph is portable/no DO_USERDIRS, so -userdir was an
+invalid test premise; -multiuser exercises the native SDL preference-root owner.
+No production repair or assertion weakening is made for that setup error.

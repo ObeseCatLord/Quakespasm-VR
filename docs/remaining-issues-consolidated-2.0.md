@@ -47,7 +47,9 @@ evidence; unavailable parts no longer gate completion.
   actual negotiated UDP voice/SDL callback/map-reconnect reset; native desktop
   cache valid/corrupt/repaired restart and >16384classic particle quad draws;
   authored stock Shub restart/save/load lifecycle, actual music EOF tail,
-  removed Toss support and successful native pusher relink.
+  removed Toss support and successful native pusher relink; Unicode path
+  precedence, real HTTPS catalogue install/cancel/failure cleanup and native
+  catalogue/installed-mod filtering.
 - V06 observed failure: reverse reconnect restores inventory correctly but a
   saved typed QC reference aliases the wrong player after slot reuse. Same local
   Astra approved the narrow native typed-reference/lifetime adapter; Luna is
@@ -57,8 +59,8 @@ evidence; unavailable parts no longer gate completion.
 - Pending native consumers: remaining calibration/paired-melee distinctions
   and teleport/frozen-reset behavior. Authored Shub and native music EOF tail are now accepted at
   the exact bounded outcomes in the grouped results.
-- Pending attainable desktop residuals: paths/catalogue/cleanup, remaining CPU
-  asset/worker consumers and desktop fallback/diagnostics.
+- Pending attainable desktop residuals: missing-model retirement cleanup,
+  remaining CPU asset/worker consumers and desktop fallback/diagnostics.
   Listen-server RCON error recovery now passes through the available CPU route.
 - Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug/Release
   build/package/source/inventory freshness accepted. The clean Windows Release
