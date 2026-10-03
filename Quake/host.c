@@ -301,6 +301,8 @@ void Host_Error (const char *error, ...)
 		SCR_JumpToCSQCErrorRecovery ();
 	}
 
+	Con_Redirect (NULL);
+
 	if (sv.active)
 		Host_ShutdownServer (false);
 

@@ -43,3 +43,24 @@ RCON world transition/reset or ordinary shutdown boundary selected by review,
 and preserve prior ten admission/discovery cases. Update affected shipping
 source freshness once implementation settles; earlier58fb cohort cannot qualify
 a new production patch. GPU/provider/physical gates remain unchanged.
+
+## Verified Astra disposition before code
+
+Local Astra/xhigh Epicurus completed read-only review. Main checked native
+NET_ListAddresses global-index mutation, ED_PrintEdict_f's VM entry, ordinary
+Host_Error after-CSQC branch and QSS-M Host_Error's redirect cleanup.
+
+| Recommendation | Main disposition |
+| --- | --- |
+| Suspend/restore borrowed VM around admitted native RCON | Adopt donor boundary. |
+| Restore both network driver indices, beyond donor LAN-only restoration | Adopt verified status/address-query mutation. Save incoming indices locally. |
+| Flush redirect on ordinary Host_Error nonlocal exit | Adopt QSS-M Con_Redirect(NULL), after CSQC recovery branch before shutdown. |
+| Flush/restore drivers before inactive-server abort; restore VM only on continuing path | Adopt existing Host_EndGame ownership; no stale context resurrection. |
+| Replace native map/load ownership or introduce queues/generation layers | Reject; static sv.qcvm survives object replacement, receive loop looks up client/edict after polling. |
+
+The verified error-unwind omission expands the write set to net_dgrm.c and
+host.c, still roughly15lines. Preserve admission/default/command behavior.
+Final tests add native status while connected, successful map/reconnect plus
+failed-map and failed-changelevel terminal/output checks. Dedicated native quit0
+and native abort1 are distinct expected outcomes. Listen longjmp remains a
+separate existing qualification boundary, not proven by dedicated tests.

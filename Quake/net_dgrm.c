@@ -1814,9 +1814,18 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 			response = "rcon is not enabled on this server";
 		else if (!strcmp (password, rcon_password.string))
 		{
+			qcvm_t *oldvm = qcvm;
+			int olddriver = net_driverlevel, oldlandriver = net_landriverlevel;
+
 			Con_Redirect (Datagram_Rcon_Flush);
+			PR_SwitchQCVM (NULL);
 			Cmd_ExecuteString (command_string, src_command);
 			Con_Redirect (NULL);
+			net_driverlevel = olddriver;
+			net_landriverlevel = oldlandriver;
+			if (!sv.active)
+				Host_EndGame ("Server shut down from rcon.");
+			PR_SwitchQCVM (oldvm);
 			return;
 		}
 		else if (!strcmp (password, "password"))
