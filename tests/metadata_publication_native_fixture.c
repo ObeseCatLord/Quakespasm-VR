@@ -29,6 +29,10 @@ static qboolean control_pressure, name_pressure_armed, begin_pressure_armed;
 static qboolean name_pressure_observed, begin_pressure_observed;
 static qboolean limit_applied, limit_followup_applied, metadata_wait_observed;
 static qboolean signon_capacity_restored;
+static qboolean live_admission, live_capture_autocvar, live_capture_commands;
+static unsigned live_autocvar_calls, live_native_command_count, live_failures;
+static qboolean live_native_command_overflow;
+static char live_native_commands[16][2048];
 static int signon_restore_capacity;
 static char signon_limit[16] = "none";
 
@@ -39,6 +43,36 @@ qboolean __wrap_NET_CanSendMessage (qsocket_t *socket)
 		return false;
 	return __real_NET_CanSendMessage (socket);
 }
+
+#ifdef METADATA_LIVE_ADMISSION_FIXTURE
+void __real_PR_AutoCvarChanged (cvar_t *var);
+void __wrap_PR_AutoCvarChanged (cvar_t *var)
+{
+	if (live_capture_autocvar)
+		++live_autocvar_calls;
+	__real_PR_AutoCvarChanged (var);
+}
+
+qboolean __real_Cmd_ExecuteString (const char *text, cmd_source_t src);
+qboolean __wrap_Cmd_ExecuteString (const char *text, cmd_source_t src)
+{
+	if (live_capture_commands && src == src_client &&
+		host_client == &svs.clients[0])
+	{
+		if (live_native_command_count < countof (live_native_commands))
+		{
+			if (q_strlcpy (live_native_commands[live_native_command_count], text,
+				sizeof (live_native_commands[0])) >= sizeof (live_native_commands[0]))
+				live_native_command_overflow = true;
+		}
+		else
+			live_native_command_overflow = true;
+		++live_native_command_count;
+	}
+	return __real_Cmd_ExecuteString (text, src);
+}
+
+#endif /* METADATA_LIVE_ADMISSION_FIXTURE */
 
 void __real_CL_SignonReply (void);
 void __wrap_CL_SignonReply (void)
@@ -193,6 +227,258 @@ static void RunServerFrame (void)
 	PR_SwitchQCVM (NULL);
 }
 
+typedef struct
+{
+	cvar_t *var;
+	char string[256];
+	char default_string[256];
+	qboolean has_default;
+	float value;
+	cvarflags_t flags;
+	cvarcallback_t callback;
+} live_cvar_snapshot_t;
+
+static void LiveCheck (qboolean condition, const char *name)
+{
+	if (condition)
+		return;
+	++live_failures;
+	fprintf (stderr, "METADATA_LIVE_CHECK_FAILED %s\n", name);
+}
+
+static void LiveCvarSnapshot (live_cvar_snapshot_t *snapshot, cvar_t *var)
+{
+	assert (snapshot && var);
+	memset (snapshot, 0, sizeof (*snapshot));
+	snapshot->var = var;
+	q_strlcpy (snapshot->string, var->string ? var->string : "",
+		sizeof (snapshot->string));
+	snapshot->has_default = var->default_string != NULL;
+	if (snapshot->has_default)
+		q_strlcpy (snapshot->default_string, var->default_string,
+			sizeof (snapshot->default_string));
+	snapshot->value = var->value;
+	snapshot->flags = var->flags;
+	snapshot->callback = var->callback;
+}
+
+static qboolean LiveCvarMatches (const live_cvar_snapshot_t *snapshot)
+{
+	const cvar_t *var = snapshot->var;
+	return var && !strcmp (var->string ? var->string : "", snapshot->string) &&
+		(!!var->default_string == snapshot->has_default) &&
+		(!snapshot->has_default || !strcmp (var->default_string,
+			snapshot->default_string)) && var->value == snapshot->value &&
+		var->flags == snapshot->flags && var->callback == snapshot->callback;
+}
+
+static void LivePrintEscaped (const char *text)
+{
+	putchar ('"');
+	for (; *text; ++text)
+	{
+		if (*text == '\n') fputs ("\\n", stdout);
+		else if (*text == '\r') fputs ("\\r", stdout);
+		else if (*text == '\\') fputs ("\\\\", stdout);
+		else if (*text == '"') fputs ("\\\"", stdout);
+		else putchar (*text);
+	}
+	putchar ('"');
+}
+
+static void LiveCompareCommands (const char *stage,
+	const char *const *expected, unsigned expected_count)
+{
+	qboolean matches = !live_native_command_overflow &&
+		live_native_command_count == expected_count;
+	fprintf (stdout, "METADATA_LIVE_NATIVE_COMMANDS stage=%s count=%u",
+		stage, live_native_command_count);
+	for (unsigned i = 0; i < live_native_command_count &&
+		i < countof (live_native_commands); ++i)
+	{
+		fputs (" command=", stdout);
+		LivePrintEscaped (live_native_commands[i]);
+		if (i >= expected_count || strcmp (live_native_commands[i], expected[i]))
+			matches = false;
+	}
+	putchar ('\n');
+	if (live_native_command_overflow)
+		matches = false;
+	LiveCheck (matches, va ("%s emitted exact native command sequence", stage));
+}
+
+static void LiveRunNativeFrame (void)
+{
+	live_native_command_count = 0;
+	live_native_command_overflow = false;
+	live_capture_commands = true;
+	host_frametime = 0.017f;
+	realtime += host_frametime;
+	RunServerFrame ();
+	live_capture_commands = false;
+	ReceiveClientPackets ();
+}
+
+static void LiveCheckDeniedState (client_t *peer,
+	const live_cvar_snapshot_t *name, const live_cvar_snapshot_t *top,
+	const live_cvar_snapshot_t *bottom, const char *client_info,
+	const char *server_info, const char *peer_name, const char *peer_info,
+	int peer_colors, const byte *queued, int queued_size, int queued_maxsize,
+	unsigned autocvar_calls)
+{
+	LiveCheck (LiveCvarMatches (name), "refusal preserved name cvar string/default/flags/value/callback");
+	LiveCheck (LiveCvarMatches (top), "refusal preserved topcolor cvar string/default/flags/value/callback");
+	LiveCheck (LiveCvarMatches (bottom), "refusal preserved bottomcolor cvar string/default/flags/value/callback");
+	LiveCheck (!strcmp (cls.userinfo, client_info), "refusal preserved local userinfo store");
+	LiveCheck (!strcmp (svs.serverinfo, server_info), "refusal preserved serverinfo store");
+	LiveCheck (!strcmp (peer->name, peer_name) && peer->colors == peer_colors &&
+		!strcmp (peer->userinfo, peer_info), "refusal preserved native peer state");
+	LiveCheck (cls.message.cursize == queued_size &&
+		cls.message.maxsize == queued_maxsize && !cls.message.overflowed &&
+		!memcmp (cls.message.data, queued, queued_size),
+		"refusal preserved every queued reliable byte");
+	LiveCheck (live_autocvar_calls == autocvar_calls,
+		"refusal produced no QC autocvar update");
+}
+
+static void LiveAttemptRefusal (const char *label, const char *command,
+	client_t *peer, const live_cvar_snapshot_t *name,
+	const live_cvar_snapshot_t *top, const live_cvar_snapshot_t *bottom,
+	const char *client_info, const char *server_info, const char *peer_name,
+	const char *peer_info, int peer_colors, const byte *queued, int queued_size,
+	int queued_maxsize, unsigned autocvar_calls)
+{
+	qboolean handled;
+	live_capture_autocvar = true;
+	handled = Cmd_ExecuteString (command, src_command);
+	live_capture_autocvar = false;
+	LiveCheck (handled, va ("%s reached native console command owner", label));
+	LiveCheckDeniedState (peer, name, top, bottom, client_info, server_info,
+		peer_name, peer_info, peer_colors, queued, queued_size,
+		queued_maxsize, autocvar_calls);
+	fprintf (stdout, "METADATA_LIVE_REFUSAL stage=%s owner_reached=%d queued_unchanged=%d\n",
+		label, handled, cls.message.cursize == queued_size &&
+		!memcmp (cls.message.data, queued, queued_size));
+}
+
+static void LiveRetry (const char *stage, const char *command,
+	const char *const *expected, unsigned expected_count)
+{
+	qboolean handled = Cmd_ExecuteString (command, src_command);
+	LiveCheck (handled, va ("%s retry reached native console command owner", stage));
+	LiveCheck (cls.message.cursize > 0,
+		va ("%s retry queued native reliable command bytes", stage));
+	CL_SendCmd ();
+	LiveCheck (!cls.message.cursize,
+		va ("%s retry reached local reliable transport", stage));
+	LiveRunNativeFrame ();
+	LiveCompareCommands (stage, expected, expected_count);
+}
+
+static void VerifyLiveAdmission (client_t *peer)
+{
+	live_cvar_snapshot_t name, top, bottom;
+	char client_info[sizeof (cls.userinfo)];
+	char server_info[sizeof (svs.serverinfo)];
+	char peer_name[sizeof (peer->name)];
+	char peer_info[sizeof (peer->userinfo)];
+	byte queued[NET_MAXMESSAGE];
+	int queued_size, queued_maxsize, peer_colors;
+	unsigned autocvar_calls;
+	const char *expected[3];
+	char value[CLIENT_USER_INFO_STRING_SIZE];
+
+	assert (cls.state == ca_connected && cls.netcon && cls.signon >= SIGNONS &&
+		peer->active && peer->spawned);
+	assert (!cls.message.cursize && !cls.message.overflowed);
+	assert (cls.message.maxsize > 0 && cls.message.maxsize <= sizeof (queued));
+	LiveCvarSnapshot (&name, &cl_name);
+	LiveCvarSnapshot (&top, &cl_topcolor);
+	LiveCvarSnapshot (&bottom, &cl_bottomcolor);
+	q_strlcpy (client_info, cls.userinfo, sizeof (client_info));
+	q_strlcpy (server_info, svs.serverinfo, sizeof (server_info));
+	q_strlcpy (peer_name, peer->name, sizeof (peer_name));
+	q_strlcpy (peer_info, peer->userinfo, sizeof (peer_info));
+	peer_colors = peer->colors;
+	autocvar_calls = live_autocvar_calls;
+
+	/* The real reliable client buffer is held at its full native capacity.
+	 * clc_nop bytes create pressure without inventing commands or server state. */
+	hold_client_send = true;
+	while (cls.message.cursize < cls.message.maxsize)
+		MSG_WriteByte (&cls.message, clc_nop);
+	assert (cls.message.cursize == cls.message.maxsize && !cls.message.overflowed);
+	queued_size = cls.message.cursize;
+	queued_maxsize = cls.message.maxsize;
+	memcpy (queued, cls.message.data, queued_size);
+
+	LiveAttemptRefusal ("set", "set topcolor 5", peer, &name, &top, &bottom,
+		client_info, server_info, peer_name, peer_info, peer_colors, queued,
+		queued_size, queued_maxsize, autocvar_calls);
+	LiveAttemptRefusal ("seta", "seta topcolor 6", peer, &name, &top, &bottom,
+		client_info, server_info, peer_name, peer_info, peer_colors, queued,
+		queued_size, queued_maxsize, autocvar_calls);
+	LiveCheck (!(cl_topcolor.flags & CVAR_SETA) &&
+		cl_topcolor.flags == top.flags,
+		"refused seta added no persistence flags");
+	LiveAttemptRefusal ("name", "name refusal_name", peer, &name, &top, &bottom,
+		client_info, server_info, peer_name, peer_info, peer_colors, queued,
+		queued_size, queued_maxsize, autocvar_calls);
+	LiveAttemptRefusal ("color", "color 3 4", peer, &name, &top, &bottom,
+		client_info, server_info, peer_name, peer_info, peer_colors, queued,
+		queued_size, queued_maxsize, autocvar_calls);
+	LiveAttemptRefusal ("setinfo", "setinfo fixture_key refused", peer,
+		&name, &top, &bottom, client_info, server_info, peer_name, peer_info,
+		peer_colors, queued, queued_size, queued_maxsize, autocvar_calls);
+
+	hold_client_send = false;
+	CL_SendCmd ();
+	LiveCheck (!cls.message.cursize,
+		"held reliable pressure drained through native local transport");
+	LiveRunNativeFrame ();
+	LiveCheck (!live_native_command_count,
+		"pressure drain contained no fabricated client commands");
+
+	expected[0] = "color \"5\" \"0\"\n";
+	LiveRetry ("set", "set topcolor 5", expected, 1);
+	LiveCheck (!strcmp (cl_topcolor.string, "5") && peer->colors == 0x50,
+		"set retry updated native peer color state");
+	expected[0] = "color \"6\" \"0\"\n";
+	LiveRetry ("seta", "seta topcolor 6", expected, 1);
+	LiveCheck (!strcmp (cl_topcolor.string, "6") && peer->colors == 0x60 &&
+		(cl_topcolor.flags & CVAR_SETA),
+		"seta retry updated native peer and persistence flag");
+	/* The frozen wrapper contract retains setter emissions before its tail:
+	 * two complete name commands and three ordered color commands. */
+	expected[0] = "name \"retry_name\"\n";
+	expected[1] = "name \"retry_name\"\n";
+	LiveRetry ("name", "name retry_name", expected, 2);
+	LiveCheck (!strcmp (cl_name.string, "retry_name") &&
+		!strcmp (peer->name, "retry_name"),
+		"name retry updated native peer name");
+	expected[0] = "color \"3\" \"0\"\n";
+	expected[1] = "color \"3\" \"4\"\n";
+	expected[2] = "color \"3\" \"4\"\n";
+	LiveRetry ("color", "color 3 4", expected, 3);
+	LiveCheck (!strcmp (cl_topcolor.string, "3") &&
+		!strcmp (cl_bottomcolor.string, "4") && peer->colors == 0x34,
+		"color retry updated both native peer color nibbles");
+	expected[0] = "setinfo \"fixture_key\" \"retry_info\"\n";
+	LiveRetry ("setinfo", "setinfo fixture_key retry_info", expected, 1);
+	Info_GetKey (cls.userinfo, "fixture_key", value, sizeof (value));
+	LiveCheck (!strcmp (value, "retry_info"),
+		"setinfo retry updated local userinfo store");
+	Info_GetKey (peer->userinfo, "fixture_key", value, sizeof (value));
+	LiveCheck (!strcmp (value, "retry_info"),
+		"setinfo retry updated native peer userinfo");
+
+	if (!live_failures)
+		puts ("METADATA_LIVE_ADMISSION_PASSED refusals=5 retries=5 reliable=local-native parser=native-commands");
+	else
+		printf ("METADATA_LIVE_ADMISSION_FAILED failures=%u refusals=5 retries=5 parser_commands=%u\n",
+			live_failures, live_native_command_count);
+}
+
 static void VerifyUserinfoPublication (client_t *peer)
 {
 	static char payload[7100];
@@ -329,8 +615,16 @@ int main (int argc, char **argv)
 	}
 	for (int i = 1; i < argc; ++i)
 		if (!strcmp (argv[i], "-control-pressure")) control_pressure = true;
+		else if (!strcmp (argv[i], "-live-admission")) live_admission = true;
 	assert (mode);
+#ifndef METADATA_LIVE_ADMISSION_FIXTURE
+	/* Historical default links need no additional observers. Fail closed if
+	 * the opt-in case is requested without its two native observer wrappers. */
+	assert (!live_admission);
+#endif
 	assert (!strcmp (mode, "qsmi") || !strcmp (mode, "predinfo"));
+	assert (!live_admission || (!strcmp (mode, "qsmi") &&
+		!strcmp (signon_limit, "none") && !control_pressure));
 	assert (!strcmp (signon_limit, "none") || !strcmp (signon_limit, "exact") ||
 		!strcmp (signon_limit, "pressure") || !strcmp (signon_limit, "permanent"));
 	/* Reuse the native _Host_Frame abort boundary. Only persistent/static engine
@@ -413,6 +707,8 @@ int main (int argc, char **argv)
 		assert (name_pressure_observed && begin_pressure_observed);
 	for (int slot = 0; slot < MAX_SCOREBOARD; ++slot)
 		assert (!cl.scores[slot].colors || slot == 0);
+	if (live_admission)
+		VerifyLiveAdmission (peer);
 	if (!strcmp (mode, "qsmi")) VerifyUserinfoPublication (peer);
 	if (!strcmp (mode, "predinfo"))
 	{
@@ -431,5 +727,5 @@ int main (int argc, char **argv)
 		full_count, empty_full_count, increment_count, userinfo_count,
 		signon2_count, signon3_count, peer->spawned,
 		!strcmp (mode, "qsmi") ? "near-full-ordered-overlay" : "all-16-slots");
-	return 0;
+	return live_admission && live_failures ? 4 : 0;
 }

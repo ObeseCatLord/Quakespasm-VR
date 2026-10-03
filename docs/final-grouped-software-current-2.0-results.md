@@ -127,7 +127,9 @@ A disposable licensed id1 profile, explicit IPv4 loopback and disabled IPv6,
 -dedicated2/-nosound/-nosteamapi loads e1m1, prints native status and quits0.
 Native loader/dependency/startup/map/normal terminal behavior is established;
 no graphical desktop, XR, mic or connected gameplay follows. Engine SHA256
-0afcb00a1e0625a6678f27a4228f009ddca80d50977120e14c35b40beb923c3f.
+c002c0f1b669c206ccaa6ed4c09fc83e7fca36c30944e84719badec9561d63cc.
+The earlier0afcb00a hash refers to the installed pre-staging engine, before
+patchelf applies the package RUNPATH; staged and installed hashes are distinct.
 Nonfatal Steam-library/localization/MD5-skin warnings remain in the log.
 
 Earlier probe failures are retained: directly invoking a bundled Ubuntu loader
@@ -142,8 +144,46 @@ argv/status/debug logs.
 
 ## Still running or awaiting final execution
 
-Final shipping artifacts are underway;
+The current production0f277 shipping cohort is reconciled;
 protected-output test inputs/capture/checker compile and await GPU execution. Live-metadata refusal and autosave qualification reuse existing native fixtures. Remaining V rows,
 D01/D02 connected oracle/terminal evidence and final local Astra integration
 signoff stay open until their actual outcomes are recorded. These results must
 not silently substitute component passes for those completion boundaries.
+
+## Additional native metadata and autosave acceptance
+
+V03 opt-in producer admission now runs actual local signon, native cvar/Cmd
+front doors, full reliable-buffer refusal and explicit successful retry through
+the server parser. Five refused mutations preserve cvar strings/defaults/values/
+flags, client/server/peer metadata and every queued byte; admitted retries reach
+native peer stores with complete ordered commands. Six historic profiles also
+pass in both the original build recipe and the optional enhanced build. The
+extra wrappers are gated by METADATA_LIVE_ADMISSION_FIXTURE so original links
+remain valid. Main integrated build_default/build_live_admission/default/live
+all exit0 at FastGames/qsvr-metadata-v03-integrated-ykidgucc.
+
+The autocvar wrapper observes no calls in this stock profile, but these cvars
+have no loaded AUTOCVAR binding. This does not establish actual bound-VM
+preservation or close all V03. Initial concurrent old-recipe wrapper-link
+failure is retained and corrected by the optional compilation guard.
+
+V06 opt-in autosave uses actual initialized co-op loopback, loaded stock QC,
+native v7 writer and ordinary load. It rotates two slots, defers too-early
+progress without consuming it, refuses a temporary-file open failure while
+preserving both previous saves/baselines/slot, retries after native backoff, then
+loads the written armor value and continues native movement. Main verifies
+COOP_AUTOSAVE_NATIVE_PASSED and LOCAL_LOAD_NATIVE_PASSED with exit0 in
+FastGames/qsvr-coop-autosave-v06-qualification-_ej20fth. Owner times and secret
+counters are fixture-controlled; failure is temporary-file open, not final
+rename. Other save dialect/identity/hub acceptance remains with V06.
+
+## Platform cohort reconciliation
+
+Windows native Release/Debug compile/link/package, Linux x86-64 package and
+native Foundry AArch64 build/package complete from production0f277d1f. Main
+independently hashes all653Linux and650ARM inventory records, and both Windows
+16-artifact inventories. All match. Test/docs commits through6e06b824 change
+no shipping input. Receipts: FastGames/qsvr-platform-final-2mx9pur9,
+source-comparison.json, scope-results.json, main-inventory-verified.json and
+platform-specific manifests. New production discovery repairs will require
+affected engine/source reconciliation before final A01 closure.

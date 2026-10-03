@@ -18,12 +18,20 @@ def main():
                         default=["qsmi", "predinfo"])
     parser.add_argument("--no-edge-cases", action="store_true",
                         help="run only the selected offer profiles")
+    parser.add_argument("--live-admission", action="store_true",
+                        help="also run the opt-in connected live refusal/retry case")
+    parser.add_argument("--artifact-root", type=Path,
+                        help="write disposable profiles and logs under this new directory")
     parser.add_argument("--timeout", type=int, default=45)
     args = parser.parse_args()
     if not (args.basedir / "id1").is_dir():
         raise SystemExit(f"stock id1 directory is missing: {args.basedir / 'id1'}")
 
-    root = Path(tempfile.mkdtemp(prefix="qsvr-metadata-publication-native-"))
+    if args.artifact_root:
+        root = args.artifact_root.expanduser().resolve()
+        root.mkdir(parents=True, exist_ok=False)
+    else:
+        root = Path(tempfile.mkdtemp(prefix="qsvr-metadata-publication-native-"))
     print(f"logs={root}")
     cases = [(offer, "none", False) for offer in args.offers]
     if not args.no_edge_cases and "qsmi" in args.offers:
@@ -47,7 +55,7 @@ def main():
                 (id1 / name).symlink_to(asset.resolve())
         command = [
             str(Path(args.binary).resolve()), "-dedicated", "16", "-noudp",
-            "-nosound", "-basedir", str(profile), "-userdir", str(profile),
+            "-nosound", "-nosteamapi", "-basedir", str(profile), "-userdir", str(profile),
             "-metadata-offer", offer, "-metadata-limit", limit,
         ]
         if control_pressure:
@@ -71,6 +79,46 @@ def main():
             print("\n".join(result.stdout.splitlines()[-32:]))
             raise SystemExit(
                 f"FAIL offer={offer} limit={limit} control={control_pressure} "
+                f"exit={result.returncode}; log={log}"
+            )
+        print(next(line for line in result.stdout.splitlines() if marker in line))
+
+    if args.live_admission:
+        offer, limit = "qsmi", "none"
+        profile = root / "qsmi-live-admission"
+        id1 = profile / "id1"
+        id1.mkdir(parents=True)
+        for name in ("pak0.pak", "pak1.pak"):
+            asset = args.basedir / "id1" / name
+            if asset.exists():
+                (id1 / name).symlink_to(asset.resolve())
+        command = [
+            str(Path(args.binary).resolve()), "-dedicated", "16", "-noudp",
+            "-nosound", "-nosteamapi", "-basedir", str(profile),
+            "-userdir", str(profile), "-metadata-offer", offer,
+            "-metadata-limit", limit, "-live-admission",
+        ]
+        log = profile / "fixture.log"
+        try:
+            result = subprocess.run(
+                command, cwd=profile, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, timeout=args.timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            output = error.stdout or ""
+            if isinstance(output, bytes):
+                output = output.decode(errors="replace")
+            log.write_text(output)
+            print("\n".join(output.splitlines()[-40:]))
+            raise SystemExit(f"FAIL live-admission timed out; log={log}")
+        log.write_text(result.stdout)
+        marker = "METADATA_LIVE_ADMISSION_PASSED "
+        native_marker = f"METADATA_NATIVE_PASSED offer={offer} limit={limit} "
+        if (result.returncode or marker not in result.stdout or
+                native_marker not in result.stdout):
+            print("\n".join(result.stdout.splitlines()[-48:]))
+            raise SystemExit(
+                f"FAIL live-admission offer={offer} limit={limit} "
                 f"exit={result.returncode}; log={log}"
             )
         print(next(line for line in result.stdout.splitlines() if marker in line))

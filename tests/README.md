@@ -4068,3 +4068,20 @@ to baseline on replacement/clear/shutdown. This
 is bounded CPU software qualification, not microphone/listening/callback/race
 qualification. [Plan](../docs/room-monitor-native-final-2.0-plan.md),
 [results and limits](../docs/room-monitor-native-current-2.0-results.md).
+
+## Optional final producer and autosave cases
+
+The metadata fixture retains its historic build/link recipe. To enable its
+actual local producer refusal/retry case, compile with
+`-DMETADATA_LIVE_ADMISSION_FIXTURE` and add link wrappers
+`-Wl,--wrap=PR_AutoCvarChanged -Wl,--wrap=Cmd_ExecuteString` to the existing
+metadata wrappers. Run `run_metadata_publication_native.py --live-admission`
+with the corresponding binary and licensed basedir; `--artifact-root` retains
+profiles in a new empty directory. This checks native producer/parser state and
+reliable output, not a loaded bound-autocvar VM.
+
+The local-load fixture supports `--cases autosave`; it requires assertions and
+uses a native two-player co-op save profile. `--keep-profiles /path/to/output`
+retains native v7 saves/logs. Rotation, interval deferral, temporary-file-open
+failure/backoff/retry and actual restored-player movement run. It does not
+exercise final rename failure or all supported save dialects.

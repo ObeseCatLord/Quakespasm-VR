@@ -6,6 +6,11 @@
 #define MIXED_NATIVE_FIXTURE_ENTRY ImportedLocalMixedMain
 #define NEGOTIATION_FIXTURE_CUSTOM_CAN_SEND
 #define MIXED_FIXTURE_CUSTOM_UNRELIABLE
+#include <sys/stat.h>
+#include <unistd.h>
+#ifdef NDEBUG
+#error "local native fixture requires assertions"
+#endif
 #include "mixed_native_fixture.c"
 
 static qboolean hold_signon = true;
@@ -252,6 +257,159 @@ static client_t *LocalLoad (const char *command)
 	return peer;
 }
 
+static void LocalAutosaveFrameAt (double wall_time, double game_time)
+{
+	/* The trigger owner is native; only clocks/QC progress are fixture-controlled. */
+	realtime = wall_time;
+	qcvm->time = game_time;
+	Host_CoopAutosaveFrame ();
+}
+
+static char *LocalReadAutosave (const char *name)
+{
+	char path[MAX_OSPATH];
+	FILE *file;
+	long length;
+	char *contents;
+	assert (q_snprintf (path, sizeof (path), "%s/%s", com_gamedir, name) > 0);
+	file = fopen (path, "rb");
+	assert (file && fseek (file, 0, SEEK_END) == 0);
+	length = ftell (file);
+	assert (length > 0 && fseek (file, 0, SEEK_SET) == 0);
+	contents = malloc ((size_t)length + 1);
+	assert (contents && fread (contents, 1, (size_t)length, file) == (size_t)length);
+	assert (fclose (file) == 0);
+	contents[length] = '\0';
+	return contents;
+}
+
+static void LocalAssertCoopAutosave (const char *name, float armor)
+{
+	char *contents = LocalReadAutosave (name);
+	char expected[96];
+	char *version_end, *comment_end, *clients_end;
+	long version = strtol (contents, &version_end, 10);
+	long maxclients;
+	assert (version == 7 && version_end > contents && *version_end == '\n');
+	comment_end = strchr (version_end + 1, '\n');
+	assert (comment_end);
+	maxclients = strtol (comment_end + 1, &clients_end, 10);
+	assert (maxclients == 2 && clients_end > comment_end + 1 && *clients_end == '\n');
+	q_snprintf (expected, sizeof (expected), "\"armorvalue\" \"%f\"", (double)armor);
+	assert (strstr (contents, expected));
+	free (contents);
+}
+
+static void LocalCoopAutosave (client_t *peer)
+{
+	char temp_path[MAX_OSPATH];
+	char *slot0_before, *slot0_after, *slot1_before, *slot1_after;
+	const float first_armor = 41.25f;
+	const float second_armor = 82.5f;
+	const float recovered_armor = 123.25f;
+	const double first_time = 10.0;
+	const double second_time = 11.1;
+	int prior_secrets, prior_kill_bucket, prior_serverflags, prior_next_slot;
+	double prior_last_realtime, retry_deadline, retry_snapshot;
+
+	assert (svs.maxclients == 2 && coop.value && !deathmatch.value &&
+		sv_save_multiplayer.value && peer->active && peer->spawned &&
+		peer->knowntoqc && peer->netconnection && peer->netconnection->driverdata == cls.netcon);
+	Cvar_SetQuick (&sv_coop_autosave, "1");
+	Cvar_SetQuick (&sv_coop_autosave_slots, "2");
+	Cvar_SetQuick (&sv_coop_autosave_min_interval, "1");
+	SaveFixture ("manual-anchor", 7);
+	assert (!strcmp (sv.lastsave, "manual-anchor"));
+
+	peer->edict->v.armorvalue = first_armor;
+	LocalAutosaveFrameAt (first_time, 3.25);
+	assert (sv.coop_autosave_mapstart_done && sv.coop_autosave_next_slot == 1 &&
+		sv.coop_autosave_last_realtime == first_time && !sv.coop_autosave_retry_realtime &&
+		!strcmp (sv.lastsave, "manual-anchor"));
+	LocalAssertCoopAutosave ("coop_auto0.sav", first_armor);
+
+	/* The fixture advances native realtime/QC time and the stock QC secret
+	 * counter directly to create deterministic triggers; it never constructs
+	 * save data or substitutes for the writer. A live progress change below
+	 * proves the minimum interval defers the writer without consuming it. */
+	peer->edict->v.armorvalue = second_armor;
+	pr_global_struct->found_secrets = 1;
+	LocalAutosaveFrameAt (first_time + 0.5, 3.30);
+	assert (sv.coop_autosave_next_slot == 1 &&
+		sv.coop_autosave_last_realtime == first_time &&
+		sv.coop_autosave_last_secrets == 0 && !sv.coop_autosave_retry_realtime);
+	LocalAutosaveFrameAt (second_time, 3.35);
+	assert (sv.coop_autosave_next_slot == 0 &&
+		sv.coop_autosave_last_realtime == second_time &&
+		sv.coop_autosave_last_secrets == 1 && !sv.coop_autosave_retry_realtime &&
+		!strcmp (sv.lastsave, "manual-anchor"));
+	LocalAssertCoopAutosave ("coop_auto1.sav", second_armor);
+
+	/* Preserve both native save files, then obstruct only the next slot's
+	 * temporary-file open. This qualifies open failure, not rename failure. */
+	slot0_before = LocalReadAutosave ("coop_auto0.sav");
+	slot1_before = LocalReadAutosave ("coop_auto1.sav");
+	LocalAssertCoopAutosave ("coop_auto0.sav", first_armor);
+	peer->edict->v.armorvalue = recovered_armor;
+	pr_global_struct->found_secrets = 2;
+	assert (q_snprintf (temp_path, sizeof (temp_path), "%s/coop_auto0.sav.tmp", com_gamedir) > 0);
+	assert (mkdir (temp_path, 0700) == 0);
+	prior_secrets = sv.coop_autosave_last_secrets;
+	prior_kill_bucket = sv.coop_autosave_last_kill_bucket;
+	prior_serverflags = sv.coop_autosave_last_serverflags;
+	prior_next_slot = sv.coop_autosave_next_slot;
+	prior_last_realtime = sv.coop_autosave_last_realtime;
+	LocalAutosaveFrameAt (second_time + 1.1, 3.40);
+	assert (sv.coop_autosave_next_slot == prior_next_slot &&
+		sv.coop_autosave_last_secrets == prior_secrets &&
+		sv.coop_autosave_last_kill_bucket == prior_kill_bucket &&
+		sv.coop_autosave_last_serverflags == prior_serverflags &&
+		sv.coop_autosave_last_realtime == prior_last_realtime &&
+		sv.coop_autosave_retry_realtime > realtime &&
+		!strcmp (sv.lastsave, "manual-anchor"));
+	retry_deadline = sv.coop_autosave_retry_realtime;
+	slot0_after = LocalReadAutosave ("coop_auto0.sav");
+	slot1_after = LocalReadAutosave ("coop_auto1.sav");
+	assert (!strcmp (slot0_before, slot0_after) && !strcmp (slot1_before, slot1_after));
+	free (slot0_after);
+	free (slot1_after);
+
+	/* While the real retry deadline is pending, another owner call must leave
+	 * both progress and retry state untouched and the old slot byte-identical. */
+	retry_snapshot = sv.coop_autosave_retry_realtime;
+	LocalAutosaveFrameAt (retry_deadline - 0.01, 3.45);
+	assert (sv.coop_autosave_next_slot == prior_next_slot &&
+		sv.coop_autosave_last_secrets == prior_secrets &&
+		sv.coop_autosave_last_realtime == prior_last_realtime &&
+		sv.coop_autosave_retry_realtime == retry_snapshot);
+	slot0_after = LocalReadAutosave ("coop_auto0.sav");
+	assert (!strcmp (slot0_before, slot0_after));
+	free (slot0_after);
+	assert (rmdir (temp_path) == 0);
+
+	LocalAutosaveFrameAt (retry_deadline + 0.01, 3.50);
+	assert (sv.coop_autosave_next_slot == 1 &&
+		sv.coop_autosave_last_realtime == retry_deadline + 0.01 &&
+		sv.coop_autosave_last_secrets == 2 && !sv.coop_autosave_retry_realtime &&
+		!strcmp (sv.lastsave, "manual-anchor"));
+	LocalAssertCoopAutosave ("coop_auto0.sav", recovered_armor);
+	slot1_after = LocalReadAutosave ("coop_auto1.sav");
+	assert (!strcmp (slot1_before, slot1_after));
+	free (slot1_after);
+	LocalAutosaveFrameAt (retry_deadline + 0.02, 3.55);
+	assert (sv.coop_autosave_next_slot == 1 &&
+		sv.coop_autosave_last_realtime == retry_deadline + 0.01 &&
+		!sv.coop_autosave_retry_realtime);
+	free (slot0_before);
+	free (slot1_before);
+
+	Cvar_SetQuick (&sv_coop_autosave, "0");
+	peer = LocalLoad ("load coop_auto0");
+	assert (fabsf (peer->edict->v.armorvalue - recovered_armor) < 0.0001f);
+	LocalMovement (peer, true, true);
+	puts ("COOP_AUTOSAVE_NATIVE_PASSED stockQC slots=2 rotate=coop_auto0/coop_auto1 open-failure=tmp-directory backoff=recovery load=restored-player-and-movement");
+}
+
 static void LocalRewriteSaveHeader (const char *name, qboolean kex,
 	int field, const char *bad)
 {
@@ -323,6 +481,12 @@ int main (int argc, char **argv)
 	client_t *peer = LocalSignon (false, public);
 	const qboolean selected = !public && !disabled;
 	assert (peer->private_pmove_walk_selected == selected);
+	if (!strcmp (scenario, "autosave"))
+	{
+		LocalCoopAutosave (peer);
+		printf ("LOCAL_LOAD_NATIVE_PASSED case=%s loopback commands/physics/full snapshots; prepared renderer signon\n", scenario);
+		return 0;
+	}
 	LocalMovement (peer, !public, selected);
 	if (!strcmp (scenario, "invalid-save"))
 		LocalInvalidSave (peer);

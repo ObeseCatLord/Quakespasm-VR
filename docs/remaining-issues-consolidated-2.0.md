@@ -104,10 +104,13 @@ complete. Controlled NVIDIA retries still fail device allocation; owned test
 runtimes are stopped without GPU resets, driver reloads or system changes.
 
 A01 refreshed Linux and Windows Release/Debug builds succeed from production
-0f277d1f; native ARM refresh and final source/package reconciliation are underway.
+0f277d1f; native ARM refresh and final source/package reconciliation complete with matching inventories.
 Protected-output inputs/capture/checker are reviewed and compile/link against
-current native renderer; no GPU execution pass. All V rows and A02 retain their
-stated completion boundaries. Tests/docs-only commits need no engine rebuild.
+current native renderer; no GPU execution pass. Additional V03 producer refusal/retry and V06 autosave rotation/open-failure/retry
+boundaries pass; their broader stated obligations remain. A new verified V01/NET-020
+startup registration gap and adjacent RCON/query admission defects are under the
+[reviewed narrow repair plan](discovery-startup-final-2.0-plan.md). All V rows and A02
+retain their stated completion boundaries. Tests/docs-only commits need no engine rebuild.
 
 ## Execution order
 
