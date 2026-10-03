@@ -56,7 +56,8 @@ evidence; unavailable parts no longer gate completion.
   native typed-reference/lifetime adapter; implementation and retained-free
   guard pass affected lifecycle/cancellation
   checks under the [reviewed plan](coop-save-reference-final-2.0-review-brief.md).
-  Shipping refresh remains required.
+  Shipping refresh/source/package reconciliation and matching native startup
+  now pass; final integration review remains.
 - Accepted CSQC create/update/split-ACK recovery/re-enable/lost-removal/ID reuse
   at captured transport; actual native typed cursor/weapon producer/parser/loaded
   QC now passes at the documented captured-delivery boundary.
@@ -71,15 +72,15 @@ evidence; unavailable parts no longer gate completion.
   request equivalence. No further software implementation issue is established. Actual unavailable-XR bootstrap/
   retry/disable keeps native desktop movement and diagnostics correct, quit0.
   Listen-server RCON error recovery now passes through the available CPU route.
-- Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug/Release
-  build/package/source/inventory freshness accepted. The clean Windows Release
-  build passed with /O2, /GL and LTCG; main verified all16 staged files including
-  all13 x64 PEs. Earlier compiler/linker failures remain historical evidence.
-  The committed V06 production fix d5cfff6c requires affected engines to refresh;
-  all four platform refreshes are now underway.
-  Planned runnable software checks are settled at the bounded outcomes in the
-  grouped ledger. Final same-Astra integration signoff follows current artifact
-  reconciliation; unavailable parts remain excluded rather than reported as pass.
+- Shipping d5cfff6c: Linux x86-64, native Linux ARM and Windows Debug/Release
+  builds/packages/freshness accepted, with main independent committed-source/
+  actual-file/hash/symlink/machine-header checks. Windows Release retains
+  /O2 /GL and LTCG. Matching Linux packaged desktop movement/fire/sign-on/quit
+  and native ARM dedicated map/status/quit pass. Failed earlier observers remain
+  retained separately from native terminal outcomes.
+- Only final same-local-Astra integration disposition/signoff remains. Planned
+  runnable software checks are settled at bounded outcomes in the grouped
+  ledger; unavailable parts remain excluded rather than reported as pass.
 
 D01 retains bounded client-prediction evidence and the separate incompatible
 short-jump-oracle failure; current server displacement does not replace client

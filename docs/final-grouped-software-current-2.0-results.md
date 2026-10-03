@@ -868,3 +868,57 @@ actual transport receipts. FastGames/qsvr-c06-qBqclD/{validation.json,
 main-verified.json}, attempt02. Immutable source079/native225, no production
 edits. This is native required-model cancellation, distinct from optional
 paired-model retirement and canonical filename lookup.
+
+
+## Final d5cfff6c shipping source and four-platform packages
+
+All four final builds/packages pass from exact production
+d5cfff6ce4cd5c36a75395aa02909f01093b4c51. Main regenerates the committed git
+archive and verifies exact SHA2561f782e9e6d016a773de5b08eb1a8a5d41b6a931f5691b9a0fb37eb04a8fcc099,
+all1345archived source-file hashes and each actual package entry. Dirty/untracked
+inputs are excluded; later commits change docs only. Production differences
+from previously qualified079 are four reviewed V06 files. Dependency libraries
+and source closure are reused, with fresh227Unix and232Windows engine objects
+including110Windows shader objects. No stale object/engine cache was copied.
+
+Linux653entries/45ELF64 and native Foundry ARM652entries/45ELF64 pass main byte,
+symlink-target and machine-header checks. ARM's two additional existing recipe
+provenance files are identified, with unchanged dependency/library closure.
+Unix staging applies recorded patchelf RUNPATH $ORIGIN/../lib: installed/staged
+hashes legitimately differ. Windows Debug and optimized Release each have16
+verified files/13x64PEs/two licenses/fresh PDB. Native MSBuild exits0; main checks
+actual PE headers, file hashes/sizes and inventories. Release uses observed
+HostX64 v143 /O2 /GL and /LTCG:incremental. No optimization downgrade, independent
+PDB GUID claim, system installation or deployment. Earlier compiler/linker
+failures and historical packages remain preserved; those engines are stale
+against this source. Main receipts: FastGames/qsvr-platform-discovery-d5cfff6c-
+kqnz514s/{main-all-platforms-verified.json,scope-results.json}.
+
+| Platform | Actual staged engine SHA256 |
+| --- | --- |
+| Linux x86-64 | 3ffd3418f4c4706a1b05a1894ab97de222a6b077de37dd3806e0213976bcf3b2 |
+| Linux ARM64 | c1860ecf4be0e73a0e0c9b91228eeb0e2148efc37f1e5b3517e92019d90e44c3 |
+| Windows Debug | 974461a9a455d4891bb8e87c78d52b2780cd3aa788b6ad2da877f49cfbd6556e |
+| Windows Release | 95cef0c70a45fd02d317094ef23c42bd24d2402ad572ea43d9a2766096dff06d |
+
+## Matching final shipping Linux and ARM startup
+
+The exact staged Linux package runs actual SDL3/Vulkan with the private signed
+CPU driver, no SDK LD_LIBRARY_PATH override. Native loaded e1m1/sign-on4: held
+forward/attack moves the player, consumes one shell, advances completed private
+move10 and settles; native quit/observer/Xvfb0. Main verifies exact staged engine
+and result hashes at FastGames/qsvr-d5-shipping-startup-olv2see5/main-verified.json.
+This is ordinary desktop gameplay/packaged runtime, not current physical XR.
+
+The matching staged ARM package runs dedicated mode on native AArch64 in the
+accepted UbuntuARM image, network=none, read-only package/assets/private profile,
+no LD_LIBRARY_PATH override. Actual start/e1m1 native checklists have18positive
+fields and status prints both maps/zero clients. Native container exits0 with
+no OOM/restart; engine bytes match before/after. Main independently verifies
+container identity/terminal state, log/checklist/transport/source hashes and
+same-process evidence at FastGames/qsvr-d5-arm-startup-x5lqff67/main-verified.json.
+Buffered-output/attach observer exits1/1 and helper137 remain recorded separately:
+commands reached the same live native stdin pipe; none of those failed observers
+is reported as successful. This proves dedicated map/status/quit, not graphics
+or network gameplay. No active owned build/test processes remain. Final same
+Astra integration review is pending; this is not whole-goal signoff alone.
