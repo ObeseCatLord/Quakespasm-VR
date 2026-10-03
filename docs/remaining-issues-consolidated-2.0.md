@@ -112,7 +112,10 @@ startup registration gap and adjacent RCON/query admission defects are repaired
 at58fb8864; ten actual native UDP cases pass under the
 [reviewed narrow repair plan](discovery-startup-final-2.0-plan.md). All V rows and A02
 retain their stated completion boundaries. Tests/docs-only commits need no engine rebuild. Shipping engines are refreshing
-for58fb8864. The latest controlled Nvidia allocation still reports reset required;
+for58fb8864; connected RCON reveals a borrowed-SSQC context failure. Its
+[donor-reuse review](rcon-qc-context-final-2.0-plan.md) must settle before final
+source/artifact closure. Actual authored v6 native load/pending-slot/quit passes;
+restored living-player movement remains pending. The latest controlled Nvidia allocation still reports reset required;
 owned GPU test peers/runtime are stopped.
 
 ## Execution order

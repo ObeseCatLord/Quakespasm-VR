@@ -227,3 +227,30 @@ protected-output success follows. All owned peers stop and isolated null runtime
 exits0. No resets, driver reloads, system graphics changes or unrelated process
 termination. Receipts: FastGames/qsvr-final-gpu-current-kyud4ace, connected
 result/logs and runtime exit.json. Further GPU qualification stays paused.
+
+## Connected RCON diagnosis and authored v6 load
+
+The wire probe's first run waited for svc_serverinfo before answering the native
+cmd-pext query; it timed out after actual reliable packet0/ACK. Main corrected
+that fixture ordering by inspecting SV_SendServerinfo/SV_Pext_f, retaining all
+protocol/ACK/movement predicates and the failed receipt. The next current run
+reads actual serverinfo15 and completes five client reliable commands with
+actual ACKs plus seven server reliable fragments. First RCON edict1 then makes
+the native server exit1 with PR_SwitchQCVM: A qcvm was already active.
+
+Main resolves the stack to RCON -> native console command -> borrowed SSQC
+context in SV_RunClients. Read-only QSS-M already suspends/restores that VM and
+restores the driver/ordinary shutdown guard. This is a demonstrated existing
+V01/NET-020 defect, not a Nvidia failure or a new checklist feature. A bounded
+[reference-reuse plan](rcon-qc-context-final-2.0-plan.md) precedes the repair and
+local Astra review. Receipts: FastGames/qsvr-native-discovery-repaired-bq1zanaw/
+native-udp-coexist-mwrsybya and qsvr-udp-coexist-requalified-r3t24gfd.
+
+Independent V06 qualification loads an actual read-only inherited v6 id1 save
+through the current ordinary dedicated engine, using copied save bytes/private
+profile and linked licensed packs. Native status reports start/16maxplayers,
+reserved player edict1 stays free pending restored identity, and normal quit0.
+Source-save hash is unchanged. This establishes actual authored v6 load and
+pending-slot admission only; saved living-player restore/movement remains
+prepared for after the RCON repair. No generated save/header substitution, GPU
+or physical inputs. Receipt: FastGames/qsvr-authored-v6-save-final-0bwynx03.
