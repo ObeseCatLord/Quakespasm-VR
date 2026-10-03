@@ -45,6 +45,11 @@ User order: complete enumeration, resolve all implementation issues, then run
 combined final tests. Existing F01–F10 feature/acceptance scope below is retained;
 no obsolete platform/storage/GPU or already accepted subcase is reopened.
 
+Production repairs committed at0f277d1f. Initial grouped final verification:
+[22native cases, six UBSan components and13audio checks](final-grouped-software-current-2.0-results.md).
+D03/D04 targeted runtime acceptance, remaining V rows and final integration
+remain open; source implementation and whole-goal completion are distinguished.
+
 ## One remaining list
 
 | ID | Priority / owner | Remaining work and objective completion boundary |

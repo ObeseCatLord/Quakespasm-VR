@@ -26,6 +26,16 @@ except ValueError:
 if not 0 <= expected_peers <= 64:
     raise RuntimeError('QSVR_LOCAL_EXPECT_PEERS must be between 0 and 64')
 result_path = os.environ.get('QSVR_LOCAL_RESULT')
+
+# Preserve contemporaneous native failure ownership before batch cleanup.
+def capture_abort_stack(event):
+    if isinstance(event, gdb.SignalEvent) and event.stop_signal == 'SIGABRT':
+        text = gdb.execute('thread apply all bt', to_string=True)
+        if result_path:
+            with open(result_path + '.abort-stack.txt', 'w') as output:
+                output.write(text)
+gdb.events.stop.connect(capture_abort_stack)
+
 ready_path = os.environ.get('QSVR_LOCAL_MAP_READY') or None
 assert_action_ack = os.environ.get('QSVR_LOCAL_ASSERT_ACTION_ACK') == '1'
 assert_move_stats = os.environ.get('QSVR_LOCAL_ASSERT_MOVE_STATS') == '1'
@@ -104,6 +114,10 @@ def sample(label):
     origin = [float(gdb.parse_and_eval('cl.entities[%d].netstate.origin[%d]' %
                                        (owner, axis))) for axis in range(3)]
     state = dict(label=label, signon=integer('cls.signon'),
+                 realtime=float(gdb.parse_and_eval('realtime')),
+                 client_time=float(gdb.parse_and_eval('cl.time')),
+                 frame_seconds=float(gdb.parse_and_eval('host_frametime')),
+                 velocity=[float(gdb.parse_and_eval('cl.velocity[%d]' % axis)) for axis in range(3)],
                  dialect=0 if upstream_peer else integer('cl.protocol_qsvr'),
                  legacy=0 if upstream_peer else integer('cls.legacy_qsvr'),
                  permission=None if upstream_peer else bool(integer('cl.move_ack_prediction_allowed')),
@@ -193,6 +207,11 @@ def observe_prediction_frame(completed_framecount):
                                            current['displayed'])
             require(math.isfinite(displacement), 'nonfinite_displayed_displacement')
             prediction_probe['stable_replay_pairs'] += 1
+            if displacement >= prediction_probe['max_stable_replay_displacement']:
+                prediction_probe['largest_replay_pair'] = dict(
+                    previous=prediction_previous, current=current,
+                    elapsed_seconds=current['realtime']-prediction_previous['realtime'],
+                    displacement=displacement)
             prediction_probe['max_stable_replay_displacement'] = max(
                 prediction_probe['max_stable_replay_displacement'], displacement)
             if displacement >= 0.25:

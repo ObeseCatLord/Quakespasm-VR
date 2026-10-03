@@ -30,6 +30,16 @@ result = {'status':'running', 'scope':'focused XR admission, private VR command,
           'follow_up':['body/eye/muzzle geometry', 'roomscale movement and collision',
                        'weapon damage/effects and physical headset/controller qualification']}
 result_path = os.environ.get('QSVR_PINNED_VR_RESULT')
+
+# Preserve contemporaneous native failure ownership before batch cleanup.
+def capture_abort_stack(event):
+    if isinstance(event, gdb.SignalEvent) and event.stop_signal == 'SIGABRT':
+        text = gdb.execute('thread apply all bt', to_string=True)
+        if result_path:
+            with open(result_path + '.abort-stack.txt', 'w') as output:
+                output.write(text)
+gdb.events.stop.connect(capture_abort_stack)
+
 expect_prediction_text = os.environ.get('QSVR_PINNED_VR_EXPECT_SELECTED_PREDICTION', '0')
 if expect_prediction_text not in ('0', '1'):
     raise RuntimeError('QSVR_PINNED_VR_EXPECT_SELECTED_PREDICTION must be 0 or 1')
@@ -221,6 +231,9 @@ class ReplayCall(gdb.Breakpoint):
 def prediction_sample():
     owner = iv('cl.viewentity')
     return dict(owner=owner,
+        realtime=fv('realtime'), client_time=fv('cl.time'),
+        frame_seconds=fv('host_frametime'), velocity=vec('cl.velocity'),
+        pending_forward=fv('cl.pendingcmd.forwardmove'),
         origin=vec('cl.entities[%d].netstate.origin' % owner),
         displayed=vec('cl.entities[%d].origin' % owner),
         ack=iv('cl.ackedmovemessages'), sent=iv('cl.movemessages'),
@@ -271,6 +284,11 @@ def observe_prediction_frame(completed_framecount):
             displacement = distance3(prediction_previous['displayed'], current['displayed'])
             if not math.isfinite(displacement):
                 raise RuntimeError('nonfinite displayed-owner displacement')
+            if displacement >= prediction_probe['max_stable_candidate_displacement']:
+                prediction_probe['largest_candidate_pair'] = dict(
+                    previous=prediction_previous, current=current,
+                    elapsed_seconds=current['realtime']-prediction_previous['realtime'],
+                    displacement=displacement)
             prediction_probe['max_stable_candidate_displacement'] = round(max(
                 prediction_probe['max_stable_candidate_displacement'], displacement), 3)
             replay_pair_proven = current['replay_proven'] and prediction_previous['replay_proven']
@@ -316,6 +334,9 @@ class PrivateWire(gdb.Breakpoint):
                    'roomscale':vec('cmd->vr_roomscalemove')}
             if expect_selected_prediction:
                 rec['forwardmove'] = iv('cmd->forwardmove')
+                rec['seconds'] = fv('cmd->seconds')
+                rec['msec'] = iv('cmd->msec')
+                rec['servertime'] = fv('cmd->servertime')
             rec['finite'] = all(finite3(rec[k]) for k in ('relative_muzzle','hand_angles','roomscale'))
             if (expect_selected_prediction and fire_prediction_command is None and
                     phase == 'fire' and rec['attack'] and rec['forwardmove'] > 0 and
