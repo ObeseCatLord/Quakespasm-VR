@@ -5411,6 +5411,18 @@ static qboolean R_VRIKRefreshCachedSurfaces (r_vrik_skincache_t *cache)
 	return true;
 }
 
+#ifdef R_ALIAS_CACHE_TEST
+qboolean R_VRIKRefreshCachedSurfacesForTest (r_vrik_skincache_t *cache)
+{
+	return R_VRIKRefreshCachedSurfaces (cache);
+}
+
+aliashdr_t *R_VRIKRefreshPropSurfaceForTest (r_vrik_skincache_t *cache)
+{
+	return R_VRIKRefreshPropSurface (cache);
+}
+#endif
+
 static qboolean R_VRIKPrepareSkin (qmodel_t *model)
 {
 	r_avatar_humanoid_t humanoid;
