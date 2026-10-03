@@ -37,7 +37,8 @@ def main():
                 if asset.exists():
                     (id1 / name).symlink_to(asset.resolve())
             command = [args.binary, "-dedicated",
-                       "2" if scenario.startswith("pending") or scenario == "autosave" else "1",
+                       "2" if scenario.startswith("pending") or
+                       scenario in ("autosave", "coop-lifecycle") else "1",
                        "-noudp", "-nosound", "-basedir", directory, "-userdir", directory,
                        "-localcase", scenario]
             if scenario == "autosave":
@@ -55,6 +56,15 @@ def main():
             markers = [marker]
             if scenario == "autosave":
                 markers.append("COOP_AUTOSAVE_NATIVE_PASSED ")
+            elif scenario == "coop-lifecycle":
+                markers.extend([
+                    "COOP_COLLISION_FF_TELEFRAG_PASSED ",
+                    "COOP_SHARED_PICKUPS_PASSED ",
+                    "COOP_V07_SAVE_PASSED ",
+                    "COOP_V07_REVERSE_RECONNECT_PASSED ",
+                    "COOP_RESPAWN_COOLDOWN_NEAR_PASSED ",
+                    "COOP_V07_REFERENCE_IDENTITY_PASSED ",
+                ])
             if result.returncode or any(required not in result.stdout for required in markers):
                 print(result.stdout)
                 if args.keep_profiles:

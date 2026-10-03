@@ -67,8 +67,10 @@ static void LocalStrings (const char **commands, int count)
 	SV_RunClients ();
 }
 
-static client_t *LocalSignon (qboolean already_connected, qboolean public)
+static client_t *LocalSignonNamed (qboolean already_connected, qboolean public,
+	const char *identity)
 {
+	char name_command[128];
 	hold_signon = true;
 	if (!already_connected)
 	{
@@ -85,7 +87,9 @@ static client_t *LocalSignon (qboolean already_connected, qboolean public)
 	LocalStrings (offer, countof (offer));
 	Header (peer, public ? 0 : QSVR_PROTOCOL_PINNED);
 	SZ_Clear (&peer->message); // renderer resources are prepared after spawn
-	const char *spawn[] = {"name private", "spawn", "begin", "notarget 1"};
+	assert (q_snprintf (name_command, sizeof (name_command), "name %s",
+		identity && identity[0] ? identity : "private") > 0);
+	const char *spawn[] = {name_command, "spawn", "begin", "notarget 1"};
 	LocalStrings (spawn, countof (spawn));
 	assert (peer->spawned && peer->knowntoqc && !peer->edict->free);
 	SZ_Clear (&peer->message);
@@ -108,6 +112,11 @@ static client_t *LocalSignon (qboolean already_connected, qboolean public)
 	key_dest = key_game;
 	hold_signon = false;
 	return peer;
+}
+
+static client_t *LocalSignon (qboolean already_connected, qboolean public)
+{
+	return LocalSignonNamed (already_connected, public, "private");
 }
 
 static void LocalReceive (void)
@@ -241,7 +250,7 @@ static void SaveFixture (const char *name, int version)
 	fclose (file);
 }
 
-static client_t *LocalLoad (const char *command)
+static client_t *LocalLoadAs (const char *command, const char *identity)
 {
 	hold_signon = true;
 	/* Loading runs the real disconnect, server reconstruction and local
@@ -250,11 +259,16 @@ static client_t *LocalLoad (const char *command)
 	Cmd_ExecuteString (command, src_command);
 	assert (sv.active && cls.netcon && cls.signon == 0);
 	PR_SwitchQCVM (&sv.qcvm);
-	client_t *peer = LocalSignon (true, false);
+	client_t *peer = LocalSignonNamed (true, false, identity);
 	assert (!peer->private_cmd_queue_count && !peer->private_pmove_last_cmd_valid &&
 		peer->private_completed_move == 0 && !peer->lastmovemessage &&
 		cl.movemessages == 0 && cl.ackedmovemessages == -1 && !cl.move_snapshot_valid);
 	return peer;
+}
+
+static client_t *LocalLoad (const char *command)
+{
+	return LocalLoadAs (command, "private");
 }
 
 static void LocalAutosaveFrameAt (double wall_time, double game_time)
@@ -467,19 +481,368 @@ static void LocalInvalidSave (client_t *peer)
 	puts ("INVALID_SAVE_NATIVE_PASSED legacy/KEX skill/time refusals and valid recovery");
 }
 
+static edict_t *LocalFindClass (const char *classname)
+{
+	for (int i = svs.maxclients + 1; i < qcvm->num_edicts; ++i)
+	{
+		edict_t *ent = EDICT_NUM (i);
+		if (!ent->free && ent->v.classname &&
+			!q_strcasecmp (PR_GetString (ent->v.classname), classname))
+			return ent;
+	}
+	return NULL;
+}
+
+static edict_t *LocalFindUniqueCounter (void)
+{
+	for (int i = svs.maxclients + 1; i < qcvm->num_edicts; ++i)
+	{
+		edict_t *candidate = EDICT_NUM (i);
+		const char *name;
+		int matches = 0;
+		if (candidate->free || !candidate->v.classname ||
+			q_strcasecmp (PR_GetString (candidate->v.classname), "trigger_counter") ||
+			!candidate->v.targetname)
+			continue;
+		name = PR_GetString (candidate->v.targetname);
+		for (int j = svs.maxclients + 1; j < qcvm->num_edicts; ++j)
+		{
+			edict_t *ent = EDICT_NUM (j);
+			if (!ent->free && ent->v.targetname &&
+				!strcmp (PR_GetString (ent->v.targetname), name))
+				++matches;
+		}
+		if (matches == 1)
+			return candidate;
+	}
+	return NULL;
+}
+
+static eval_t *LocalFloatField (edict_t *ent, const char *name)
+{
+	ddef_t *field = ED_FindField (name);
+	assert (ent && !ent->free && field &&
+		(field->type & ~DEF_SAVEGLOBAL) == ev_float);
+	return GetEdictFieldValue (ent, field->ofs);
+}
+
+static void LocalApplyDamage (edict_t *target, edict_t *inflictor,
+	edict_t *attacker, float damage)
+{
+	dfunction_t *func = ED_FindFunction ("T_Damage");
+	int old_self = pr_global_struct->self;
+	int old_other = pr_global_struct->other;
+	assert (func && target && !target->free && inflictor && !inflictor->free &&
+		attacker && !attacker->free);
+	pr_global_struct->time = qcvm->time;
+	pr_global_struct->self = EDICT_TO_PROG (attacker);
+	G_INT (OFS_PARM0) = EDICT_TO_PROG (target);
+	G_INT (OFS_PARM1) = EDICT_TO_PROG (inflictor);
+	G_INT (OFS_PARM2) = EDICT_TO_PROG (attacker);
+	G_FLOAT (OFS_PARM3) = damage;
+	PR_ExecuteProgram (func - qcvm->functions);
+	pr_global_struct->self = old_self;
+	pr_global_struct->other = old_other;
+}
+
+static client_t *LocalSpawnPeerAs (int slot, const char *identity)
+{
+	char name_command[128];
+	client_state_t saved_client_state = cl;
+	sizebuf_t saved_client_message = cls.message;
+	qsocket_t *saved_netcon = cls.netcon;
+	int saved_signon = cls.signon;
+	int saved_state = cls.state;
+	int saved_net_driverlevel = net_driverlevel;
+	client_t *peer;
+	net_driverlevel = 0; // the prepared endpoint uses the existing loop driver
+	peer = Negotiate (slot, modern_offer, QSVR_PROTOCOL_PINNED);
+	host_client = peer;
+	sv_player = peer->edict;
+	assert (q_snprintf (name_command, sizeof (name_command), "name %s", identity) > 0);
+	Cmd_ExecuteString (name_command, src_client);
+	Cmd_ExecuteString ("spawn", src_client);
+	Cmd_ExecuteString ("begin", src_client);
+	assert (peer->active && peer->spawned && peer->knowntoqc &&
+		!strcmp (peer->name, identity) && !peer->edict->free);
+	/* The native negotiation helper prepares a synthetic client model. Restore
+	 * the paired loopback client's real state before sending its next command. */
+	cl = saved_client_state;
+	cls.message = saved_client_message;
+	cls.netcon = saved_netcon;
+	cls.signon = saved_signon;
+	cls.state = saved_state;
+	net_driverlevel = saved_netcon ? saved_netcon->driver : saved_net_driverlevel;
+	return peer;
+}
+
+static char *LocalNextLine (char **cursor)
+{
+	char *line, *end;
+	if (!cursor || !*cursor)
+		return NULL;
+	line = *cursor;
+	end = strchr (line, '\n');
+	if (end)
+	{
+		*end = '\0';
+		*cursor = end + 1;
+	}
+	else
+		*cursor = NULL;
+	return line;
+}
+
+static void LocalAssertTwoIdentitySave (const char *name, int reference_slot)
+{
+	char *contents = LocalReadAutosave (name);
+	char *lines = strdup (contents), *cursor = lines;
+	char *line;
+	char expected_reference[64];
+	assert (lines);
+	assert ((line = LocalNextLine (&cursor)) && !strcmp (line, "7"));
+	assert (LocalNextLine (&cursor)); // writer comment
+	assert ((line = LocalNextLine (&cursor)) && !strcmp (line, "2"));
+	for (int i = 0; i < 2; ++i)
+	{
+		assert ((line = LocalNextLine (&cursor)) && !strcmp (line, "1"));
+		line = LocalNextLine (&cursor);
+		assert (line && !strcmp (line, i ? "62657461" : "616c706861"));
+		assert (LocalNextLine (&cursor)); // colors
+		assert (LocalNextLine (&cursor)); // frags
+		for (int parm = 0; parm < NUM_BASIC_SPAWN_PARMS; ++parm)
+			assert (LocalNextLine (&cursor));
+	}
+	assert (q_snprintf (expected_reference, sizeof (expected_reference),
+		"\"enemy\" \"%d\"", reference_slot) > 0);
+	assert (strstr (contents, expected_reference));
+	free (lines);
+	free (contents);
+}
+
+static void LocalSetOrigin (edict_t *ent, const vec3_t origin)
+{
+	VectorCopy (origin, ent->v.origin);
+	SV_LinkEdict (ent, false);
+}
+
+static void LocalCoopLifecycle (client_t *alpha)
+{
+	client_t *beta;
+	edict_t *health, *key, *weapon, *counter, *world = EDICT_NUM (0);
+	edict_t *teledeath, *start, *coop_spawn, *reference;
+	vec3_t beta_origin, saved_beta_origin, delta;
+	float before_health, before_count, beta_nails, alpha_nails;
+	int reference_slot;
+	const char *counter_name;
+	assert (svs.maxclients == 2 && coop.value && !deathmatch.value &&
+		alpha && alpha->active && alpha->spawned && alpha->netconnection &&
+		alpha->netconnection->driverdata == cls.netcon);
+	LocalStrings ((const char *[]){"name alpha"}, 1);
+	alpha = &svs.clients[0];
+	beta = LocalSpawnPeerAs (1, "beta");
+	assert (alpha->private_pmove_walk_selected && beta->private_pmove_walk_selected);
+
+	/* Compare the real hull trace, team-damage guard and teledeath gate under
+	 * their classic and default native policies. */
+	VectorCopy (beta->edict->v.origin, beta_origin);
+	VectorCopy (alpha->edict->v.origin, delta);
+	delta[0] += 8.0f;
+	LocalSetOrigin (beta->edict, delta);
+	Cvar_Set ("sv_coop_classic", "1");
+	Cvar_Set ("sv_coop_noplayerclip", "-1");
+	assert (SV_TestEntityPosition (alpha->edict) == beta->edict);
+	Cvar_Set ("sv_coop_classic", "0");
+	assert (SV_TestEntityPosition (alpha->edict) == NULL);
+	LocalSetOrigin (beta->edict, beta_origin);
+
+	before_health = beta->edict->v.health;
+	assert (Cvar_VariableValue ("sv_nofriendlyfire") == 0.0f);
+	LocalApplyDamage (beta->edict, alpha->edict, alpha->edict, 5.0f);
+	assert (beta->edict->v.health < before_health);
+	beta->edict->v.health = before_health;
+	Cvar_Set ("sv_nofriendlyfire", "1");
+	assert (SV_CoopFriendlyFireBegin (alpha->edict));
+	LocalApplyDamage (beta->edict, alpha->edict, alpha->edict, 25.0f);
+	SV_CoopFriendlyFireEnd ();
+	assert (beta->edict->v.health == before_health &&
+		beta->edict->v.takedamage != DAMAGE_NO);
+	Cvar_Set ("sv_nofriendlyfire", "0");
+
+	teledeath = ED_Alloc ();
+	assert (teledeath && teledeath->free == false);
+	teledeath->v.classname = PR_SetEngineString ("teledeath");
+	teledeath->v.owner = EDICT_TO_PROG (alpha->edict);
+	Cvar_Set ("sv_coop_notelefrag", "-1");
+	assert (SV_ShouldSuppressCoopTelefrag (teledeath, beta->edict));
+	assert (!SV_ShouldSuppressCoopTelefrag (teledeath, alpha->edict));
+	Cvar_Set ("sv_coop_notelefrag", "0");
+	assert (!SV_ShouldSuppressCoopTelefrag (teledeath, beta->edict));
+	Cvar_Set ("sv_coop_notelefrag", "-1");
+	ED_Free (teledeath);
+	fprintf (stderr, "COOP_COLLISION_FF_TELEFRAG_PASSED classic hull/default no-player-clip; QC damage/native protection; native teledeath gate\n");
+
+	/* Actual loaded e1m3 QC pickups exercise native team-key/weapon ownership,
+	 * distinct ammo, and the loaded SUB_UseTargets counter exactly once. */
+	health = LocalFindClass ("item_health");
+	key = LocalFindClass ("item_key2");
+	weapon = LocalFindClass ("weapon_nailgun");
+	counter = LocalFindUniqueCounter ();
+	assert (health && key && weapon && counter && health->v.touch && key->v.touch &&
+		weapon->v.touch && counter->v.use &&
+		LocalFloatField (counter, "count")->_float > 0.0f);
+	Cvar_Set ("sv_coop_shared_pickups", "1");
+	Cvar_Set ("sv_coop_pickup_targetfix", "1");
+	Cvar_Set ("sv_coop_pickup_targetfix_classes", "item_health");
+	alpha->edict->v.health = 50.0f;
+	alpha->edict->v.items = (int)alpha->edict->v.items & ~(IT_KEY2 | IT_NAILGUN);
+	beta->edict->v.items = (int)beta->edict->v.items & ~(IT_KEY2 | IT_NAILGUN);
+	alpha->edict->v.ammo_nails = 10.0f;
+	beta->edict->v.ammo_nails = 6.0f;
+	LocalFloatField (counter, "count")->_float = 5.0f;
+	before_count = LocalFloatField (counter, "count")->_float;
+	counter_name = PR_GetString (counter->v.targetname);
+	assert (counter_name && counter_name[0]);
+	health->v.target = PR_SetEngineString (counter_name);
+	/* Signon can consume the spawn-adjacent map pickups. Re-arm those same
+	 * loaded map edicts so their stock QC touch callbacks run under policy. */
+	health->v.solid = SOLID_TRIGGER;
+	key->v.solid = SOLID_TRIGGER;
+	weapon->v.solid = SOLID_TRIGGER;
+	LocalSetOrigin (health, alpha->edict->v.origin);
+	SV_LinkEdict (alpha->edict, true);
+	assert (!health->free && health->v.solid == SOLID_NOT &&
+		alpha->edict->v.health > 50.0f &&
+		LocalFloatField (counter, "count")->_float == before_count - 1.0f);
+
+	LocalSetOrigin (key, alpha->edict->v.origin);
+	SV_LinkEdict (alpha->edict, true);
+	assert (((int)alpha->edict->v.items & IT_KEY2) &&
+		((int)beta->edict->v.items & IT_KEY2));
+	LocalSetOrigin (weapon, alpha->edict->v.origin);
+	SV_LinkEdict (alpha->edict, true);
+	assert (((int)alpha->edict->v.items & IT_NAILGUN) &&
+		((int)beta->edict->v.items & IT_NAILGUN));
+	assert (beta->edict->v.ammo_nails == 6.0f &&
+		alpha->edict->v.ammo_nails > 10.0f);
+	alpha_nails = alpha->edict->v.ammo_nails;
+	beta_nails = beta->edict->v.ammo_nails;
+	fprintf (stderr, "COOP_SHARED_PICKUPS_PASSED key2=shared nailgun=shared ammo-alpha=%.0f ammo-beta=%.0f target-counter=once\n",
+		(double)alpha_nails, (double)beta_nails);
+
+	/* Keep the actual producer's old command pending, then write the real v7
+	 * two-identity save with a live entity reference to beta's edict. */
+	Cvar_Set ("sv_coop_respawn_near_player", "1");
+	Cvar_Set ("sv_coop_respawn_delay", "2");
+	alpha->edict->v.armorvalue = 41.25f;
+	beta->edict->v.armorvalue = 82.5f;
+	VectorCopy (beta->edict->v.origin, saved_beta_origin);
+	LocalFrame (); // refresh the native death-inventory cache before save
+	LocalSend (true, 0, 0.0f); // private move sequences zero and one are warmup
+	LocalSend (true, 0, 0.0f);
+	LocalSend (true, 0, 100.0f);
+	NetworkBuffer ();
+	SV_RunClients ();
+	assert (alpha->private_cmd_queue_count && !alpha->private_completed_move);
+	world->v.enemy = EDICT_TO_PROG (beta->edict);
+	LocalApplyDamage (alpha->edict, world, world, 500.0f);
+	assert (alpha->edict->v.health <= 0.0f);
+	SaveFixture ("reverse-coop-witness", 7);
+	reference_slot = NUM_FOR_EDICT (beta->edict);
+	LocalAssertTwoIdentitySave ("reverse-coop-witness.sav", reference_slot);
+	fprintf (stderr, "COOP_V07_SAVE_PASSED identities=alpha,beta active=2 dead-alpha=1 reference-slot=%d\n",
+		reference_slot);
+
+	/* Beta is deliberately the first reconnect although it occupied saved
+	 * slot two. Alpha's old local command/queue must not cross that identity. */
+	beta = LocalLoadAs ("load reverse-coop-witness", "beta");
+	world = EDICT_NUM (0); // Host_Loadgame rebuilt the QCVM/edict array
+	assert (sv.loadgame && sv.loadgame_client_saved[0] &&
+		!sv.loadgame_client_saved[1] && EDICT_NUM (reference_slot)->free &&
+		NUM_FOR_EDICT (PROG_TO_EDICT (world->v.enemy)) == reference_slot);
+	assert (!beta->private_cmd_queue_count && !beta->private_completed_move &&
+		!memcmp (saved_beta_origin, beta->edict->v.origin, sizeof delta) &&
+		beta->edict->v.armorvalue == 82.5f && beta->edict->v.ammo_nails == beta_nails);
+	alpha = LocalSpawnPeerAs (1, "alpha");
+	assert (!sv.loadgame && !sv.loadgame_client_saved[0] &&
+		!sv.loadgame_client_saved[1]);
+	assert (beta->edict == EDICT_NUM (1) && alpha->edict == EDICT_NUM (2) &&
+		beta->edict->v.armorvalue == 82.5f &&
+		alpha->edict->v.ammo_nails == alpha_nails &&
+		((int)alpha->edict->v.items & (IT_KEY2 | IT_NAILGUN)) ==
+		(IT_KEY2 | IT_NAILGUN) &&
+		((int)beta->edict->v.items & (IT_KEY2 | IT_NAILGUN)) ==
+		(IT_KEY2 | IT_NAILGUN) && beta->edict->v.ammo_nails == beta_nails);
+	fprintf (stderr, "COOP_V07_REVERSE_RECONNECT_PASSED beta-first own-state queues-reset beta-ammo=%.0f alpha-ammo=%.0f named-spawn alpha-dead-inventory-restored\n",
+		(double)beta->edict->v.ammo_nails, (double)alpha->edict->v.ammo_nails);
+
+	/* Exercise the native near-player placement owner and real local input
+	 * cooldown/respawn after load; the second identity remains an independent
+	 * survivor while beta dies and respawns. */
+	start = LocalFindClass ("info_player_start");
+	coop_spawn = LocalFindClass ("info_player_coop");
+	assert (start && coop_spawn);
+	LocalSetOrigin (alpha->edict, coop_spawn->v.origin);
+	LocalSetOrigin (beta->edict, start->v.origin);
+	const float survivor_health = alpha->edict->v.health;
+	LocalApplyDamage (beta->edict, world, world, 500.0f);
+	assert (beta->edict->v.health <= 0.0f);
+	LocalFrame ();
+	LocalSend (true, BUTTON_ATTACK, 0.0f);
+	LocalFrame ();
+	assert (beta->edict->v.health <= 0.0f); // native two-second respawn fence
+	for (int frame = 0; frame < (int)ceil (2.1f / host_frametime); ++frame)
+	{
+		LocalSend (true, 0, 0.0f);
+		LocalFrame ();
+	}
+	assert (beta->edict->v.health <= 0.0f);
+	LocalSend (true, BUTTON_ATTACK, 0.0f);
+	LocalFrame ();
+	assert (beta->edict->v.health > 0.0f && alpha->edict->v.health == survivor_health);
+	assert (SV_CoopRespawnPlaceNearPlayer (beta->edict));
+	VectorSubtract (beta->edict->v.origin, alpha->edict->v.origin, delta);
+	assert (VectorLength (delta) < 128.0f);
+	fprintf (stderr, "COOP_RESPAWN_COOLDOWN_NEAR_PASSED native delay=2s near-helper-anchor=alpha survivor-preserved\n");
+
+	/* A saved reference to beta's now-free slot must follow beta through the
+	 * reverse-order restore, rather than aliasing alpha when slot two is reused. */
+	reference = PROG_TO_EDICT (world->v.enemy);
+	fprintf (stderr, "COOP_V07_REFERENCE_IDENTITY expected-slot=%d expected-beta=%d actual-slot=%d actual-free=%d\n",
+		reference_slot, NUM_FOR_EDICT (beta->edict), NUM_FOR_EDICT (reference), reference->free);
+	fflush (stderr);
+	assert (reference == beta->edict);
+	fprintf (stderr, "COOP_V07_REFERENCE_IDENTITY_PASSED saved-reference-follows-beta\n");
+}
+
 int main (int argc, char **argv)
 {
-	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
+	const char *scenario;
+	int arg;
+	scenario = NULL;
+	for (int i = 1; i + 1 < argc; ++i)
+		if (!strcmp (argv[i], "-localcase"))
+			scenario = argv[i + 1];
+	assert (scenario);
+	Fixture_InitNativeEngine (argc, argv,
+		!strcmp (scenario, "coop-lifecycle") ? "e1m3" : "e1m1", true);
 	network_buffer = net_message;
 	host_frametime = .025;
-	const int arg = COM_CheckParm ("-localcase");
+	arg = COM_CheckParm ("-localcase");
 	assert (arg && arg + 1 < com_argc);
-	const char *scenario = com_argv[arg + 1];
+	scenario = com_argv[arg + 1];
 	const qboolean public = !strncmp (scenario, "public", 6);
 	const qboolean disabled = !strcmp (scenario, "disabled");
 	if (disabled) Cvar_Set ("sv_private_pmove_walk", "0");
 	client_t *peer = LocalSignon (false, public);
 	const qboolean selected = !public && !disabled;
+	if (!strcmp (scenario, "coop-lifecycle"))
+	{
+		assert (peer->private_pmove_walk_selected == selected);
+		LocalCoopLifecycle (peer);
+		fprintf (stderr, "COOP_LIFECYCLE_NATIVE_PASSED loaded=e1m3 stock-QC loopback-first prepared-second\n");
+		return 0;
+	}
 	assert (peer->private_pmove_walk_selected == selected);
 	if (!strcmp (scenario, "autosave"))
 	{
