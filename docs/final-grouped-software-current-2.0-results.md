@@ -496,3 +496,41 @@ transient direct-console token observation, classic-format expectation against
 the actual MD5 model, and an incorrectly escaped cleanup string. Final checks
 use registered/native public owners, normal command-buffer execution and actual
 selected model format; production source was not changed for these attempts.
+
+
+## Loaded native CSQC entity lifecycle — captured transport
+
+Luna Hubble adds one bounded native SSQC/CSQC witness; main reviews sender/parser,
+actual loaded callback and ACK ownership and checks final log markers. All six
+markers pass/run0 against the assertion-enabled225-object graph. Actual
+SendEntity payloads are56bytes, forcing native split datagrams under the128byte
+bound. Create/update callback order and values match the native current edicts;
+withheld sequence5 requeues entity182, recovered payload21. Native enablecsqc
+command disables/re-enables the existing mapping; withheld removal sequence12
+replays at14, exactly one remove runs and removewait clears. Native allocator
+reuses the acknowledged ID with exactly one new callback/payload41.
+
+`FastGames/qsvr-csqc-entity-native-sqruypeq/main-verified.json` records actual
+reviewed source/log/graph hashes; graph hash is not an engine-binary hash. Four
+link owners are replaced only for the fixture, with production sender/frame/
+parser and native clc_ackframe consumers. Unreliable bytes/sequence delivery is
+captured under explicit loss. A fixture-supplied svc_nop checks parser framing;
+this is not a real typed cursor/weapon producer, two actual sockets or graphical
+CSQC proof. The separate actual UDP gameplay proof stays credited at its scope.
+
+## V06 observed co-op saved-reference failure — review before repair
+
+Luna Archimedes' opt-in loaded stock e1m3 co-op case passes native collision/
+friendly-fire/telefrag policy, shared key/weapon ownership without copied ammo,
+exact-once target counter, real two-identity v7 save, reverse reconnect identity/
+inventory/queue reset and cooldown/near-player helper. It then aborts: saved
+world.enemy edict2 names beta, who reconnects as1; after alpha reuses2 the saved
+reference resolves to alpha. The current payload-only restore/name match does
+not relocate typed references. Main reads source and failure in
+`FastGames/qsvr-protected-native-72o89z1i/profiles/qsvr-local-load-coop-lifecycle-d97i5l26/native-run.log`.
+This is an observed software failure attached to existing V06, not a new feature
+or unavailable check. The [verified design brief](coop-save-reference-final-2.0-review-brief.md)
+asks the same local Astra to verify the premise and select the smallest native
+adapter before a production change. Beta's prepared endpoint remains explicit;
+no full two-socket co-op claim. Authored KEX/hub inputs were not found by the
+finite installed-asset lookup and their authored-input subcases are excluded.
