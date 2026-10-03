@@ -119,10 +119,31 @@ No protected GPU output pass is claimed. Receipts:
 FastGames/qsvr-foveation-final-prep-jec4o61u/{status.json,sources.json,assets,
 compile-argv.json,link-argv.json,compile.log,link.log}.
 
+## Refreshed Linux package startup
+
+Current shipping Linux engine0f277d1f executes directly through its recorded
+native system interpreter and relative RUNPATH, with no global library override.
+A disposable licensed id1 profile, explicit IPv4 loopback and disabled IPv6,
+-dedicated2/-nosound/-nosteamapi loads e1m1, prints native status and quits0.
+Native loader/dependency/startup/map/normal terminal behavior is established;
+no graphical desktop, XR, mic or connected gameplay follows. Engine SHA256
+0afcb00a1e0625a6678f27a4228f009ddca80d50977120e14c35b40beb923c3f.
+Nonfatal Steam-library/localization/MD5-skin warnings remain in the log.
+
+Earlier probe failures are retained: directly invoking a bundled Ubuntu loader
+with external host libc is outside the documented native-interpreter contract
+and crashes before engine startup; disabling all UDP on the ordinary dedicated
+entry naturally refuses unavailable networking. No packaging/engine fix is
+inferred. A first corrected native startup also initializes default IPv6; final
+repeat explicitly uses -noudp6. All children exit; no runtime/service deployment.
+Receipts: FastGames/qsvr-linux-package-final-run-6gem4__j,
+ipv4-only-argv.json/ipv4-only-status.json/ipv4-only-run.log plus the earlier
+argv/status/debug logs.
+
 ## Still running or awaiting final execution
 
 Final shipping artifacts are underway;
-protected-output test inputs/capture/checker compile and await GPU execution. Remaining V rows,
+protected-output test inputs/capture/checker compile and await GPU execution. Live-metadata refusal and autosave qualification reuse existing native fixtures. Remaining V rows,
 D01/D02 connected oracle/terminal evidence and final local Astra integration
 signoff stay open until their actual outcomes are recorded. These results must
 not silently substitute component passes for those completion boundaries.
