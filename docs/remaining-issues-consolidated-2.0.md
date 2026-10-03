@@ -1,5 +1,26 @@
 # Consolidated remaining issues — reviewed final work list
 
+## Completion scope update — user instruction, 2026-10-02
+
+The user now excludes things this agent cannot do or test from the goal.
+This overrides unavailable-test requirements in the historical rows below.
+Keep implemented features and the existing source audit; do not count an
+unavailable check as a pass or invent a replacement runtime/provider.
+
+Unavailable GPU rendering, simulated-XR execution, protected foveation output,
+physical headset/controller/tracker/gaze/provider and listening/performance
+checks no longer gate completion. Current Nvidia allocation fails with
+NV_ERR_RESET_REQUIRED; CPU Monado also refuses compositor creation. No driver
+reset or system graphics change is required. Retained failed and earlier
+successful runs remain evidence at their stated limits.
+
+CPU-native checks that can run here, available Windows/Linux/Linux ARM builds
+and package/source reconciliation, demonstrated software-defect repairs and
+the final local Astra review remain required. If an unavailable resource affects
+only part of a row, exclude only that part. A failed runnable check is still a
+failure to diagnose; it is not made unavailable by this instruction.
+
+
 2026-10-02, source snapshot414d58ec. User work order: identify every remaining
 issue together, resolve the implementation issues, then run final verification.
 No further per-boundary fixture/capture/test cycle. Only2.0 is writable; main,

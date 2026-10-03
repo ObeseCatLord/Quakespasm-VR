@@ -254,3 +254,13 @@ Source-save hash is unchanged. This establishes actual authored v6 load and
 pending-slot admission only; saved living-player restore/movement remains
 prepared for after the RCON repair. No generated save/header substitution, GPU
 or physical inputs. Receipt: FastGames/qsvr-authored-v6-save-final-0bwynx03.
+
+## User completion-scope update
+
+2026-10-02: unavailable tasks/tests are outside the goal. The current GPU device
+allocation/XR runtime and unavailable physical headset/gaze/provider checks are
+excluded completion gates, with their outcomes retained as unverified/failed
+observations rather than successes. Available CPU-native verification, platform
+build/package freshness and final local Astra review continue. This scope
+instruction overrides older acceptance wording; it does not remove implemented
+OpenXR, optional gaze, stereo or foveation features.
