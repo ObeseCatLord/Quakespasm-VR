@@ -42,7 +42,8 @@ server movement, truthful advertised dialect and natural quit0. Also actual
 RCON world transition/reset or ordinary shutdown boundary selected by review,
 and preserve prior ten admission/discovery cases. Update affected shipping
 source freshness once implementation settles; earlier58fb cohort cannot qualify
-a new production patch. GPU/provider/physical gates remain unchanged.
+a new production patch. Unavailable GPU/provider/physical execution is outside completion under the
+latest user instruction; preserve unverified outcomes and implemented features.
 
 ## Verified Astra disposition before code
 
@@ -64,3 +65,13 @@ Final tests add native status while connected, successful map/reconnect plus
 failed-map and failed-changelevel terminal/output checks. Dedicated native quit0
 and native abort1 are distinct expected outcomes. Listen longjmp remains a
 separate existing qualification boundary, not proven by dedicated tests.
+
+## Execution progress
+
+Production079f4431 implements the reviewed11-line source repair. Current native
+public15 gameplay/status/edict, actual ACK-loss recovery and authored living-v6
+restore/movement pass with ordinary quit0; see the
+[grouped results](final-grouped-software-current-2.0-results.md). The same engine
+passes ten discovery/admission cases. Map/reconnect and failed-map/changelevel
+terminal/output checks remain in progress. No unavailable GPU test gates this
+repair's software completion.

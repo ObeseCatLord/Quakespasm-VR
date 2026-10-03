@@ -264,3 +264,44 @@ observations rather than successes. Available CPU-native verification, platform
 build/package freshness and final local Astra review continue. This scope
 instruction overrides older acceptance wording; it does not remove implemented
 OpenXR, optional gaze, stereo or foveation features.
+
+## Current native connected RCON, loss and living v6 restore
+
+Reviewed production079f4431 reuses the QSS-M borrowed-QCVM boundary and ordinary
+Host_Error redirect cleanup, with both driver indices restored after status.
+The current225-object native graph rebuilds/relinks0; engine SHA256
+936635e2b4c9a82eca39e08b55c66e06baf93cf8b1b8dded05eafdca36b3fba8.
+Docs-only scope commit5b6c491d changes no shipping input.
+
+Three actual UDP gameplay runs pass on that engine. Each admits the native
+NetQuake/ProQuake peer, answers cmd-pext before reading actual serverinfo15,
+receives five reliable command ACKs0–4, spawns a walking player and sends20
+unreliable movement packets. Native edict displacement exceeds93units while
+getinfo/getstatus/rule/RCON-echo queries run; actual connected status and edict
+commands succeed without nested-VM error. Public discovery truthfully advertises
+network3/game15 and the connected player. External masters remain cleared.
+
+The loss case deliberately omits server reliable ACK0, observes one actual
+native retransmitted fragment, ACKs it, then completes signon and gameplay.
+The authored v6 case restores the real saved living player's origin464/320/24
+(native printed precision; saved z24.03125), health100 and shells25 before
+movement. It uses a private byte-identical copy of the read-only save; reference
+and copy hashes match afterward. Every owned server exits0 through ordinary
+stdin quit with the peer pumping native ACKs during teardown.
+
+Main independently verifies all three result receipts, exact engine hash,
+command ACKs, loss duplicate and restored state. Root:
+FastGames/qsvr-rcon-context-nativequit-final-nuwesksr/verified-receipts.json.
+This is actual native transport/gameplay/save behavior, not a full graphical
+client prediction/snapshot parser or every save dialect/identity/hub proof.
+The ten discovery/admission cases also pass on production079f4431 under
+FastGames/qsvr-rcon-context-final-rnccijr2/discovery.
+
+Failed observer runs remain retained: native enum/vector print parsing, binary
+rule JSON representation, one relocated missing private save, and a shutdown
+wait exactly equal to native NET_SendToAll's5-second window without peer ACK
+pumping. The final observer encodes only binary rule data as hex, copies the
+actual save and pumps the existing native peer during bounded ordinary quit.
+No production workaround or weakened gameplay/exit predicate accompanies these
+observer corrections. Successful RCON map/reconnect and expected error exits
+remain a separate final lifecycle check.
