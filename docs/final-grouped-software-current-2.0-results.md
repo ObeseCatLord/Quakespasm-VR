@@ -712,3 +712,40 @@ main-verified.json,catalogue.gdb,run.py}. Prior catalogue-final-1nh5pkjk observe
 failure is retained: that graph is portable/no DO_USERDIRS, so -userdir was an
 invalid test premise; -multiuser exercises the native SDL preference-root owner.
 No production repair or assertion weakening is made for that setup error.
+
+
+## Native cursor/weapon and stock immersive melee consumers
+
+Main independently checks all525files in the typed cursor manifest (exit0),
+reads the fixture and verifies the delivered bytes are the unchanged native
+move packet followed by the native forwarded name command. Native CL_SendMove,
+SV_ReadClientMessage, PR input scope and loaded SV_RunClientCommand consume
+weapon/cursor arguments once, queue/completed sequence2, parser end81bytes and
+following-command alignment, with normal quit0. Cursor74565 is numeric codec
+coverage, not a resolved live edict; captured append is not a same-channel or
+actual-socket claim. Private receipts: FastGames/qsvr-typed-cursor-native-hisy4xlb/
+{final-receipt.json,main-verified.json,SHA256SUMS}, successful attempt05.
+
+Main reruns the stock-melee offline byte/source/QC audit (exit0): four held-trigger
+samples emit no attack or QC damage; supplied0.1m/0.05s gesture produces one
+native command pulse, one loaded W_Attack/W_FireAxe/T_Damage chain, health
+1000→980 and unchanged ammo; eight recovery samples do not repeat attack. Native
+R_SetupAliasFrame holds ready pose0 without changing the underlying QC frame.
+Normal quit/observer/Xvfb0. Private receipts: FastGames/qsvr-v11-native-melee-
+GUIQaQFf/{validation.json,main-verified.json}, attempt04. Supplied initialized
+action/pose samples, no physical tracking/rendered-pose or paired-mod claim.
+Both use unchanged shipping source079/native225; no production edits.
+
+## V06 named co-op save reference repair
+
+The prior reverse reconnect reference failure is repaired with the reviewed
+native typed-reference adapter and retained-free identity anchors. Existing named
+snapshot restoration/native allocation/lifetime helpers are reused. Local Astra
+implementation review found a conditional retained-free payload omission; main
+adopts its tiny guard and a focused owner/enemy resolution/release predicate.
+Corrected coop-lifecycle and loaded remove(self) spawn-cancellation cases both
+pass, including strict saved player identity and actual QC damage consumer.
+Earlier twelve load cases/default negotiation remain accepted at their exact
+scope; immutable original artifacts are untouched. Current source/binary/log
+hashes: FastGames/qsvr-v06-retained-free-pq5rxsak/receipts/main-verified.json.
+Four-platform refresh/final integration approval remain required.

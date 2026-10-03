@@ -2528,10 +2528,108 @@ static void Host_LoadgameRestoreClientEdict (int clientnum, edict_t *ent)
 	ent->free = false;
 }
 
+/* Examine only native typed entity values. Discovery is read-only; relocation
+ * matches one identity offset, including references in still-pending payloads. */
+static int Host_LoadgameEntityReference (int *value, int from, int to, qboolean *referenced)
+{
+	int slot;
+	if (*value < 0 || *value % qcvm->edict_size)
+		return 0;
+	slot = *value / qcvm->edict_size;
+	if (slot >= qcvm->max_edicts)
+		return 0;
+	if (referenced)
+	{
+		if (slot > 0 && slot <= MAX_SCOREBOARD && sv.loadgame_client_saved[slot - 1])
+			referenced[slot - 1] = true;
+	}
+	else if (*value == from)
+		*value = to;
+	return slot;
+}
+
+static int Host_LoadgameEntityReferences (int from, int to, qboolean *referenced)
+{
+	int i, j, highest = 0;
+	for (i = 0; i < qcvm->num_edicts + MAX_SCOREBOARD; i++)
+	{
+		edict_t *ent;
+		if (i < qcvm->num_edicts)
+		{
+			ent = EDICT_NUM (i);
+			if (ent->free && !ent->retain_count)
+				continue;
+		}
+		else
+		{
+			j = i - qcvm->num_edicts;
+			if (!sv.loadgame_client_saved[j])
+				continue;
+			ent = Host_LoadgameSavedClientEdict (j);
+		}
+		for (j = 0; j < qcvm->numentityfields; j++)
+			highest = q_max (highest, Host_LoadgameEntityReference (
+				(int *)((byte *)&ent->v + qcvm->entityfieldofs[j]), from, to, referenced));
+	}
+	for (i = 0; i < qcvm->progs->numglobaldefs; i++)
+	{
+		ddef_t *def = &qcvm->globaldefs[i];
+		if ((def->type & ~DEF_SAVEGLOBAL) == ev_entity)
+			highest = q_max (highest, Host_LoadgameEntityReference (
+				(int *)&qcvm->globals[def->ofs], from, to, referenced));
+	}
+	return highest;
+}
+
+static qboolean Host_LoadgameStageClientReferences (void)
+{
+	qboolean referenced[MAX_SCOREBOARD] = {false};
+	int i, count = 0;
+	int first = q_max (qcvm->num_edicts, Host_LoadgameEntityReferences (0, 0, referenced) + 1);
+	for (i = 0; i < MAX_SCOREBOARD; i++)
+		count += referenced[i] ? 1 : 0;
+	if (!count)
+		return true;
+	/* Preflight the entire gap and all anchors before exposing or changing any
+	 * edict/reference. Saved forward/free targets must never become anchors. */
+	if (count > qcvm->max_edicts - first)
+		return false;
+	/* Parsing may have queued forward targets outside the final loaded body. */
+	ED_RebuildFreeList (true);
+	while (qcvm->num_edicts < first)
+		ED_Free (ED_AllocFresh ());
+	for (i = 0; i < MAX_SCOREBOARD; i++)
+	{
+		edict_t *anchor;
+		if (!referenced[i])
+			continue;
+		anchor = ED_AllocFresh ();
+		sv.loadgame_client_reference_anchors[i] = EDICT_TO_PROG (anchor);
+		ED_Retain (anchor);
+		ED_Free (anchor);
+	}
+	for (i = 0; i < MAX_SCOREBOARD; i++)
+		if (referenced[i])
+			Host_LoadgameEntityReferences ((i + 1) * qcvm->edict_size,
+				sv.loadgame_client_reference_anchors[i], NULL);
+	return true;
+}
+
+static void Host_LoadgameResolveClientReferences (int clientnum, edict_t *ent)
+{
+	int offset = sv.loadgame_client_reference_anchors[clientnum];
+	if (!offset)
+		return;
+	Host_LoadgameEntityReferences (offset, ent ? EDICT_TO_PROG (ent) : 0, NULL);
+	ED_Release (PROG_TO_EDICT (offset));
+	sv.loadgame_client_reference_anchors[clientnum] = 0;
+}
+
 static void Host_LoadgameClearSavedClient (int clientnum)
 {
 	byte *snapshot = Host_LoadgameClientEdictSnapshot (clientnum);
 
+	Host_LoadgameResolveClientReferences (clientnum, NULL);
 	sv.loadgame_client_saved[clientnum] = false;
 	sv.loadgame_client_name_required[clientnum] = false;
 	sv.loadgame_client_names[clientnum][0] = '\0';
@@ -3216,7 +3314,17 @@ static void Host_Loadgame_f (void)
 				sv.loadgame_client_saved[i] = false;
 				sv.loadgame_client_name_required[i] = false;
 			}
-
+		}
+		if (!Host_LoadgameStageClientReferences ())
+		{
+			Mem_Free (start);
+			start = NULL;
+			Host_Error ("Inherited save has no room for pending player reference anchors");
+			return;
+		}
+		for (i = 0; i < saved_maxclients; i++)
+		{
+			ent = EDICT_NUM_NO_CHECK (i + 1);
 			/* Reserved client edicts stay reserved, but must not remain linked or
 			 * carry the parsed copy while waiting for their owner to reconnect. */
 			if (!ent->free)
@@ -3669,6 +3777,7 @@ static void Host_Spawn_f (void)
 			ent->v.team = (host_client->colors & 15) + 1;
 			ent->v.frags = (float)host_client->old_frags;
 			SV_CoopSharedApplyToJoiningClient (ent);
+			Host_LoadgameResolveClientReferences (saved_clientnum, ent);
 			SV_LinkEdict (ent, false);
 			Host_LoadgameClearSavedClient (saved_clientnum);
 			Host_LoadgameMaybeClearLoadedFlag ();
@@ -3720,6 +3829,7 @@ static void Host_Spawn_f (void)
 					return;
 				ent->alpha = sv.loadgame_client_alpha[saved_clientnum];
 				ent->v.frags = (float)host_client->old_frags;
+				Host_LoadgameResolveClientReferences (saved_clientnum, ent);
 				Host_LoadgameClearSavedClient (saved_clientnum);
 				Host_LoadgameMaybeClearLoadedFlag ();
 			}

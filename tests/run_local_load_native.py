@@ -38,7 +38,7 @@ def main():
                     (id1 / name).symlink_to(asset.resolve())
             command = [args.binary, "-dedicated",
                        "2" if scenario.startswith("pending") or
-                       scenario in ("autosave", "coop-lifecycle") else "1",
+                       scenario in ("autosave", "coop-lifecycle", "coop-ref-cancel") else "1",
                        "-noudp", "-nosound", "-basedir", directory, "-userdir", directory,
                        "-localcase", scenario]
             if scenario == "autosave":
@@ -64,7 +64,20 @@ def main():
                     "COOP_V07_REVERSE_RECONNECT_PASSED ",
                     "COOP_RESPAWN_COOLDOWN_NEAR_PASSED ",
                     "COOP_V07_REFERENCE_IDENTITY_PASSED ",
+                    "COOP_REFERENCE_ALLOCATOR_PASSED ",
+                    "COOP_REFERENCE_PENDING_SAVE_REFUSED_PASSED ",
+                    "Can't save while inherited multiplayer player states are pending.",
+                    "COOP_REFERENCE_TYPED_PENDING_PASSED ",
+                    "COOP_REFERENCE_RETAINED_FREE_PASSED ",
+                    "COOP_REFERENCE_QC_CONSUMER_PASSED ",
+                    "COOP_REFERENCE_RESAVE_PASSED ",
+                    "COOP_REFERENCE_CAPACITY_PASSED ",
+                    "Inherited save has no room for pending player reference anchors",
+                    "COOP_REFERENCE_TEARDOWN_PASSED ",
+                    "COOP_LIFECYCLE_NATIVE_PASSED ",
                 ])
+            elif scenario == "coop-ref-cancel":
+                markers.append("COOP_REFERENCE_CANCEL_PASSED ")
             if result.returncode or any(required not in result.stdout for required in markers):
                 print(result.stdout)
                 if args.keep_profiles:

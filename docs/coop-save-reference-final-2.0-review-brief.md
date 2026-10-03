@@ -113,3 +113,68 @@ beyond those limits is authorized by this plan without a main architecture
 reassessment. Tests run after the complete bounded edit, and any production
 change refreshes affected source/engine artifacts on all four platforms. Earlier
 unaffected rendering/audio/input proof retains its exact documented scope.
+
+
+## Main implementation recheck brief, 2026-10-03
+
+[verified: main diff/direct source reads] Final worker patch is120added/1deleted
+production lines in host_cmd.c/server.h/pr_edict.c/progs.h. The prior design's
+native typed-reference adapter is implemented, not a new save/protocol/slot policy.
+Main verifies native ED_Alloc FIFO behavior remains unchanged and its existing
+fresh-tail initialization/debug fields/hook move into ED_AllocFresh. Stage scans
+only entityfieldofs/live payloads/pending payloads/ev_entity globals; preflight
+covers final body and highest admitted forward target. Native rebuild/allocate/
+retain/free/release remain the owner. Anchor offsets are now obtained while live:
+main caught the intermediate EDICT_TO_PROG-after-free mistake and worker corrected
+it before final fixtures. General Debug conversion checks are unchanged.
+
+[verified: main current hashes and private receipts] All six source/test hashes in
+FastGames/qsvr-v06-reference-km59fzty/receipts/final-manifest.json match workspace;
+both private binary hashes and all12case log hashes/markers match. Worker rebuilt
+all225objects under -D_DEBUG into separate outputs, bypassing original PCH. The
+original shipping/native225 binary remains unchanged936635e2...b3fba8. Main reads
+final test diff: original five positive co-op markers/strict reference predicate
+retained; corrected intermediate expects immediate living beta1 and distinct
+pending alpha anchor. Actual loaded QC T_Damage through world.enemy now affects
+only beta. Pending typed world/global/payload/self/cross references, intervening
+frames/new beta references, newcomer/drop, native allocator/rebuild, referenced
+free/forward target, equal float/vector/function controls, existing pending-save
+refusal, capacity rejection before staging, teardown, living resave/reload and
+loaded remove(self) dead-spawn cancellation have explicit predicates. Default
+nine cases plus invalid-save and original default negotiation also pass.
+
+[limits] Captured/native prepared second endpoint, actual paired loopback first;
+no full two-socket gameplay claim. Current ordinary v5/public/disabled/fastload
+paths keep existing policy; unavailable authored KEX/hub and device outcomes
+remain excluded under user instruction. Prior independent native Shub/music/
+catalogue/physics/input/calibration and shipped079 four-platform proofs are
+credited at documented boundaries; these are not proof of a final new engine.
+Four-platform affected-engine refresh follows approval/commit, then final overall
+integration signoff after remaining attainable software cases settle.
+
+Decision for same local Astra/xhigh Kant: verify patch against your prior approved
+plan and actual native owners/receipts; identify blocking correctness/lifetime/
+ordinary-desktop regressions or unnecessary architecture, and required affected
+rerun scope. Rejected broader alternatives remain prior brief's native slot
+migration/raw-word remap/duplicate allocator. No new185-feature audit, broad
+mod matrix, physical tests or new pending serialization policy. Read-only,
+no edits/delegation. <=1600word terminal review with prioritized disposition and
+exact file/line evidence. Main owns synthesis/integration; not finalF10signoff.
+
+
+## Final main implementation disposition and affected rerun
+
+Same local Astra/xhigh Kant verified the implemented adapter and native
+allocator/lifetime owners. The review approves bounded integration, not F10.
+
+| Recommendation | Main disposition |
+| --- | --- |
+| Integrate the typed staging adapter; no blocking ordinary-load regression or unnecessary parallel architecture was found. | Adopt. Main reviews all four production files; normal FIFO allocation and ordinary load policy remain native. |
+| Retained-free payloads can still be consumed by QC and must follow pending identities. | Adopt the tiny defensive correction: skip only free edicts with no retain count. One native retained-free owner/enemy container proves relocation before anchor release and native FIFO re-entry after release. No raw/free-garbage scan. |
+| Repeat affected lifecycle/cancellation checks; retain unrelated evidence. | Adopt. Corrected private host_cmd and fixtures compile/link against the copied225-object compatible Debug graph. Both actual native cases pass, including strict saved-reference/QC-consumer and retained-free/release predicates. Earlier twelve load cases/default negotiation retain their documented scope. |
+| Refresh shipping engines after this production change. | Adopt; affected four-platform build/package/source reconciliation follows this commit. No completion claim from the private fixtures. |
+
+Final corrected receipts are FastGames/qsvr-v06-retained-free-pq5rxsak/receipts/
+main-verified.json, with current six source/test hashes, both private binary hashes
+and two log hashes. Earlier worker manifest is historical, not the corrected
+source manifest. Immutable original225 engine/outputs remain untouched.

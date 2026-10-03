@@ -8,6 +8,7 @@
 #define MIXED_FIXTURE_CUSTOM_UNRELIABLE
 #include <sys/stat.h>
 #include <unistd.h>
+#include <setjmp.h>
 #ifdef NDEBUG
 #error "local native fixture requires assertions"
 #endif
@@ -545,7 +546,7 @@ static void LocalApplyDamage (edict_t *target, edict_t *inflictor,
 	pr_global_struct->other = old_other;
 }
 
-static client_t *LocalSpawnPeerAs (int slot, const char *identity)
+static client_t *LocalAttemptPeerAs (int slot, const char *identity, qboolean complete)
 {
 	char name_command[128];
 	client_state_t saved_client_state = cl;
@@ -562,9 +563,10 @@ static client_t *LocalSpawnPeerAs (int slot, const char *identity)
 	assert (q_snprintf (name_command, sizeof (name_command), "name %s", identity) > 0);
 	Cmd_ExecuteString (name_command, src_client);
 	Cmd_ExecuteString ("spawn", src_client);
-	Cmd_ExecuteString ("begin", src_client);
-	assert (peer->active && peer->spawned && peer->knowntoqc &&
-		!strcmp (peer->name, identity) && !peer->edict->free);
+	if (complete)
+		Cmd_ExecuteString ("begin", src_client);
+	assert (peer->active && peer->knowntoqc && !strcmp (peer->name, identity));
+	assert (complete ? peer->spawned && !peer->edict->free : !peer->spawned && peer->edict->free);
 	/* The native negotiation helper prepares a synthetic client model. Restore
 	 * the paired loopback client's real state before sending its next command. */
 	cl = saved_client_state;
@@ -574,6 +576,86 @@ static client_t *LocalSpawnPeerAs (int slot, const char *identity)
 	cls.state = saved_state;
 	net_driverlevel = saved_netcon ? saved_netcon->driver : saved_net_driverlevel;
 	return peer;
+}
+
+static client_t *LocalSpawnPeerAs (int slot, const char *identity)
+{
+	return LocalAttemptPeerAs (slot, identity, true);
+}
+
+static void LocalDropPreparedPeer (client_t *peer)
+{
+	assert (peer->netconnection && !peer->netconnection->driverdata);
+	/* This endpoint never opened a loop transport. Release its native socket
+	 * allocation without Loop_Close retiring the unrelated real loop server. */
+	NET_FreeQSocket (peer->netconnection);
+	host_client = peer;
+	SV_DropClient (true);
+	assert (NET_QSocketIsLoopbackPeer (cls.netcon, svs.clients[0].netconnection));
+}
+
+static edict_t *LocalPendingClient (int slot)
+{
+	assert (sv.loadgame_client_saved[slot] && sv.loadgame_client_edicts);
+	return (edict_t *)(sv.loadgame_client_edicts + slot * sv.loadgame_client_edict_size);
+}
+
+static int *LocalEntityGlobal (const char *name)
+{
+	ddef_t *def = ED_FindGlobal (name);
+	assert (def && (def->type & ~DEF_SAVEGLOBAL) == ev_entity && (def->type & DEF_SAVEGLOBAL));
+	return (int *)&qcvm->globals[def->ofs];
+}
+
+static qboolean LocalFreeListContains (int slot)
+{
+	for (size_t i = 0; i < qcvm->free_list.size; ++i)
+		if (qcvm->free_list.circular_buffer[(qcvm->free_list.head_index + i) % MAX_EDICTS] == slot)
+			return true;
+	return false;
+}
+
+static void LocalAssertAnchor (int offset)
+{
+	edict_t *anchor = PROG_TO_EDICT (offset);
+	assert (offset && anchor->free && anchor->retain_count == 1 && !anchor->area.prev &&
+		anchor->v.solid == SOLID_NOT && !anchor->v.takedamage && !anchor->v.model &&
+		!LocalFreeListContains (NUM_FOR_EDICT (anchor)) &&
+		!memcmp (&anchor->baseline, &nullentitystate, sizeof nullentitystate));
+}
+
+static int local_staged_allocations;
+static void LocalObserveFreshAllocation (edict_t *ent)
+{
+	assert (!ent->free);
+	if (sv.loadgame_client_edicts)
+		++local_staged_allocations;
+}
+
+static void LocalExerciseAnchorAllocator (int offset, int free_target)
+{
+	int *allocated;
+	size_t count;
+	ED_RebuildFreeList (true);
+	LocalAssertAnchor (offset);
+	count = qcvm->free_list.size;
+	allocated = malloc ((count + 1) * sizeof *allocated);
+	assert (allocated);
+	for (size_t i = 0; i <= count; ++i)
+	{
+		edict_t *ent = ED_Alloc ();
+		allocated[i] = NUM_FOR_EDICT (ent);
+		assert (EDICT_TO_PROG (ent) != offset);
+	}
+	assert (LocalFreeListContains (NUM_FOR_EDICT (PROG_TO_EDICT (offset))) == false);
+	assert (EDICT_NUM (0)->v.chain == free_target * qcvm->edict_size &&
+		free_target < NUM_FOR_EDICT (PROG_TO_EDICT (offset)));
+	for (size_t i = 0; i <= count; ++i)
+		ED_Free (EDICT_NUM (allocated[i]));
+	free (allocated);
+	ED_RebuildFreeList (true);
+	LocalAssertAnchor (offset);
+	fprintf (stderr, "COOP_REFERENCE_ALLOCATOR_PASSED retained-anchor FIFO/rebuild fresh-tail referenced-free-target=%d\n", free_target);
 }
 
 static char *LocalNextLine (char **cursor)
@@ -626,6 +708,61 @@ static void LocalSetOrigin (edict_t *ent, const vec3_t origin)
 	SV_LinkEdict (ent, false);
 }
 
+/* Derive a controlled forward/capacity boundary from a real v7 writer body;
+ * the original two-identity witness stays untouched. This is not a donor save. */
+static void LocalRewriteChainTarget (const char *source, const char *destination, int slot)
+{
+	char *contents = LocalReadAutosave (source);
+	char *chain = strstr (contents, "\"chain\" \"");
+	char *end;
+	FILE *file = fopen (va ("%s/%s", com_gamedir, destination), "wb");
+	assert (file && chain && (end = strchr (chain, '\n')));
+	assert (fwrite (contents, 1, chain - contents, file) == (size_t)(chain - contents));
+	assert (fprintf (file, "\"chain\" \"%d\"", slot) > 0 && fputs (end, file) >= 0);
+	assert (fclose (file) == 0);
+	free (contents);
+}
+
+static void LocalReferenceCapacityAndTeardown (void)
+{
+	extern jmp_buf host_abortserver;
+	ED_AllocHook_func previous;
+	LocalRewriteChainTarget ("reverse-coop-witness.sav", "reference-capacity.sav", qcvm->max_edicts - 1);
+	local_staged_allocations = 0;
+	previous = ED_AllocSetHook (LocalObserveFreshAllocation);
+	/* The real error owner aborts this host frame. The local client is connected,
+	 * so the dedicated bootstrap does not take the dedicated-console exit. */
+	if (!setjmp (host_abortserver))
+	{
+		PR_SwitchQCVM (NULL);
+		Cmd_ExecuteString ("load reference-capacity", src_command);
+		assert (!"capacity load must fail before allocating/staging anchors");
+	}
+	assert (!sv.active && !local_staged_allocations);
+	PR_SwitchQCVM (&sv.qcvm);
+	assert (EDICT_NUM (0)->v.enemy == 2 * qcvm->edict_size &&
+		EDICT_NUM (0)->v.owner == qcvm->edict_size &&
+		LocalPendingClient (0)->v.owner == qcvm->edict_size &&
+		LocalPendingClient (0)->v.enemy == 2 * qcvm->edict_size);
+	for (int i = 0; i < MAX_SCOREBOARD; ++i)
+		assert (!sv.loadgame_client_reference_anchors[i]);
+	ED_AllocSetHook (previous);
+	PR_SwitchQCVM (NULL);
+	fprintf (stderr, "COOP_REFERENCE_CAPACITY_PASSED preflight no-anchor-allocation/no-reference-relocation\n");
+	client_t *beta = LocalLoadAs ("load reverse-coop-witness", "beta");
+	assert (beta && sv.loadgame_client_saved[0]);
+	LocalAssertAnchor (sv.loadgame_client_reference_anchors[0]);
+	PR_SwitchQCVM (NULL);
+	Cmd_ExecuteString ("map e1m1", src_command);
+	assert (sv.active && !sv.loadgame_client_edicts);
+	PR_SwitchQCVM (&sv.qcvm);
+	for (int i = 0; i < MAX_SCOREBOARD; ++i)
+		assert (!sv.loadgame_client_saved[i] && !sv.loadgame_client_reference_anchors[i]);
+	for (int i = 0; i < qcvm->num_edicts; ++i)
+		assert (!EDICT_NUM (i)->retain_count);
+	fprintf (stderr, "COOP_REFERENCE_TEARDOWN_PASSED pending-anchor destroyed by native map/VM teardown\n");
+}
+
 static void LocalCoopLifecycle (client_t *alpha)
 {
 	client_t *beta;
@@ -633,7 +770,8 @@ static void LocalCoopLifecycle (client_t *alpha)
 	edict_t *teledeath, *start, *coop_spawn, *reference;
 	vec3_t beta_origin, saved_beta_origin, delta;
 	float before_health, before_count, beta_nails, alpha_nails;
-	int reference_slot;
+	int reference_slot, free_target, pending_anchor, beta_anchor;
+	edict_t *retained_reference;
 	const char *counter_name;
 	assert (svs.maxclients == 2 && coop.value && !deathmatch.value &&
 		alpha && alpha->active && alpha->spawned && alpha->netconnection &&
@@ -747,7 +885,21 @@ static void LocalCoopLifecycle (client_t *alpha)
 	world->v.enemy = EDICT_TO_PROG (beta->edict);
 	LocalApplyDamage (alpha->edict, world, world, 500.0f);
 	assert (alpha->edict->v.health <= 0.0f);
+	world->v.owner = EDICT_TO_PROG (alpha->edict);
+	alpha->edict->v.owner = EDICT_TO_PROG (alpha->edict);
+	alpha->edict->v.enemy = EDICT_TO_PROG (beta->edict);
+	beta->edict->v.owner = EDICT_TO_PROG (beta->edict);
+	beta->edict->v.enemy = EDICT_TO_PROG (alpha->edict);
+	*LocalEntityGlobal ("le1") = EDICT_TO_PROG (beta->edict);
+	*LocalEntityGlobal ("le2") = EDICT_TO_PROG (alpha->edict);
+	reference = ED_AllocFresh ();
+	world->v.chain = EDICT_TO_PROG (reference);
+	ED_Free (reference);
+	world->v.frags = (float)EDICT_TO_PROG (beta->edict); // nonentity numeric control
 	SaveFixture ("reverse-coop-witness", 7);
+	free_target = qcvm->num_edicts + 7;
+	assert (free_target + 2 < qcvm->max_edicts);
+	LocalRewriteChainTarget ("reverse-coop-witness.sav", "reverse-coop-forward.sav", free_target);
 	reference_slot = NUM_FOR_EDICT (beta->edict);
 	LocalAssertTwoIdentitySave ("reverse-coop-witness.sav", reference_slot);
 	fprintf (stderr, "COOP_V07_SAVE_PASSED identities=alpha,beta active=2 dead-alpha=1 reference-slot=%d\n",
@@ -755,14 +907,75 @@ static void LocalCoopLifecycle (client_t *alpha)
 
 	/* Beta is deliberately the first reconnect although it occupied saved
 	 * slot two. Alpha's old local command/queue must not cross that identity. */
-	beta = LocalLoadAs ("load reverse-coop-witness", "beta");
+	local_staged_allocations = 0;
+	ED_AllocHook_func previous_hook = ED_AllocSetHook (LocalObserveFreshAllocation);
+	beta = LocalLoadAs ("load reverse-coop-forward", "beta");
+	ED_AllocSetHook (previous_hook);
 	world = EDICT_NUM (0); // Host_Loadgame rebuilt the QCVM/edict array
+	pending_anchor = sv.loadgame_client_reference_anchors[0];
+	beta_anchor = (free_target + 2) * qcvm->edict_size;
 	assert (sv.loadgame && sv.loadgame_client_saved[0] &&
 		!sv.loadgame_client_saved[1] && EDICT_NUM (reference_slot)->free &&
-		NUM_FOR_EDICT (PROG_TO_EDICT (world->v.enemy)) == reference_slot);
+		PROG_TO_EDICT (world->v.enemy) == beta->edict && world->v.owner == pending_anchor);
+	assert (pending_anchor == (free_target + 1) * qcvm->edict_size &&
+		local_staged_allocations >= 2 && EDICT_NUM (free_target)->free &&
+		!EDICT_NUM (free_target)->retain_count &&
+		!PROG_TO_EDICT (beta_anchor)->retain_count && LocalFreeListContains (free_target + 2));
+	LocalAssertAnchor (pending_anchor);
+	char previous_save[sizeof sv.lastsave];
+	memcpy (previous_save, sv.lastsave, sizeof previous_save);
+	Cmd_ExecuteString ("save reference-pending-refused", src_command);
+	assert (access (va ("%s/reference-pending-refused.sav", com_gamedir), F_OK) != 0 &&
+		access (va ("%s/reference-pending-refused.sav.tmp", com_gamedir), F_OK) != 0 &&
+		!memcmp (previous_save, sv.lastsave, sizeof previous_save) &&
+		sv.loadgame_client_saved[0] && sv.loadgame_client_reference_anchors[0] == pending_anchor);
+	LocalAssertAnchor (pending_anchor);
+	fprintf (stderr, "COOP_REFERENCE_PENDING_SAVE_REFUSED_PASSED existing-refusal no-file/lastsave-change anchor-preserved\n");
+	assert (beta->edict->v.owner == EDICT_TO_PROG (beta->edict) &&
+		beta->edict->v.enemy == pending_anchor &&
+		LocalPendingClient (0)->v.owner == pending_anchor &&
+		LocalPendingClient (0)->v.enemy == EDICT_TO_PROG (beta->edict) &&
+		*LocalEntityGlobal ("le1") == EDICT_TO_PROG (beta->edict) &&
+		*LocalEntityGlobal ("le2") == pending_anchor &&
+		world->v.frags == (float)(reference_slot * qcvm->edict_size));
 	assert (!beta->private_cmd_queue_count && !beta->private_completed_move &&
 		!memcmp (saved_beta_origin, beta->edict->v.origin, sizeof delta) &&
 		beta->edict->v.armorvalue == 82.5f && beta->edict->v.ammo_nails == beta_nails);
+	LocalExerciseAnchorAllocator (pending_anchor, free_target);
+	/* Let real frames run while alpha is pending. Fresh references to beta1 must
+	 * survive the later alpha1->live2 resolution. Keep beta clear of pickups. */
+	start = LocalFindClass ("info_player_start");
+	assert (start);
+	VectorCopy (start->v.origin, delta);
+	delta[2] += 128.0f;
+	LocalSetOrigin (beta->edict, delta);
+	for (int frame = 0; frame < 3; ++frame)
+	{
+		LocalSend (true, 0, 0.0f);
+		LocalFrame ();
+	}
+	world->v.aiment = EDICT_TO_PROG (beta->edict);
+	*LocalEntityGlobal ("le1") = EDICT_TO_PROG (beta->edict);
+	/* Equal raw values in float/vector/function fields are deliberately untyped
+	 * controls. No callbacks dereference these world controls. */
+	memcpy (&world->v.frags, &pending_anchor, sizeof pending_anchor);
+	memcpy (&world->v.movedir[0], &pending_anchor, sizeof pending_anchor);
+	world->v.think = pending_anchor;
+	/* Native retention permits callback readers to access a freed payload.
+	 * Its typed pending identity must resolve before the anchor is released. */
+	retained_reference = ED_AllocFresh ();
+	retained_reference->v.owner = pending_anchor;
+	retained_reference->v.enemy = EDICT_TO_PROG (beta->edict);
+	ED_Retain (retained_reference);
+	ED_Free (retained_reference);
+	assert (retained_reference->free && retained_reference->retain_count == 1 &&
+		retained_reference->v.owner == pending_anchor);
+	client_t *newcomer = LocalSpawnPeerAs (1, "charlie");
+	assert (sv.loadgame_client_saved[0] && world->v.owner == pending_anchor &&
+		newcomer->edict == EDICT_NUM (2));
+	newcomer->edict->v.enemy = EDICT_TO_PROG (beta->edict);
+	LocalDropPreparedPeer (newcomer);
+	assert (sv.loadgame_client_saved[0] && sv.loadgame_client_reference_anchors[0] == pending_anchor);
 	alpha = LocalSpawnPeerAs (1, "alpha");
 	assert (!sv.loadgame && !sv.loadgame_client_saved[0] &&
 		!sv.loadgame_client_saved[1]);
@@ -773,6 +986,28 @@ static void LocalCoopLifecycle (client_t *alpha)
 		(IT_KEY2 | IT_NAILGUN) &&
 		((int)beta->edict->v.items & (IT_KEY2 | IT_NAILGUN)) ==
 		(IT_KEY2 | IT_NAILGUN) && beta->edict->v.ammo_nails == beta_nails);
+	assert (world->v.enemy == EDICT_TO_PROG (beta->edict) &&
+		world->v.owner == EDICT_TO_PROG (alpha->edict) &&
+		world->v.aiment == EDICT_TO_PROG (beta->edict) &&
+		beta->edict->v.owner == EDICT_TO_PROG (beta->edict) &&
+		beta->edict->v.enemy == EDICT_TO_PROG (alpha->edict) &&
+		*LocalEntityGlobal ("le1") == EDICT_TO_PROG (beta->edict) &&
+		*LocalEntityGlobal ("le2") == EDICT_TO_PROG (alpha->edict) &&
+		!memcmp (&world->v.frags, &pending_anchor, sizeof pending_anchor) &&
+		!memcmp (&world->v.movedir[0], &pending_anchor, sizeof pending_anchor) &&
+		world->v.think == pending_anchor && !PROG_TO_EDICT (pending_anchor)->retain_count &&
+		LocalFreeListContains (pending_anchor / qcvm->edict_size));
+	assert (retained_reference->free && retained_reference->retain_count == 1 &&
+		retained_reference->v.owner == EDICT_TO_PROG (alpha->edict) &&
+		retained_reference->v.enemy == EDICT_TO_PROG (beta->edict));
+	ED_Release (retained_reference);
+	assert (!retained_reference->retain_count &&
+		LocalFreeListContains (NUM_FOR_EDICT (retained_reference)));
+	fprintf (stderr, "COOP_REFERENCE_RETAINED_FREE_PASSED typed pending container follows identity before anchor release\n");
+	world->v.frags = world->v.movedir[0] = world->v.think = 0;
+	for (int i = 0; i < MAX_SCOREBOARD; ++i)
+		assert (!sv.loadgame_client_reference_anchors[i]);
+	fprintf (stderr, "COOP_REFERENCE_TYPED_PENDING_PASSED world/global/self/cross pending-payload new-beta-refs nonentity-controls newcomer/drop released\n");
 	fprintf (stderr, "COOP_V07_REVERSE_RECONNECT_PASSED beta-first own-state queues-reset beta-ammo=%.0f alpha-ammo=%.0f named-spawn alpha-dead-inventory-restored\n",
 		(double)beta->edict->v.ammo_nails, (double)alpha->edict->v.ammo_nails);
 
@@ -799,6 +1034,9 @@ static void LocalCoopLifecycle (client_t *alpha)
 	assert (beta->edict->v.health <= 0.0f);
 	LocalSend (true, BUTTON_ATTACK, 0.0f);
 	LocalFrame ();
+	fprintf (stderr, "COOP_RESPAWN_OBSERVED beta-health=%g alpha-health=%g survivor-health=%g deadflag=%g buttons=%g time=%g\n",
+		beta->edict->v.health, alpha->edict->v.health, survivor_health,
+		beta->edict->v.deadflag, beta->edict->v.button0, qcvm->time);
 	assert (beta->edict->v.health > 0.0f && alpha->edict->v.health == survivor_health);
 	assert (SV_CoopRespawnPlaceNearPlayer (beta->edict));
 	VectorSubtract (beta->edict->v.origin, alpha->edict->v.origin, delta);
@@ -813,6 +1051,74 @@ static void LocalCoopLifecycle (client_t *alpha)
 	fflush (stderr);
 	assert (reference == beta->edict);
 	fprintf (stderr, "COOP_V07_REFERENCE_IDENTITY_PASSED saved-reference-follows-beta\n");
+	const float alpha_health = alpha->edict->v.health;
+	const float beta_health = beta->edict->v.health;
+	LocalApplyDamage (reference, world, world, 10.0f);
+	assert (beta->edict->v.health < beta_health && alpha->edict->v.health == alpha_health);
+	fprintf (stderr, "COOP_REFERENCE_QC_CONSUMER_PASSED T_Damage through saved-reference affects only beta\n");
+	/* Both players are now living: a second save/load covers actual full payload
+	 * self/cross restoration, and proves released anchors do not serialize live. */
+	alpha->edict->v.owner = EDICT_TO_PROG (alpha->edict);
+	alpha->edict->v.enemy = EDICT_TO_PROG (beta->edict);
+	beta->edict->v.owner = EDICT_TO_PROG (beta->edict);
+	beta->edict->v.enemy = EDICT_TO_PROG (alpha->edict);
+	SaveFixture ("references-resolved", 7);
+	beta = LocalLoadAs ("load references-resolved", "beta");
+	alpha = LocalSpawnPeerAs (1, "alpha");
+	world = EDICT_NUM (0);
+	assert (PROG_TO_EDICT (world->v.enemy) == beta->edict &&
+		PROG_TO_EDICT (world->v.owner) == alpha->edict &&
+		PROG_TO_EDICT (alpha->edict->v.owner) == alpha->edict &&
+		PROG_TO_EDICT (alpha->edict->v.enemy) == beta->edict &&
+		PROG_TO_EDICT (beta->edict->v.owner) == beta->edict &&
+		PROG_TO_EDICT (beta->edict->v.enemy) == alpha->edict);
+	for (int i = 0; i < MAX_SCOREBOARD; ++i)
+		assert (!sv.loadgame_client_reference_anchors[i]);
+	for (int i = 0; i < qcvm->num_edicts; ++i)
+		assert (!EDICT_NUM (i)->retain_count);
+	fprintf (stderr, "COOP_REFERENCE_RESAVE_PASSED living self/cross references no-retained-anchors\n");
+	LocalReferenceCapacityAndTeardown ();
+}
+
+static void LocalReferenceCallbackCancellation (client_t *alpha)
+{
+	ddef_t *cancel, *calls;
+	client_t *beta;
+	edict_t *world = EDICT_NUM (0);
+	int anchor, callbacks;
+	LocalStrings ((const char *[]){"name alpha"}, 1);
+	beta = LocalSpawnPeerAs (1, "beta");
+	LocalApplyDamage (alpha->edict, world, world, 500.0f);
+	assert (alpha->edict->v.health <= 0.0f);
+	world->v.enemy = EDICT_TO_PROG (beta->edict);
+	world->v.owner = EDICT_TO_PROG (alpha->edict);
+	alpha->edict->v.enemy = EDICT_TO_PROG (beta->edict);
+	SaveFixture ("reference-cancel", 7);
+	beta = LocalLoadAs ("load reference-cancel", "beta");
+	world = EDICT_NUM (0);
+	anchor = sv.loadgame_client_reference_anchors[0];
+	LocalAssertAnchor (anchor);
+	assert (PROG_TO_EDICT (world->v.enemy) == beta->edict && world->v.owner == anchor);
+	cancel = ED_FindGlobal ("fixture_cancel_spawn");
+	calls = ED_FindGlobal ("fixture_spawn_callbacks");
+	assert (cancel && calls);
+	callbacks = (int)qcvm->globals[calls->ofs];
+	qcvm->globals[cancel->ofs] = 1;
+	alpha = LocalAttemptPeerAs (1, "alpha", false);
+	assert (qcvm->globals[calls->ofs] == callbacks + 1 &&
+		sv.loadgame_client_saved[0] && sv.loadgame_client_reference_anchors[0] == anchor &&
+		LocalPendingClient (0)->v.enemy == EDICT_TO_PROG (beta->edict) &&
+		world->v.owner == anchor && PROG_TO_EDICT (world->v.enemy) == beta->edict);
+	LocalAssertAnchor (anchor);
+	LocalDropPreparedPeer (alpha);
+	qcvm->globals[cancel->ofs] = 0;
+	alpha = LocalSpawnPeerAs (1, "alpha");
+	assert (qcvm->globals[calls->ofs] == callbacks + 2 && !sv.loadgame_client_saved[0] &&
+		!sv.loadgame_client_reference_anchors[0] && !PROG_TO_EDICT (anchor)->retain_count &&
+		PROG_TO_EDICT (world->v.owner) == alpha->edict &&
+		PROG_TO_EDICT (world->v.enemy) == beta->edict &&
+		!alpha->private_cmd_queue_count && !beta->private_cmd_queue_count);
+	fprintf (stderr, "COOP_REFERENCE_CANCEL_PASSED loaded-QC remove(self) cancels dead-spawn pending-payload/anchor preserved reconnect resolves/releases\n");
 }
 
 int main (int argc, char **argv)
@@ -836,11 +1142,18 @@ int main (int argc, char **argv)
 	if (disabled) Cvar_Set ("sv_private_pmove_walk", "0");
 	client_t *peer = LocalSignon (false, public);
 	const qboolean selected = !public && !disabled;
+	if (!strcmp (scenario, "coop-ref-cancel"))
+	{
+		LocalReferenceCallbackCancellation (peer);
+		fprintf (stderr, "LOCAL_LOAD_NATIVE_PASSED case=%s loaded-QC callback cancellation\n", scenario);
+		return 0;
+	}
 	if (!strcmp (scenario, "coop-lifecycle"))
 	{
 		assert (peer->private_pmove_walk_selected == selected);
 		LocalCoopLifecycle (peer);
 		fprintf (stderr, "COOP_LIFECYCLE_NATIVE_PASSED loaded=e1m3 stock-QC loopback-first prepared-second\n");
+		fprintf (stderr, "LOCAL_LOAD_NATIVE_PASSED case=%s typed-reference lifecycle\n", scenario);
 		return 0;
 	}
 	assert (peer->private_pmove_walk_selected == selected);

@@ -95,6 +95,13 @@ edict_t *ED_Alloc (void)
 		return e;
 	}
 
+	return ED_AllocFresh ();
+}
+
+/* Allocate only the fresh tail, without consuming a reusable saved target. */
+edict_t *ED_AllocFresh (void)
+{
+	edict_t *e;
 	if (qcvm->num_edicts == qcvm->max_edicts) // johnfitz -- use sv.max_edicts instead of MAX_EDICTS
 		Host_Error ("ED_Alloc: no free edicts (max_edicts is %i)", qcvm->max_edicts);
 

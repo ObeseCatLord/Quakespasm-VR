@@ -49,13 +49,17 @@ evidence; unavailable parts no longer gate completion.
   authored stock Shub restart/save/load lifecycle, actual music EOF tail,
   removed Toss support and successful native pusher relink; Unicode path
   precedence, real HTTPS catalogue install/cancel/failure cleanup and native
-  catalogue/installed-mod filtering.
+  catalogue/installed-mod filtering; native typed cursor/weapon parser/QC alignment
+  and stock immersive-melee input/QC/ready-pose consumers.
 - V06 observed failure: reverse reconnect restores inventory correctly but a
   saved typed QC reference aliases the wrong player after slot reuse. Same local
   Astra approved the narrow native typed-reference/lifetime adapter; Luna is
-  implementing it under the [reviewed plan](coop-save-reference-final-2.0-review-brief.md). This remains required.
+  implementation and retained-free guard now pass affected lifecycle/cancellation
+  checks under the [reviewed plan](coop-save-reference-final-2.0-review-brief.md).
+  Shipping refresh remains required.
 - Accepted CSQC create/update/split-ACK recovery/re-enable/lost-removal/ID reuse
-  at captured transport; actual typed cursor/weapon producer remains unproved.
+  at captured transport; actual native typed cursor/weapon producer/parser/loaded
+  QC now passes at the documented captured-delivery boundary.
 - Pending native consumers: remaining calibration/paired-melee distinctions
   and teleport/frozen-reset behavior. Authored Shub and native music EOF tail are now accepted at
   the exact bounded outcomes in the grouped results.

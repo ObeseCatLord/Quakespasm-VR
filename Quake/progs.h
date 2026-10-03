@@ -135,6 +135,7 @@ void		PR_ClearEngineString (int num);
 void PR_Profile_f (void);
 
 edict_t *ED_Alloc (void);
+edict_t *ED_AllocFresh (void);
 void	 ED_Free (edict_t *ed);
 void	 ED_Retain (edict_t *ed);
 void	 ED_Release (edict_t *ed);

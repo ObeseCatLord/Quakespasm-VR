@@ -92,6 +92,7 @@ typedef struct
 	byte	 loadgame_client_alpha[MAX_SCOREBOARD];
 	byte	 *loadgame_client_edicts; // QC payload snapshots; excludes live edict metadata
 	size_t	 loadgame_client_edict_size;
+	int		 loadgame_client_reference_anchors[MAX_SCOREBOARD]; // retained-free QC offsets, zero if unreferenced
 
 	char lastsave[128];
 
