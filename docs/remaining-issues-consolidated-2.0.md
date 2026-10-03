@@ -75,8 +75,8 @@ fix code without evidence.
 
 F09: five semantic package negatives complete. Current Windows Release/Debug,
 Linux x86-64 and native ARM builds/packages/freshness accepted at0bd4 shipping
-source; current docs/tests commits need no platform rebuild. No current storage
-or GPU-availability blocker. Upstream vkQuake merge rehearsal/conflict-owner
+source; current docs/tests commits need no platform rebuild. Storage remains available. Current native Vulkan allocation is blocked by
+NV_ERR_RESET_REQUIRED; CPU Monado also refuses compositor device creation. Upstream vkQuake merge rehearsal/conflict-owner
 maintainability work accepted as attempted rehearsal; integrating36new upstream
 commits is outside this migration goal. Native architecture and graphics remain.
 
@@ -87,6 +87,27 @@ AV-009/general VRM importer and eleven useful-addition candidates remain researc
 Physical Beyond2e/Monado and Steam Frame headset/gaze/FB-META/provider/listening/
 multiplayer/performance outcomes remain user-side work. Both native and streamed
 Frame release targets and optional eye tracking remain the implemented contract.
+
+## Execution status after the frozen enumeration
+
+D03/D04 production repairs are reviewed and committed at0f277d1f. All12loaded
+native QC/parser regression cases pass with Debug assertions; the same12pass
+with an optimized sv_user object and Debug support graph (not full Release).
+The [grouped results](final-grouped-software-current-2.0-results.md) record22native
+physics/metadata/save cases, six UBSan components and13native audio markers.
+
+D01 now has bounded CPU-rendered between-send prediction evidence at original
+thresholds; that aggregate still fails a command-rate-incompatible short jump
+oracle. D02 remains open: the public desktop gameplay probe passes but Monado
+cannot start XR, so mixed-peer lifecycle and normal terminal evidence do not
+complete. Controlled NVIDIA retries still fail device allocation; owned test
+runtimes are stopped without GPU resets, driver reloads or system changes.
+
+A01 refreshed Linux and Windows Release/Debug builds succeed from production
+0f277d1f; native ARM refresh and final source/package reconciliation are underway.
+Protected-output inputs/capture/checker are reviewed and compile/link against
+current native renderer; no GPU execution pass. All V rows and A02 retain their
+stated completion boundaries. Tests/docs-only commits need no engine rebuild.
 
 ## Execution order
 

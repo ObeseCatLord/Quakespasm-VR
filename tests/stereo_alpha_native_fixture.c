@@ -118,12 +118,15 @@ void Fixture_AlphaSceneInit (void)
 	}
 }
 
-void Fixture_AlphaSceneOpacity (int enabled)
+void Fixture_AlphaSceneOpacity (int mode)
 {
-	unsigned char alpha = enabled ? 128 : ENTALPHA_ZERO;
+	unsigned char alpha;
 	int i;
 
-	assert ((enabled == 0 || enabled == 1) && !Tasks_IsWorker () && fixture_alpha_static_count == 2);
+	assert ((mode == 0 || mode == 1 || mode == 2) && !Tasks_IsWorker () && fixture_alpha_static_count == 2);
+	/* Preserve F05's zero/translucent inputs; F06 also needs the engine's
+	 * ordinary opaque sentinel so the models enter the protected alias path. */
+	alpha = mode == 0 ? ENTALPHA_ZERO : mode == 1 ? 128 : ENTALPHA_DEFAULT;
 	for (i = 0; i < fixture_alpha_static_count; ++i)
 	{
 		int index = fixture_alpha_static_indices[i];
@@ -139,7 +142,8 @@ void Fixture_AlphaSceneOpacity (int enabled)
 
 static void Fixture_AlphaSceneOpacityCommand (void)
 {
-	assert (Cmd_Argc () == 2 && (!strcmp (Cmd_Argv (1), "0") || !strcmp (Cmd_Argv (1), "1")));
+	assert (Cmd_Argc () == 2 && (!strcmp (Cmd_Argv (1), "0") || !strcmp (Cmd_Argv (1), "1") ||
+		!strcmp (Cmd_Argv (1), "2")));
 	Fixture_AlphaSceneOpacity (atoi (Cmd_Argv (1)));
 }
 

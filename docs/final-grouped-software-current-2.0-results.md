@@ -84,15 +84,45 @@ Monado null runtime provide diagnostic connected execution without NVIDIA. The
 default profile admits movement, shots, replay and ACKs but observes no stable
 ACK/sent pairs between sends, so the original prediction oracle fails without a
 rendering opportunity. No production prediction bug or pass is inferred.
-Explicit lower-resolution/command-rate software qualification remains underway;
-original thresholds remain unchanged. Receipts: FastGames/qsvr-final-cpu-vulkan-
-bdm_i5vc and qsvr-final-gpu-resumed-khdhlxgs. The driver is private and selected
-only in child environments; no system installation or global runtime setting.
+The explicit320x240/8Hz diagnostic observes54successful desktop replay returns
+and8.702units between-send displayed displacement with unchanged ACK/sent/owner/
+authoritative origin, followed by convergence. It still fails the separate short
+jump timer assertion: native jump_secs expires above50ms and these commands are
+longer. Thresholds and failure remain unchanged; this is bounded prediction
+evidence, not a complete suite pass. The unchanged public baseline separately
+passes desktop gameplay with266.981units movement, four shells consumed and
+advancing ACKs. XR cannot start: the owned Monado null compositor reports
+VK_ERROR_INITIALIZATION_FAILED during its own vkCreateDevice. No XR lifecycle,
+clean public peer quit or D02 resolution is claimed from this aborted aggregate.
+The experimental lower-rate runner is retained privately and removed from the
+repository rather than introducing a qualification mode incompatible with the
+short timer oracle. Both owned CPU services exit0.
+
+Receipts: FastGames/qsvr-final-cpu-vulkan-bdm_i5vc and
+qsvr-final-gpu-resumed-khdhlxgs. Signed private driver selection is confined to
+child environments; no system installation or global runtime setting.
+
+## Protected-output preparation
+
+The patterned emitter and current native parser-fixture client compile/link0,
+using the225-object refreshed graph, original enabled dependencies and renderer.
+Mode0/1 behavior is preserved; test-only mode2 uses native opaque alias state.
+The checker selects aligned coarse-fragment sensitivity from OFF captures before
+comparing FIXED/E, requires both eyes and consumed default opaque alias pipelines,
+actual generated/uploaded map equality and a stable outside-world difference.
+Missing sensitivity is inconclusive. Main reviews the test source and verifies
+asset generation, native strict compile/link and Python syntax.
+
+Layer selection is source-derived from eye/map-layer count and the native
+multiview/image-view setup; it is not independently observed Vulkan layer routing.
+No protected GPU output pass is claimed. Receipts:
+FastGames/qsvr-foveation-final-prep-jec4o61u/{status.json,sources.json,assets,
+compile-argv.json,link-argv.json,compile.log,link.log}.
 
 ## Still running or awaiting final execution
 
 Final shipping artifacts are underway;
-protected-output test inputs/capture/checker are in preparation. Remaining V rows,
+protected-output test inputs/capture/checker compile and await GPU execution. Remaining V rows,
 D01/D02 connected oracle/terminal evidence and final local Astra integration
 signoff stay open until their actual outcomes are recorded. These results must
 not silently substitute component passes for those completion boundaries.
