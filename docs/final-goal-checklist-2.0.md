@@ -34,6 +34,17 @@ During this audit main also qualified9stock and5cooperative local-load cases,
 plus7loaded cooperative-QC profiles without code edits:
 [current lifecycle evidence](local-qc-load-current-qualification-2.0.md).
 
+## Current execution list and work order
+
+2026-10-02: [consolidated reviewed remaining issues](remaining-issues-consolidated-2.0.md)
+reconciles the chronological progress below into D01–D04, V01–V21 and A01/A02,
+with [local Astra/main dispositions](consolidated-issues-senior-2.0-review.md).
+Two confirmed source defects are D03/D04 (including malformed EOF string-prefix
+admission). D01/D02 are unresolved historical evidence, not proven fork bugs.
+User order: complete enumeration, resolve all implementation issues, then run
+combined final tests. Existing F01–F10 feature/acceptance scope below is retained;
+no obsolete platform/storage/GPU or already accepted subcase is reopened.
+
 ## One remaining list
 
 | ID | Priority / owner | Remaining work and objective completion boundary |

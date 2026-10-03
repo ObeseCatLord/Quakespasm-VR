@@ -1,4 +1,4 @@
-# Consolidated remaining issues — audit draft
+# Consolidated remaining issues — reviewed final work list
 
 2026-10-02, source snapshot414d58ec. User work order: identify every remaining
 issue together, resolve the implementation issues, then run final verification.
@@ -14,7 +14,8 @@ worksheet each have185unique matching IDs. Original C01–C22/Q01 are source-
 integrated; latest prior complete scope review establishes no additional source
 omission. That is reused audited-source evidence, not a new full code proof.
 Current local senior review must challenge it at load-bearing seams before this
-list is frozen. An unverified behavior is not a confirmed code defect.
+list is frozen. That review is now complete with the two confirmed source paths
+below and the explicit existing-scope coverage clarifications. An unverified behavior is not a confirmed code defect.
 
 Types: **D** observed unresolved failure requiring diagnosis/disposition; **V**
 remaining software acceptance, no demonstrated production defect; **A** final
@@ -27,8 +28,16 @@ an exhaustive mods/settings/builtin/device matrix.
 
 | Item | Type / frozen owner | Issue and required resolution |
 | --- | --- | --- |
-| D01 | D / F01 | Existing connected prediction/movement probes intermittently see maximum between-send displacement0.119 below0.25, or original settled-distance failure, despite successful replay/ACK/fire and subsequent unchanged passes. Determine whether sampling/input/timing assumptions or actual movement/presentation are at fault; retain native command/QC/reference semantics and do not weaken an unexplained threshold. Evidence: connected-crossplay-current-2.0-results.md and connected-lifecycle-current-2.0-results.md. |
-| D02 | D / F01,F10 | Newest unchanged public-vkQuake peer exits with corrupted double-linked list/SIGABRT at quit after the crossplay/map/slot phases. Earlier public run exits normally. Root cause and whether current fork shares it are unestablished. Diagnose from retained evidence/source; do not modify the read-only baseline or claim the failed aggregate a pass. The old documented /tmp qualification root is currently absent; trace relocated artifacts before drawing a memory-owner conclusion. |
+| D01 | D / F01 | Existing connected prediction/movement probes intermittently see maximum between-send displacement0.119 below0.25, or original settled-distance failure, despite successful replay/ACK/fire and subsequent unchanged passes. Retain as an oracle-evidence gap: between-send observations lack elapsed-time/velocity/unobstructed-movement premises; settled endpoints do not measure travelled distance. Preserve historical thresholds/results. During final qualification record accepted input duration, timing, positions, velocity and obstruction with an ordinary collision-free movement opportunity; diagnose current failure if present without assuming broken prediction. Evidence: connected-crossplay-current-2.0-results.md and connected-lifecycle-current-2.0-results.md. |
+| D02 | D / F01,F10 | Newest unchanged public-vkQuake peer exits with corrupted double-linked list/SIGABRT at quit after the crossplay/map/slot phases. Earlier public run exits normally. Root cause and whether current fork shares it are unestablished. Do not attribute to fork/driver/renderer or demand unconditional repair of the read-only baseline. Current fork clean exits remain valid bounded evidence. Record each process outcome during final mixed-peer qualification; a recurring abort requires a contemporaneous stack/ownership diagnosis. Historical raw logs are unavailable after targeted relocation lookup; do not require recreating them or claim the failed aggregate a pass. |
+
+
+## Confirmed production issues — resolve before final tests
+
+| Item | Type / frozen owner | Verified path and smallest repair |
+| --- | --- | --- |
+| D03 | D / F01,F03, NET-015 | SV_ReadQCRequest converts a bounds-checked numbered entity with Debug EDICT_TO_PROG, which Host_Errors on a legitimately freed slot before handler lookup. Main verifies sv_user.c:1984, pr_edict.c:2426, host.c:304 and plain-offset pinned MAIN/QSS-M references. Reuse the existing saved-reference byte-offset adapter; do not revive the slot or weaken general Debug checks. |
+| D04 | D / F01,F03 | QC string-command self-drop causes reader false and a second SV_DropClient; immediate spawnclient may let trailing old message commands reach the replacement. Main verifies sv_user.c:2084/2183, pr_ext.c:2491 and host.c:593–647. Reuse typed-request requester/socket retirement guard for both QC hook and normal command dispatch. No new lifetime manager; inherited donor bug, still within callback/slot contract. Also reject unterminated EOF string prefixes immediately after MSG_ReadString before any capability/QC/native command effects. Main and the same Astra reviewer confirm this adjacent admission defect; terminated overlong-string policy remains unchanged. |
 
 ## Remaining software acceptance — source behavior exists
 
@@ -38,24 +47,24 @@ fix code without evidence.
 
 | Item | Owner | Remaining action / completion boundary |
 | --- | --- | --- |
-| V01 | F01 | Bounded actual transport loss/reorder/split snapshot and ACK/owner recovery; advancing native socket sequences and focused IPv6 cleanup/admission for native/public/private peers. Preserve accepted connected signon/gameplay/map/slot proofs. |
+| V01 | F01 | Bounded actual transport loss/reorder/split snapshot and ACK/owner recovery; advancing native socket sequences and focused IPv6 cleanup/admission for native/public/private peers; NET-020 LAN/master/status/RCON/challenge/discovery control and truthful dialect advertising with controlled peers. Preserve accepted connected signon/gameplay/map/slot proofs. |
 | V02 | F01,C02 | Metadata slots spanning reliable sends, mid-signon mutation, empty-full/update-only init, downgrade/fastload, QC-intercepted slot occupation, retirement/reuse and complete logical envelopes. Complete publication or explicit refusal; preserve six accepted native metadata profiles. |
 | V03 | F01,C02 | Live cvar/name/color/setinfo/seta refusal preserves store/default/VM/output/archive flags; admitted controls retry without partial commands or stale state. Source publication/admission integration is complete; final native producer/parser/lifecycle evidence remains. |
 | V04 | F02 | Distinct stock-liquid, pusher/customphysics handoffs and command-versus-world-QC authority; pause/load/teleport/frozen reset; removed Toss support and successful elevator relink. Reuse current movement/physics owners and donor behaviors. |
-| V05 | F02 | Classic/default co-op policies, shared keys/weapons without copied ammo, exact-once targets, respawn-near/cooldown and established QBJ3 lifecycle revisions. Existing9stock/5cooperative load cases and7loaded QC profiles stay credited. |
+| V05 | F02 | Classic/default co-op collision/friendly-fire/telefrag policies, shared keys/weapons without copied ammo, exact-once targets, respawn-near/cooldown and established QBJ3 lifecycle revisions. Existing9stock/5cooperative load cases and7loaded QC profiles stay credited. |
 | V06 | F02 | Save v5/inheritedv6/v7/KEX6 lifecycle beyond accepted malformed headers: living/dead/pending clients, reverse-order restore, referenced free-edict reuse, hubs and autosave rotation/failed replacement. Native identities/callbacks retire without duplicate ownership. |
 | V07 | F03 | Remaining loaded-QC error unwind/simultaneous VM retirement and graphical authored HUD/localization consumers. Numeric/name/core permissions, buffers/files/search/calls/message/token/reflection/entity/surface/commands/changed-program ordinary reload already have bounded current acceptance; no512builtin framework. |
-| V08 | F03,F02 | Authored inherited entity/round behavior including Shub same-map restart/save-load latches and actual CSQC entity lifecycle/parser/application boundaries still unproved by dedicated generated programs. Document intentional native/unsupported differences rather than adding mod-specific machinery. |
-| V09 | F04 | Initialized input→native command→QC profile/handedness/focus/context/release/neutral-rearm checks; aim/recenter/turn/roomscale and pointer/wheel draw-hit-release. Existing eight actual6DoF phases stay accepted. |
+| V08 | F03,F02 | Authored inherited entity/round behavior including Shub same-map restart/save-load latches and actual CSQC create/update/remove, lost-removal/update recovery and re-enable resend (NET-009), plus typed requests/cursor/weapon arguments/following-command alignment (NET-015), still unproved by dedicated generated programs. Document intentional native/unsupported differences rather than adding mod-specific machinery. |
+| V09 | F04 | Initialized input→native command→QC profile/handedness/focus/context/release/neutral-rearm checks; aim/recenter/turn/roomscale and pointer/wheel draw-hit-release; explicit hand/toggle haptics (VR-010), calibrated crosshair depth (VR-011), obstruction handling and mod bindings/suppression. Existing eight actual6DoF phases stay accepted. |
 | V10 | F04 | Tracker identity/staleness, calibration accept/cancel/save/restart/reconnect, high ownership/ammo/schema consumers and AD preset reload, including AD-based mods. One shared solo/MP calibration and actual projectile placement. Existing offsets stay useful; no separate MP offsets. |
 | V11 | F04 | Paired ranged identities and recognized immersive-melee trigger suppression, swing ordinary-QC attack and held ready pose without gesture attack animation. Existing inherited/reference behavior remains the authority; contact melee and Mjolnir dual-state behavior are excluded. |
-| V12 | F05 | Targeted HUD/menu/console/wheel/intermission/field-panel output at inherited placement, names/outlines, mirror/mask/precision/lightmaps. Actual packaged desktop/two-eye/AO/MSAA/6DoF and native opposite-water composition/either-eye static alias boundaries remain accepted. |
+| V12 | F05 | Targeted HUD/menu/console/wheel/intermission/field-panel output at inherited placement, names/outlines, mirror/mask/precision/lightmaps. World/PVS/moving-brush visibility (XR-010/PERF-013), once-per-frame effects, supported shadow/caster/receiver consistency (PERF-F003) and truthful available/unavailable/shared diagnostics (PERF-F001) remain explicit. Actual packaged desktop/two-eye/AO/MSAA/6DoF and native opposite-water composition/either-eye static alias boundaries remain accepted. |
 | V13 | F05 | Independent tracked-player render and ordinary desktop/dead/corpse fallback; QBJ3 optional equipment present/missing with body/prop/muzzle/shadow agreement. Reuse published immutable poses/model-owned resources. General VRM importer/CPU retargeting rewrite is not required. |
 | V14 | F05 | Loaded desktop↔XR transition, focus/reference reset/map retirement and valid/corrupt/restart pipeline-cache behavior with clean output/lifetimes. Current session/backend component evidence is bounded; do not substitute mocks for whole loaded rendering. |
 | V15 | F06 | Actual available KHR protected output while eligible world shading coarsens. Existing backend policy/capability/selection/setter/off-recovery/view/pass/framebuffer components and actual fixed/menu/unavailable/off transitions are accepted. Pattern/opaque image-oracle design is unimplemented; local review requires aligned fragment sensitivity, actual tile/layer mapping and consumed opaque pipeline observation. Never implicit fixed fallback. |
 | V16 | F07 | Bounded native id1/Hipnotic/Rogue desktop play/transitions, built-in desktop demo record/play/pause/seek and config/postcfg/controls. Preserve vkQuake desktop behavior; no full-campaign or VR-demo gate. |
 | V17 | F07 | Unicode/path precedence, installed-mod/filter/catalogue install/cancel/failure and missing-model reconnect cleanup. Source code/pinned donor adaptation exists; actual complete cleanup/refusal at final software boundaries remains. |
-| V18 | F07 | Actual image/model/fullbright/WAD3/lightmapped-liquid/style CPU-GPU and late-precache/whitespace consumers, malformed BSP bounds; retained worker/serial mfxsp17 and large-map extents acceptance stays credited. |
+| V18 | F07 | Actual image/model/fullbright/WAD3/lightmapped-liquid/style CPU-GPU and late-precache/whitespace consumers, malformed BSP bounds; texture/skin worker-versus-serial equivalence (PERF-003/004); retained worker/serial mfxsp17 and large-map extents acceptance stays credited. |
 | V19 | F07,F05 | Repeated jumbo-map replacement and targeted stereo output including mj4m1, without heapsize workaround; >16384classic quads use their own vertices. Existing initial named-map rendering and exact worker/serial extents are accepted. No performance measurement gate. |
 | V20 | F08,F01 | Remaining real negotiated voice delivery/receiver/map reset, private movement framing/fresh reconnect and active-XR default-system dummy mic profile with saved opt-out/desktop opt-in. Existing13native audio components and Opus/relay/jitter/loss/budget/generation/PTT/VAD/retry cases stay accepted. No physical mic recording or human listening. |
 | V21 | F08 | Full host/device callback integration and retained music EOF-tail/timing limitations at the native audio owner. Current HRTF/native fallback, loop pause/cursor/reduced room send, wet-only monitor/room-worker/music formats/reset and device-fault component evidence remains credited. User physical audio/performance tests are excluded. |
@@ -92,4 +101,11 @@ Frame release targets and optional eye tracking remain the implemented contract.
    new defect is repaired before the affected final rerun. User live tests stay
    excluded. Commit regular coherent changes and reconcile shipping artifacts.
 
-Draft status: senior reconciliation pending. This document is not final signoff.
+Reviewed status: complete enumeration on2026-10-02. Four observed/confirmed
+issue rows D01–D04,21verification rows V01–V21 and two integration rows A01/A02.
+D01/D02 are diagnosis/qualification gaps; D03/D04 (including adjacent EOF-prefix
+admission) are the confirmed implementation queue. Same local Astra/xhigh
+review, all185IDs reconciled; [main dispositions](consolidated-issues-senior-2.0-review.md).
+Before-code repair plan: [native request boundary](server-request-retirement-final-2.0-plan.md).
+No production patch or final tests are counted as completed by enumeration.
+This is not final F10 integration signoff.
