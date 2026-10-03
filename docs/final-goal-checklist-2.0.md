@@ -437,3 +437,24 @@ No human feature decision blocks this list. Main/reference and user-owned migrat
   native footprints each;24missing-layer substitutions are rejected. This closes
   the opposite-wet/dry transparency boundary. OtherF05/frozen owners and final
   integration signoff remain open. Production renderer remains unchanged.
+
+- F05: targeted ordinary static alias either-eye culling closes after local
+  Astra/xhigh review:32actual native GPU captures,240matching presents, eight
+  eligible cells with1485native influence footprints each, four outside-both
+  rejected models with zero accepted geometry, and16same-target-eye full-image
+  comparisons all exact. Final checker requires actual enabled draw-path counts
+  for rejected models too; two disposable missing-observation/changed-image
+  controls reject. [Exact results/limits](stereo-culling-current-2.0-results.md),
+  [senior dispositions](stereo-resource-boundaries-2.0-review.md).
+  Recorded native matrices condition the independent arithmetic; no separate
+  GPU uniform-byte proof. Avatar/equipment/submodel/world-PVS and other F05
+  distinctions remain open. Production renderer unchanged; no GPU reset.
+- F06: native optional density pass/framebuffer rejection and partial cleanup
+  closes at the constructor component boundary after local Astra/xhigh review.
+  Exact borrowed-map/color-slot pairing, non-admission of failed nonnull outputs,
+  one-time owned retirement and live reconstructed pass bindings pass under
+  strict main compile/run. Existing acquisition matrix unchanged/passes.
+  [Exact results/limits](foveation-pass-framebuffer-current-2.0-results.md).
+  Ordinary construction after cleanup/input reset is qualified separately from
+  existing GL coordinator recovery. Protected foveation GPU output and deferred
+  physical FB/META/provider compatibility remain distinct; no full F06/F10 closure.

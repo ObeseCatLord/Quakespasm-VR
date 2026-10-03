@@ -14,6 +14,7 @@ qboolean R_SSAOEnabled (void)
 {
 	return r_ssao.value > 0;
 }
+#ifndef RENDER_ACQUIRE_FIXTURE_EXTERNAL_PASS_SPY
 VKAPI_ATTR VkResult VKAPI_CALL
 vkCreateRenderPass (VkDevice device, const VkRenderPassCreateInfo *info, const VkAllocationCallbacks *allocator, VkRenderPass *pass)
 {
@@ -33,6 +34,7 @@ vkCreateRenderPass (VkDevice device, const VkRenderPassCreateInfo *info, const V
 	*pass = (VkRenderPass)(uintptr_t)++created_passes;
 	return VK_SUCCESS;
 }
+#endif
 
 void Sys_Error (const char *format, ...)
 {

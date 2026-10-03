@@ -281,6 +281,38 @@ native recipe. An inconclusive result is not a pass.
 [Senior dispositions and plan](../docs/stereo-alpha-reference-2.0-review.md),
 [current native output acceptance and limits](../docs/stereo-alpha-reference-current-2.0-results.md).
 
+## Native either-eye static alias culling
+
+`openxr-stereo-culling.gdb` adapts the published alpha-reference recipe at exact
+source seams. Reuse its parser-fixture host, fresh authored assets and isolated
+runtime/profile setup; do not substitute the shipping client without those
+private fixture commands. Set `XR_STEREO_CULLING_BASE` to the absolute path of
+`tests/openxr-stereo-alpha-reference.gdb`, `XR_STEREO_CULLING_GROUPS=1` for the
+first eight-phase probe or `4` for all32phases, and the alpha recipe's output/
+geometry variables. Set alpha group/eye variables to0; the adapter routes them
+per phase. Use a new output directory without whitespace. Never overwrite
+published evidence or the user's game configuration.
+
+The source controls located pose/FOV inputs and ordinary opacity/water/OIT
+commands. Native frustum, lists, boxes, cull returns and accepted triangle counts
+remain actual results. Retired native queries are separately labeled; in-path
+observations exclude them. Native4xMSAA/AO1/OIT1 and settled notifications remain
+required. Require native/GDB0, `STEREO_CULLING_NATIVE_PASSED`, matching native
+snapshot/presentation receipts and no Python observer exceptions.
+
+Run `python3 tests/check_stereo_culling.py --captures OUTPUT_DIRECTORY --assets
+EMITTED_ASSETS/assets.json` with NumPy/Pillow installed. Full acceptance requires
+32phases, actual enabled consumer counts including rejected identities, stable
+repeats, loaded-box six-plane agreement, eligible-model visible influence and
+all16 same-target-eye full-image controls. An eight-phase probe is exploratory
+and lacks those four-group controls. The independent arithmetic uses recorded
+native matrices; no separate FOV-construction or GPU uniform-byte claim. Empty
+projected polygons are not measured pixel absence. This covers ordinary parsed
+static aliases; avatars/equipment/submodels and exhaustive world PVS remain
+separate. [Plan](../docs/stereo-culling-current-2.0-plan.md),
+[results](../docs/stereo-culling-current-2.0-results.md),
+[senior dispositions](../docs/stereo-resource-boundaries-2.0-review.md).
+
 ## Native pending screenshot request
 
 `screenshot_pending_native.gdb` uses normal native commands/rendering/encoders
@@ -365,6 +397,35 @@ Require exit0 and `OPENXR_IMAGE_VIEW_FAULT_PASSED`. Native color views remain
 until ordinary cleanup; error output handles are not owned. See the
 [finite plan](../docs/foveation-device-selection-final-2.0-plan.md) and
 [actual constructor results](../docs/foveation-image-view-current-2.0-results.md).
+
+`openxr_pass_framebuffer_fault_fixture.c` includes the existing acquisition
+fixture and actual native render-pass/framebuffer compiler, constructors and
+destructors. It controls prepared inputs and Vulkan dispatch only: valid density
+baseline, rejected second density pass, rejected second density framebuffer,
+partial cleanup and ordinary construction after cleanup/input reset. Negative
+error outputs are deliberately nonnull unowned tokens. Exact two-color-slot by
+three-density-view indexing and one-time retirement of admitted handles are
+required; borrowed images/views cannot be destroyed. Context bindings must
+resolve to live admitted passes. Warp cleanup remains a separate explicit owner.
+
+```sh
+cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
+  -Wno-unused-parameter -Wno-missing-field-initializers -Wno-sign-compare \
+  -ffunction-sections -fdata-sections tests/openxr_pass_framebuffer_fault_fixture.c \
+  -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
+  -o /tmp/qsvr-openxr-pass-framebuffer-fault
+/tmp/qsvr-openxr-pass-framebuffer-fault
+```
+
+Require exit0 and the explicit baseline/fault-cleanup/input-reset success
+message. The existing acquisition spy is unchanged unless the new fixture's
+conditional guard is defined. This does not prove real driver errors, runtime
+borrowed-resource readiness, actual SSAO computation or the retained-state GL
+recovery coordinator. Owning arrays/secondary-context handles clear; cached
+binding values are rebuilt, not claimed zero after destruction.
+[Plan](../docs/foveation-pass-framebuffer-2.0-plan.md),
+[results](../docs/foveation-pass-framebuffer-current-2.0-results.md),
+[senior dispositions](../docs/stereo-resource-boundaries-2.0-review.md).
 
 `openxr_device_selection_fixture.c` invokes actual native `GL_InitDevice` with
 controlled discovery inputs, capturing its final device-create request before
