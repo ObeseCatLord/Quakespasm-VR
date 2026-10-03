@@ -7,7 +7,7 @@ This overrides unavailable-test requirements in the historical rows below.
 Keep implemented features and the existing source audit; do not count an
 unavailable check as a pass or invent a replacement runtime/provider.
 
-Unavailable GPU rendering, simulated-XR execution, protected foveation output,
+Unavailable hardware-GPU rendering, simulated-XR execution, protected foveation output,
 physical headset/controller/tracker/gaze/provider and listening/performance
 checks no longer gate completion. Current Nvidia allocation fails with
 NV_ERR_RESET_REQUIRED; CPU Monado also refuses compositor creation. No driver
@@ -18,7 +18,9 @@ CPU-native checks that can run here, available Windows/Linux/Linux ARM builds
 and package/source reconciliation, demonstrated software-defect repairs and
 the final local Astra review remain required. If an unavailable resource affects
 only part of a row, exclude only that part. A failed runnable check is still a
-failure to diagnose; it is not made unavailable by this instruction.
+failure to diagnose; it is not made unavailable by this instruction. Previously
+successful CPU-rendered desktop execution remains eligible independently of
+the unavailable OpenXR compositor.
 
 
 2026-10-02, source snapshot414d58ec. User work order: identify every remaining
