@@ -534,3 +534,54 @@ asks the same local Astra to verify the premise and select the smallest native
 adapter before a production change. Beta's prepared endpoint remains explicit;
 no full two-socket co-op claim. Authored KEX/hub inputs were not found by the
 finite installed-asset lookup and their authored-input subcases are excluded.
+
+
+## Real negotiated UDP voice and SDL playback callback — current079f4431
+
+Luna Lovelace's private attempt05 passes actual sender/server/receiver UDP voice,
+loaded client/server negotiation and actual SDL dummy capture/playback. Main
+reads observer/audit/result boundaries and independently runs offline receipt
+validation0:261actual byte/sample artifacts. Matching datagrams and Opus payloads
+pass clientCL_SendMove→server acceptance/relay→clientCL_ParseVoicePacket→Opus
+nonzero PCM→resampled receiver rings→paint_audio on the SDL SDLAudioP15 thread→
+accepted SDL_PutAudioStreamData. Exact callback prefix mixing and first decode's
+960mono48kHz samples→882stereo44.1kHz frames are checked from captured bytes.
+
+Baseline has10complete payload chains/9600decoded samples/15callback puts/61440
+callback bytes; after map change8chains/8640samples/10puts/40960bytes; receiver
+reconnect8chains/8640samples/12puts/49152bytes. All negotiate voice version1,
+signon4, native datagram driver1/UDP landriver0 and capable peers. Map change and
+disconnect clear all16receiver generation/jitter/ring/talking states and reset
+all16Opus decoders before subsequent successful delivery. All native engines
+quit0. Separate private Xvfb displays preserve playback focus.
+
+`FastGames/qsvr-voice-udp-sdl-v20v21-i9aT6L1Z/main-verified.json` binds scripts,
+validation and attempt05 states/results. Controlled PCM replaces actual SDL
+dummy capture frames; consent/PTT are explicit native test KeyEvents. No physical
+mic/playback, XR, throughput/latency or music EOF claim. Attempts01–04 preserve
+observer/consent/focus failures, without a production repair.
+
+## Native desktop cache restart/corruption and dense classic particles
+
+Main uses current079f4431 native engine, private signed CPU Vulkan driver and
+isolated Xvfb. Four fresh/valid/corrupt/repaired process cases each run0/native
+quit0. Observed vkCreatePipelineCache receives empty/32byte/empty/32byte initial
+payloads respectively; actual native cache handle is nonzero. Real native quit
+writes the VKPC envelope, the next process consumes it, damaged magic is rejected
+and overwritten with a valid cache, then a fourth process consumes the repaired
+file. The CPU driver returns a32byte header payload: this proves cache lifecycle
+and fallback, not a cached-shader performance improvement.
+
+With `-particles32768`, actual native index-buffer staging contains uint32quad
+indices at0,16383,16384,20479,32767. Quad16384 starts65536 and quad32767 reaches
+131071, so neither wraps to the first vertices. Twenty actual classic
+R_ParticleExplosion calls produce20480active particles; real R_DrawParticlesFaces
+binds the native particle buffer as VK_INDEX_TYPE_UINT32 and issues122880indices.
+Native rendering/shutdown completes without a production change. This is the
+classic-particle C22owner, not unrelated menu quads or a benchmark. Stereo output
+and physical GPU performance are excluded unavailable outcomes.
+
+`FastGames/qsvr-cpu-cache-particles-_cpa8cu1/main-verified.json` binds actual
+runner/GDB/log/results and retained valid/damaged/saved cache bytes. A private
+runner string-generation syntax error was corrected before any inferior started;
+no test predicate or production source changed.

@@ -43,16 +43,19 @@ evidence; unavailable parts no longer gate completion.
   record/play/pause/seek, postcfg/native saved configuration and inspected menus;
   metadata multi-packet/mid-signon/retire/reuse/reset and loaded AUTOCVAR admission;
   initialized native input lifecycle, neutral-rearm and command/QC gameplay;
-  native calibration file save/reload/restart and authored q30 AD defaults.
+  native calibration file save/reload/restart and authored q30 AD defaults;
+  actual negotiated UDP voice/SDL callback/map-reconnect reset; native desktop
+  cache valid/corrupt/repaired restart and >16384classic particle quad draws.
 - V06 observed failure: reverse reconnect restores inventory correctly but a
   saved typed QC reference aliases the wrong player after slot reuse. Same local
-  Astra reviews the narrow save-owner design before repair. This remains required.
+  Astra approved the narrow native typed-reference/lifetime adapter; Luna is
+  implementing it under the [reviewed plan](coop-save-reference-final-2.0-review-brief.md). This remains required.
 - Accepted CSQC create/update/split-ACK recovery/re-enable/lost-removal/ID reuse
   at captured transport; actual typed cursor/weapon producer remains unproved.
 - Pending native consumers: authored Shub lifecycle, remaining calibration/
-  physics/paired-melee distinctions and audio socket/playback-callback boundary.
+  physics/paired-melee distinctions and actual music EOF tail.
 - Pending attainable desktop residuals: paths/catalogue/cleanup, remaining CPU
-  asset/worker consumers, desktop fallback/diagnostics/cache/classic quads.
+  asset/worker consumers and desktop fallback/diagnostics.
   Listen-server RCON error recovery now passes through the available CPU route.
 - Shipping079f4431: Linux x86-64, native Linux ARM and Windows Debug build/
   package/source/inventory freshness accepted. Windows Release has a retained
