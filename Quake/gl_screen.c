@@ -1755,6 +1755,16 @@ static qboolean vr_modal_from_menu;
 static const struct qmodel_s *vr_menu_world;
 static int vr_menu_connection;
 
+/* Text popups use one head-relative surface per XR frame. The immutable
+ * transform is shared by both eye GUI recordings. */
+typedef struct
+{
+	qboolean valid;
+	float world_from_ndc[16];
+} vr_text_popup_panel_t;
+
+static vr_text_popup_panel_t vr_text_popup_panel;
+
 typedef struct
 {
 	qboolean valid;
@@ -1972,6 +1982,74 @@ static void SCR_VRMenuPrepare (void)
 		scr_style.value < 1.0f && cl.qcvm.extfuncs.CSQC_DrawScores && !qcvm)
 		SCR_VRCSQCPanelPrepare (&vr_menu_panel.csqc_display, vr_menu_panel.csqc_world_from_ndc,
 			320.0f, 200.0f, vr_menu_scale.value, vr_menu_anchor.center, right, down, normal, 160.0f, 100.0f);
+}
+
+/* Keep popup text at the inherited 48-unit menu distance. At the default
+ * world scale this is about 1.83 m, and cancelling the menu canvas scale keeps
+ * CANVAS_MENU glyphs at the familiar angular size. */
+static void SCR_VRTextPopupPrepare (void)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	vec3_t head_angles, forward, right, up, down, normal, center;
+	float scale, canvas_scale;
+
+	vr_text_popup_panel.valid = false;
+	if (!vulkan_globals.stereo_active || !frame || !frame->should_render || !frame->focused ||
+		!frame->devices[0].valid || !frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
+		frame->devices[0].hand != -1 || key_dest != key_game || m_state != m_none ||
+		scr_drawdialog || scr_drawloading || scr_con_current > 0.0f || con_forcedup ||
+		glwidth <= 0 || glheight <= 0)
+		return;
+	canvas_scale = M_MenuCanvasScale ();
+	if (!isfinite (canvas_scale) || canvas_scale <= 0.0f ||
+		!isfinite (vr_menu_scale.value) || vr_menu_scale.value <= 0.0f)
+		return;
+	scale = vr_menu_scale.value / canvas_scale;
+	if (!isfinite (scale) || scale <= 0.0f ||
+		!isfinite (scale * glwidth) || !isfinite (scale * glheight))
+		return;
+	VectorCopy (r_refdef.viewangles, head_angles);
+	head_angles[ROLL] = 0.0f;
+	AngleVectors (head_angles, forward, right, up);
+	VectorScale (up, -1.0f, down);
+	VectorCopy (forward, normal);
+	VectorMA (r_refdef.vieworg, 48.0f, normal, center);
+	for (int i = 0; i < 3; ++i)
+		if (!isfinite (center[i]) || !isfinite (right[i]) || !isfinite (down[i]) || !isfinite (normal[i]))
+			return;
+	memset (vr_text_popup_panel.world_from_ndc, 0, sizeof (vr_text_popup_panel.world_from_ndc));
+	for (int i = 0; i < 3; ++i)
+	{
+		vr_text_popup_panel.world_from_ndc[i] = right[i] * scale * glwidth * 0.5f;
+		vr_text_popup_panel.world_from_ndc[4 + i] = down[i] * scale * glheight * 0.5f;
+		vr_text_popup_panel.world_from_ndc[8 + i] = normal[i] * scale;
+		vr_text_popup_panel.world_from_ndc[12 + i] = center[i];
+		if (!isfinite (vr_text_popup_panel.world_from_ndc[i]) ||
+			!isfinite (vr_text_popup_panel.world_from_ndc[4 + i]) ||
+			!isfinite (vr_text_popup_panel.world_from_ndc[8 + i]) ||
+			!isfinite (vr_text_popup_panel.world_from_ndc[12 + i]))
+			return;
+	}
+	vr_text_popup_panel.world_from_ndc[15] = 1.0f;
+	vr_text_popup_panel.valid = true;
+}
+
+static void SCR_DrawTextPopupCenterString (cb_context_t *cbx)
+{
+	if (vr_text_popup_panel.valid)
+		GL_BeginUIPanel (cbx, vr_text_popup_panel.world_from_ndc);
+	SCR_CheckDrawCenterString (cbx);
+	if (vr_text_popup_panel.valid)
+		GL_EndUIPanel (cbx);
+}
+
+static void SCR_DrawTextPopupConsole (cb_context_t *cbx)
+{
+	if (vr_text_popup_panel.valid)
+		GL_BeginUIPanel (cbx, vr_text_popup_panel.world_from_ndc);
+	SCR_DrawConsole (cbx);
+	if (vr_text_popup_panel.valid)
+		GL_EndUIPanel (cbx);
 }
 
 /* Prepare the held weapon wheel once for the stereo pair. Keep the opening
@@ -2240,8 +2318,9 @@ static void SCR_VRClassicSbarPrepare (void)
 		  (sb_showscores || cl.stats[STAT_HEALTH] <= 0) && key_dest != key_menu));
 	if (csqc_hud)
 	{
-		if (Sbar_IsADWideCSQCHud ())
-			canvas_width = q_max (320.0f, 960.0f / q_max (1.0f, scr_sbarscale.value));
+		const csqc_display_t display = SCR_GetCSQCDisplay ();
+		if (isfinite (display.width) && isfinite (display.scale) && display.width > 0.0f && display.scale > 0.0f)
+			canvas_width = q_max (320.0f, display.width / display.scale);
 	}
 
 	scale = vr_hud_scale.value;
@@ -2505,9 +2584,18 @@ static void SCR_DrawGUI (void *unused)
 		if (intermission_panel_valid)
 			GL_BeginUIPanel (cbx, vr_menu_panel.world_from_ndc);
 		Sbar_FinaleOverlay (cbx);
-		SCR_CheckDrawCenterString (cbx);
-		if (intermission_panel_valid)
-			GL_EndUIPanel (cbx);
+		if (vr_text_popup_panel.valid)
+		{
+			if (intermission_panel_valid)
+				GL_EndUIPanel (cbx);
+			SCR_DrawTextPopupCenterString (cbx);
+		}
+		else
+		{
+			SCR_CheckDrawCenterString (cbx);
+			if (intermission_panel_valid)
+				GL_EndUIPanel (cbx);
+		}
 	}
 	else
 	{
@@ -2515,7 +2603,7 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawNet (cbx);
 		SCR_DrawTurtle (cbx);
 		SCR_DrawPause (cbx);
-		SCR_CheckDrawCenterString (cbx);
+		SCR_DrawTextPopupCenterString (cbx);
 		SCR_DrawVRHUDPanel (cbx, true);
 		SCR_DrawDevStats (cbx); // johnfitz
 		SCR_DrawFPS (cbx);		// johnfitz
@@ -2523,7 +2611,7 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawClock (cbx); // johnfitz
 		SCR_DrawEdictInfo (cbx);
 		if (!console_panel_valid)
-			SCR_DrawConsole (cbx);
+			SCR_DrawTextPopupConsole (cbx);
 		M_Draw (cbx);
 		if (console_panel_valid)
 		{
@@ -2579,6 +2667,7 @@ static void SCR_SetupFrame (void *unused)
 	if (!con_forcedup)
 		R_UpdateEntityDlights ();
 	SCR_VRMenuPrepare ();
+	SCR_VRTextPopupPrepare ();
 	SCR_VRWeaponMenuPrepare ();
 	SCR_VRClassicSbarPrepare ();
 	SCR_VRModernSbarPrepare ();

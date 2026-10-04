@@ -2153,7 +2153,7 @@ static void GL_InitDevice (void)
 	 * RG8/layers, auxiliary offset state and incoming layout/producer readiness
 	 * remain runtime integration assumptions; capability probes do not certify them. */
 	const qboolean density_settings_ready = !(vid_fsaa.value >= 2 && vid_fsaamode.value >= 1) &&
-		!(r_width.value > 0 && r_height.value > 0);
+		(openxr_vulkan_binding || !(r_width.value > 0 && r_height.value > 0));
 	const qboolean allow_runtime_foveation = density_settings_ready;
 	qboolean prefer_fb_eye = false;
 #if defined(VK_QCOM_fragment_density_map_offset)
@@ -4247,7 +4247,9 @@ static void VID_GetRenderSize (int *width, int *height)
 {
 	*width = vid.width;
 	*height = vid.height;
-	if (r_width.value > 0 && r_height.value > 0)
+	/* OpenXR owns the eye extent.  Keep desktop render scaling dormant until
+	 * the session detaches, without discarding the user's desktop setting. */
+	if (!vulkan_globals.stereo_active && r_width.value > 0 && r_height.value > 0)
 	{
 		*width = (int)CLAMP (q_min (320, vid.width), r_width.value, vid.width);
 		*height = (int)CLAMP (q_min (200, vid.height), r_height.value, vid.height);
@@ -4760,6 +4762,10 @@ static void GL_OpenXRRetireImages (void *unused)
 		vid.recalc_refdef = true;
 	}
 	vulkan_globals.stereo_active = false;
+	/* TexMgr owns combined image-sampler descriptors. Restore the desktop
+	 * sampler choice only after the OpenXR resources are idle and retired. */
+	if (vulkan_globals.device != VK_NULL_HANDLE)
+		TexMgr_UpdateTextureDescriptorSets ();
 	memset (&openxr_frame, 0, sizeof (openxr_frame));
 	vulkan_globals.stereo_color_format = VK_FORMAT_UNDEFINED;
 }
@@ -4831,6 +4837,9 @@ static void GL_OpenXRAttach (void)
 		return;
 	}
 	vulkan_globals.stereo_active = true;
+	/* The descriptor sets were populated for desktop filtering. Rebind the
+	 * OpenXR-only anisotropic sampler choice before recording stereo work. */
+	TexMgr_UpdateTextureDescriptorSets ();
 	vulkan_globals.stereo_color_format = VRXR_VulkanColorFormat ();
 	vid.width = width;
 	vid.height = height;
@@ -6713,6 +6722,8 @@ static qboolean VID_Menu_OptionSelectable (int option)
 {
 	if (option == VID_OPT_PADDING)
 		return false;
+	if (option == VID_OPT_RENDER_RESOLUTION && vulkan_globals.stereo_active)
+		return false;
 	if (option == VID_OPT_FILTER && VID_Menu_RenderMode ().width < 0)
 		return false;
 	if (vid_fullscreen.value == 1 && vid_desktopfullscreen.value && (option == VID_OPT_MODE || option == VID_OPT_REFRESHRATE))
@@ -6890,6 +6901,9 @@ vid_height cvars, then updates refreshrate lists
 */
 static void VID_Menu_ChooseNextMode (int dir, qboolean render_resolution)
 {
+	if (render_resolution && vulkan_globals.stereo_active)
+		return;
+
 	int i;
 	VID_Menu_BuildModeList (render_resolution);
 	cvar_t			   *width = render_resolution ? &r_width : &vid_width;
@@ -7188,7 +7202,8 @@ void M_Video_Draw (cb_context_t *cbx)
 		{
 			const vid_menu_mode mode = VID_Menu_RenderMode ();
 			M_Print (cbx, MENU_LABEL_X, y, "Render resolution");
-			M_Print (cbx, MENU_VALUE_X, y, mode.width < 0 ? "Native" : va ("%ix%i", mode.width, mode.height));
+			M_Print (cbx, MENU_VALUE_X, y, vulkan_globals.stereo_active ? "Runtime" :
+				mode.width < 0 ? "Native" : va ("%ix%i", mode.width, mode.height));
 			break;
 		}
 		case VID_OPT_FILTER:

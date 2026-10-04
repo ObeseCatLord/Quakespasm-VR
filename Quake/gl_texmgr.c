@@ -264,6 +264,8 @@ static void TexMgr_SetFilterModes (gltexture_t *glt)
 		image_info.sampler = point_sampler;
 	else if (glt->flags & TEXPREF_LINEAR)
 		image_info.sampler = linear_sampler;
+	else if (vulkan_globals.stereo_active && enable_anisotropy)
+		image_info.sampler = linear_sampler;
 	else
 		image_info.sampler = (vid_filter.value == 1) ? point_sampler : linear_sampler;
 
