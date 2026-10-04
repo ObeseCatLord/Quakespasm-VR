@@ -1302,7 +1302,10 @@ void PM_AirMove (void)
 		else
 			blocked = PM_SlideMove ();
 
-		if (movevars.pground && (blocked & BLOCKED_FLOOR))
+		/* Landing on an uphill floor can create rising velocity. Let QC jump
+		 * owners reach the final support probe instead of treating that rise
+		 * as another takeoff. The probe still rejects an edge or solid start. */
+		if ((movevars.pground || pmove.qc_jump_owner) && (blocked & BLOCKED_FLOOR))
 			pmove.onground = true;
 	}
 }

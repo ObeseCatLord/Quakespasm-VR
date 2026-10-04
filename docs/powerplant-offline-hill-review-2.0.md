@@ -47,3 +47,18 @@ Effective Astra6 / xhigh confirmed from bounded turn metadata. Reviewed source-b
 | Retain inherited180 cutoff without a failed steep traversal | Adopted; current real-BSP steeper corridor still reaches320 horizontal without failure |
 
 Correction: Powerplant overflow comes from BBOX/SLIDEBOX bounds, not true BSP sentinel. Lossless32-bit transport preserves the existing packed solidsize; it does not invent higher precision than that representation.
+
+## Running landing reproduction and second Astra disposition
+
+The required running case reproduced the predicted gap: real Honey QC/BSP, continuousforward160, frame30 floor collision creates positive Z20.469 but server ground0; successive commands stay airborne and slow toward30, rejecting a second jump. This is separate from actual takeoff. Fresh explicitly selected Astra6/xhigh verified the minimal correction: PM_AirMove authorizes the existing final support probe for QC owners after BLOCKED_FLOOR, preserving pground=0 and final trace authority. No extra floor-hit state is required for the start/allsolid return3 because that path clears velocity and the final trace rejects solid-start support. No native walking or protocol rewrite.
+
+| Follow-up recommendation | Disposition |
+|---|---|
+| QC owners use existing collision-to-support handoff | Adopted, one condition plus explanation; no new policy/cvar/state |
+| Final trace owns ground entity and edge/solid rejection | Adopted; solver regression covers world and nonworld slope support and removed support |
+| Retain180, actual takeoff, shallow-water safety | Adopted; existing low-takeoff/release/water checks retained |
+| Keep generic jump timing separate from no-jump parity | Adopted; unchanged honest fixture reporting |
+
+After implementation, Honey real-QC/BSP matrix passes at4/8/16ms, including both rest and continuously moving uphill landing/rejump: two accepted QC jumps, true same-slope landing, second airborne launch and release. Exact generic QC jump trajectories remain separately reported; these captured transport tests are not physical headset evidence.
+
+The actual isolated local desktop Powerplant run reaches signon, records selection=true/currentnative=true (weapon2 invokes the existing conservative q30 native fallback), reaches~315units/sec grounded uphill and then rises on jump. This proves native preservation, not q30 shared solver dispatch. The identifier q30 is misleading here: its existing exactSHA also matches installed Perilpak2. Asset priority was independently checked; no assets/configs changed.
