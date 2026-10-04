@@ -287,9 +287,36 @@ static const vr_weapon_schema_entry_t vr_ad_weapon_fallbacks[] = {
 };
 #undef VR_AD_WEAPON_PROFILE
 
-/* These Mjolnir paths are hash-confirmed copies of the named AD pak0 models.
- * Keep this list exact: similarly named AD replacements can have different
- * geometry and need their own authored schema values. */
+/* Full-byte FNV-1a signatures of installed AD assets, not mod identities.
+ * The older nailgun differs only in scale/origin/radius float encoding:
+ * all bytes after its 84-byte header match, with decoded position differences
+ * below 0.000115 Quake units. Both versions use the same held calibration. */
+static const struct
+{
+	const char *path;
+	int length;
+	unsigned hash;
+} vr_ad_weapon_signatures[] = {
+	{"progs/v_shot.mdl",     22260, 0x77592100u},
+	{"progs/v_shot2.mdl",    22764, 0x8fb04e6fu},
+	{"progs/v_shot3.mdl",    77868, 0xabc6f98du},
+	{"progs/v_nail.mdl",     47140, 0xa82e429au},
+	{"progs/v_nail.mdl",     47140, 0xd5e4c067u},
+	{"progs/v_nail2.mdl",    48964, 0xb9f1559eu},
+	{"progs/v_rock.mdl",     37420, 0x88977215u},
+	{"progs/v_rock2.mdl",    39668, 0x0a7cfc81u},
+	{"progs/v_light.mdl",    22212, 0xf7098ba4u},
+	{"progs/v_plasma.mdl",   54940, 0xc5de8c00u},
+	{"progs/v_shadaxe0.mdl", 97860, 0xadc010afu},
+	{"progs/v_shadaxe1.mdl", 97860, 0x730d17bcu},
+	{"progs/v_shadaxe2.mdl", 97860, 0x05185939u},
+	{"progs/v_shadaxe3.mdl", 97860, 0x22f9a757u},
+	{"progs/v_shadaxe4.mdl", 97860, 0x581c9d25u},
+	{"progs/v_shadaxe5.mdl", 97860, 0x27c623d3u},
+};
+
+/* These aliases reuse canonical profiles only after effective-asset identity
+ * succeeds. Similarly named replacements can have different geometry. */
 static const struct
 {
 	const char *alias_path;
@@ -307,8 +334,15 @@ static const struct
 	{"progs/ad171/v_shadaxe3.mdl", "progs/v_shadaxe3.mdl"},
 	{"progs/ad171/v_shadaxe4.mdl", "progs/v_shadaxe4.mdl"},
 	{"progs/ad171/v_shadaxe5.mdl", "progs/v_shadaxe5.mdl"},
+	{"progs/ad171/v_nail.mdl", "progs/v_nail.mdl"},
 	{"progs/ad171/v_nail2.mdl", "progs/v_nail2.mdl"},
 };
+
+/* Only the generic branch receives AD inheritance; authored special presets
+ * keep ownership of their calibration and bypass the copied-default filter. */
+static qboolean vr_weapon_calibration_inherits_ad;
+static qboolean vr_ad_weapon_identified[countof(vr_ad_weapon_fallbacks)];
+static qboolean vr_ad171_weapon_identified[countof(vr_ad171_weapon_aliases)];
 
 /* Classic viewmodel calibration from the donor's Enyo InitWeaponCVars. */
 static const vr_weapon_schema_entry_t vr_enyo_weapon_fallbacks[] = {
@@ -2500,6 +2534,7 @@ void VR_WeaponCalibrationReset(void)
 	int slot;
 
 	VR_WeaponCalibrationAdjustCancel();
+	vr_weapon_calibration_inherits_ad = false;
 	memset(vr_weapon_calibration_slots, 0,
 		   sizeof(vr_weapon_calibration_slots));
 	if (!vr_weapon_calibration_initialized)
@@ -2714,24 +2749,113 @@ static qboolean VR_WeaponCalibrationGameIs(const char *name)
 	return game && !q_strcasecmp(game, name);
 }
 
-static qboolean VR_WeaponCalibrationADRootPath(const char *path)
+/* Cache successes and failures once per ReloadGame. No preset or lookup IO. */
+static qboolean VR_WeaponCalibrationADAssetMatches(
+	const char *path, const char *canonical_path)
 {
-	for (size_t i = 7; i < countof(vr_ad_weapon_fallbacks); ++i)
-		if (!strcmp(path, vr_ad_weapon_fallbacks[i].viewmodel_path))
-			return true;
-	return false;
+	int handle = -1;
+	qfilesize_t length = COM_OpenFile(path, &handle, NULL);
+	byte *data;
+	unsigned hash;
+	size_t i;
+	qboolean matches = false;
+
+	if (handle < 0)
+		return false;
+	for (i = 0; i < countof(vr_ad_weapon_signatures); ++i)
+		if (!strcmp(canonical_path, vr_ad_weapon_signatures[i].path) &&
+			length == vr_ad_weapon_signatures[i].length)
+			break;
+	if (i == countof(vr_ad_weapon_signatures))
+	{
+		Sys_FileClose(handle);
+		return false;
+	}
+	/* A matching table length bounds allocation/read to at most 97860 bytes. */
+	data = (byte *)malloc((size_t)length);
+	if (!data)
+	{
+		Sys_FileClose(handle);
+		return false;
+	}
+	if (Sys_FileRead(handle, data, (int)length) == (int)length)
+	{
+		hash = COM_HashBlock(data, (size_t)length);
+		for (; i < countof(vr_ad_weapon_signatures); ++i)
+			if (!strcmp(canonical_path, vr_ad_weapon_signatures[i].path) &&
+				length == vr_ad_weapon_signatures[i].length &&
+				hash == vr_ad_weapon_signatures[i].hash)
+			{
+				matches = true;
+				break;
+			}
+	}
+	Sys_FileClose(handle);
+	free(data);
+	return matches;
+}
+
+static void VR_WeaponCalibrationRefreshADIdentity(void)
+{
+	for (size_t i = 0; i < countof(vr_ad_weapon_fallbacks); ++i)
+		vr_ad_weapon_identified[i] = VR_WeaponCalibrationADAssetMatches(
+			vr_ad_weapon_fallbacks[i].viewmodel_path,
+			vr_ad_weapon_fallbacks[i].viewmodel_path);
+	for (size_t i = 0; i < countof(vr_ad171_weapon_aliases); ++i)
+		vr_ad171_weapon_identified[i] = VR_WeaponCalibrationADAssetMatches(
+			vr_ad171_weapon_aliases[i].alias_path,
+			vr_ad171_weapon_aliases[i].ad_path);
+}
+
+static const vr_weapon_schema_entry_t *VR_WeaponCalibrationIdentifiedADProfile(
+	const char *path)
+{
+	for (size_t i = 0; i < countof(vr_ad171_weapon_aliases); ++i)
+		if (!strcmp(path, vr_ad171_weapon_aliases[i].alias_path))
+		{
+			if (!vr_ad171_weapon_identified[i])
+				return NULL;
+			for (size_t j = 0; j < countof(vr_ad_weapon_fallbacks); ++j)
+				if (!strcmp(vr_ad171_weapon_aliases[i].ad_path,
+					vr_ad_weapon_fallbacks[j].viewmodel_path))
+					return &vr_ad_weapon_fallbacks[j];
+			return NULL;
+		}
+	for (size_t i = 0; i < countof(vr_ad_weapon_fallbacks); ++i)
+		if (vr_ad_weapon_identified[i] &&
+			!strcmp(path, vr_ad_weapon_fallbacks[i].viewmodel_path))
+			return &vr_ad_weapon_fallbacks[i];
+	return NULL;
+}
+
+static qboolean VR_WeaponCalibrationPresetAppendIdentifiedAD(
+	vr_weapon_schema_entry_t *entries, size_t *count)
+{
+	for (size_t i = 0; i < countof(vr_ad_weapon_fallbacks) +
+		countof(vr_ad171_weapon_aliases); ++i)
+	{
+		const char *path = i < countof(vr_ad_weapon_fallbacks) ?
+			vr_ad_weapon_fallbacks[i].viewmodel_path :
+			vr_ad171_weapon_aliases[i - countof(vr_ad_weapon_fallbacks)].alias_path;
+		const vr_weapon_schema_entry_t *profile =
+			VR_WeaponCalibrationIdentifiedADProfile(path);
+		if (!profile)
+			continue;
+		if (*count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
+			return false;
+		entries[*count] = *profile;
+		strcpy(entries[*count].viewmodel_path, path);
+		++*count;
+	}
+	return true;
 }
 
 static qboolean VR_WeaponCalibrationPresetAppendSchema(
 	vr_weapon_schema_entry_t *entries, size_t *count,
-	const vr_weapon_schema_entry_t *source, size_t source_count,
-	qboolean ad_root_only)
+	const vr_weapon_schema_entry_t *source, size_t source_count)
 {
 	for (size_t i = 0; i < source_count; ++i)
 	{
-		if (ad_root_only &&
-			!VR_WeaponCalibrationADRootPath(source[i].viewmodel_path))
-			continue;
 		if (*count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
 			return false;
 		entries[*count] = source[i];
@@ -2743,14 +2867,11 @@ static qboolean VR_WeaponCalibrationPresetAppendSchema(
 
 static qboolean VR_WeaponCalibrationPresetAppendRows(
 	vr_weapon_schema_entry_t *entries, size_t *count,
-	const vr_weapon_preset_row_t *rows, size_t row_count,
-	qboolean ad_root_only)
+	const vr_weapon_preset_row_t *rows, size_t row_count)
 {
 	for (size_t i = 0; i < row_count; ++i)
 	{
 		vr_weapon_schema_entry_t *entry;
-		if (ad_root_only && !VR_WeaponCalibrationADRootPath(rows[i].path))
-			continue;
 		if (*count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
 			return false;
 		entry = &entries[(*count)++];
@@ -2807,21 +2928,19 @@ static qboolean VR_WeaponCalibrationPresetAppendMuzzleRows(
 }
 
 static qboolean VR_WeaponCalibrationPresetAppendGeneric(
-	vr_weapon_schema_entry_t *entries, size_t *count, int preset,
-	qboolean ad_root_only)
+	vr_weapon_schema_entry_t *entries, size_t *count, int preset)
 {
 	const vr_weapon_preset_row_t *rows = NULL;
 	size_t row_count = 0;
 
 	if (preset == VR_WEAPON_PRESET_AD)
 		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
-			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks), ad_root_only);
+			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks));
 	if (preset == VR_WEAPON_PRESET_BLOCKQUAKE)
 		return VR_WeaponCalibrationPresetAppendRows(entries, count,
-			vr_blockquake_classic, countof(vr_blockquake_classic), ad_root_only);
+			vr_blockquake_classic, countof(vr_blockquake_classic));
 	if (!VR_WeaponCalibrationPresetAppendSchema(entries, count,
-		vr_stock_classic_fallbacks, countof(vr_stock_classic_fallbacks),
-		ad_root_only))
+		vr_stock_classic_fallbacks, countof(vr_stock_classic_fallbacks)))
 		return false;
 	switch (preset)
 	{
@@ -2839,17 +2958,14 @@ static qboolean VR_WeaponCalibrationPresetAppendGeneric(
 		break;
 	}
 	return !rows || VR_WeaponCalibrationPresetAppendRows(entries, count,
-		rows, row_count, ad_root_only);
+		rows, row_count);
 }
 
 static qboolean VR_WeaponCalibrationBuildPreset(
 	vr_weapon_schema_entry_t *entries, size_t *count, int preset,
-	qboolean reload_defaults)
+	qboolean reload_defaults, qboolean *inherits_ad)
 {
-	const qboolean additional_ad_root = VR_WeaponCalibrationGameIs("q30a1024") ||
-		VR_WeaponCalibrationGameIs("gibtropolis") ||
-		VR_WeaponCalibrationGameIs("hwjam4") ||
-		VR_WeaponCalibrationGameIs("hwjam2");
+	*inherits_ad = false;
 	*count = 0;
 	if (VR_WeaponCalibrationGameIs("qbj3"))
 		return VR_WeaponCalibrationPresetAppendQBJ3(entries, count);
@@ -2857,58 +2973,51 @@ static qboolean VR_WeaponCalibrationBuildPreset(
 		VR_WeaponCalibrationGameIs("snack3"))
 		return VR_WeaponCalibrationPresetAppendMuzzleRows(entries, count,
 			vr_snack_weapon_fallbacks, countof(vr_snack_weapon_fallbacks));
-	if (VR_WeaponCalibrationGameIs("ad"))
-		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
-			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks), false) &&
-			(preset != VR_WEAPON_PRESET_PLAGUE ||
-			 VR_WeaponCalibrationPresetAppendRows(entries, count,
-				vr_plague_classic_overrides, countof(vr_plague_classic_overrides), true));
-	if (additional_ad_root)
-	{
-		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
-			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks), false) &&
-			(preset == VR_WEAPON_PRESET_VANILLA || preset == VR_WEAPON_PRESET_AD ||
-			 VR_WeaponCalibrationPresetAppendGeneric(entries, count, preset, true));
-	}
 	if (VR_WeaponCalibrationGameIs("alk"))
 		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
-			vr_alk_axe_fallback, countof(vr_alk_axe_fallback), false) &&
+			vr_alk_axe_fallback, countof(vr_alk_axe_fallback)) &&
 			VR_WeaponCalibrationPresetAppendRows(entries, count,
-				vr_alk_fixed_fallbacks, countof(vr_alk_fixed_fallbacks), false) &&
+				vr_alk_fixed_fallbacks, countof(vr_alk_fixed_fallbacks)) &&
 			VR_WeaponCalibrationPresetAppendRows(entries, count,
 				preset == VR_WEAPON_PRESET_PLAGUE ? vr_alk_plague : vr_alk_classic,
-				countof(vr_alk_classic), false);
+				countof(vr_alk_classic));
 	if (VR_WeaponCalibrationGameIs("enyo"))
 		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
-			vr_enyo_weapon_fallbacks, countof(vr_enyo_weapon_fallbacks), false);
+			vr_enyo_weapon_fallbacks, countof(vr_enyo_weapon_fallbacks));
 	if (VR_WeaponCalibrationGameIs("dwell") ||
 		VR_WeaponCalibrationGameIs("dwellv2p2"))
 		return VR_WeaponCalibrationPresetAppendRows(entries, count,
-			vr_dwell_weapon_fallbacks, countof(vr_dwell_weapon_fallbacks), false);
+			vr_dwell_weapon_fallbacks, countof(vr_dwell_weapon_fallbacks));
 	if (VR_WeaponCalibrationGameIs("enhanced"))
 		preset = VR_WEAPON_PRESET_ENHANCED;
-	if (!VR_WeaponCalibrationPresetAppendGeneric(entries, count, preset, false))
+	*inherits_ad = true;
+	if (!VR_WeaponCalibrationPresetAppendGeneric(entries, count, preset))
 		return false;
 	if (VR_WeaponCalibrationGameIs("bonkjam") &&
 		!VR_WeaponCalibrationPresetAppendSchema(entries, count,
-			vr_bonk_hammer_fallbacks, countof(vr_bonk_hammer_fallbacks), false))
+			vr_bonk_hammer_fallbacks, countof(vr_bonk_hammer_fallbacks)))
 		return false;
 	if ((preset == VR_WEAPON_PRESET_BLOCKQUAKE || preset == VR_WEAPON_PRESET_AD) &&
 		!reload_defaults)
-		return true;
+		return VR_WeaponCalibrationPresetAppendIdentifiedAD(entries, count);
 	return VR_WeaponCalibrationPresetAppendSchema(entries, count,
-			vr_copper_axe_fallback, countof(vr_copper_axe_fallback), false) &&
+			vr_copper_axe_fallback, countof(vr_copper_axe_fallback)) &&
 		(!VR_WeaponCalibrationGameIs("limjam") ||
 		 VR_WeaponCalibrationPresetAppendSchema(entries, count,
-			vr_alk_axe_fallback, countof(vr_alk_axe_fallback), false));
+			vr_alk_axe_fallback, countof(vr_alk_axe_fallback))) &&
+		VR_WeaponCalibrationPresetAppendIdentifiedAD(entries, count);
 }
 
 static qboolean VR_WeaponCalibrationApplyPreset(int preset, qboolean reload_defaults)
 {
 	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
 	size_t count;
-	return VR_WeaponCalibrationBuildPreset(entries, &count, preset, reload_defaults) &&
-		VR_WeaponCalibrationApplySchemaMode(entries, count, true);
+	qboolean inherits_ad;
+	if (!VR_WeaponCalibrationBuildPreset(entries, &count, preset, reload_defaults,
+		&inherits_ad) || !VR_WeaponCalibrationApplySchemaMode(entries, count, true))
+		return false;
+	vr_weapon_calibration_inherits_ad = inherits_ad;
+	return true;
 }
 
 static void VR_WeaponCalibrationSetPresetCvar(int preset)
@@ -2948,86 +3057,34 @@ const char *VR_WeaponCalibrationPresetName(void)
 	return names[vr_weapon_preset_accepted];
 }
 
-static qboolean VR_WeaponCalibrationApplyAD171Aliases(void)
-{
-	const char *game = COM_SkipPath(com_gamedir);
-	vr_weapon_schema_entry_t entries[
-		sizeof(vr_ad171_weapon_aliases) / sizeof(vr_ad171_weapon_aliases[0])];
-	size_t alias_index;
-
-	if (!game || q_strcasecmp(game, "mjolnir"))
-		return true;
-
-	for (alias_index = 0;
-		 alias_index < sizeof(vr_ad171_weapon_aliases) /
-			sizeof(vr_ad171_weapon_aliases[0]); ++alias_index)
-	{
-		size_t profile_index;
-		const vr_weapon_schema_entry_t *profile = NULL;
-
-		for (profile_index = 0;
-			 profile_index < sizeof(vr_ad_weapon_fallbacks) /
-				sizeof(vr_ad_weapon_fallbacks[0]); ++profile_index)
-		{
-			if (!strcmp(vr_ad_weapon_fallbacks[profile_index].viewmodel_path,
-						vr_ad171_weapon_aliases[alias_index].ad_path))
-			{
-				profile = &vr_ad_weapon_fallbacks[profile_index];
-				break;
-			}
-		}
-		if (!profile)
-			return false;
-
-		entries[alias_index] = *profile;
-		strcpy(entries[alias_index].viewmodel_path,
-			vr_ad171_weapon_aliases[alias_index].alias_path);
-	}
-
-	return VR_WeaponCalibrationApplySchema(entries,
-		sizeof(entries) / sizeof(entries[0]));
-}
-
 static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 {
 	return VR_WeaponCalibrationApplyPreset(vr_weapon_preset_accepted, true) &&
-		VR_WeaponCalibrationApplyEnhancedFallbacks() &&
-		VR_WeaponCalibrationApplyAD171Aliases();
+		VR_WeaponCalibrationApplyEnhancedFallbacks();
 }
 
-/* q30's legacy profile contains complete generic classic triples for models
- * whose loose assets are byte-identical to AD's. Ignore only an entire exact
- * triple on a path with an AD profile so q30 inherits AD's matching defaults.
- * Other paths and any changed triple remain authored. Never rewrite the file. */
-static void VR_WeaponCalibrationFilterLegacyQ30GenericDefaults(
+/* Suppress only a complete exact copied generic classic triple on an asset
+ * receiving identified AD defaults. Changed/partial triples and every other
+ * schema field stay authored; special profiles retain their existing behavior.
+ * An intentional saved triple equal to generic defaults is indistinguishable. */
+static void VR_WeaponCalibrationFilterLegacyADGenericDefaults(
 	vr_weapon_schema_entry_t *entries, size_t count)
 {
-	size_t index;
-
-	if (!VR_WeaponCalibrationGameIs("q30a1024"))
+	if (!vr_weapon_calibration_inherits_ad)
 		return;
-	for (index = 0; index < count; ++index)
+	for (size_t i = 0; i < count; ++i)
 	{
-		vr_weapon_schema_entry_t *entry = &entries[index];
-		size_t generic_index;
-
-		for (generic_index = 0;
-			 generic_index < countof(vr_stock_classic_fallbacks);
-			 ++generic_index)
+		vr_weapon_schema_entry_t *entry = &entries[i];
+		const vr_weapon_schema_entry_t *profile =
+			VR_WeaponCalibrationIdentifiedADProfile(entry->viewmodel_path);
+		if (!profile)
+			continue;
+		for (size_t j = 0; j < countof(vr_stock_classic_fallbacks); ++j)
 		{
-			const vr_weapon_schema_entry_t *generic =
-				&vr_stock_classic_fallbacks[generic_index];
-			size_t ad_index;
-
-			if (strcmp(entry->viewmodel_path, generic->viewmodel_path))
+			const vr_weapon_schema_entry_t *generic = &vr_stock_classic_fallbacks[j];
+			if (strcmp(profile->viewmodel_path, generic->viewmodel_path))
 				continue;
-			for (ad_index = 0; ad_index < countof(vr_ad_weapon_fallbacks);
-				 ++ad_index)
-				if (!strcmp(entry->viewmodel_path,
-					vr_ad_weapon_fallbacks[ad_index].viewmodel_path))
-					break;
-			if (ad_index == countof(vr_ad_weapon_fallbacks) ||
-				!entry->has_held_offset || !entry->has_held_scale ||
+			if (!entry->has_held_offset || !entry->has_held_scale ||
 				!entry->has_muzzle_offset ||
 				!VectorCompare(entry->held_offset, generic->held_offset) ||
 				entry->held_scale != generic->held_scale ||
@@ -3053,6 +3110,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 
 	VR_WeaponCalibrationInit();
 	VR_WeaponCalibrationReset();
+	VR_WeaponCalibrationRefreshADIdentity();
 	if (!VR_WeaponCalibrationApplyBuiltinFallbacks())
 	{
 		VR_WeaponCalibrationReset();
@@ -3068,7 +3126,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 	Mem_Free(file);
 	if (!parsed)
 		return false;
-	VR_WeaponCalibrationFilterLegacyQ30GenericDefaults(entries, count);
+	VR_WeaponCalibrationFilterLegacyADGenericDefaults(entries, count);
 
 	applied = VR_WeaponCalibrationApplySchema(entries, count);
 	if (!applied)
