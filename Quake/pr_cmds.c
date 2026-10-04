@@ -24,6 +24,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 /* Kept local to the trace builtin so server.h does not need the trace_t
  * definition before client translation units include it. */
+extern qboolean SV_BonkHammerWhiffTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace);
 extern qboolean SV_VRStockAxeTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace);
 extern qboolean SV_VRStockShotgunTrace (edict_t *ignore, int nomonsters,
@@ -828,7 +830,8 @@ static void PF_traceline (void)
 	if (IS_NAN (v2[0]) || IS_NAN (v2[1]) || IS_NAN (v2[2]))
 		v2[0] = v2[1] = v2[2] = 0;
 
-	if (!SV_VRDwellBerserkTrace (ent, nomonsters, v1, v2, &trace) &&
+	if (!SV_BonkHammerWhiffTrace (ent, nomonsters, v1, v2, &trace) &&
+		!SV_VRDwellBerserkTrace (ent, nomonsters, v1, v2, &trace) &&
 		!SV_VRStockAxeTrace (ent, nomonsters, v1, v2, &trace) &&
 		!SV_EnyoAkimboTrace (ent, v1, v2, nomonsters, &trace) &&
 		!SV_VRStockShotgunTrace (ent, nomonsters, v1, v2, &trace) &&

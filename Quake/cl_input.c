@@ -763,6 +763,9 @@ void CL_WritePrivateUsercmd (sizebuf_t *buf, const usercmd_t *cmd,
 			MSG_WriteFloat (buf, cmd->vr_contact.tip[i][2]);
 			MSG_WriteFloat (buf, cmd->vr_contact.speed[i]);
 		}
+		if (cmd->vr_contact.flags & VR_WEAPON_CONTACT_HEAD_PRESENT)
+			for (i = 0; i < 3; ++i)
+				MSG_WriteFloat (buf, cmd->vr_contact.head_angles[i]);
 	}
 
 	if (extbits & MOVEEXT_VR_GORILLA)

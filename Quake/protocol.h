@@ -519,7 +519,8 @@ typedef enum {
 #define VR_WEAPON_CONTACT_PROTOCOL_VERSION 1u
 #define VR_WEAPON_CONTACT_CAP_COLLISION 1
 #define VR_WEAPON_CONTACT_CAP_MELEE 2
-#define VR_WEAPON_CONTACT_CAP_KNOWN 3
+#define VR_WEAPON_CONTACT_CAP_BONK_HEAD 4
+#define VR_WEAPON_CONTACT_CAP_KNOWN 7
 /* Server-selected, verified QC families; never inferred from a mod directory
  * or a familiar inventory bit by the receiving client. */
 enum {
@@ -539,9 +540,11 @@ enum {
 };
 #define VR_WEAPON_CONTACT_RIGHT_VALID 2
 #define VR_WEAPON_CONTACT_IMMERSIVE_MELEE 4
+#define VR_WEAPON_CONTACT_HEAD_PRESENT 8
+#define VR_WEAPON_CONTACT_HEAD_BYTES 12
 #define VR_WEAPON_CONTACT_KNOWN_FLAGS                                      \
   (VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID |       \
-   VR_WEAPON_CONTACT_IMMERSIVE_MELEE)
+   VR_WEAPON_CONTACT_IMMERSIVE_MELEE | VR_WEAPON_CONTACT_HEAD_PRESENT)
 
 /* Anatomical hands are left (0), right (1). Positions are body-relative on
  * the wire; speed remains raw physical point speed in metres/second. */
@@ -553,6 +556,9 @@ typedef struct {
   vec3_t base[2];
   vec3_t tip[2];
   float speed[2];
+  /* Bonk-only suffix after hand data: float32 angles in [-180,180).
+   * Command-correlated post-turn mapped head; never movement/hand fallback. */
+  vec3_t head_angles;
 } vr_weapon_contact_t;
 
 typedef struct

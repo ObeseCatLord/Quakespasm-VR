@@ -877,6 +877,27 @@ qboolean SV_ReadPrivateUsercmd (usercmd_t *readcmd, unsigned int sequence,
 				return false;
 			}
 		}
+		/* Framing is flag-owned even after a weapon switch/offer revocation.
+		 * Exact Bonk and current capability admission belongs to sv_phys. */
+		if (flags & VR_WEAPON_CONTACT_HEAD_PRESENT)
+		{
+			if (net_message.cursize - msg_readcount < VR_WEAPON_CONTACT_HEAD_BYTES)
+			{
+				msg_badread = true;
+				return false;
+			}
+			for (i = 0; i < 3; ++i)
+			{
+				readcmd->vr_contact.head_angles[i] = MSG_ReadFloat ();
+				if (!isfinite (readcmd->vr_contact.head_angles[i]) ||
+					readcmd->vr_contact.head_angles[i] < -180.0f ||
+					readcmd->vr_contact.head_angles[i] >= 180.0f)
+				{
+					msg_badread = true;
+					return false;
+				}
+			}
+		}
 	}
 
 	if (extbits & MOVEEXT_VR_GORILLA)

@@ -411,6 +411,7 @@ typedef struct client_s
 	qboolean private_vr_direct_melee_authorized[2];
 	int private_vr_direct_melee_subtype[2];
 	float private_vr_direct_melee_deadline[2];
+	float private_vr_direct_melee_tier[2]; // Bonk: committed at first outcome
 	int private_vr_direct_melee_hit_count[2];
 	int private_vr_direct_melee_hit_entities[2][2];
 	double	 lastmovetime;
@@ -676,6 +677,7 @@ qboolean SV_VRStockAxeMeleeEnabled (void);
 qboolean SV_VRDwellBerserkMeleeEnabled (void);
 qboolean SV_VRQBJ3MeleeEnabled (void);
 qboolean SV_VREnyoMeleeEnabled (void);
+qboolean SV_VRBonkMeleeEnabled (void);
 void SV_ReceiveVRIKPoseV2 (client_t *client, const vrik_v2_pose_t *pose,
 	const unsigned char body[VRIK_V2_BODY_BYTES]);
 void SV_ReceiveVRIKPoseV3 (client_t *client, const vrik_codec_pose_t *pose);
@@ -725,7 +727,7 @@ qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle);
 unsigned int SV_VRStockAxeContactProfile (void);
 unsigned int SV_VRQBJ3MeleeContactProfile (void);
 unsigned int SV_VREnyoMeleeContactProfile (void);
-/* Dormant exact Bonk recognition; these do not negotiate or admit contacts. */
+/* Exact native Bonk identity and first-outcome readiness. */
 qboolean SV_BonkHammerProgramLoaded (void);
 qboolean SV_BonkHammerWeaponSelected (edict_t *ent);
 qboolean SV_BonkHammerAttackReady (edict_t *ent);
