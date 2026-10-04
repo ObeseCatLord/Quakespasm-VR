@@ -5911,6 +5911,7 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 		.vid_palettize = vid_palettize.value != 0,
 		.polyblend = gl_polyblend.value != 0,
 		.menu = key_dest == key_menu,
+		.menu_alpha = 1.0f - M_MenuPreviewFraction (),
 #if defined(_DEBUG)
 		.ray_debug = !vulkan_globals.stereo_active && r_raydebug.value && (bmodel_tlas != VK_NULL_HANDLE),
 #endif
@@ -5918,7 +5919,7 @@ task_handle_t GL_EndRendering (qboolean use_tasks, qboolean swapchain)
 		.vid_height = vid.height,
 		.render_width = vid.render_width,
 		.render_height = vid.render_height,
-		.time = fmod (cl.time, 2.0 * M_PI),
+		.time = fmod (M_ForcedUnderwater () ? realtime : cl.time, 2.0 * M_PI),
 		.color_clear_value = vulkan_globals.color_clear_value,
 		.density_eye_active = openxr_density_eye_active,
 		.density_offsets = {openxr_density_offsets[0], openxr_density_offsets[1]},
@@ -7258,7 +7259,7 @@ M_Menu_Video_f
 void M_Menu_Video_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (modestate == MS_WINDOWED);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_video;
 	m_entersound = true;

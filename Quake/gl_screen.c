@@ -93,6 +93,8 @@ cvar_t scr_sbaralpha = {"scr_sbaralpha", "0.75", CVAR_ARCHIVE};
 cvar_t scr_conwidth = {"scr_conwidth", "0", CVAR_ARCHIVE};
 cvar_t scr_conscale = {"scr_conscale", "1", CVAR_ARCHIVE};
 cvar_t scr_crosshairscale = {"scr_crosshairscale", "1", CVAR_ARCHIVE};
+cvar_t scr_showspeed = {"scr_showspeed", "0", CVAR_ARCHIVE};
+cvar_t scr_showspeed_ofs = {"scr_showspeed_ofs", "0", CVAR_ARCHIVE};
 cvar_t scr_infoscale = {"scr_infoscale", "2.0", CVAR_ARCHIVE};
 cvar_t scr_showfps = {"scr_showfps", "0", CVAR_ARCHIVE};
 cvar_t scr_clock = {"scr_clock", "0", CVAR_NONE};
@@ -269,89 +271,61 @@ void SCR_CenterPrint (const char *str) // update centerprint data
 	scr_center_maxcols = q_max (scr_center_maxcols, linecols);
 }
 
-static void SCR_DrawCenterStringTextBox (cb_context_t *cbx, int x, int y, int width, int lines)
+// From Ironwail: ignore empty padding lines when sizing the background.
+static void SCR_DrawCenterBackground (cb_context_t *cbx, const char *text, int y)
 {
-	qpic_t *box_tl = Draw_CachePic ("gfx/box_tl.lmp");
-	qpic_t *box_ml = Draw_CachePic ("gfx/box_ml.lmp");
-	qpic_t *box_bl = Draw_CachePic ("gfx/box_bl.lmp");
-	qpic_t *box_tm = Draw_CachePic ("gfx/box_tm.lmp");
-	qpic_t *box_mm = Draw_CachePic ("gfx/box_mm.lmp");
-	qpic_t *box_mm2 = Draw_CachePic ("gfx/box_mm2.lmp");
-	qpic_t *box_bm = Draw_CachePic ("gfx/box_bm.lmp");
-	qpic_t *box_tr = Draw_CachePic ("gfx/box_tr.lmp");
-	qpic_t *box_mr = Draw_CachePic ("gfx/box_mr.lmp");
-	qpic_t *box_br = Draw_CachePic ("gfx/box_br.lmp");
-	int cx = x;
-	int cy = y;
-	int n;
-
-	Draw_Pic (cbx, cx, cy, box_tl, 0.7f, true);
-	for (n = 0; n < lines; n++)
-	{
-		cy += CHARACTER_SIZE;
-		Draw_Pic (cbx, cx, cy, box_ml, 0.7f, true);
-	}
-	Draw_Pic (cbx, cx, cy + CHARACTER_SIZE, box_bl, 0.7f, true);
-
-	cx += CHARACTER_SIZE;
-	while (width > 0)
-	{
-		cy = y;
-		Draw_Pic (cbx, cx, cy, box_tm, 0.7f, true);
-		for (n = 0; n < lines; n++)
-		{
-			cy += CHARACTER_SIZE;
-			Draw_Pic (cbx, cx, cy, n == 1 ? box_mm2 : box_mm, 0.7f, true);
-		}
-		Draw_Pic (cbx, cx, cy + CHARACTER_SIZE, box_bm, 0.7f, true);
-		width -= 2;
-		cx += 2 * CHARACTER_SIZE;
-	}
-
-	cy = y;
-	Draw_Pic (cbx, cx, cy, box_tr, 0.7f, true);
-	for (n = 0; n < lines; n++)
-	{
-		cy += CHARACTER_SIZE;
-		Draw_Pic (cbx, cx, cy, box_mr, 0.7f, true);
-	}
-	Draw_Pic (cbx, cx, cy + CHARACTER_SIZE, box_br, 0.7f, true);
-}
-
-static void SCR_DrawCenterStringBackground (cb_context_t *cbx, int y)
-{
-	int width, x;
-
-	if (cl.intermission || scr_center_lines <= 0 || scr_center_maxcols <= 0)
+	int			lines = 1, cols = 0, width = 0;
+	const char *end;
+	if (cl.intermission || !scr_centerprintbg.value)
 		return;
-
+	while (*text == '\n')
+	{
+		++text;
+		y += CHARACTER_SIZE;
+	}
+	end = text + strlen (text);
+	while (end > text && end[-1] == '\n')
+		--end;
+	if (end == text)
+		return;
+	for (const char *p = text; p < end; ++p)
+	{
+		if (*p == '\n')
+		{
+			width = q_max (width, cols);
+			cols = 0;
+			++lines;
+		}
+		else
+			++cols;
+	}
+	width = q_max (width, cols);
 	switch ((int)scr_centerprintbg.value)
 	{
 	case 1:
-		width = (scr_center_maxcols + 3) & ~1;
-		x = (320 - width * CHARACTER_SIZE) / 2;
-		SCR_DrawCenterStringTextBox (cbx, x - CHARACTER_SIZE, y - 12, width, scr_center_lines + 1);
+		width = (width + 3) & ~1;
+		M_DrawTextBoxAlpha (cbx, (320 - width * 8) / 2 - 8, y - 12, width, lines + 1, 0.5f);
 		break;
 	case 2:
-		width = q_min (scr_center_maxcols, 40) + 2;
-		x = (320 - width * CHARACTER_SIZE) / 2;
-		Draw_Fill (cbx, x, y - 4, width * CHARACTER_SIZE, scr_center_lines * CHARACTER_SIZE + 8, 0, 0.7f);
+		Draw_Fill (cbx, (320 - (width + 2) * 8) / 2, y - 4, (width + 2) * 8, lines * 8 + 8, 0, 0.5f);
 		break;
 	case 3:
-		Draw_Fill (cbx, 0, y - 4, 320, scr_center_lines * CHARACTER_SIZE + 8, 0, 0.7f);
+	{
+		float scale = CLAMP (1.0f, M_GetScale (), q_min (glwidth / 320.0f, glheight / 200.0f));
+		float extent = glwidth / scale;
+		Draw_Fill (cbx, (320 - extent) / 2, y - 4, extent, lines * 8 + 8, 0, 0.5f);
 		break;
-	default:
-		break;
+	}
 	}
 }
 
-static void SCR_DrawCenterString (cb_context_t *cbx) // actually do the drawing
+static void SCR_DrawCenterText (cb_context_t *cbx, const char *text, int lines) // actually do the drawing
 {
-	char *start;
-	int	  l;
-	int	  j;
-	int	  x, y;
-	int	  remaining;
+	const char *start;
+	int			l;
+	int			j;
+	int			x, y;
+	int			remaining;
 
 	GL_SetCanvas (cbx, CANVAS_MENU); // johnfitz
 
@@ -362,16 +336,16 @@ static void SCR_DrawCenterString (cb_context_t *cbx) // actually do the drawing
 		remaining = 9999;
 
 	scr_erase_center = 0;
-	start = scr_centerstring;
+	start = text;
 
-	if (scr_center_lines <= 4)
+	if (lines <= 4)
 		y = 200 * 0.35; // johnfitz -- 320x200 coordinate system
 	else
 		y = 48;
 	if (crosshair.value)
 		y -= CHARACTER_SIZE;
 
-	SCR_DrawCenterStringBackground (cbx, y);
+	SCR_DrawCenterBackground (cbx, start, y);
 
 	do
 	{
@@ -394,6 +368,26 @@ static void SCR_DrawCenterString (cb_context_t *cbx) // actually do the drawing
 			break;
 		start++; // skip the \n
 	} while (1);
+}
+
+static void SCR_DrawCenterString (cb_context_t *cbx)
+{
+	SCR_DrawCenterText (cbx, scr_centerstring, scr_center_lines);
+}
+
+void SCR_DrawCenterPrintPreview (cb_context_t *cbx, float alpha)
+{
+	if (cl.intermission)
+		return;
+	Draw_SetOpacity (alpha);
+	SCR_DrawCenterText (
+		cbx,
+		"Certain messages appear inconveniently\n"
+		"in the middle of your view. These are\n"
+		"always important, and you do not want\n"
+		"to ignore them!",
+		4);
+	Draw_SetOpacity (1.0f);
 }
 
 static void SCR_CheckDrawCenterString (cb_context_t *cbx)
@@ -827,6 +821,9 @@ void SCR_Init (void)
 	Cvar_RegisterVariable (&scr_conscale);
 	Cvar_RegisterVariable (&scr_crosshairscale);
 	Cvar_RegisterVariable (&scr_infoscale);
+	Cvar_RegisterVariable (&scr_centerprintbg);
+	Cvar_RegisterVariable (&scr_showspeed);
+	Cvar_RegisterVariable (&scr_showspeed_ofs);
 	Cvar_RegisterVariable (&scr_showfps);
 	Cvar_RegisterVariable (&scr_clock);
 	Cvar_RegisterVariable (&scr_autoclock);
@@ -849,7 +846,6 @@ void SCR_Init (void)
 	Cvar_RegisterVariable (&scr_showpause);
 	Cvar_RegisterVariable (&scr_centertime);
 	Cvar_RegisterVariable (&scr_printspeed);
-	Cvar_RegisterVariable (&scr_centerprintbg);
 	Cvar_RegisterVariable (&scr_style);
 	Cvar_RegisterVariable (&vr_menu_scale);
 	Cvar_RegisterVariable (&vr_menu_follow);
@@ -902,9 +898,60 @@ void SCR_Init (void)
 
 /*
 ==============
-SCR_DrawFPS -- johnfitz
+SCR_DrawSpeed -- from Ironwail
 ==============
 */
+static void SCR_DrawSpeed (cb_context_t *cbx)
+{
+	if (cl.intermission || CL_AngleLocked () || scr_viewsize.value >= 130)
+		return;
+
+	const float	  show_speed_interval_value = 0.05f;
+	static float  maxspeed = 0, display_speed = -1;
+	static double lastrealtime = 0;
+	float		  speed;
+	vec3_t		  vel;
+
+	if (lastrealtime > realtime)
+	{
+		lastrealtime = 0;
+		display_speed = -1;
+		maxspeed = 0;
+	}
+
+	VectorCopy (cl.velocity, vel);
+	vel[2] = 0;
+	speed = VectorLength (vel);
+
+	if (speed > maxspeed)
+		maxspeed = speed;
+
+	if (scr_showspeed.value)
+	{
+		if (display_speed >= 0)
+		{
+			float y;
+			char  str[12];
+
+			sprintf (str, "%d", (int)display_speed);
+			float scale = CLAMP (1.f, scr_crosshairscale.value, 10.f);
+			float halfheight = scr_vrect.height / (2.f * scale);
+			y = CLAMP (-halfheight, 4.f + scr_showspeed_ofs.value, halfheight - 8.f);
+			// Use screen coordinates: Draw_String rejects negative Y on the centered canvas.
+			GL_SetCanvas (cbx, CANVAS_DEFAULT);
+			Draw_String_Scaled (
+				cbx, scr_vrect.x + scr_vrect.width * 0.5f - strlen (str) * 4 * scale, scr_vrect.y + scr_vrect.height * 0.5f + y * scale, str, scale);
+		}
+	}
+
+	if (realtime - lastrealtime >= show_speed_interval_value)
+	{
+		lastrealtime = realtime;
+		display_speed = maxspeed;
+		maxspeed = 0;
+	}
+}
+
 static void SCR_DrawFPS (cb_context_t *cbx)
 {
 	static double oldtime = 0;
@@ -1380,6 +1427,20 @@ static void SCR_DrawPause (cb_context_t *cbx)
 
 	pic = Draw_CachePic ("gfx/pause.lmp");
 	Draw_Pic (cbx, (320 - pic->width) / 2, (240 - 48 - pic->height) / 2, pic, 1.0f, false); // johnfitz -- stretched menus
+}
+
+/*
+==============
+SCR_DrawSaving
+==============
+*/
+static void SCR_DrawSaving (cb_context_t *cbx)
+{
+	if (!Host_IsSaving () || scr_viewsize.value >= 130)
+		return;
+
+	GL_SetCanvas (cbx, CANVAS_TOPRIGHT);
+	Draw_Pic (cbx, 320 - 16 - draw_disc->width, 8, draw_disc, 1.0f, false);
 }
 
 /*
@@ -2629,10 +2690,12 @@ static void SCR_DrawGUI (void *unused)
 		SCR_DrawNet (cbx);
 		SCR_DrawTurtle (cbx);
 		SCR_DrawPause (cbx);
+		SCR_DrawSaving (cbx);
 		SCR_DrawTextPopupCenterString (cbx);
 		SCR_DrawVRHUDPanel (cbx, true);
 		SCR_DrawDevStats (cbx); // johnfitz
-		SCR_DrawFPS (cbx);		// johnfitz
+		SCR_DrawSpeed (cbx);
+		SCR_DrawFPS (cbx); // johnfitz
 		SCR_DrawSpeeds (cbx);
 		SCR_DrawClock (cbx); // johnfitz
 		SCR_DrawEdictInfo (cbx);

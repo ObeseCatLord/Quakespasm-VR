@@ -26,6 +26,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 static byte *Image_LoadPCX (int file_handle, int *width, int *height, const char *image_name);
 static byte *Image_LoadLMP (int file_handle, int *width, int *height, const char *image_name);
 
+typedef struct
+{
+	unsigned int width, height;
+} lmpheader_t;
+
 #ifdef _MSC_VER
 // Disable warning C4505: Unused functions
 #pragma warning(push)
@@ -158,6 +163,14 @@ static struct
 
 const int num_supported_image_formats = countof (supported_image_formats);
 
+qboolean Image_IsSupportedExtension (const char *ext)
+{
+	for (int i = 0; i < num_supported_image_formats; i++)
+		if (!q_strcasecmp (ext, supported_image_formats[i].file_extension))
+			return true;
+	return false;
+}
+
 byte *Image_LoadImage (const char *name, int *width, int *height, enum srcformat *fmt, unsigned int min_path_id)
 {
 	// 1. Search 'name' image by supported_image_formats, keeping only the best, as:
@@ -226,6 +239,33 @@ byte *Image_LoadImage (const char *name, int *width, int *height, enum srcformat
 	}
 
 	return NULL;
+}
+
+/*
+============
+Image_GetLMPSize
+============
+*/
+void Image_GetLMPSize (const char *name, int *width, int *height)
+{
+	char		loadfilename[MAX_OSPATH];
+	int			file_handle = -1;
+	lmpheader_t qpic;
+
+	q_snprintf (loadfilename, sizeof (loadfilename), "%s.lmp", name);
+	const qfilesize_t file_size = COM_OpenFile (loadfilename, &file_handle, NULL);
+	if (file_handle == -1)
+		return;
+
+	const qboolean valid = Sys_FileRead (file_handle, &qpic, sizeof (qpic)) == sizeof (qpic) &&
+						   file_size == sizeof (qpic) + (qfilesize_t)LittleLong (qpic.width) * LittleLong (qpic.height);
+	COM_CloseFile (file_handle);
+
+	if (valid)
+	{
+		*width = (int)LittleLong (qpic.width);
+		*height = (int)LittleLong (qpic.height);
+	}
 }
 
 //==============================================================================
@@ -393,11 +433,6 @@ static byte *Image_LoadPCX (int file_handle, int *width, int *height, const char
 //  QPIC (aka '.lmp')
 //
 //==============================================================================
-
-typedef struct
-{
-	unsigned int width, height;
-} lmpheader_t;
 
 /*
 ============

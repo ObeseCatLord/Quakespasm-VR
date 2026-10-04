@@ -1812,6 +1812,11 @@ static void Mod_LoadTextures (qmodel_t *mod, byte *mod_base, lump_t *l)
 
 		memcpy (tx->name, mt.name, sizeof (mt.name));
 		tx->name[sizeof (mt.name)] = 0;
+		if (!tx->name[0])
+		{
+			q_snprintf (tx->name, sizeof (tx->name), "unnamed%d", i);
+			Con_Warning ("unnamed texture in %s, renaming to %s\n", mod->name, tx->name);
+		}
 		tx->width = mt.width;
 		tx->height = mt.height;
 		tx->type = Mod_TextureTypeFromName (tx->name);

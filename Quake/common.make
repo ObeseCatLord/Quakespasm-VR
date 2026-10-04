@@ -241,6 +241,10 @@ SHADER_OBJS = \
 	ssao_mip_fp16_comp.o \
 	ssao_mip_msaa_comp.o \
 	ssao_mip_msaa_fp16_comp.o \
+	ssao_mip_shared_comp.o \
+	ssao_mip_shared_fp16_comp.o \
+	ssao_mip_shared_msaa_comp.o \
+	ssao_mip_shared_msaa_fp16_comp.o \
 	ssao_filter_comp.o \
 	ssao_filter_fp16_comp.o \
 	ssao_composite_msaa_frag.o \

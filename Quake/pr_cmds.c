@@ -380,6 +380,30 @@ static void PF_setsize (void)
 	SetMinMaxSize (e, minvec, maxvec, false);
 }
 
+cvar_t sv_gameplayfix_setmodelrealbox = {"sv_gameplayfix_setmodelrealbox", "1", CVAR_NONE};
+
+/*
+=================
+SetModelSize
+
+sv_gameplayfix_setmodelrealbox 0 restores the vanilla fixed box for alias models
+=================
+*/
+void SetModelSize (edict_t *e, qmodel_t *mod)
+{
+	static vec3_t vanilla_mins = {-16, -16, -16};
+	static vec3_t vanilla_maxs = {16, 16, 16};
+
+	if (!mod)
+		SetMinMaxSize (e, vec3_origin, vec3_origin, true);
+	else if (mod->type == mod_brush) // johnfitz -- correct physics cullboxes for bmodels
+		SetMinMaxSize (e, mod->clipmins, mod->clipmaxs, true);
+	else if (mod->type == mod_alias && !sv_gameplayfix_setmodelrealbox.value)
+		SetMinMaxSize (e, vanilla_mins, vanilla_maxs, true);
+	else
+		SetMinMaxSize (e, mod->mins, mod->maxs, true);
+}
+
 /*
 =================
 PF_setmodel
@@ -387,7 +411,6 @@ PF_setmodel
 setmodel(entity, model)
 =================
 */
-cvar_t		sv_gameplayfix_setmodelrealbox = {"sv_gameplayfix_setmodelrealbox", "1"};
 static void PF_sv_setmodel (void)
 {
 	int			i;
@@ -423,18 +446,7 @@ static void PF_sv_setmodel (void)
 	e->v.modelindex = i; // SV_ModelIndex (m);
 
 	mod = sv.models[(int)e->v.modelindex]; // Mod_ForName (m, true);
-
-	if (mod)
-	// johnfitz -- correct physics cullboxes for bmodels
-	{
-		if (mod->type == mod_brush)
-			SetMinMaxSize (e, mod->clipmins, mod->clipmaxs, true);
-		else
-			SetMinMaxSize (e, mod->mins, mod->maxs, true);
-	}
-	// johnfitz
-	else
-		SetMinMaxSize (e, vec3_origin, vec3_origin, true);
+	SetModelSize (e, mod);
 }
 
 /*
@@ -1930,7 +1942,7 @@ sizebuf_t *WriteDest (void)
 		return &sv.reliable_datagram;
 
 	case MSG_INIT:
-		return &sv.signon;
+		return sv.signon;
 
 	case MSG_EXT_MULTICAST:
 	case MSG_EXT_ENTITY: // just reuse it...

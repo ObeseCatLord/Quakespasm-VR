@@ -106,13 +106,17 @@ void	 M_Video_Draw (cb_context_t *cbx);
 void	 M_Video_Key (int key);
 qboolean M_HandleScrollBarKeys (const int key, int *cursor, int *first_drawn, const int num_total, const int max_on_screen);
 
-#define MENU_TOP		 40
-#define MENU_CURSOR_X	 60
-#define MENU_LABEL_X	 70
-#define MENU_VALUE_X	 (27 * CHARACTER_SIZE)
-#define MENU_SLIDER_X	 (MENU_VALUE_X + 6)
-#define MENU_SCROLLBAR_X (46 * CHARACTER_SIZE) // make some room for slider labels
-#define MAX_MENU_LINES	 14
+#define MENU_TOP		   40
+#define MENU_CURSOR_X	   60
+#define MENU_LABEL_X	   70
+#define MENU_VALUE_X	   (28 * CHARACTER_SIZE)
+#define MENU_SLIDER_X	   (MENU_VALUE_X + 6)
+#define MENU_SLIDER_SIZE   12
+#define MENU_SLIDER_EXTENT ((MENU_SLIDER_SIZE - 1) * CHARACTER_SIZE)
+#define MENU_SLIDER_START  (MENU_SLIDER_X + 4)
+#define MENU_SLIDER_END	   (MENU_SLIDER_START + MENU_SLIDER_EXTENT)
+#define MENU_SCROLLBAR_X   (47 * CHARACTER_SIZE)
+#define MAX_MENU_LINES	   14
 
 // Max FPS menu entry is a slider [10 .. 1000; no limit] by steps of 2 fps so we can set 72 fps
 #define MIN_FPS_MENU_VALUE	10.0f
@@ -134,5 +138,10 @@ crosshair_t M_GetCrosshairDef (float crosshair_def_value);
 const char *M_GetCrosshairColorName (float crosshair_color_value);
 void		M_GetCrosshairColor (float crosshair_color_value, float *rgb);
 void		M_DrawCrosshair (cb_context_t *cbx, float x, float y, float size);
+
+void M_DrawTextBoxAlpha (cb_context_t *cbx, int x, int y, int width, int lines, float alpha);
+
+float	 M_MenuPreviewFraction (void);
+qboolean M_ForcedUnderwater (void);
 
 #endif /* _QUAKE_MENU_H */

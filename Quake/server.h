@@ -57,6 +57,8 @@ typedef struct
 
 //=============================================================================
 
+#define MAX_SIGNON_BUFFERS 256
+
 typedef enum
 {
 	ss_loading,
@@ -104,6 +106,17 @@ typedef struct
 	int		 coop_autosave_last_secrets;
 	int		 coop_autosave_last_kill_bucket;
 	int		 coop_autosave_last_serverflags;
+	struct
+	{
+		float  secret_boost;
+		float  prev_health;
+		int	   prev_secrets;
+		double retry_realtime; // busy/failed SP admission backoff
+		double time;	   // last autosave time
+		double hurt_time;  // last time the player was hurt
+		double shoot_time; // last time the player attacked
+		double cheat;	   // time spent with cheats active since last autosave
+	} autosave;
 
 	int	   lastcheck; // used by PF_checkclient
 	double lastchecktime;
@@ -124,8 +137,9 @@ typedef struct
 	sizebuf_t reliable_datagram; // copied to all clients at end of frame
 	byte	  reliable_datagram_buf[MAX_DATAGRAM];
 
-	sizebuf_t signon;
-	byte	  signon_buf[MAX_MSGLEN - 2]; // johnfitz -- was 8192, now uses MAX_MSGLEN
+	sizebuf_t *signon; // current buffer for MSG_INIT writes
+	int		   num_signon_buffers;
+	sizebuf_t *signon_buffers[MAX_SIGNON_BUFFERS];
 
 	unsigned protocol; // johnfitz
 	unsigned protocolflags;
@@ -208,6 +222,8 @@ typedef struct client_s
 		PRESPAWN_SPAWN_METADATA,
 	} sendsignon; // only valid before spawned
 	int			 signonidx;
+	qboolean signon_chunk_pending; // cleared only after this reliable message is sent
+	int signon_message_capacity; // restore the negotiated capacity after a chunk envelope is sent
 	unsigned int signon_sounds; //
 	unsigned int signon_models; //
 
@@ -556,7 +572,7 @@ extern edict_t *sv_player;
 //===========================================================
 
 void SV_Init (void);
-void Host_CoopAutosaveFrame (void);
+void Host_AutosaveFrame (void);
 void Host_SavegamePoll (void);
 void Host_SavegameDrain (void);
 
@@ -611,6 +627,7 @@ void SV_CSQCEntityFreed (edict_t *ed);
 void SV_BuildEntityState (edict_t *ent, entity_state_t *state);
 void SV_SendClientMessages (void);
 void SV_ClearDatagram (void);
+void SV_ReserveSignonSpace (int numbytes);
 
 int SV_ModelIndex (const char *name);
 

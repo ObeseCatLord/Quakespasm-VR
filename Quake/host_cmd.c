@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+extern cvar_t sv_autosave, sv_autosave_interval;
 #include "q_ctype.h"
 #include "json.h"
 #include "savegame_dialect.h"
@@ -187,9 +188,9 @@ static const char *RightPad (const char *str, size_t minlen, char c)
 	return buf;
 }
 
-filelist_item_t	 *extralevels;
-filelist_item_t **extralevels_sorted;
-static size_t	  maxlevelnamelen;
+filelist_item_t			*extralevels;
+static filelist_item_t **extralevels_sorted;
+static size_t			 maxlevelnamelen;
 
 static SDL_Thread	  *extralevels_parsing_thread;
 static atomic_uint32_t extralevels_cancel_parsing;
@@ -302,6 +303,47 @@ ExtraMaps_IsStart
 qboolean ExtraMaps_IsStart (maptype_t type)
 {
 	return type == MAPTYPE_CUSTOM_MOD_START || type == MAPTYPE_MOD_START || type == MAPTYPE_CUSTOM_ID_START || type == MAPTYPE_ID_START;
+}
+
+/*
+==================
+ExtraMaps_NextLevel
+
+Iterates the playable levels in display order; start with *index = 0.
+==================
+*/
+filelist_item_t *ExtraMaps_NextLevel (int *index)
+{
+	filelist_item_t *item;
+
+	if (!extralevels_sorted)
+		return NULL;
+
+	// the description parser can turn entries into MAPTYPE_BMODEL after sorting
+	while ((item = extralevels_sorted[*index]) != NULL)
+	{
+		++*index;
+		if (ExtraMaps_GetType (item) < MAPTYPE_BMODEL)
+			return item;
+	}
+
+	return NULL;
+}
+
+/*
+==================
+ExtraMaps_Match
+==================
+*/
+qboolean ExtraMaps_Match (const filelist_item_t *item, const char *substr)
+{
+	const char *message;
+
+	if (!substr || !*substr || q_strcasestr (item->name, substr))
+		return true;
+
+	message = ExtraMaps_GetMessage (item);
+	return message && q_strcasestr (message, substr);
 }
 
 /*
@@ -505,7 +547,7 @@ Host_Maps_f
 */
 static void Host_Maps_f (void)
 {
-	int				 i;
+	int				 i, j;
 	filelist_item_t *item;
 	const char		*desc;
 	const qboolean	 active_only = !q_strcasecmp (Cmd_Argv (0), "maps_mod");
@@ -514,18 +556,17 @@ static void Host_Maps_f (void)
 	char			 padchar = '.' - 0x80; // same bits as ('.' | 0x80) without truncating a constant
 	size_t			 ofsdesc = maxlevelnamelen + 2;
 
-	for (item = extralevels, i = 0; item; item = item->next)
+	for (j = 0, i = 0; (item = ExtraMaps_NextLevel (&j)) != NULL;)
 	{
 		const maptype_t type = ExtraMaps_GetType (item);
-		if (type >= MAPTYPE_ID_START || (active_only && type >= MAPTYPE_CUSTOM_ID_START))
+		if (type >= MAPTYPE_ID_START || (active_only && type >= MAPTYPE_CUSTOM_ID_START) ||
+			!ExtraMaps_Match (item, substr))
 			continue;
 		desc = ExtraMaps_GetMessage (item);
 		if (!desc)
 			desc = "";
 		if (substr && *substr)
 		{
-			if (!q_strcasestr (item->name, substr) && !q_strcasestr (desc, substr))
-				continue;
 			const char *tinted_name = COM_TintSubstring (item->name, substr, buf, sizeof (buf));
 			const char *tinted_desc = COM_TintSubstring (desc, substr, buf2, sizeof (buf2));
 			if (*desc)
@@ -856,7 +897,151 @@ void SaveList_Rebuild (void)
 
 void SaveList_Init (void)
 {
+	char		dirname[MAX_OSPATH];
+	char		filename[MAX_QPATH];
+	char		savename[MAX_QPATH];
+	findfile_t *find;
+
 	FileList_Init ("", "sav", &savelist);
+
+	if ((size_t)q_snprintf (dirname, sizeof (dirname), "%s/autosave", com_gamedir) < sizeof (dirname))
+	{
+		for (find = Sys_FindFirst (dirname, "sav"); find; find = Sys_FindNext (find))
+		{
+			if (find->attribs & FA_DIRECTORY)
+				continue;
+			COM_StripExtension (find->name, filename, sizeof (filename));
+			if ((size_t)q_snprintf (savename, sizeof (savename), "autosave/%s", filename) < sizeof (savename))
+				FileList_Add (savename, &savelist);
+		}
+	}
+}
+
+//==============================================================================
+// sky list management
+//==============================================================================
+
+filelist_item_t *skylist;
+
+static void SkyList_Clear (void)
+{
+	FileList_Clear (&skylist);
+}
+
+void SkyList_Rebuild (void)
+{
+	SkyList_Clear ();
+	SkyList_Init ();
+}
+
+static void SkyList_AddFile (const char *path)
+{
+	static const char *const suffixes[] = {"up", "cube"}; // Sky_LoadSkyBox accepts six faces or a single cubemap image
+	const char				 prefix[] = "gfx/env/";
+	char					 skyname[MAX_QPATH];
+	size_t					 len;
+	int						 i;
+
+	// pak files are passed in without any path filtering
+	if (q_strncasecmp (path, prefix, sizeof (prefix) - 1) != 0)
+		return;
+	path += sizeof (prefix) - 1;
+
+	if (!Image_IsSupportedExtension (COM_FileGetExtension (path)))
+		return;
+
+	COM_StripExtension (path, skyname, sizeof (skyname));
+	len = strlen (skyname);
+	for (i = 0; i < (int)countof (suffixes); i++)
+	{
+		size_t suffixlen = strlen (suffixes[i]);
+		if (len > suffixlen && !q_strcasecmp (skyname + len - suffixlen, suffixes[i]))
+		{
+			skyname[len - suffixlen] = '\0';
+			FileList_Add (skyname, &skylist);
+			return;
+		}
+	}
+}
+
+static void SkyList_AddDirRec (const char *root, const char *relpath)
+{
+	findfile_t *find;
+	char		child[MAX_OSPATH];
+	char		fullpath[MAX_OSPATH];
+
+	q_snprintf (fullpath, sizeof (fullpath), "%s/%s", root, relpath);
+	for (find = Sys_FindFirst (fullpath, NULL); find; find = Sys_FindNext (find))
+	{
+		q_snprintf (child, sizeof (child), "%s/%s", relpath, find->name);
+		if (find->attribs & FA_DIRECTORY)
+		{
+			if (find->name[0] == '.')
+				continue;
+			SkyList_AddDirRec (root, child);
+			continue;
+		}
+		SkyList_AddFile (child);
+	}
+}
+
+void SkyList_Init (void)
+{
+	searchpath_t *search;
+	pack_t		 *pak;
+	int			  i;
+
+	for (search = com_searchpaths; search; search = search->next)
+	{
+		if (*search->filename) // directory
+			SkyList_AddDirRec (search->filename, "gfx/env");
+		else // pakfile
+			for (i = 0, pak = search->pack; i < pak->numfiles; i++)
+				SkyList_AddFile (pak->files[i].name);
+	}
+}
+
+/*
+==================
+Host_Skies_f
+
+list all potential skies
+==================
+*/
+static void Host_Skies_f (void)
+{
+	int				 i;
+	filelist_item_t *item;
+	const char		*substr = Cmd_Argc () >= 2 ? Cmd_Argv (1) : NULL;
+	char			 buf[256];
+
+	for (item = skylist, i = 0; item; item = item->next)
+	{
+		if (substr && *substr)
+		{
+			if (!q_strcasestr (item->name, substr))
+				continue;
+			Con_SafePrintf ("   %s\n", COM_TintSubstring (item->name, substr, buf, sizeof (buf)));
+		}
+		else
+			Con_SafePrintf ("   %s\n", item->name);
+		i++;
+	}
+
+	if (substr && *substr)
+	{
+		if (i)
+			Con_SafePrintf ("%i %s containing \"%s\"\n", i, i == 1 ? "sky" : "skies", substr);
+		else
+			Con_SafePrintf ("no skies found containing \"%s\"\n", substr);
+	}
+	else
+	{
+		if (i)
+			Con_SafePrintf ("%i %s\n", i, i == 1 ? "sky" : "skies");
+		else
+			Con_SafePrintf ("no skies found\n");
+	}
 }
 
 /*
@@ -1519,7 +1704,7 @@ static void Host_Randmap_f (void)
 	if (cmd_source != src_command)
 		return;
 
-	for (level = extralevels, numlevels = 0; level; level = level->next)
+	for (i = 0, numlevels = 0; ExtraMaps_NextLevel (&i);)
 		numlevels++;
 
 	if (numlevels == 0)
@@ -1530,9 +1715,9 @@ static void Host_Randmap_f (void)
 
 	randlevel = (COM_Rand () % numlevels);
 
-	for (level = extralevels, i = 0; level; level = level->next, i++)
+	for (i = 0; (level = ExtraMaps_NextLevel (&i)) != NULL;)
 	{
-		if (i == randlevel)
+		if (--randlevel < 0)
 		{
 			Con_Printf ("Starting map %s...\n", level->name);
 			Cbuf_AddText (va ("map %s\n", level->name));
@@ -1712,7 +1897,7 @@ static void Host_SavegameComment (char text[SAVEGAME_COMMENT_LENGTH + 1])
 	// Remove CR/LFs from level name to avoid broken saves, e.g. with autumn_sp map:
 	// sanitize Level name:
 	char cleanname[sizeof (cl.levelname)];
-	COM_SanitizeDescriptionString (cleanname, sizeof (cleanname), cl.levelname, true);
+	COM_SanitizeDescriptionString (cleanname, sizeof (cleanname), cl.levelname[0] ? cl.levelname : cl.mapname, true);
 
 	i = (int)strlen (cleanname);
 	if (i > SAVEGAME_LEVEL_LENGTH)
@@ -1729,6 +1914,13 @@ static void Host_SavegameComment (char text[SAVEGAME_COMMENT_LENGTH + 1])
 			text[i] = '_';
 	}
 }
+
+typedef enum
+{
+	HOST_SAVE_MANUAL,
+	HOST_SAVE_SP_AUTOSAVE,
+	HOST_SAVE_COOP_AUTOSAVE
+} host_savegame_purpose_t;
 
 #define HOST_SAVEGAME_SLOT_COUNT 2
 
@@ -1760,7 +1952,9 @@ typedef struct
 	char		  tempname[MAX_OSPATH];
 	char		  savename[sizeof (sv.lastsave)];
 	uint64_t	  request_sequence;
-	qboolean	  quiet;
+	host_savegame_purpose_t purpose;
+	qboolean	  notify;
+	double sp_save_time, sp_save_cheat;
 	qboolean	  lastsave_eligible;
 	qboolean	  autosave_mapstart;
 	int		  autosave_slots;
@@ -1936,7 +2130,7 @@ static void Host_SavegameCompleteSlot (host_savegame_slot_t *slot)
 	if (state == HOST_SAVEGAME_SLOT_SUCCEEDED)
 	{
 		SaveList_Rebuild ();
-		if (slot->quiet)
+		if (slot->purpose == HOST_SAVE_COOP_AUTOSAVE)
 		{
 			sv.coop_autosave_next_slot = (slot->autosave_next_slot + 1) % slot->autosave_slots;
 			sv.coop_autosave_last_realtime = slot->autosave_realtime;
@@ -1950,7 +2144,13 @@ static void Host_SavegameCompleteSlot (host_savegame_slot_t *slot)
 		}
 		else
 		{
-			Con_Printf ("done.\n");
+			Con_Printf ("%sdone.\n", slot->notify ? "" : "[skipnotify]");
+			if (slot->purpose == HOST_SAVE_SP_AUTOSAVE)
+			{
+				sv.autosave.time = slot->sp_save_time;
+				sv.autosave.cheat = q_max (0.0, sv.autosave.cheat - slot->sp_save_cheat);
+				sv.autosave.retry_realtime = 0;
+			}
 			if (slot->lastsave_eligible &&
 				slot->request_sequence > host_savegame_lastsave_sequence)
 			{
@@ -1959,14 +2159,18 @@ static void Host_SavegameCompleteSlot (host_savegame_slot_t *slot)
 			}
 		}
 	}
-	else if (slot->quiet)
+	else if (slot->purpose == HOST_SAVE_COOP_AUTOSAVE)
 	{
 		sv.coop_autosave_retry_realtime = realtime + slot->autosave_retry_delay;
 		Con_DPrintf ("Coop autosave: couldn't finalize %s\n", slot->name);
 	}
 	else
+	{
+		if (slot->purpose == HOST_SAVE_SP_AUTOSAVE)
+			sv.autosave.retry_realtime = realtime + 5.0;
 		Con_Printf ("ERROR: couldn't finalize savegame.\n");
-	if (slot->quiet)
+	}
+	if (slot->purpose == HOST_SAVE_COOP_AUTOSAVE)
 		host_savegame_autosave_pending = false;
 	Host_SavegameReleaseSlot (slot);
 }
@@ -2020,7 +2224,7 @@ static void Host_SavegameSetAutosaveMetadata (const char *savename, int slots,
 	for (i = 0; i < HOST_SAVEGAME_SLOT_COUNT; i++)
 	{
 		host_savegame_slot_t *slot = &host_savegame_slots[i];
-		if (!slot->quiet || strcmp (slot->savename, savename) ||
+		if (slot->purpose != HOST_SAVE_COOP_AUTOSAVE || strcmp (slot->savename, savename) ||
 			Atomic_LoadUInt32 (&slot->state) == HOST_SAVEGAME_SLOT_IDLE)
 			continue;
 		slot->autosave_slots = slots;
@@ -2229,7 +2433,15 @@ Host_SavegameWrite
 #define HOST_SAVEGAME_ERROR(...) do { if (!quiet) Con_Printf (__VA_ARGS__); } while (0)
 #define HOST_SAVEGAME_CAPTURE(...) do { if (!Host_SavegameSinkPrintf (&sink, __VA_ARGS__)) goto capture_failed; } while (0)
 
-static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
+qboolean Host_IsSaving (void)
+{
+	for (int i = 0; i < HOST_SAVEGAME_SLOT_COUNT; ++i)
+		if (Atomic_LoadUInt32 (&host_savegame_slots[i].state) != HOST_SAVEGAME_SLOT_IDLE)
+			return true;
+	return false;
+}
+
+static qboolean Host_SavegameWrite (const char *savename, host_savegame_purpose_t purpose, qboolean notify)
 {
 	char  name[MAX_OSPATH];
 	char  tempname[MAX_OSPATH];
@@ -2240,6 +2452,8 @@ static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 	edict_t *client_snapshot = NULL;
 	host_savegame_slot_t *slot = NULL;
 	savegame_sink_t sink = {Host_SavegameSinkAppend, NULL};
+	const qboolean quiet = purpose == HOST_SAVE_COOP_AUTOSAVE;
+	const char *skipnotify = notify ? "" : "[skipnotify]";
 
 	if (qcvm && qcvm != &sv.qcvm)
 	{
@@ -2388,7 +2602,10 @@ static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 	q_strlcpy (slot->savename, savename, sizeof (slot->savename));
 	if (slot->lastsave_eligible && !q_strcasecmp (COM_FileGetExtension (slot->savename), "sav"))
 		slot->savename[strlen (slot->savename) - 4] = '\0';
-	slot->quiet = quiet;
+	slot->purpose = purpose;
+	slot->notify = notify;
+	slot->sp_save_time = sv.qcvm.time;
+	slot->sp_save_cheat = sv.autosave.cheat;
 	slot->request_sequence = ++host_savegame_next_sequence;
 	Atomic_StoreUInt32 (&slot->state, HOST_SAVEGAME_SLOT_RESERVED);
 	/* Slot ownership begins before QC serialization, including Host_Error
@@ -2397,9 +2614,9 @@ static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 
 	if (!quiet)
 	{
-		Con_SafePrintf ("Saving game to ");
-		Con_LinkPrintf (name, "%s", name);
-		Con_SafePrintf ("...\n");
+		Con_SafePrintf ("%sSaving game to ", skipnotify);
+		Con_LinkPrintf (name, "%s%s", skipnotify, savename);
+		Con_SafePrintf ("%s...\n", skipnotify);
 	}
 	switched_qcvm = qcvm == NULL;
 	if (switched_qcvm)
@@ -2562,7 +2779,7 @@ capture_failed:
 	return false;
 }
 
-void Host_CoopAutosaveFrame (void)
+static void Host_CoopAutosaveFrame (void)
 {
 	int i;
 	qboolean active_client = false;
@@ -2690,7 +2907,7 @@ void Host_CoopAutosaveFrame (void)
 	q_snprintf (savename, sizeof (savename), "coop_auto%i",
 		sv.coop_autosave_next_slot % slots);
 
-	if (!Host_SavegameWrite (savename, true))
+	if (!Host_SavegameWrite (savename, HOST_SAVE_COOP_AUTOSAVE, false))
 	{
 		double retry_delay = min_interval > COOP_AUTOSAVE_RETRY_DELAY ?
 			min_interval : COOP_AUTOSAVE_RETRY_DELAY;
@@ -2703,16 +2920,117 @@ void Host_CoopAutosaveFrame (void)
 		!strcmp (reason, "map start"));
 }
 
+static void Host_SingleplayerAutosaveFrame (void)
+{
+	float health_change, speed, elapsed, score;
+	edict_t *sv_player = svs.clients[0].edict;
+
+	if (!sv_player || sv_player->free || !svs.clients[0].active || !svs.clients[0].spawned ||
+		sv.paused || sv.nomonsters || deathmatch.value || realtime < sv.autosave.retry_realtime || !sv_autosave.value || sv_autosave_interval.value <= 0.f || svs.maxclients != 1 || sv_player->v.health <= 0.f || cl.intermission )
+		return;
+
+	if (Host_IsSaving ())
+	{
+		sv.autosave.retry_realtime = realtime + 5.0;
+		return;
+	}
+
+	if (cls.signon == SIGNONS)
+	{
+		// Track new secrets
+		if (pr_global_struct->found_secrets != sv.autosave.prev_secrets)
+		{
+			sv.autosave.prev_secrets = pr_global_struct->found_secrets;
+			sv.autosave.secret_boost = 1.f;
+		}
+		else
+			sv.autosave.secret_boost = q_max (0.f, sv.autosave.secret_boost - host_frametime / 1.5f);
+	}
+
+	// Track health changes
+	if (!sv.autosave.prev_health)
+		sv.autosave.prev_health = sv_player->v.health;
+	health_change = sv_player->v.health - sv.autosave.prev_health;
+	if (health_change < 0.f)
+		if (health_change < -3.f || sv_player->v.health < 100.f || sv_player->v.watertype == CONTENTS_SLIME || sv_player->v.watertype == CONTENTS_LAVA)
+			sv.autosave.hurt_time = qcvm->time;
+	sv.autosave.prev_health = sv_player->v.health;
+
+	// Track attacking
+	if (sv_player->v.button0)
+		sv.autosave.shoot_time = qcvm->time;
+
+	// Time spent with cheats active doesn't count
+	if (sv_player->v.movetype == MOVETYPE_NOCLIP || (int)sv_player->v.flags & (FL_GODMODE | FL_NOTARGET))
+	{
+		sv.autosave.cheat += host_frametime;
+		return;
+	}
+
+	// Don't save if the player has been hurt recently
+	if (qcvm->time - sv.autosave.hurt_time < 3.f)
+		return;
+
+	// Don't save if the player has fired recently
+	if (qcvm->time - sv.autosave.shoot_time < 3.f)
+		return;
+
+	// Only save when the player slows down a bit
+	speed = VectorLength (sv_player->v.velocity);
+	if (speed > 100.f)
+		return;
+
+	// Copper's func_void holds the player at the bottom for a bit before inflicting damage,
+	// so we can't assume it's safe to save just because we're no longer falling
+	if ((int)sv_player->v.movetype == MOVETYPE_NONE)
+		return;
+
+	// Don't save too often
+	elapsed = qcvm->time - sv.autosave.time - sv.autosave.cheat;
+	if (elapsed < 3.f)
+		return;
+
+	// Compute a normalized autosave score
+
+	// Base value is the fraction of the autosave interval already passed
+	score = elapsed / sv_autosave_interval.value;
+	// Scale down the score if health + armor is below 100 (save less often with lower health)
+	score *= q_min (100.f, (sv_player->v.health + sv_player->v.armortype * sv_player->v.armorvalue)) / 100.f;
+	// Boost the score right after picking up health
+	score += q_max (0.f, health_change) / 100.f;
+	// Lower score a bit based on speed (favor standing still/slowing down)
+	score -= (speed / 100.f) * 0.25f;
+	// Boost the score after finding a secret
+	score += sv.autosave.secret_boost * 0.25f;
+	// Boost the score after teleporting
+	score += CLAMP (0.f, 1.f - (qcvm->time - sv_player->v.teleport_time) / 1.5f, 1.f) * 0.5f;
+
+	// Only save if the score is high enough
+	if (score < 1.f)
+		return;
+
+	if (!Host_SavegameWrite ("autosave", HOST_SAVE_SP_AUTOSAVE, false))
+		sv.autosave.retry_realtime = realtime + 5.0;
+}
+
+void Host_AutosaveFrame (void)
+{
+	if (svs.maxclients == 1)
+		Host_SingleplayerAutosaveFrame ();
+	else
+		Host_CoopAutosaveFrame ();
+}
+
 static void Host_Savegame_f (void)
 {
 	if (cmd_source != src_command)
 		return;
-	if (Cmd_Argc () != 2)
+	if (Cmd_Argc () < 2 || Cmd_Argc () > 3)
 	{
 		Con_Printf ("save <savename> : save a game\n");
 		return;
 	}
-	Host_SavegameWrite (Cmd_Argv (1), false);
+	Host_SavegameWrite (Cmd_Argv (1), HOST_SAVE_MANUAL, Cmd_Argc () < 3 || atof (Cmd_Argv (2)) != 0);
 }
 
 #undef HOST_SAVEGAME_ERROR
@@ -3066,6 +3384,17 @@ static void Host_Loadgame_f (void)
 	}
 
 	q_strlcpy (savename, Cmd_Argv (1), sizeof (savename));
+
+	// the file might still be being written
+	Host_SavegameDrain ();
+
+	if (nomonsters.value)
+	{
+		Con_Warning ("\"%s\" disabled automatically.\n", nomonsters.name);
+		Cvar_SetValueQuick (&nomonsters, 0.f);
+	}
+
+	cls.demonum = -1; // stop demo loop in case this fails
 
 	// avoid leaking if the previous Host_Loadgame_f failed with a Host_Error
 	if (start != NULL)
@@ -3551,6 +3880,8 @@ static void Host_Loadgame_f (void)
 	}
 
 	qcvm->time = time;
+	memset (&sv.autosave, 0, sizeof (sv.autosave)); // fastload keeps sv, so drop times from after this point
+	sv.autosave.time = time;
 
 	// we finished the edicts loading, free the excess > entnum
 	for (i = entnum; i < qcvm->num_edicts; i++)
@@ -4030,9 +4361,17 @@ static void Host_PreSpawn_f (void)
 		return;
 	}
 
+	// A repeated request cannot reset an envelope still owned by transport.
+	if (host_client->signon_chunk_pending)
+	{
+		Con_Printf ("prespawn still awaiting reliable send\n");
+		return;
+	}
+
 	// will start splurging out prespawn data
 	host_client->sendsignon = 2;
 	host_client->signonidx = 0;
+	host_client->signon_chunk_pending = false;
 }
 
 /*
@@ -5388,9 +5727,10 @@ static void Host_Startdemos_f (void)
 		// VR demos are unsupported; use the native menu startup branch in XR.
 		if (!cl_startdemos.value || V_TrackedSessionActive ())
 		{ /* QuakeSpasm customization: */
-			/* go straight to menu, no CL_NextDemo */
+			/* go straight to menu/console, no CL_NextDemo */
 			cls.demonum = -1;
-			Cbuf_InsertText ("menu_main\n");
+			if (cl_startmenu.value)
+				Cbuf_InsertText ("menu_main\n");
 			return;
 		}
 		CL_NextDemo ();
@@ -5602,6 +5942,7 @@ void Host_InitCommands (void)
 {
 	Cmd_AddCommand ("maps", Host_Maps_f);		// johnfitz
 	Cmd_AddCommand ("maps_mod", Host_Maps_f);
+	Cmd_AddCommand ("skies", Host_Skies_f);
 	Cmd_AddCommand ("mods", Host_Mods_f);		// johnfitz
 	Cmd_AddCommand ("games", Host_Mods_f);		// as an alias to "mods" -- S.A. / QuakeSpasm
 	Cmd_AddCommand ("mapname", Host_Mapname_f); // johnfitz

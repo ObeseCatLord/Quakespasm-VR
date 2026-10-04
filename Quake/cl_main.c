@@ -70,6 +70,7 @@ cvar_t cl_maxpitch = {"cl_maxpitch", "90", CVAR_ARCHIVE_GAME};	// johnfitz -- va
 cvar_t cl_minpitch = {"cl_minpitch", "-90", CVAR_ARCHIVE_GAME}; // johnfitz -- variable pitch clamping
 
 cvar_t cl_startdemos = {"cl_startdemos", "1", CVAR_ARCHIVE};
+cvar_t cl_startmenu = {"cl_startmenu", "1", CVAR_ARCHIVE};
 cvar_t cl_confirmquit = {"cl_confirmquit", "0", CVAR_ARCHIVE};
 
 client_static_t cls;
@@ -4092,6 +4093,18 @@ static void CL_LegacyColor_f (void)
 
 /*
 =================
+V_Water_f
+=================
+*/
+static void V_Water_f (void)
+{
+	if (Cmd_Argc () < 2)
+		return;
+	cl.forceunderwater = atoi (Cmd_Argv (1));
+}
+
+/*
+=================
 CL_Init
 =================
 */
@@ -4146,6 +4159,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_minpitch); // johnfitz -- variable pitch clamping
 
 	Cvar_RegisterVariable (&cl_startdemos);
+	Cvar_RegisterVariable (&cl_startmenu);
 	Cvar_RegisterVariable (&cl_confirmquit);
 
 	Cmd_AddCommand ("entities", CL_PrintEntities_f);
@@ -4193,4 +4207,6 @@ void CL_Init (void)
 	Cmd_AddCommand_ServerCommand ("cl_serverextension_download", CL_ServerExtension_Ignore_f); // spike
 	Cmd_AddCommand_ServerCommand ("cl_downloadbegin", CL_ServerExtension_Ignore_f);			   // spike
 	Cmd_AddCommand_ServerCommand ("cl_downloadfinished", CL_ServerExtension_Ignore_f);		   // spike
+
+	Cmd_AddCommand_ServerCommand ("v_water", V_Water_f);
 }

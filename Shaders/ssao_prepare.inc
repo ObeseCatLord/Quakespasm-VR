@@ -22,17 +22,20 @@ void main ()
 	ivec2 output_pixel = ivec2 (gl_GlobalInvocationID.xy);
 	if (any (greaterThanEqual (output_pixel, imageSize (prepared))))
 		return;
+	ivec2 source_pixel = output_pixel * int (pc.settings.w);
 	float depth = 0.0;
-	if (in_view (output_pixel))
+	if (in_view (source_pixel))
 	{
 #ifdef MULTISAMPLED
 		for (int s = 0; s < int (pc.projection.w); ++s)
 #else
 		const int s = 0;
 #endif
-			depth = max (depth, DEPTH (scene_depth, output_pixel, s));
+			depth = max (depth, DEPTH (scene_depth, source_pixel, s));
 	}
 	// Reserve the largest finite half value for missing depth.
 	float view_depth = depth > 0.0 ? min (pc.projection.z / depth, 65472.0) : 65504.0;
+	// Round explicitly, as in prepare_depth, instead of relying on imageStore's conversion.
+	view_depth = unpackHalf2x16 (packHalf2x16 (vec2 (view_depth))).x;
 	imageStore (prepared, output_pixel, vec4 (view_depth, 65504.0, 0.0, 0.0));
 }

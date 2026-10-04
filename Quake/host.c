@@ -116,6 +116,8 @@ cvar_t pausable = {"pausable", "1", CVAR_NONE};
 
 cvar_t autoload = {"autoload", "1", CVAR_ARCHIVE_GAME};
 cvar_t autofastload = {"autofastload", "0", CVAR_ARCHIVE_GAME};
+cvar_t sv_autosave = {"sv_autosave", "1", CVAR_ARCHIVE};
+cvar_t sv_autosave_interval = {"sv_autosave_interval", "30", CVAR_ARCHIVE};
 
 cvar_t developer = {"developer", "0", CVAR_NONE};
 cvar_t map_checks = {"map_checks", "0", CVAR_NONE};
@@ -388,6 +390,8 @@ void Host_Callback_Notify (cvar_t *var)
 		SV_BroadcastPrintf ("\"%s\" changed to \"%s\"\n", var->name, var->string);
 }
 
+static void Host_WriteConfig_f (void);
+
 /*
 =======================
 Host_InitLocal
@@ -396,6 +400,7 @@ Host_InitLocal
 void Host_InitLocal (void)
 {
 	Cmd_AddCommand ("version", Host_Version_f);
+	Cmd_AddCommand ("writeconfig", Host_WriteConfig_f);
 
 	Host_InitCommands ();
 
@@ -468,6 +473,8 @@ void Host_InitLocal (void)
 
 	Cvar_RegisterVariable (&autoload);
 	Cvar_RegisterVariable (&autofastload);
+	Cvar_RegisterVariable (&sv_autosave);
+	Cvar_RegisterVariable (&sv_autosave_interval);
 
 	Cvar_RegisterVariable (&temp1);
 
@@ -514,6 +521,55 @@ void Host_WriteConfiguration (void)
 		fprintf (f, "+mlook\n"); // always enable mouse look on config, can be overriden by -mlook in autoexec.cfg
 		fclose (f);
 	}
+}
+
+/*
+=======================
+Host_WriteConfig_f
+
+Writes the global and game configs, or everything into a single named file in the game directory
+=======================
+*/
+static void Host_WriteConfig_f (void)
+{
+	char  name[MAX_QPATH];
+	char  fullname[MAX_OSPATH];
+	FILE *f;
+
+	if (Cmd_Argc () < 2)
+	{
+		Host_WriteConfiguration ();
+		return;
+	}
+
+	q_strlcpy (name, Cmd_Argv (1), sizeof (name));
+	if (strstr (name, "..") || strchr (name, ':') || name[0] == '/' || name[0] == '\\')
+	{
+		Con_Printf ("Invalid config name \"%s\".\n", name);
+		return;
+	}
+	COM_AddExtension (name, ".cfg", sizeof (name));
+
+	if (!host_initialized || isDedicated || host_parms->errstate)
+		return;
+
+	q_snprintf (fullname, sizeof (fullname), "%s/%s", com_gamedir, name);
+	f = Sys_fopen (fullname, "w");
+	if (!f)
+	{
+		Con_Printf ("Couldn't write %s.\n", name);
+		return;
+	}
+
+	Key_WriteBindings (f);
+	Cvar_WriteVariables (f, CVAR_ARCHIVE | CVAR_ARCHIVE_GAME);
+	fprintf (f, "vid_restart\n");
+	fprintf (f, "+mlook\n");
+	fclose (f);
+
+	Con_SafePrintf ("Wrote ");
+	Con_LinkPrintf (fullname, "%s", name);
+	Con_SafePrintf (".\n");
 }
 
 /*
@@ -780,8 +836,8 @@ void Host_ClearMemory (void)
 	}
 
 	Con_DPrintf ("Clearing memory\n");
-	Mod_ClearAll ();
 	Sky_ClearAll ();
+	Mod_ClearAll ();
 	if (!isDedicated)
 		S_ClearAll ();
 	cls.signon = 0;
@@ -789,6 +845,8 @@ void Host_ClearMemory (void)
 		Mem_Free (sv.loadgame_client_edicts);
 	PR_ClearProgs (&sv.qcvm);
 	Mem_Free (sv.static_entities); // spike -- this is dynamic too, now
+	for (int i = 0; i < sv.num_signon_buffers; ++i)
+		Mem_Free (sv.signon_buffers[i]);
 	for (int i = 1; i < MAX_PARTICLETYPES; ++i)
 		Mem_Free (sv.particle_precache[i]);
 	memset (&sv, 0, sizeof (sv));
@@ -912,7 +970,7 @@ void Host_ServerFrame (void)
 	{
 		SV_Physics ();
 		SV_FinishPrivateUsercmds ();
-		Host_CoopAutosaveFrame ();
+		Host_AutosaveFrame ();
 	}
 
 	if (sv_speeds.value)
@@ -1409,6 +1467,7 @@ void Host_Init (void)
 		Modlist_Init ();  // johnfitz
 		DemoList_Init (); // ericw
 		SaveList_Init ();
+		SkyList_Init ();
 		VID_Init ();
 		IN_Init ();
 		VR_InputInit ();

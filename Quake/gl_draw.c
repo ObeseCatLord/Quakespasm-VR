@@ -388,8 +388,10 @@ qpic_t *Draw_TryCachePic (const char *path, unsigned int texflags, int picflags)
 
 	q_strlcpy (pic->name, path, countof (pic->name));
 
+	// layout code expects the original .lmp size even when a high-res replacement supplies the texture
 	pic->pic.width = pic_width;
 	pic->pic.height = pic_height;
+	Image_GetLMPSize (npath, &pic->pic.width, &pic->pic.height);
 
 	// pass the extensionless name as the source so TexMgr_ReloadImage can find the image
 	// again through Image_LoadImage (needed to recolor gfx/menuplyr.lmp in the setup menu)
@@ -561,6 +563,13 @@ void Draw_Init (void)
 //==============================================================================
 
 static float canvas_color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+static float draw_opacity = 1.0f;
+
+// Scoped by the menu draw: fade pictures and text without replacing their colors.
+void Draw_SetOpacity (float opacity)
+{
+	draw_opacity = CLAMP (0.0f, opacity, 1.0f);
+}
 
 /*
 ================
@@ -605,7 +614,7 @@ static void Draw_FillCharacterQuadScaled (float x, float y, float scale, char nu
 	for (int i = 0; i < 4; ++i)
 	{
 		for (int j = 0; j < 4; ++j)
-			corner_verts[i].color[j] = (byte)(canvas_color[j] * 255.0f);
+			corner_verts[i].color[j] = (byte)(canvas_color[j] * (j == 3 ? draw_opacity : 1.0f) * 255.0f);
 		corner_verts[i].texture_region[0] = fcol;
 		corner_verts[i].texture_region[1] = frow;
 		corner_verts[i].texture_region[2] = fcol + st_size;
@@ -708,7 +717,7 @@ void Draw_Character (cb_context_t *cbx, float x, float y, int num)
 	Draw_FillCharacterQuad (x, y, (char)num, vertices, rotation);
 
 	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
-	Draw_BindPicState (cbx, char_texture, canvas_color[3] < 1.0f, Draw_GetTextFilter ());
+	Draw_BindPicState (cbx, char_texture, canvas_color[3] * draw_opacity < 1.0f, Draw_GetTextFilter ());
 	vulkan_globals.vk_cmd_draw (cbx->cb, 6, 1, 0, 0);
 }
 
@@ -745,7 +754,7 @@ void Draw_String (cb_context_t *cbx, float x, float y, const char *str)
 	}
 
 	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
-	Draw_BindPicState (cbx, char_texture, canvas_color[3] < 1.0f, Draw_GetTextFilter ());
+	Draw_BindPicState (cbx, char_texture, canvas_color[3] * draw_opacity < 1.0f, Draw_GetTextFilter ());
 	vulkan_globals.vk_cmd_draw (cbx->cb, num_verts, 1, 0, 0);
 }
 
@@ -783,7 +792,7 @@ void Draw_String_Scaled (cb_context_t *cbx, float x, float y, const char *str, f
 	}
 
 	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
-	Draw_BindPicState (cbx, char_texture, canvas_color[3] < 1.0f, Draw_GetTextFilter ());
+	Draw_BindPicState (cbx, char_texture, canvas_color[3] * draw_opacity < 1.0f, Draw_GetTextFilter ());
 	vulkan_globals.vk_cmd_draw (cbx->cb, num_verts, 1, 0, 0);
 }
 
@@ -796,6 +805,10 @@ void Draw_Pic (cb_context_t *cbx, float x, float y, qpic_t *pic, float alpha, qb
 {
 	glpic_t gl;
 	int		i;
+
+	alpha *= draw_opacity;
+	if (alpha < 1.0f)
+		alpha_blend = true;
 
 	if (scrap_dirty)
 		Scrap_Upload ();
@@ -858,8 +871,10 @@ static void Draw_SubPicInternal (
 	qboolean force_blend)
 {
 	glpic_t	 gl;
-	qboolean alpha_blend = force_blend || alpha < 1.0f;
+	qboolean alpha_blend = force_blend || alpha * draw_opacity < 1.0f;
 	int		 i;
+
+	alpha *= draw_opacity;
 	if (alpha <= 0.0f)
 		return;
 
@@ -1093,7 +1108,7 @@ void Draw_Fill (cb_context_t *cbx, float x, float y, float w, float h, int c, fl
 		corner_verts[i].color[0] = pal[c * 4];
 		corner_verts[i].color[1] = pal[c * 4 + 1];
 		corner_verts[i].color[2] = pal[c * 4 + 2];
-		corner_verts[i].color[3] = alpha * 255;
+		corner_verts[i].color[3] = alpha * draw_opacity * 255;
 	}
 
 	vertices[0] = corner_verts[0];
@@ -1139,7 +1154,7 @@ void Draw_FadeScreen (cb_context_t *cbx)
 	corner_verts[3].position[1] = glheight;
 
 	for (i = 0; i < 4; ++i)
-		corner_verts[i].color[3] = (byte)(128.0f * M_MenuLivePreviewFadeAlpha ());
+		corner_verts[i].color[3] = (byte)(128.0f * draw_opacity * M_MenuLivePreviewFadeAlpha ());
 
 	vertices[0] = corner_verts[0];
 	vertices[1] = corner_verts[1];

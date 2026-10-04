@@ -911,7 +911,7 @@ void __wrap_SZ_Write (sizebuf_t *buf, const void *data, int length)
 	{
 		assert (length > 0);
 		signon_restore_capacity = buf->maxsize;
-		buf->maxsize = buf->cursize + length + sv.signon.cursize +
+		buf->maxsize = buf->cursize + length + sv.signon->cursize +
 			(!strcmp (signon_limit, "exact") ? 2 : 1);
 		assert (buf->maxsize <= NET_MAXMESSAGE);
 		limit_applied = true;
@@ -965,7 +965,7 @@ void __wrap_SV_SendClientMessages (void)
 		peer->sendsignon == PRESPAWN_SIGNONMSG && !peer->metadata_serverinfo_pending &&
 		peer->message.cursize == 0 && cls.signon < 2)
 	{
-		peer->message.maxsize = sv.signon.cursize + 2;
+		peer->message.maxsize = sv.signon->cursize + 2;
 		MSG_WriteByte (&peer->message, svc_nop);
 		assert (peer->message.cursize == 1);
 		limit_followup_applied = true;

@@ -78,4 +78,8 @@ extern cvar_t scr_crosshairscale;
 extern cvar_t scr_usekfont;
 // johnfitz
 
+extern cvar_t scr_centerprintbg;
+
+void SCR_DrawCenterPrintPreview (cb_context_t *cbx, float alpha);
+
 #endif /* _QUAKE_SCREEN_H */

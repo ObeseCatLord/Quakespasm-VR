@@ -47,6 +47,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define SDL_Condition							SDL_cond
 #define SDL_CreateCondition						SDL_CreateCond
 #define SDL_BroadcastCondition					SDL_CondBroadcast
+#define SDL_SignalCondition						SDL_CondSignal
+#define SDL_DestroyCondition					SDL_DestroyCond
 #define SDL_WaitCondition						SDL_CondWait
 #define SDL_WaitConditionTimeout(cond, mtx, ms) (SDL_CondWaitTimeout (cond, mtx, ms) == 0)
 
@@ -476,6 +478,7 @@ extern filelist_item_t *modlist;
 extern filelist_item_t *extralevels;
 extern filelist_item_t *demolist;
 extern filelist_item_t *savelist;
+extern filelist_item_t *skylist;
 
 typedef enum
 {
@@ -508,11 +511,11 @@ typedef enum
 	MAPTYPE_COUNT,
 } maptype_t;
 
-maptype_t	ExtraMaps_GetType (const filelist_item_t *item);
-qboolean	ExtraMaps_IsStart (maptype_t type);
-const char *ExtraMaps_GetMessage (const filelist_item_t *item);
-
-extern filelist_item_t **extralevels_sorted;
+maptype_t		 ExtraMaps_GetType (const filelist_item_t *item);
+qboolean		 ExtraMaps_IsStart (maptype_t type);
+const char		*ExtraMaps_GetMessage (const filelist_item_t *item);
+filelist_item_t *ExtraMaps_NextLevel (int *index);
+qboolean		 ExtraMaps_Match (const filelist_item_t *item, const char *substr);
 
 // friendly display name for a mod list entry (only valid for modlist items), NULL if unknown
 const char *Modlist_GetFullName (const filelist_item_t *item);
@@ -530,6 +533,7 @@ void			   Host_Quit_f (void);
 void			   Host_ClientCommands (const char *fmt, ...) FUNC_PRINTF (1, 2);
 void			   Host_ShutdownServer (qboolean crash);
 void			   Host_WriteConfiguration (void);
+qboolean		   Host_IsSaving (void);
 void			   Host_Resetdemos (void);
 
 void ExtraMaps_Init (void);
@@ -537,12 +541,14 @@ void Modlist_Init (void);
 void Modlist_Rebuild (void);
 void DemoList_Init (void);
 void SaveList_Init (void);
+void SkyList_Init (void);
 
 void ExtraMaps_NewGame (void);
 void ExtraMaps_Clear (void);
 void ExtraMaps_ShutDown (void);
 void DemoList_Rebuild (void);
 void SaveList_Rebuild (void);
+void SkyList_Rebuild (void);
 
 void M_CheckMods (void);
 

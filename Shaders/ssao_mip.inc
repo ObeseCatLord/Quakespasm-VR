@@ -33,9 +33,11 @@ layout (rg16f, set = 0, binding = 2) uniform writeonly image2D mip1;
 layout (rg16f, set = 0, binding = 3) uniform writeonly image2D mip2;
 layout (rg16f, set = 0, binding = 4) uniform writeonly image2D mip3;
 layout (rg16f, set = 0, binding = 5) uniform writeonly image2D mip4;
+layout (r32ui, set = 0, binding = 6) uniform uimage2D depth_mismatch;
 shared half2 depths1[64];
 shared half2 depths2[16];
 shared half2 depths3[4];
+shared uint	 matching_subgroups[64]; // Per-lane fallback flags, or subgroup flags on the optimized path.
 
 // XeGTAO_DepthMIPFilter: all depth-filter arithmetic uses lpfloat.
 half reduce_depth (half a, half b, half c, half d)
@@ -108,26 +110,28 @@ half2 prepare_depth (ivec2 p)
 {
 	if (any (greaterThanEqual (p, imageSize (mip0))))
 		return half2 (65504.0);
+	ivec2 source_pixel = p * int (pc.settings.w);
 	float depth = 0.0;
-	if (all (greaterThanEqual (vec2 (p), pc.viewport.xy)) && all (lessThan (vec2 (p), pc.viewport.xy + round (1.0 / pc.viewport.zw))))
+	if (all (greaterThanEqual (vec2 (source_pixel), pc.viewport.xy)) && all (lessThan (vec2 (source_pixel), pc.viewport.xy + round (1.0 / pc.viewport.zw))))
 	{
 #ifdef MULTISAMPLED
 		for (int s = 0; s < int (pc.projection.w); ++s)
-			depth = max (depth, texelFetch (scene_depth, p, s).r);
+			depth = max (depth, texelFetch (scene_depth, source_pixel, s).r);
 #else
-		depth = texelFetch (scene_depth, p, 0).r;
+		depth = texelFetch (scene_depth, source_pixel, 0).r;
 #endif
 	}
-	half2 depths = half2 (imageLoad (mip0, p).x, depth > 0.0 ? min (pc.projection.z / depth, 65472.0) : 65504.0);
-	// Match the already stored world depth before reducing the two channels together.
-	depths = half2 (unpackHalf2x16 (packHalf2x16 (vec2 (depths))));
+	float view_depth = depth > 0.0 ? min (pc.projection.z / depth, 65472.0) : 65504.0;
+	// Use the same explicit FP32-to-FP16 conversion as world depth preparation,
+	// before either imageStore or a half cast can apply a different rounding mode.
+	vec2  depths = unpackHalf2x16 (packHalf2x16 (vec2 (imageLoad (mip0, p).x, view_depth)));
 	imageStore (mip0, p, vec4 (depths, 0, 0));
-	return depths;
+	return half2 (depths);
 }
 
 void main ()
 {
-	// Full subgroups, as in screen_effects: each four adjacent lanes form a 2x2 quad.
+	// Full subgroups: each four adjacent lanes form a 2x2 quad.
 	// No early return: even edge lanes must participate in shuffles and barriers.
 #ifdef SHARED_MIPS
 	uint index = gl_LocalInvocationIndex;
@@ -137,7 +141,40 @@ void main ()
 	ivec2 local = ivec2 (morton_x (index), morton_x (index >> 1));
 	ivec2 p = ivec2 (gl_WorkGroupID.xy) * 8 + local;
 	ivec2 q = p * 2;
-	half2 depth = reduce (prepare_depth (q), prepare_depth (q + ivec2 (1, 0)), prepare_depth (q + ivec2 (0, 1)), prepare_depth (q + ivec2 (1, 1)));
+	half2 depth00 = prepare_depth (q);
+	half2 depth10 = prepare_depth (q + ivec2 (1, 0));
+	half2 depth01 = prepare_depth (q + ivec2 (0, 1));
+	half2 depth11 = prepare_depth (q + ivec2 (1, 1));
+	uint  matching = (depth00.x == depth00.y && depth10.x == depth10.y && depth01.x == depth01.y && depth11.x == depth11.y) ? 1u : 0u;
+#ifdef SHARED_MIPS
+	matching_subgroups[index] = matching;
+	barrier ();
+#else
+	for (uint mask = 1u; mask < gl_SubgroupSize; mask <<= 1u)
+		matching &= subgroupShuffleXor (matching, mask);
+	if (gl_SubgroupInvocationID == 0u)
+		matching_subgroups[gl_SubgroupID] = matching;
+	barrier ();
+#endif
+	if (index == 0u)
+	{
+		uint all_matching = 1u;
+#ifdef SHARED_MIPS
+		for (uint i = 0u; i < 64u; ++i)
+#else
+		for (uint i = 0u; i < gl_NumSubgroups; ++i)
+#endif
+			all_matching &= matching_subgroups[i];
+		// Reduce 8x8 workgroups into one 128x128 tag, including partial edge tiles.
+		if (all_matching == 0u)
+		{
+			// Pack an 8x4 block of tile flags into each 32-bit texel.
+			uvec2 tile = gl_WorkGroupID.xy >> 3;
+			uint  bit_index = (tile.y & 3u) * 8u + (tile.x & 7u);
+			imageAtomicOr (depth_mismatch, ivec2 (tile >> uvec2 (3, 2)), 1u << bit_index);
+		}
+	}
+	half2 depth = reduce (depth00, depth10, depth01, depth11);
 	// An odd trailing row/column still needs mip 0, even when it contributes to no higher mip.
 	ivec2 origin = ivec2 (gl_WorkGroupID.xy) * 8;
 	if (any (greaterThanEqual (origin, imageSize (mip1))))

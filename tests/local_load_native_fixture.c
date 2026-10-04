@@ -278,7 +278,7 @@ static void LocalAutosaveFrameAt (double wall_time, double game_time)
 	/* The trigger owner is native; only clocks/QC progress are fixture-controlled. */
 	realtime = wall_time;
 	qcvm->time = game_time;
-	Host_CoopAutosaveFrame ();
+	Host_AutosaveFrame ();
 	Host_SavegameDrain (); // resolve asynchronous success/backoff at this clock
 }
 
