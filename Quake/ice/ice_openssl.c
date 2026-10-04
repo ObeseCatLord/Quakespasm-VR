@@ -205,7 +205,7 @@ static qboolean print_cn_name(X509_NAME* const name, const char *utf8match, cons
         if(!utf8 || !(length > 0))  break; /* failed */
 
 		if (utf8match)
-			success = !strcmp(utf8, utf8match);
+			success = !strcmp((const char *)utf8, utf8match);
 		else
 		{
 			Con_Printf("%s%s", prefix, utf8);
@@ -215,7 +215,9 @@ static qboolean print_cn_name(X509_NAME* const name, const char *utf8match, cons
     } while (0);
 
     if(utf8)
+    {
         OPENSSL_free(utf8);
+    }
 
 	return success;
 }
@@ -537,7 +539,7 @@ typedef struct {
 static int OSSL_Bio_DWrite(BIO *h, const char *buf, int size)
 {
 	ossldtls_t *f = BIO_get_data(h);
-	neterr_t r = f->push(f->cbctx, buf, size);
+	neterr_t r = f->push(f->cbctx, (const qbyte *)buf, size);
 
 	BIO_clear_retry_flags(h);
 	switch(r)
@@ -548,6 +550,7 @@ static int OSSL_Bio_DWrite(BIO *h, const char *buf, int size)
 	case NETERR_DISCONNECTED:
 		return -1;
 	case NETERR_MTU:
+	case NETERR_NQIO: // The plaintext netquake.io framing cannot carry DTLS.
 		return -1;
 	case NETERR_CLOGGED:
 		BIO_set_retry_write(h);
@@ -1026,7 +1029,7 @@ static qboolean OSSL_GenTempCertificate(const char *subject, struct dtlslocalcre
 
 		{
 			X509_NAME	*name = X509_get_subject_name(x509);
-			X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (subject?subject:"localhost"), -1, -1, 0);
+			X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char *)(subject?subject:"localhost"), -1, -1, 0);
 			X509_set_issuer_name(x509, name);
 		}
 
