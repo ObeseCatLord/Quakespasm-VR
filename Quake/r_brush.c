@@ -1234,7 +1234,8 @@ void R_DrawIndirectBrushesFiltered (
 			R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 			if (draw_water)
 				R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 20 * sizeof (float), sizeof (alpha), &alpha);
-			const uint32_t instance_base = ((uint32_t)bmodel_instances_index * MAX_MODELS) + 1;
+			// The graphics descriptor already selects the instance-buffer slot.
+			const uint32_t instance_base = 1;
 			assert ((instance_base & 0x80000000u) == 0);
 
 			if (!alpha_test && !alpha_blend)
@@ -1278,7 +1279,8 @@ void R_DrawIndirectBrushes_ShowTris (cb_context_t *cbx)
 
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
 		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &(VkDescriptorSet){R_BModelInstancesDescriptorSet ()}, 0, NULL);
-	const uint32_t instance_base = ((uint32_t)bmodel_instances_index * MAX_MODELS) + 1;
+	// The graphics descriptor already selects the instance-buffer slot.
+	const uint32_t instance_base = 1;
 	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 21 * sizeof (float), sizeof (uint32_t), &instance_base);
 
 	VkDeviceSize offset = 0;
