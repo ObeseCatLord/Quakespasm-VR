@@ -5,7 +5,8 @@
  *     tests/anisotropy_vulkan_fixture.c Quake/gl_rmisc.c $(pkg-config --cflags --libs sdl3) \
  *     -Wl,--gc-sections,--wrap=vkCreateSampler,--wrap=vkUpdateDescriptorSets -lvulkan -lm -o "$p"
  *   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json "$p" "$p.spv"
- * Exit 77 means the selected Vulkan device lacks compute or 16x anisotropy.
+ * Exit 77 means no suitable compute device with at least 2x anisotropy.
+ * tests/run_anisotropy_native.py uses the existing strict Meson recipes.
  */
 #include <vulkan/vulkan.h>
 #include <math.h>
@@ -18,7 +19,7 @@
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"ANISO_FAILED line=%d: %s\n",__LINE__,#x); exit(1); } } while (0)
 #define VK(x) do { VkResult e=(x); if(e!=VK_SUCCESS) { fprintf(stderr,"ANISO_FAILED line=%d: %s=%d\n",__LINE__,#x,e); exit(1); } } while (0)
 typedef struct { VkSampler h; VkSamplerCreateInfo ci; } sampler_record_t;
-static sampler_record_t samplers[32]; static int nsamplers; static VkSampler selected_sampler;
+static sampler_record_t samplers[128]; static int nsamplers; static VkSampler selected_sampler;
 cvar_t vid_anisotropic={"vid_anisotropic","1",CVAR_ARCHIVE,1}, vid_filter={"vid_filter","1",CVAR_ARCHIVE,1};
 void Sys_Printf(const char *f,...) { (void)f; }
 void Sys_Error(const char *f,...) { va_list a; va_start(a,f); vfprintf(stderr,f,a); va_end(a); abort(); }
@@ -53,13 +54,70 @@ int main(int argc,char **argv)
 {
 	if(argc!=2) { fprintf(stderr,"usage: %s anisotropy_fixture.comp.spv\n",argv[0]); return 2; }
 	VkInstance instance;VkApplicationInfo app={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.apiVersion=VK_API_VERSION_1_1};VkInstanceCreateInfo ii={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.pApplicationInfo=&app};if(vkCreateInstance(&ii,NULL,&instance)!=VK_SUCCESS)skip("vkCreateInstance");uint32_t n=0,family=0;VK(vkEnumeratePhysicalDevices(instance,&n,NULL));if(!n)skip("no device");VkPhysicalDevice *g=calloc(n,sizeof(*g));VK(vkEnumeratePhysicalDevices(instance,&n,g));VkPhysicalDevice gpu=VK_NULL_HANDLE;for(uint32_t i=0;i<n&&!gpu;i++){VkPhysicalDeviceFeatures x;vkGetPhysicalDeviceFeatures(g[i],&x);uint32_t q=0;vkGetPhysicalDeviceQueueFamilyProperties(g[i],&q,NULL);VkQueueFamilyProperties *qs=calloc(q,sizeof(*qs));vkGetPhysicalDeviceQueueFamilyProperties(g[i],&q,qs);for(uint32_t j=0;j<q;j++)if(x.samplerAnisotropy&&(qs[j].queueFlags&VK_QUEUE_COMPUTE_BIT)){gpu=g[i];family=j;break;}free(qs);}free(g);if(!gpu)skip("needs compute plus samplerAnisotropy");
-	VkPhysicalDeviceProperties props;vkGetPhysicalDeviceProperties(gpu,&props);if(props.limits.maxSamplerAnisotropy<16)skip("needs 16x anisotropy for fixed readback footprint");float priority=1;VkDeviceQueueCreateInfo qi={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,.queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};VkPhysicalDeviceFeatures features={.samplerAnisotropy=VK_TRUE};VkDeviceCreateInfo di={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.queueCreateInfoCount=1,.pQueueCreateInfos=&qi,.pEnabledFeatures=&features};VK(vkCreateDevice(gpu,&di,NULL,&vulkan_globals.device));vkGetDeviceQueue(vulkan_globals.device,family,0,&vulkan_globals.queue);vkGetPhysicalDeviceMemoryProperties(gpu,&vulkan_globals.memory_properties);vulkan_globals.device_features.samplerAnisotropy=VK_TRUE;vulkan_globals.device_properties=props;
+	VkPhysicalDeviceProperties props;vkGetPhysicalDeviceProperties(gpu,&props);if(props.limits.maxSamplerAnisotropy<2)skip("needs at least 2x anisotropy");printf("ANISO_VULKAN_DEVICE name=%s type=%u supported_max=%g\n",props.deviceName,props.deviceType,props.limits.maxSamplerAnisotropy);float priority=1;VkDeviceQueueCreateInfo qi={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,.queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};VkPhysicalDeviceFeatures features={.samplerAnisotropy=VK_TRUE};VkDeviceCreateInfo di={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.queueCreateInfoCount=1,.pQueueCreateInfos=&qi,.pEnabledFeatures=&features};VK(vkCreateDevice(gpu,&di,NULL,&vulkan_globals.device));vkGetDeviceQueue(vulkan_globals.device,family,0,&vulkan_globals.queue);vkGetPhysicalDeviceMemoryProperties(gpu,&vulkan_globals.memory_properties);vulkan_globals.device_features.samplerAnisotropy=VK_TRUE;vulkan_globals.device_properties=props;
 	VkCommandPool pool;VkCommandPoolCreateInfo pi={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.queueFamilyIndex=family,.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};VK(vkCreateCommandPool(vulkan_globals.device,&pi,NULL,&pool));VkCommandBuffer cb;VkCommandBufferAllocateInfo cai={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=pool,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};VK(vkAllocateCommandBuffers(vulkan_globals.device,&cai,&cb));
 	VkDescriptorSetLayoutBinding bindings[2]={{0,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_COMPUTE_BIT},{0,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT}};VkDescriptorSetLayoutCreateInfo li={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=1,.pBindings=bindings};VkDescriptorSetLayout tex_layout;VK(vkCreateDescriptorSetLayout(vulkan_globals.device,&li,NULL,&tex_layout));li.pBindings=bindings+1;VkDescriptorSetLayout out_layout;VK(vkCreateDescriptorSetLayout(vulkan_globals.device,&li,NULL,&out_layout));VkDescriptorPoolSize ps[2]={{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1},{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1}};VkDescriptorPoolCreateInfo dp={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,.maxSets=2,.poolSizeCount=2,.pPoolSizes=ps};VkDescriptorPool descriptor_pool;VK(vkCreateDescriptorPool(vulkan_globals.device,&dp,NULL,&descriptor_pool));VkDescriptorSet sets[2];VkDescriptorSetLayout layouts[2]={tex_layout,out_layout};VkDescriptorSetAllocateInfo dai={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=descriptor_pool,.descriptorSetCount=2,.pSetLayouts=layouts};VK(vkAllocateDescriptorSets(vulkan_globals.device,&dai,sets));
 	VkImage image;VkImageCreateInfo ici={.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,.imageType=VK_IMAGE_TYPE_2D,.format=VK_FORMAT_R8G8B8A8_UNORM,.extent={128,128,1},.mipLevels=8,.arrayLayers=1,.samples=VK_SAMPLE_COUNT_1_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL,.usage=VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT};VK(vkCreateImage(vulkan_globals.device,&ici,NULL,&image));VkMemoryRequirements ir;vkGetImageMemoryRequirements(vulkan_globals.device,image,&ir);VkDeviceMemory imem=alloc(ir,0);VK(vkBindImageMemory(vulkan_globals.device,image,imem,0));VkImageViewCreateInfo vi={.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,.image=image,.viewType=VK_IMAGE_VIEW_TYPE_2D,.format=VK_FORMAT_R8G8B8A8_UNORM,.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,8,0,1}};VkImageView view;VK(vkCreateImageView(vulkan_globals.device,&vi,NULL,&view));
 	VkDeviceSize bytes=0;for(int m=0;m<8;m++)bytes+=(VkDeviceSize)(128>>m)*(128>>m)*4;VkDeviceMemory upload_mem;void *upload;VkBuffer upload_buffer=buffer(bytes,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,&upload_mem,&upload);unsigned char *p=upload;int w=128;for(int m=0;m<8;m++,w>>=1)for(int y=0;y<w;y++)for(int x=0;x<w;x++){unsigned char v=m?128:((x&1)?255:0);*p++=v;*p++=v;*p++=v;*p++=255;}begin(cb);barrier(cb,image,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,0,VK_ACCESS_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,8);VkBufferImageCopy copies[8]={0};VkDeviceSize offset=0;for(int m=0;m<8;m++){int d=128>>m;copies[m]=(VkBufferImageCopy){.bufferOffset=offset,.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,(uint32_t)m,0,1},.imageExtent={(uint32_t)d,(uint32_t)d,1}};offset+=(VkDeviceSize)d*d*4;}vkCmdCopyBufferToImage(cb,upload_buffer,image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,8,copies);barrier(cb,image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,8);submit(cb);
-	texmgr_mutex=SDL_CreateMutex();CHECK(texmgr_mutex);gltexture_t tex={.image_view=view,.descriptor_set=sets[0],.flags=TEXPREF_MIPMAP};active_gltextures=&tex;vulkan_globals.gui_sampler_descriptor_sets[0]=(VkDescriptorSet)1;sampler_case(0,true,1);TexMgr_UpdateTextureDescriptorSets();CHECK(selected_sampler==vulkan_globals.point_sampler_lod_bias);sampler_case(4,true,4);vulkan_globals.stereo_active=false;TexMgr_UpdateTextureDescriptorSets();CHECK(selected_sampler==vulkan_globals.point_aniso_sampler_lod_bias);sampler_case(1,true,props.limits.maxSamplerAnisotropy);
-	VkDeviceMemory out_mem;void *out;VkBuffer out_buffer=buffer(128*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,&out_mem,&out);VkDescriptorBufferInfo bi={out_buffer,0,128*sizeof(float)};VkWriteDescriptorSet write={.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=sets[1],.dstBinding=0,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&bi};vkUpdateDescriptorSets(vulkan_globals.device,1,&write,0,NULL);VkPipelineLayoutCreateInfo pli={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,.setLayoutCount=2,.pSetLayouts=layouts};VkPipelineLayout pipeline_layout;VK(vkCreatePipelineLayout(vulkan_globals.device,&pli,NULL,&pipeline_layout));VkShaderModule module=shader(argv[1]);VkComputePipelineCreateInfo cp={.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,.stage={.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_COMPUTE_BIT,.module=module,.pName="main"},.layout=pipeline_layout};VkPipeline pipeline;VK(vkCreateComputePipelines(vulkan_globals.device,VK_NULL_HANDLE,1,&cp,NULL,&pipeline));
-	float contrast[2];for(int pass=0;pass<2;pass++){if(pass){sampler_case(1,true,props.limits.maxSamplerAnisotropy);}else {sampler_case(0,true,1);}begin(cb);vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline_layout,0,2,sets,0,NULL);vkCmdDispatch(cb,128,1,1);VkBufferMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT,.dstAccessMask=VK_ACCESS_HOST_READ_BIT,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.buffer=out_buffer,.size=VK_WHOLE_SIZE};vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,NULL,1,&b,0,NULL);submit(cb);float *v=out;contrast[pass]=0;for(int i=1;i<128;i++)contrast[pass]+=fabsf(v[i]-v[i-1]);contrast[pass]/=127.;}CHECK(contrast[0]<.08f&&contrast[1]>.35f&&contrast[1]>contrast[0]*6);printf("ANISO_VULKAN_PASSED max=%g off_contrast=%g max_contrast=%g production_sampler_and_descriptor_selection\n",props.limits.maxSamplerAnisotropy,contrast[0],contrast[1]);
+	texmgr_mutex=SDL_CreateMutex();CHECK(texmgr_mutex);gltexture_t tex={.image_view=view,.descriptor_set=sets[0],.flags=TEXPREF_MIPMAP};active_gltextures=&tex;vulkan_globals.gui_sampler_descriptor_sets[0]=(VkDescriptorSet)1;sampler_case(0,true,1);TexMgr_UpdateTextureDescriptorSets();CHECK(selected_sampler==vulkan_globals.point_sampler_lod_bias);sampler_case(4,true,fminf(4,props.limits.maxSamplerAnisotropy));vulkan_globals.stereo_active=false;TexMgr_UpdateTextureDescriptorSets();CHECK(selected_sampler==vulkan_globals.point_aniso_sampler_lod_bias);sampler_case(1,true,props.limits.maxSamplerAnisotropy);
+	VkDeviceMemory out_mem;void *out;VkBuffer out_buffer=buffer(128*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,&out_mem,&out);VkDescriptorBufferInfo bi={out_buffer,0,128*sizeof(float)};VkWriteDescriptorSet write={.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=sets[1],.dstBinding=0,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&bi};vkUpdateDescriptorSets(vulkan_globals.device,1,&write,0,NULL);VkPushConstantRange footprint={.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT,.size=sizeof(float)};VkPipelineLayoutCreateInfo pli={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,.setLayoutCount=2,.pSetLayouts=layouts,.pushConstantRangeCount=1,.pPushConstantRanges=&footprint};VkPipelineLayout pipeline_layout;VK(vkCreatePipelineLayout(vulkan_globals.device,&pli,NULL,&pipeline_layout));VkShaderModule module=shader(argv[1]);VkComputePipelineCreateInfo cp={.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,.stage={.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_COMPUTE_BIT,.module=module,.pName="main"},.layout=pipeline_layout};VkPipeline pipeline;VK(vkCreateComputePipelines(vulkan_globals.device,VK_NULL_HANDLE,1,&cp,NULL,&pipeline));
+	/* Exercise every supported power-of-two request, including mobile caps.
+	 * The long gradient follows the request instead of assuming a 16x device. */
+	const float requests[] = {2, 4, 8, 16};
+	int readbacks = 0;
+	for (int level = 0; level < (int)countof(requests); ++level)
+	{
+		const float request = requests[level];
+		if (request > props.limits.maxSamplerAnisotropy)
+			break;
+		float contrast[2];
+		for (int pass = 0; pass < 2; ++pass)
+		{
+			sampler_case(pass ? request : 0, true, pass ? request : 1);
+			if (pass)
+			{
+				for (int i = nsamplers; i--;)
+					if (samplers[i].h == selected_sampler)
+					{
+						CHECK(samplers[i].ci.minFilter == VK_FILTER_LINEAR);
+						CHECK(samplers[i].ci.magFilter == VK_FILTER_LINEAR);
+						CHECK(samplers[i].ci.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR);
+						CHECK(samplers[i].ci.mipLodBias == 0);
+						break;
+					}
+			}
+			begin(cb);
+			vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+			vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 2, sets, 0, NULL);
+			vkCmdPushConstants(cb, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(request), &request);
+			vkCmdDispatch(cb, 128, 1, 1);
+			VkBufferMemoryBarrier b = {.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+				.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+				.buffer=out_buffer, .size=VK_WHOLE_SIZE};
+			vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+				0, 0, NULL, 1, &b, 0, NULL);
+			submit(cb);
+			float *v = out;
+			contrast[pass] = 0;
+			for (int i = 0; i < 128; ++i)
+			{
+				CHECK(isfinite(v[i]) && v[i] >= 0 && v[i] <= 1);
+				if (i) contrast[pass] += fabsf(v[i] - v[i-1]);
+			}
+			contrast[pass] /= 127;
+		}
+		printf("ANISO_VULKAN_READBACK request=%g off_contrast=%g on_contrast=%g\n",
+			request, contrast[0], contrast[1]);
+		CHECK(contrast[0] < .08f && contrast[1] > .35f && contrast[1] > contrast[0] * 6);
+		++readbacks;
+	}
+	CHECK(readbacks > 0);
+	/* Saved value 1 still selects the real maximum; oversized requests clamp. */
+	sampler_case(1, true, props.limits.maxSamplerAnisotropy);
+	sampler_case(props.limits.maxSamplerAnisotropy * 2, true, props.limits.maxSamplerAnisotropy);
+	printf("ANISO_VULKAN_PASSED supported_max=%g readbacks=%d production_sampler_and_descriptor_selection\n",
+		props.limits.maxSamplerAnisotropy, readbacks);
+
 	VkSampler owned[]={vulkan_globals.point_sampler,vulkan_globals.linear_sampler,vulkan_globals.gui_point_sampler,vulkan_globals.gui_linear_sampler,vulkan_globals.point_aniso_sampler,vulkan_globals.linear_aniso_sampler,vulkan_globals.point_sampler_lod_bias,vulkan_globals.linear_sampler_lod_bias,vulkan_globals.point_aniso_sampler_lod_bias,vulkan_globals.linear_aniso_sampler_lod_bias};for(int i=0;i<(int)countof(owned);i++)if(owned[i])vkDestroySampler(vulkan_globals.device,owned[i],NULL);vkDestroyPipeline(vulkan_globals.device,pipeline,NULL);vkDestroyShaderModule(vulkan_globals.device,module,NULL);vkDestroyPipelineLayout(vulkan_globals.device,pipeline_layout,NULL);vkDestroyBuffer(vulkan_globals.device,out_buffer,NULL);vkFreeMemory(vulkan_globals.device,out_mem,NULL);vkDestroyBuffer(vulkan_globals.device,upload_buffer,NULL);vkFreeMemory(vulkan_globals.device,upload_mem,NULL);vkDestroyImageView(vulkan_globals.device,view,NULL);vkDestroyImage(vulkan_globals.device,image,NULL);vkFreeMemory(vulkan_globals.device,imem,NULL);vkDestroyDescriptorPool(vulkan_globals.device,descriptor_pool,NULL);vkDestroyDescriptorSetLayout(vulkan_globals.device,out_layout,NULL);vkDestroyDescriptorSetLayout(vulkan_globals.device,tex_layout,NULL);SDL_DestroyMutex(texmgr_mutex);vkDestroyCommandPool(vulkan_globals.device,pool,NULL);vkDestroyDevice(vulkan_globals.device,NULL);vkDestroyInstance(instance,NULL);return 0;
 }

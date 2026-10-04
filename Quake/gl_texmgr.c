@@ -987,11 +987,13 @@ TexMgr_DeriveNumMips
 static int TexMgr_DeriveNumMips (int width, int height)
 {
 	int num_mips = 0;
-	while (width >= 1 && height >= 1)
+	while (1)
 	{
-		width /= 2;
-		height /= 2;
 		num_mips += 1;
+		if (width == 1 && height == 1)
+			break;
+		width = q_max (width / 2, 1);
+		height = q_max (height / 2, 1);
 	}
 	return num_mips;
 }
@@ -1004,11 +1006,13 @@ TexMgr_DeriveStagingSize
 static int TexMgr_DeriveStagingSize (int width, int height)
 {
 	int size = 0;
-	while (width >= 1 && height >= 1)
+	while (1)
 	{
 		size += width * height * 4;
-		width /= 2;
-		height /= 2;
+		if (width == 1 && height == 1)
+			break;
+		width = q_max (width / 2, 1);
+		height = q_max (height / 2, 1);
 	}
 	return size;
 }
@@ -1262,7 +1266,7 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 		mipwidth = glt->width;
 		mipheight = glt->height;
 
-		while (mipwidth >= 1 && mipheight >= 1)
+		while (1)
 		{
 			regions[num_regions].bufferOffset = staging_offset + mip_offset;
 			regions[num_regions].imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -1275,8 +1279,10 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 			mip_offset += mipwidth * mipheight * 4;
 			num_regions += 1;
 
-			mipwidth /= 2;
-			mipheight /= 2;
+			if (mipwidth == 1 && mipheight == 1)
+				break;
+			mipwidth = q_max (mipwidth / 2, 1);
+			mipheight = q_max (mipheight / 2, 1);
 		}
 	}
 	else if (is_cube)
@@ -1337,17 +1343,21 @@ static void TexMgr_LoadImage32 (gltexture_t *glt, unsigned *data)
 		mipheight = glt->height;
 
 		memcpy (staging_memory, data, mipwidth * mipheight * 4);
-		while (mipwidth >= 1 && mipheight >= 1)
+		while (1)
 		{
 			const byte *previous_mip = staging_memory + mip_offset;
+			int next_mipwidth, next_mipheight;
+
+			if (mipwidth == 1 && mipheight == 1)
+				break;
+
+			next_mipwidth = q_max (mipwidth / 2, 1);
+			next_mipheight = q_max (mipheight / 2, 1);
 			mip_offset += mipwidth * mipheight * 4;
-			num_regions += 1;
+			stbir_resize_uint8_linear (previous_mip, mipwidth, mipheight, 0, staging_memory + mip_offset, next_mipwidth, next_mipheight, 0, STBIR_4CHANNEL);
 
-			if (mipwidth > 1 && mipheight > 1)
-				stbir_resize_uint8_linear (previous_mip, mipwidth, mipheight, 0, staging_memory + mip_offset, mipwidth / 2, mipheight / 2, 0, STBIR_4CHANNEL);
-
-			mipwidth /= 2;
-			mipheight /= 2;
+			mipwidth = next_mipwidth;
+			mipheight = next_mipheight;
 		}
 	}
 	else if (is_cube)
