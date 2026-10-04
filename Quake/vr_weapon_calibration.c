@@ -290,7 +290,12 @@ static const vr_weapon_schema_entry_t vr_ad_weapon_fallbacks[] = {
 /* Full-byte FNV-1a signatures of installed AD assets, not mod identities.
  * The older nailgun differs only in scale/origin/radius float encoding:
  * all bytes after its 84-byte header match, with decoded position differences
- * below 0.000115 Quake units. Both versions use the same held calibration. */
+ * below 0.000115 Quake units. Both versions use the same held calibration.
+ * Installed reskins (d3d8b117, c79ffca6, 18f7a730, 7242f947) retain topology,
+ * animation poses/timing and normals; only skin/UV data and the same nailgun
+ * header encoding differ for the first three. The fourth reuses shot3 geometry
+ * (the same calibrated tuple), with float rounding and ignored trailing bytes.
+ * See docs/ad-calibration-installed-audit-2026-10-04.md. */
 static const struct
 {
 	const char *path;
@@ -299,12 +304,16 @@ static const struct
 } vr_ad_weapon_signatures[] = {
 	{"progs/v_shot.mdl",     22260, 0x77592100u},
 	{"progs/v_shot2.mdl",    22764, 0x8fb04e6fu},
+	{"progs/v_shot2.mdl",   131164, 0x7242f947u},
 	{"progs/v_shot3.mdl",    77868, 0xabc6f98du},
 	{"progs/v_nail.mdl",     47140, 0xa82e429au},
 	{"progs/v_nail.mdl",     47140, 0xd5e4c067u},
+	{"progs/v_nail.mdl",     47140, 0xd3d8b117u},
 	{"progs/v_nail2.mdl",    48964, 0xb9f1559eu},
+	{"progs/v_nail2.mdl",    48964, 0xc79ffca6u},
 	{"progs/v_rock.mdl",     37420, 0x88977215u},
 	{"progs/v_rock2.mdl",    39668, 0x0a7cfc81u},
+	{"progs/v_rock2.mdl",    39668, 0x18f7a730u},
 	{"progs/v_light.mdl",    22212, 0xf7098ba4u},
 	{"progs/v_plasma.mdl",   54940, 0xc5de8c00u},
 	{"progs/v_shadaxe0.mdl", 97860, 0xadc010afu},
@@ -2771,7 +2780,7 @@ static qboolean VR_WeaponCalibrationADAssetMatches(
 		Sys_FileClose(handle);
 		return false;
 	}
-	/* A matching table length bounds allocation/read to at most 97860 bytes. */
+	/* A matching table length bounds allocation/read to at most 131164 bytes. */
 	data = (byte *)malloc((size_t)length);
 	if (!data)
 	{
