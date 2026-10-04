@@ -29,6 +29,8 @@ static qboolean window_has_focus = true;
 
 cvar_t in_debugkeys = {"in_debugkeys", "0", CVAR_NONE};
 
+extern cvar_t ui_mouse;
+
 qboolean joy_altmodifier_pressed = false;
 
 // SDL Game Controller cvars
@@ -300,6 +302,11 @@ void IN_Deactivate (qboolean free_cursor)
 void IN_DeactivateForConsole (void)
 {
 	IN_Deactivate (true);
+}
+
+void IN_DeactivateForMenu (void)
+{
+	IN_Deactivate (modestate == MS_WINDOWED || ui_mouse.value);
 }
 
 void IN_ScaleMouseCoords (float x, float y, int *outx, int *outy)

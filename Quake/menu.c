@@ -138,6 +138,63 @@ static int scrollbar_x;
 static int scrollbar_y;
 static int scrollbar_size;
 
+cvar_t ui_live_preview = {"ui_live_preview", "1", CVAR_ARCHIVE};
+
+typedef enum
+{
+	PREVIEW_WORLD,
+	PREVIEW_CENTERPRINT,
+	PREVIEW_UNDERWATER
+} preview_kind_t;
+
+static struct
+{
+	enum m_state_e menu;
+	int			   row;
+	preview_kind_t kind;
+	float		   fraction, target, hold;
+} menu_preview;
+
+static void M_UpdatePreview (void);
+
+float M_MenuPreviewFraction (void)
+{
+	if (!ui_live_preview.value || key_dest != key_menu || m_state != menu_preview.menu)
+		return 0.0f;
+	return menu_preview.fraction;
+}
+
+qboolean M_ForcedUnderwater (void)
+{
+	return M_MenuPreviewFraction () > 0.0f && menu_preview.kind == PREVIEW_UNDERWATER;
+}
+
+static void M_PreviewRow (cb_context_t *cbx, int row, int y)
+{
+	float fraction = M_MenuPreviewFraction ();
+	if (row == menu_preview.row)
+	{
+		Draw_SetOpacity (1.0f);
+		if (fraction > 0.0f)
+			Draw_Fill (cbx, MENU_CURSOR_X - 4, y - 4, 320 - MENU_CURSOR_X, CHARACTER_SIZE + 8, 0, 0.5f * fraction);
+	}
+	else
+		Draw_SetOpacity (1.0f - fraction);
+}
+
+static void M_BeginPreview (int row, preview_kind_t kind)
+{
+	if (!ui_live_preview.value || cls.state != ca_connected || cls.signon != SIGNONS || (kind == PREVIEW_CENTERPRINT && cl.intermission))
+		return;
+	menu_preview.menu = m_state;
+	menu_preview.row = row;
+	menu_preview.kind = kind;
+	menu_preview.target = 1.0f;
+	menu_preview.hold = kind == PREVIEW_UNDERWATER ? 2.25f : 1.25f;
+}
+
+cvar_t ui_mouse = {"ui_mouse", "1", CVAR_ARCHIVE};
+
 void		M_ConfigureNetSubsystem (void);
 static void M_SetSkillMenuMap (const char *name);
 
@@ -145,6 +202,7 @@ extern qboolean keydown[256];
 
 extern cvar_t scr_fov;
 extern cvar_t scr_showfps;
+extern cvar_t scr_showspeed;
 extern cvar_t cl_confirmquit;
 extern cvar_t scr_style;
 extern cvar_t autoload;
@@ -178,37 +236,14 @@ extern cvar_t crosshair_alpha;
 
 static qboolean slider_grab;
 static qboolean scrollbar_grab;
-static cvar_t ui_live_preview = {"ui_live_preview", "1", CVAR_ARCHIVE};
-static float m_live_preview_fraction;
-static double m_live_preview_until;
 
 /* Graphics cvars already own their renderer state. This only reveals that
  * state briefly, without moving the view or staging a second renderer. */
-static qboolean M_LivePreview_GameAvailable (void)
-{
-	return cls.state == ca_connected && cls.signon == SIGNONS;
-}
-
-static void M_LivePreview_Kick (void)
-{
-	if (ui_live_preview.value && M_LivePreview_GameAvailable ())
-		m_live_preview_until = realtime + 1.5;
-}
-
-static void M_LivePreview_Update (void)
-{
-	const float target = ui_live_preview.value && key_dest == key_menu && m_state == m_graphics &&
-		M_LivePreview_GameAvailable () && realtime < m_live_preview_until ? 1.0f : 0.0f;
-	const float step = CLAMP (0.0f, host_frametime * 8.0f, 1.0f);
-
-	m_live_preview_fraction += (target - m_live_preview_fraction) * step;
-}
+static void M_LivePreview_Kick (void);
 
 float M_MenuLivePreviewFadeAlpha (void)
 {
-	if (key_dest != key_menu || m_state != m_graphics)
-		return 1.0f;
-	return 1.0f - 0.60f * CLAMP (0.0f, m_live_preview_fraction, 1.0f);
+	return 1.0f - 0.60f * M_MenuPreviewFraction ();
 }
 
 // clang-format off
@@ -427,7 +462,7 @@ static void M_DrawTransPicTranslate (cb_context_t *cbx, int x, int y, qpic_t *pi
 M_DrawTextBox
 ================
 */
-static void M_DrawTextBox (cb_context_t *cbx, int x, int y, int width, int lines)
+void M_DrawTextBoxAlpha (cb_context_t *cbx, int x, int y, int width, int lines, float alpha)
 {
 	qpic_t *p;
 	int		cx, cy;
@@ -437,15 +472,15 @@ static void M_DrawTextBox (cb_context_t *cbx, int x, int y, int width, int lines
 	cx = x;
 	cy = y;
 	p = Draw_CachePic ("gfx/box_tl.lmp");
-	M_DrawTransPic (cbx, cx, cy, p);
+	Draw_Pic (cbx, cx, cy, p, alpha, true);
 	p = Draw_CachePic ("gfx/box_ml.lmp");
 	for (n = 0; n < lines; n++)
 	{
 		cy += 8;
-		M_DrawTransPic (cbx, cx, cy, p);
+		Draw_Pic (cbx, cx, cy, p, alpha, true);
 	}
 	p = Draw_CachePic ("gfx/box_bl.lmp");
-	M_DrawTransPic (cbx, cx, cy + 8, p);
+	Draw_Pic (cbx, cx, cy + 8, p, alpha, true);
 
 	// draw middle
 	cx += 8;
@@ -453,17 +488,17 @@ static void M_DrawTextBox (cb_context_t *cbx, int x, int y, int width, int lines
 	{
 		cy = y;
 		p = Draw_CachePic ("gfx/box_tm.lmp");
-		M_DrawTransPic (cbx, cx, cy, p);
+		Draw_Pic (cbx, cx, cy, p, alpha, true);
 		p = Draw_CachePic ("gfx/box_mm.lmp");
 		for (n = 0; n < lines; n++)
 		{
 			cy += 8;
 			if (n == 1)
 				p = Draw_CachePic ("gfx/box_mm2.lmp");
-			M_DrawTransPic (cbx, cx, cy, p);
+			Draw_Pic (cbx, cx, cy, p, alpha, true);
 		}
 		p = Draw_CachePic ("gfx/box_bm.lmp");
-		M_DrawTransPic (cbx, cx, cy + 8, p);
+		Draw_Pic (cbx, cx, cy + 8, p, alpha, true);
 		width -= 2;
 		cx += 16;
 	}
@@ -471,15 +506,20 @@ static void M_DrawTextBox (cb_context_t *cbx, int x, int y, int width, int lines
 	// draw right side
 	cy = y;
 	p = Draw_CachePic ("gfx/box_tr.lmp");
-	M_DrawTransPic (cbx, cx, cy, p);
+	Draw_Pic (cbx, cx, cy, p, alpha, true);
 	p = Draw_CachePic ("gfx/box_mr.lmp");
 	for (n = 0; n < lines; n++)
 	{
 		cy += 8;
-		M_DrawTransPic (cbx, cx, cy, p);
+		Draw_Pic (cbx, cx, cy, p, alpha, true);
 	}
 	p = Draw_CachePic ("gfx/box_br.lmp");
-	M_DrawTransPic (cbx, cx, cy + 8, p);
+	Draw_Pic (cbx, cx, cy + 8, p, alpha, true);
+}
+
+static void M_DrawTextBox (cb_context_t *cbx, int x, int y, int width, int lines)
+{
+	M_DrawTextBoxAlpha (cbx, x, y, width, lines, 1.0f);
 }
 
 /*
@@ -493,11 +533,6 @@ void M_MenuChanged ()
 	m_mouse_hover_state = m_none;
 	menu_changed = true;
 }
-
-#define SLIDER_SIZE	  10
-#define SLIDER_EXTENT ((SLIDER_SIZE - 1) * 8)
-#define SLIDER_START  (MENU_SLIDER_X + 4)
-#define SLIDER_END	  (SLIDER_START + SLIDER_EXTENT)
 
 /*
 ================
@@ -521,7 +556,7 @@ static void M_DrawSliderSized (cb_context_t *cbx, int x, int y, float value,
 
 static void M_DrawSlider (cb_context_t *cbx, int x, int y, float value, const char *label)
 {
-	M_DrawSliderSized (cbx, x, y, value, label, SLIDER_SIZE);
+	M_DrawSliderSized (cbx, x, y, value, label, MENU_SLIDER_SIZE);
 }
 
 /*
@@ -537,9 +572,9 @@ M_GetSliderPos (float low, float high, float current, qboolean backward, qboolea
 	if (mouse)
 	{
 		if (backward)
-			f = high + (low - high) * (clamped_mouse - SLIDER_START) / SLIDER_EXTENT;
+			f = high + (low - high) * (clamped_mouse - MENU_SLIDER_START) / MENU_SLIDER_EXTENT;
 		else
-			f = low + (high - low) * (clamped_mouse - SLIDER_START) / SLIDER_EXTENT;
+			f = low + (high - low) * (clamped_mouse - MENU_SLIDER_START) / MENU_SLIDER_EXTENT;
 	}
 	else
 	{
@@ -798,7 +833,7 @@ void M_Menu_Main_f (void)
 		m_save_demonum = cls.demonum;
 		cls.demonum = -1;
 	}
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_main;
 }
@@ -985,7 +1020,7 @@ static qboolean m_singleplayer_showlevels;
 static void M_Menu_SinglePlayer_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_singleplayer;
 	if (m_singleplayer_cursor >= SINGLEPLAYER_ITEMS)
@@ -1080,6 +1115,8 @@ char			m_filenames[MAX_SAVEGAMES][SAVEGAME_COMMENT_LENGTH + 1];
 int				loadable[MAX_SAVEGAMES];
 static char		quicksave_filename[SAVEGAME_COMMENT_LENGTH + 1];
 static qboolean quicksave_available;
+static char		autosave_filename[SAVEGAME_COMMENT_LENGTH + 1];
+static qboolean autosave_available;
 
 static qboolean M_ScanSave (const char *save_name, char *comment, size_t comment_size, const char *legacy_dir, qboolean have_legacy_saves)
 {
@@ -1126,6 +1163,7 @@ static void M_ScanSaves (void)
 	qboolean have_legacy_saves = COM_GetLegacySaveDir (legacy_dir, sizeof (legacy_dir));
 
 	quicksave_available = M_ScanSave ("quick", quicksave_filename, sizeof (quicksave_filename), legacy_dir, have_legacy_saves);
+	autosave_available = M_ScanSave ("autosave", autosave_filename, sizeof (autosave_filename), legacy_dir, have_legacy_saves);
 
 	for (i = 0; i < MAX_SAVEGAMES; i++)
 	{
@@ -1160,11 +1198,11 @@ static void M_Menu_Load_f (void)
 	M_MenuChanged ();
 	m_state = m_load;
 
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	M_ScanSaves ();
-	if (load_cursor >= MAX_SAVEGAMES + quicksave_available)
-		load_cursor = MAX_SAVEGAMES + quicksave_available - 1;
+	if (load_cursor >= MAX_SAVEGAMES + quicksave_available + autosave_available)
+		load_cursor = MAX_SAVEGAMES + quicksave_available + autosave_available - 1;
 }
 
 static void M_Menu_Save_f (void)
@@ -1178,7 +1216,7 @@ static void M_Menu_Save_f (void)
 	M_MenuChanged ();
 	m_state = m_save;
 
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	M_ScanSaves ();
 	if (load_cursor >= MAX_SAVEGAMES)
@@ -1196,11 +1234,13 @@ static void M_Load_Draw (cb_context_t *cbx)
 	row = 0;
 	if (quicksave_available)
 		M_PrintSavegame (cbx, 16, 32 + 8 * row++, quicksave_filename, "Quicksave");
+	if (autosave_available)
+		M_PrintSavegame (cbx, 16, 32 + 8 * row++, autosave_filename, "Autosave");
 	for (i = 0; i < MAX_SAVEGAMES; i++, row++)
 		M_PrintSavegame (cbx, 16, 32 + 8 * row, m_filenames[i], NULL);
 
 	// line cursor
-	M_Mouse_UpdateListCursor (&load_cursor, 16, 320, 32, 8, MAX_SAVEGAMES + quicksave_available, 0);
+	M_Mouse_UpdateListCursor (&load_cursor, 16, 320, 32, 8, MAX_SAVEGAMES + quicksave_available + autosave_available, 0);
 	Draw_Character (cbx, 8, 32 + load_cursor * 8, 12 + ((int)(realtime * 4) & 1));
 }
 
@@ -1222,9 +1262,10 @@ static void M_Save_Draw (cb_context_t *cbx)
 
 static void M_Load_Key (int k)
 {
-	int		 num_items = MAX_SAVEGAMES + quicksave_available;
-	int		 save_slot = load_cursor - quicksave_available;
+	int		 num_items = MAX_SAVEGAMES + quicksave_available + autosave_available;
+	int		 save_slot = load_cursor - quicksave_available - autosave_available;
 	qboolean quicksave_selected = quicksave_available && load_cursor == 0;
+	qboolean autosave_selected = autosave_available && load_cursor == quicksave_available;
 
 	switch (k)
 	{
@@ -1239,7 +1280,7 @@ static void M_Load_Key (int k)
 	case K_KP_ENTER:
 	case K_ABUTTON:
 		S_LocalSound ("misc/menu2.wav");
-		if (!quicksave_selected && (save_slot < 0 || save_slot >= MAX_SAVEGAMES || !loadable[save_slot]))
+		if (!quicksave_selected && !autosave_selected && (save_slot < 0 || save_slot >= MAX_SAVEGAMES || !loadable[save_slot]))
 			return;
 
 		// Draw before leaving the menu so disconnected loads don't expose the console.
@@ -1252,6 +1293,8 @@ static void M_Load_Key (int k)
 		// issue the load command
 		if (quicksave_selected)
 			Cbuf_AddText ("load quick\n");
+		else if (autosave_selected)
+			Cbuf_AddText ("load autosave\n");
 		else
 			Cbuf_AddText (va ("load s%i\n", save_slot));
 		return;
@@ -1320,7 +1363,7 @@ int m_multiplayer_cursor;
 
 static void M_Menu_MultiPlayer_f (void)
 {
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_multiplayer;
 	m_entersound = true;
@@ -1411,7 +1454,7 @@ int	 setup_oldavatar;
 
 static void M_Menu_Setup_f (void)
 {
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_setup;
 	m_entersound = true;
@@ -1611,7 +1654,7 @@ static const char *net_helpMessage[] = {
 static void M_Menu_Net_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_net;
 
@@ -1721,6 +1764,9 @@ enum
 	GAME_OPT_AUTOLOAD,
 	GAME_OPT_STARTUP_DEMOS,
 	GAME_OPT_SHOWFPS,
+	GAME_OPT_SHOWSPEED,
+	GAME_OPT_CENTERPRINTBG,
+	GAME_OPT_LIVE_PREVIEW,
 	GAME_OPT_CONFIRMQUIT,
 	GAME_OPT_LANGUAGE,
 	GAME_OPTIONS_ITEMS
@@ -1732,7 +1778,8 @@ static int first_game_option = 0;
 
 static void M_Menu_GameOptions_f (void)
 {
-	IN_Deactivate (true);
+	memset (&menu_preview, 0, sizeof (menu_preview));
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_game;
 	m_entersound = true;
@@ -1743,7 +1790,7 @@ static void M_GameOptions_AdjustSliders (int dir, qboolean mouse)
 	if (scrollbar_grab)
 		return;
 
-	float f, clamped_mouse = CLAMP (SLIDER_START, (float)m_mouse_x, SLIDER_END);
+	float f, clamped_mouse = CLAMP (MENU_SLIDER_START, (float)m_mouse_x, MENU_SLIDER_END);
 
 	if (fabsf (clamped_mouse - (float)m_mouse_x) > 12.0f)
 		mouse = false;
@@ -1771,7 +1818,7 @@ static void M_GameOptions_AdjustSliders (int dir, qboolean mouse)
 		}
 		break;
 	case GAME_OPT_MOUSESPEED: // mouse speed
-		f = M_GetSliderPos (1, 11, sensitivity.value, false, mouse, clamped_mouse, dir, 0.5, 999);
+		f = M_GetSliderPos (1, 11, sensitivity.value, false, mouse, clamped_mouse, dir, 0.05, 999);
 		Cvar_SetValue ("sensitivity", f);
 		break;
 	case GAME_OPT_SBALPHA: // statusbar alpha
@@ -1872,11 +1919,42 @@ static void M_GameOptions_AdjustSliders (int dir, qboolean mouse)
 	case GAME_OPT_SHOWFPS:
 		Cvar_SetValue ("scr_showfps", ((int)scr_showfps.value + 2 + dir) % 2);
 		break;
+	case GAME_OPT_SHOWSPEED:
+		Cvar_SetValueQuick (&scr_showspeed, !scr_showspeed.value);
+		break;
+	case GAME_OPT_LIVE_PREVIEW:
+		Cvar_SetValueQuick (&ui_live_preview, !ui_live_preview.value);
+		break;
+	case GAME_OPT_CENTERPRINTBG:
+		Cvar_SetValueQuick (&scr_centerprintbg, ((int)scr_centerprintbg.value + 4 + dir) % 4);
+		break;
 	case GAME_OPT_LANGUAGE:
 		LOC_CycleLanguage (dir);
 		break;
 	case GAME_OPT_CONFIRMQUIT:
 		Cvar_SetValue ("cl_confirmquit", ((int)cl_confirmquit.value + 2 + dir) % 2);
+		break;
+	}
+	switch (game_options_cursor)
+	{
+	case GAME_OPT_SCALE:
+	case GAME_OPT_SBALPHA:
+	case GAME_OPT_HUD_DETAIL:
+	case GAME_OPT_HUD_STYLE:
+	case GAME_OPT_CROSSHAIR:
+	case GAME_OPT_CROSSHAIR_SIZE:
+	case GAME_OPT_CROSSHAIR_COLOR:
+	case GAME_OPT_CROSSHAIR_OPACITY:
+	case GAME_OPT_SHOWGUN:
+	case GAME_OPT_SHOWFPS:
+	case GAME_OPT_SHOWSPEED:
+		M_BeginPreview (game_options_cursor, PREVIEW_WORLD);
+		break;
+	case GAME_OPT_CENTERPRINTBG:
+		M_BeginPreview (game_options_cursor, PREVIEW_CENTERPRINT);
+		break;
+	default:
+		menu_preview.target = menu_preview.hold = 0.0f;
 		break;
 	}
 }
@@ -1926,6 +2004,7 @@ static void M_GameOptions_Draw (cb_context_t *cbx)
 	for (int i = 0; i < GAME_OPTIONS_PER_PAGE && i < (int)GAME_OPTIONS_ITEMS; i++)
 	{
 		const int y = top + i * CHARACTER_SIZE;
+		M_PreviewRow (cbx, i + first_game_option, y);
 		switch (i + first_game_option)
 		{
 		case GAME_OPT_SCALE:
@@ -1944,7 +2023,7 @@ static void M_GameOptions_Draw (cb_context_t *cbx)
 		case GAME_OPT_MOUSESPEED:
 			M_Print (cbx, MENU_LABEL_X, y, "Mouse Speed");
 			r = (sensitivity.value - 1) / 10;
-			M_DrawSlider (cbx, MENU_SLIDER_X, y, r, va ("%.1f", r));
+			M_DrawSlider (cbx, MENU_SLIDER_X, y, r, va ("%.2f", r));
 			break;
 
 		case GAME_OPT_VIEWBOB:
@@ -2047,6 +2126,21 @@ static void M_GameOptions_Draw (cb_context_t *cbx)
 			M_DrawCheckbox (cbx, MENU_VALUE_X, y, scr_showfps.value);
 			break;
 
+		case GAME_OPT_SHOWSPEED:
+			M_Print (cbx, MENU_LABEL_X, y, "Show Speed");
+			M_DrawCheckbox (cbx, MENU_VALUE_X, y, scr_showspeed.value);
+			break;
+		case GAME_OPT_LIVE_PREVIEW:
+			M_Print (cbx, MENU_LABEL_X, y, "Live Preview");
+			M_DrawCheckbox (cbx, MENU_VALUE_X, y, ui_live_preview.value);
+			break;
+		case GAME_OPT_CENTERPRINTBG:
+		{
+			static const char *names[] = {"Off", "Text box", "Menu box", "Menu strip"};
+			M_Print (cbx, MENU_LABEL_X, y, "Message Background");
+			M_Print (cbx, MENU_VALUE_X, y, names[(int)CLAMP (0, scr_centerprintbg.value, 3)]);
+			break;
+		}
 		case GAME_OPT_LANGUAGE:
 			M_Print (cbx, MENU_LABEL_X, y, "Language");
 			M_Print (cbx, MENU_VALUE_X, y, language.string);
@@ -2058,6 +2152,7 @@ static void M_GameOptions_Draw (cb_context_t *cbx)
 		}
 	}
 
+	Draw_SetOpacity (1.0f - M_MenuPreviewFraction ());
 	if (GAME_OPTIONS_ITEMS > GAME_OPTIONS_PER_PAGE)
 		M_DrawScrollbar (
 			cbx, MENU_SCROLLBAR_X, MENU_TOP + CHARACTER_SIZE, (float)(first_game_option) / (GAME_OPTIONS_ITEMS - GAME_OPTIONS_PER_PAGE),
@@ -2065,6 +2160,7 @@ static void M_GameOptions_Draw (cb_context_t *cbx)
 
 	// cursor
 	M_Mouse_UpdateListCursor (&game_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, GAME_OPTIONS_PER_PAGE, first_game_option);
+	Draw_SetOpacity (1.0f);
 	Draw_Character (cbx, MENU_CURSOR_X, top + (game_options_cursor - first_game_option) * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
 }
 
@@ -2156,6 +2252,7 @@ static void M_GraphicsSetCategory (graphics_category_t category)
 	if (category == GRAPHICS_CATEGORY_PARTICLES)
 		M_GraphicsRefreshParticlePresets ();
 	M_MenuChanged ();
+	memset (&menu_preview, 0, sizeof (menu_preview));
 	graphics_category_hover = -1;
 	slider_grab = false;
 	scrollbar_grab = false;
@@ -2167,7 +2264,7 @@ static void M_Menu_GraphicsOptions_f (void)
 	graphics_category_hover = -1;
 	slider_grab = false;
 	scrollbar_grab = false;
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_graphics;
 	m_entersound = true;
@@ -2351,7 +2448,7 @@ static int M_GraphicsSliderEnd (void)
 
 static float M_GraphicsSliderMousePos (float mouse)
 {
-	return SLIDER_START + (mouse - M_GraphicsSliderStart ()) * SLIDER_EXTENT /
+	return MENU_SLIDER_START + (mouse - M_GraphicsSliderStart ()) * MENU_SLIDER_EXTENT /
 		(M_GraphicsSliderEnd () - M_GraphicsSliderStart ());
 }
 
@@ -2468,6 +2565,35 @@ static qboolean M_GraphicsAdjust (int dir, qboolean mouse)
 	}
 	if (changed) M_LivePreview_Kick ();
 	return changed;
+}
+
+static void M_LivePreview_Kick (void)
+{
+	M_BeginPreview (graphics_cursor[graphics_category], M_GraphicsOption () == GFX_WATER_FX ? PREVIEW_UNDERWATER : PREVIEW_WORLD);
+}
+
+// Ironwail timing, with frame hitches capped so renderer restarts do not skip the fade.
+static void M_UpdatePreview (void)
+{
+	float dt = q_min (host_rawframetime, 1.0 / 30.0);
+	int	  row = m_state == m_game ? game_options_cursor : graphics_cursor[graphics_category];
+	if (!ui_live_preview.value || key_dest != key_menu || m_state != menu_preview.menu || cls.state != ca_connected || cls.signon != SIGNONS)
+	{
+		memset (&menu_preview, 0, sizeof (menu_preview));
+		return;
+	}
+	if (row != menu_preview.row)
+		menu_preview.target = menu_preview.hold = 0.0f;
+	if (menu_preview.fraction < menu_preview.target)
+		menu_preview.fraction = q_min (menu_preview.target, menu_preview.fraction + dt / 0.125f);
+	else if (menu_preview.fraction > menu_preview.target)
+		menu_preview.fraction = q_max (menu_preview.target, menu_preview.fraction - dt / 0.125f);
+	else if (menu_preview.hold > 0.0f && !slider_grab)
+	{
+		menu_preview.hold -= dt;
+		if (menu_preview.hold <= 0.0f)
+			menu_preview.target = 0.0f;
+	}
 }
 
 static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_size)
@@ -2825,7 +2951,11 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 		M_Mouse_UpdateCursor (&graphics_category_hover, x - 2, x + 62, layout.category_y, CHARACTER_SIZE, category);
 	}
 	for (int row = 0; row < visible; ++row)
+	{
+		M_PreviewRow (cbx, GraphicsMenu_RowIndex (*first, row), GraphicsMenu_RowY (row));
 		M_GraphicsDrawRow (cbx, graphics_options[graphics_category][GraphicsMenu_RowIndex (*first, row)], GraphicsMenu_RowY (row));
+	}
+	Draw_SetOpacity (1.0f);
 	M_Mouse_UpdateListCursor (cursor, MENU_CURSOR_X + 8, layout.list_right, layout.list_top, layout.row_height, visible, *first);
 	Draw_Character (cbx, MENU_CURSOR_X, GraphicsMenu_RowY (*cursor - *first), 12 + ((int)(realtime * 4) & 1));
 	if (count > layout.rows)
@@ -2854,7 +2984,7 @@ static void M_Menu_VoiceOptions_f (void);
 
 static void M_Menu_SoundOptions_f (void)
 {
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_sound;
 	m_entersound = true;
@@ -2862,7 +2992,7 @@ static void M_Menu_SoundOptions_f (void)
 
 static void M_SoundOptions_AdjustSliders (int dir, qboolean mouse)
 {
-	float f, clamped_mouse = CLAMP (SLIDER_START, (float)m_mouse_x, SLIDER_END);
+	float f, clamped_mouse = CLAMP (MENU_SLIDER_START, (float)m_mouse_x, MENU_SLIDER_END);
 
 	if (fabsf (clamped_mouse - (float)m_mouse_x) > 12.0f)
 		mouse = false;
@@ -3015,7 +3145,7 @@ static void M_Menu_VoiceOptions_f (void)
 	slider_grab = scrollbar_grab = false;
 	scrollbar_x = scrollbar_y = scrollbar_size = 0;
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_voice;
 	m_entersound = true;
@@ -3024,7 +3154,7 @@ static void M_Menu_VoiceOptions_f (void)
 static void M_VoiceOptions_Back (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = voice_options_parent;
 }
@@ -3033,7 +3163,7 @@ static void M_VoiceOptions_Adjust (int dir, qboolean mouse)
 {
 	voice_menu_state_t state;
 	float f;
-	float clamped_mouse = CLAMP (SLIDER_START, (float)m_mouse_x, SLIDER_END);
+	float clamped_mouse = CLAMP (MENU_SLIDER_START, (float)m_mouse_x, MENU_SLIDER_END);
 
 	Voice_GetMenuState (&state);
 	if (voice_options_cursor == VOICE_OPT_CONTROLS)
@@ -3391,7 +3521,7 @@ static int M_VROptions_CrosshairMode (void)
 static void M_Menu_VROptions_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_vroptions;
 	vr_options_weapon_page = false;
@@ -4527,7 +4657,7 @@ static cvar_t *M_ControllerCvar (const char *name)
 static void M_Menu_ControllerOptions_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_controller;
 }
@@ -4661,43 +4791,43 @@ static void M_ControllerOptions_Draw (cb_context_t *cbx)
 	for (int i = 0; i < CONTROLLER_ITEMS; i++)
 	{
 		const int y = top + i * CHARACTER_SIZE;
-		M_Print (cbx, 56, y, labels[i]);
+		M_Print (cbx, MENU_LABEL_X, y, labels[i]);
 		M_Mouse_UpdateCursor (&controller_options_cursor, 56, 320, y, CHARACTER_SIZE, i);
 	}
 
 #define VALUE(name) (M_ControllerCvar (name)->value)
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_YAW * 8, va ("%.0f", VALUE ("joy_sensitivity_yaw")));
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_PITCH * 8, va ("%.0f", VALUE ("joy_sensitivity_pitch")));
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_INVERT * 8, VALUE ("joy_invert"));
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_SWAP * 8, VALUE ("joy_swapmovelook") ? "Left" : "Right");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_ALWAYS_ACTIVE * 8, VALUE ("joy_always_active"));
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_LOOK_DEADZONE * 8, va ("%.0f%%", VALUE ("joy_deadzone_look") * 100.f));
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_MOVE_DEADZONE * 8, va ("%.0f%%", VALUE ("joy_deadzone_move") * 100.f));
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_TRIGGER_DEADZONE * 8, va ("%.0f%%", VALUE ("joy_deadzone_trigger") * 100.f));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_YAW * CHARACTER_SIZE, va ("%.0f", VALUE ("joy_sensitivity_yaw")));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_PITCH * CHARACTER_SIZE, va ("%.0f", VALUE ("joy_sensitivity_pitch")));
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_INVERT * CHARACTER_SIZE, VALUE ("joy_invert"));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_SWAP * CHARACTER_SIZE, VALUE ("joy_swapmovelook") ? "Left" : "Right");
+	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_ALWAYS_ACTIVE * CHARACTER_SIZE, VALUE ("joy_always_active"));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_LOOK_DEADZONE * CHARACTER_SIZE, va ("%.0f%%", VALUE ("joy_deadzone_look") * 100.f));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_MOVE_DEADZONE * CHARACTER_SIZE, va ("%.0f%%", VALUE ("joy_deadzone_move") * 100.f));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_TRIGGER_DEADZONE * CHARACTER_SIZE, va ("%.0f%%", VALUE ("joy_deadzone_trigger") * 100.f));
 	if (IN_HasRumble ())
-		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_RUMBLE * 8, va ("%.0f%%", VALUE ("joy_rumble") * 100.f));
+		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_RUMBLE * CHARACTER_SIZE, va ("%.0f%%", VALUE ("joy_rumble") * 100.f));
 	else
-		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_RUMBLE * 8, "N/A");
+		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_RUMBLE * CHARACTER_SIZE, "N/A");
 	if (IN_HasGyro ())
 	{
-		M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO * 8, VALUE ("gyro_enable"));
-		M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_FLICK * 8, VALUE ("joy_flick"));
+		M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO * CHARACTER_SIZE, VALUE ("gyro_enable"));
+		M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_FLICK * CHARACTER_SIZE, VALUE ("joy_flick"));
 	}
 	else
 	{
-		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO * 8, "N/A");
-		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_FLICK * 8, "N/A");
+		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO * CHARACTER_SIZE, "N/A");
+		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_FLICK * CHARACTER_SIZE, "N/A");
 	}
 	static const char *const modes[] = {"Ignored", "Enables", "Disables", "Inverts"};
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_MODE * 8, modes[CLAMP (0, (int)VALUE ("gyro_mode"), 3)]);
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_AXIS * 8, VALUE ("gyro_turning_axis") ? "Roll" : "Yaw");
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_YAW * 8, va ("%.1f", VALUE ("gyro_yawsensitivity")));
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_PITCH * 8, va ("%.1f", VALUE ("gyro_pitchsensitivity")));
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_NOISE * 8, va ("%.1f", VALUE ("gyro_noise_thresh")));
-	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_CALIBRATE * 8, IN_HasGyro () ? "Start" : "N/A");
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_MODE * CHARACTER_SIZE, modes[CLAMP (0, (int)VALUE ("gyro_mode"), 3)]);
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_AXIS * CHARACTER_SIZE, VALUE ("gyro_turning_axis") ? "Roll" : "Yaw");
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_YAW * CHARACTER_SIZE, va ("%.1f", VALUE ("gyro_yawsensitivity")));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_PITCH * CHARACTER_SIZE, va ("%.1f", VALUE ("gyro_pitchsensitivity")));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_NOISE * CHARACTER_SIZE, va ("%.1f", VALUE ("gyro_noise_thresh")));
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_CALIBRATE * CHARACTER_SIZE, IN_HasGyro () ? "Start" : "N/A");
 #undef VALUE
 
-	Draw_Character (cbx, 48, top + controller_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+	Draw_Character (cbx, MENU_CURSOR_X, top + controller_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
 }
 
 enum
@@ -4719,7 +4849,7 @@ static int options_cursor;
 void M_Menu_Options_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_options;
 }
@@ -5025,7 +5155,7 @@ void M_Menu_Keys_f (void)
 	}
 
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_keys;
 
@@ -5168,7 +5298,7 @@ void M_Keys_Key (int k)
 		}
 
 		bind_grab = false;
-		IN_Deactivate (true); // deactivate because we're returning to the menu
+		IN_DeactivateForMenu (); // deactivate because we're returning to the menu
 		return;
 	}
 
@@ -5185,7 +5315,7 @@ void M_Keys_Key (int k)
 			slider_grab = scrollbar_grab = false;
 			scrollbar_x = scrollbar_y = scrollbar_size = 0;
 			M_MenuChanged ();
-			IN_Deactivate (true);
+			IN_DeactivateForMenu ();
 			key_dest = key_menu;
 			m_state = m_voice;
 		}
@@ -5225,7 +5355,7 @@ int help_page;
 static void M_Menu_Help_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_help;
 	m_entersound = true;
@@ -5584,7 +5714,7 @@ static void M_Mods_RefreshCatalogue (void)
 static void M_Menu_Mods_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_mods;
 	m_entersound = true;
@@ -6412,15 +6542,7 @@ static qboolean M_Maps_IsSelectable (int index)
 
 static qboolean M_Maps_Match (int index)
 {
-	const char *message;
-	if (mapsmenu.items[index].mapidx < 0)
-		return false;
-
-	if (q_strcasestr (mapsmenu.items[index].name, mapsmenu.search.text))
-		return true;
-
-	message = M_Maps_GetMessage (&mapsmenu.items[index]);
-	return message && q_strcasestr (message, mapsmenu.search.text);
+	return mapsmenu.items[index].mapidx >= 0 && ExtraMaps_Match (mapsmenu.items[index].source, mapsmenu.search.text);
 }
 
 static void M_Maps_ClearSearch (void)
@@ -6534,14 +6656,11 @@ static void M_Maps_Init (void)
 
 	M_Ticker_Init (&mapsmenu.ticker);
 
-	for (i = 0, active = -1, prev_type = (maptype_t)-1; extralevels_sorted && extralevels_sorted[i]; i++)
+	for (i = 0, active = -1, prev_type = (maptype_t)-1; (item = ExtraMaps_NextLevel (&i)) != NULL;)
 	{
 		mapitem_t map;
 
-		item = extralevels_sorted[i];
 		type = ExtraMaps_GetType (item);
-		if (type >= MAPTYPE_BMODEL)
-			continue;
 		if (prev_type != (maptype_t)-1 && prev_type != type)
 			M_Maps_AddSeparator (prev_type, type);
 		prev_type = type;
@@ -6569,7 +6688,7 @@ static void M_Maps_Init (void)
 static void M_Menu_Maps_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_maps;
 	m_entersound = true;
@@ -6694,8 +6813,8 @@ static void M_Maps_Draw (cb_context_t *cbx)
 	// to trigger scroll faster
 	M_Ticker_Update (&mapsmenu.ticker);
 
-	M_PrintWhite (cbx, x, 8, "Levels");
-	M_DrawQuakeBar (cbx, x - 8, 16, namecols + 1);
+	M_PrintWhite (cbx, x, CHARACTER_SIZE, "Levels");
+	M_DrawQuakeBar (cbx, x - CHARACTER_SIZE, 16, namecols + 1);
 	M_DrawQuakeBar (cbx, x + namecols * CHARACTER_SIZE, 16, cols + 1 - namecols);
 
 	y = MAPLIST_TOP;
@@ -7021,7 +7140,7 @@ static void M_SetSkillMenuMap (const char *name)
 static void M_Menu_Skill_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_skill_prevmenu = m_state;
 	m_state = m_skill;
@@ -7133,7 +7252,7 @@ void M_Menu_Quit_f (void)
 	if (!mod_loaded_from_menu)
 	{
 		was_in_menus = (key_dest == key_menu);
-		IN_Deactivate (true);
+		IN_DeactivateForMenu ();
 		key_dest = key_menu;
 		m_quit_prevstate = m_state;
 		m_state = m_quit;
@@ -7188,7 +7307,7 @@ static void M_Quit_Char (int key)
 	case 'Y':
 	case ' ':
 		m_is_quitting = true;
-		IN_Deactivate (true);
+		IN_DeactivateForMenu ();
 		key_dest = key_console;
 		Cbuf_InsertText ("quit");
 		break;
@@ -7250,7 +7369,7 @@ static char lan_config_joinname[36 + 1];
 static void M_Menu_LanConfig_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_lanconfig;
 	if (lan_config_cursor == -1)
@@ -7667,7 +7786,7 @@ static int mpgameoptions_cursor;
 static void M_Menu_MPGameOptions_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_mpgameoptions;
 	if (maxplayers == 0)
@@ -7984,7 +8103,7 @@ static enum slistScope_e search_last_scope = SLIST_LAN;
 static void M_Menu_Search_f (enum slistScope_e scope)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_search;
 	slist_silent = true;
@@ -8042,7 +8161,7 @@ static qboolean slist_sorted;
 static void M_Menu_ServerList_f (void)
 {
 	M_MenuChanged ();
-	IN_Deactivate (true);
+	IN_DeactivateForMenu ();
 	key_dest = key_menu;
 	m_state = m_slist;
 	slist_cursor = 0;
@@ -8191,6 +8310,8 @@ void M_Init (void)
 	Cmd_AddCommand ("help", M_Menu_Help_f);
 	Cmd_AddCommand ("menu_quit", M_Menu_Quit_f);
 	Cmd_AddCommand ("menu_credits", M_Menu_Credits_f); // needed by the 2021 re-release
+
+	Cvar_RegisterVariable (&ui_mouse);
 }
 
 void M_NewGame (void)
@@ -8225,6 +8346,14 @@ void M_UpdateMouse (void)
 		// M_PixelToMenuCanvasCoord expects; the two differ on high pixel density displays
 		int new_mouse_x;
 		int new_mouse_y;
+		if (!ui_mouse.value)
+		{
+			m_mouse_moved = false;
+			m_mouse_x = m_mouse_y = INT_MIN;
+			scrollbar_grab = slider_grab = false;
+			scrollbar_size = 0;
+			return;
+		}
 		IN_GetMousePos (&new_mouse_x, &new_mouse_y);
 
 		m_mouse_moved = !menu_changed && ((m_mouse_x_pixels != new_mouse_x) || (m_mouse_y_pixels != new_mouse_y));
@@ -8325,11 +8454,14 @@ void M_Draw (cb_context_t *cbx)
 	const qboolean recursive = m_recursiveDraw;
 	m_mouse_hover_state = m_none;
 	m_mouse_hover_cursor = NULL;
-	M_LivePreview_Update ();
+	M_UpdatePreview ();
 
 	if (m_state == m_none || key_dest != key_menu)
 		return;
 
+	if (menu_preview.kind == PREVIEW_CENTERPRINT && M_MenuPreviewFraction () > 0.0f)
+		SCR_DrawCenterPrintPreview (cbx, M_MenuPreviewFraction ());
+	Draw_SetOpacity (1.0f - M_MenuPreviewFraction ());
 	if (!m_recursiveDraw)
 	{
 		if (scr_con_current && !cbx->ui_panel_active)
@@ -8468,6 +8600,8 @@ void M_Draw (cb_context_t *cbx)
 		break;
 	}
 
+	Draw_SetOpacity (1.0f);
+
 	if (m_entersound)
 	{
 		S_LocalSound ("misc/menu2.wav");
@@ -8498,8 +8632,15 @@ qboolean M_VRPointerBindingGrab (void)
 	return bind_grab;
 }
 
+static qboolean M_IsMouseKey (int key)
+{
+	return (key >= K_MOUSE1 && key <= K_MOUSE5) || key == K_MWHEELUP || key == K_MWHEELDOWN;
+}
+
 void M_Keydown (int key, qboolean repeat)
 {
+	if (!ui_mouse.value && !V_TrackedSessionActive () && !bind_grab && M_IsMouseKey (key))
+		return;
 	if (key == K_ESCAPE && key_dest == key_menu && M_CancelPendingConnection ())
 		return;
 

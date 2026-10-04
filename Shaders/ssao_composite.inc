@@ -3,7 +3,7 @@
 #endif
 layout (push_constant) uniform constants
 {
-	vec4 viewport, projection, settings, composite_options;
+	vec4 viewport, projection, settings;
 }
 pc;
 #ifdef STEREO
@@ -11,10 +11,12 @@ pc;
 layout (set = 0, binding = 0) uniform usampler2DMSArray entity_mask;
 layout (set = 1, binding = 0) uniform sampler2DMSArray scene_depth;
 #define DEPTH(image, p, s) texelFetch (image, ivec3 (p, gl_ViewIndex), s).r
+#define SOURCE_SIZE textureSize (scene_depth).xy
 #else
 layout (set = 0, binding = 0) uniform usampler2DArray entity_mask;
 layout (set = 1, binding = 0) uniform sampler2DArray scene_depth;
 #define DEPTH(image, p, s) texelFetch (image, ivec3 (p, gl_ViewIndex), 0).r
+#define SOURCE_SIZE textureSize (scene_depth, 0).xy
 #endif
 layout (set = 2, binding = 0) uniform sampler2DArray filtered_ao;
 layout (set = 3, binding = 0) uniform sampler2DArray prepared_depth;
@@ -24,16 +26,56 @@ layout (set = 3, binding = 0) uniform sampler2DArray prepared_depth;
 layout (set = 0, binding = 0) uniform usampler2DMS entity_mask;
 layout (set = 1, binding = 0) uniform sampler2DMS scene_depth;
 #define DEPTH(image, p, s) texelFetch (image, p, s).r
+#define SOURCE_SIZE		   textureSize (scene_depth)
 #else
 layout (set = 0, binding = 0) uniform usampler2D entity_mask;
 layout (set = 1, binding = 0) uniform sampler2D scene_depth;
 #define DEPTH(image, p, s) texelFetch (image, p, 0).r
+#define SOURCE_SIZE		   textureSize (scene_depth, 0)
 #endif
 layout (set = 2, binding = 0) uniform sampler2D filtered_ao;
 layout (set = 3, binding = 0) uniform sampler2D prepared_depth;
 #define FETCH_PIXEL(image, p, s) texelFetch (image, p, s)
 #endif
 layout (location = 0) out vec4 out_color;
+
+// Low evaluates the world receiver at the top-left pixel of each 2x2 block.
+// Interpolate only between samples with compatible world depth.
+float UpsampleVisibility (ivec2 p, float depth)
+{
+	ivec2 size = textureSize (filtered_ao, 0).xy;
+	if (all (equal (size, SOURCE_SIZE)))
+		return FETCH_PIXEL (filtered_ao, p, 0).x;
+
+	vec2  position = vec2 (p) * 0.5;
+	ivec2 base = ivec2 (floor (position));
+	vec2  blend = fract (position);
+	float sum = 0.0;
+	float total_weight = 0.0;
+	float nearest_difference = 1e30;
+	float nearest_visibility = 1.0;
+	float depth_scale = 1.0 / max (depth * 0.01, 0.01);
+	for (int y = 0; y < 2; ++y)
+	{
+		for (int x = 0; x < 2; ++x)
+		{
+			ivec2 q = clamp (base + ivec2 (x, y), ivec2 (0), size - 1);
+			float sample_depth = FETCH_PIXEL (prepared_depth, q, 0).x;
+			float visibility = FETCH_PIXEL (filtered_ao, q, 0).x;
+			float difference = abs (sample_depth - depth);
+			vec2  weight_xy = mix (1.0 - blend, blend, bvec2 (x != 0, y != 0));
+			float weight = weight_xy.x * weight_xy.y * exp2 (-difference * depth_scale);
+			sum += visibility * weight;
+			total_weight += weight;
+			if (difference < nearest_difference)
+			{
+				nearest_difference = difference;
+				nearest_visibility = visibility;
+			}
+		}
+	}
+	return total_weight > 1e-5 ? sum / total_weight : nearest_visibility;
+}
 
 void main ()
 {
@@ -72,12 +114,8 @@ void main ()
 	}
 	if (pc.settings.w == 3.0)
 	{
-		ivec2 depth_pixel = p;
-#ifdef STEREO
-		if (pc.composite_options.x > 0.0)
-			depth_pixel = min (p / 2, textureSize (prepared_depth, 0).xy - 1);
-#endif
-		vec2 depths = FETCH_PIXEL (prepared_depth, depth_pixel, 0).xy;
+		ivec2 depth_pixel = all (equal (textureSize (prepared_depth, 0).xy, SOURCE_SIZE)) ? p : p / 2;
+		vec2  depths = FETCH_PIXEL (prepared_depth, depth_pixel, 0).xy;
 		out_color = vec4 (vec3 (depths.y < depths.x ? 128.0 / (128.0 + depths.y) : 0.0), 1.0);
 		return;
 	}
@@ -94,40 +132,7 @@ void main ()
 #endif
 #endif
 	float depth = world > 0.0 ? pc.projection.z / world : 1e9;
-	float visibility;
-#ifdef STEREO
-	if (pc.composite_options.x > 0.0)
-	{
-		// The world-depth pyramid and AO share half-resolution texel centers.
-		// Compare each candidate with this full-resolution receiver so a nearby
-		// depth edge does not smear AO across thin geometry.
-		vec2 low_position = (vec2 (p) + 0.5) * 0.5 - 0.5;
-		ivec2 corner = ivec2 (floor (low_position));
-		vec2 fraction = fract (low_position);
-		ivec2 last = textureSize (filtered_ao, 0).xy - 1;
-		float weighted = 0.0, total = 0.0;
-		for (int y = 0; y < 2; ++y)
-			for (int x = 0; x < 2; ++x)
-			{
-				ivec2 low_pixel = clamp (corner + ivec2 (x, y), ivec2 (0), last);
-				float low_depth = FETCH_PIXEL (prepared_depth, low_pixel, 0).x;
-				float low_visibility = FETCH_PIXEL (filtered_ao, low_pixel, 0).x;
-				float delta = abs (low_depth - depth);
-				float relative_delta = delta / max (1.0, depth * 0.01);
-				float bilateral = 1.0 / (1.0 + relative_delta * relative_delta * relative_delta * relative_delta);
-				float spatial = (x == 0 ? 1.0 - fraction.x : fraction.x) *
-					(y == 0 ? 1.0 - fraction.y : fraction.y);
-				float weight = spatial * bilateral;
-				weighted += weight * low_visibility;
-				total += weight;
-			}
-		// If all candidates lie on unrelated geometry, do not inherit their AO.
-		// Fade back to unoccluded instead of making a dark silhouette halo.
-		visibility = total > 0.0001 ? mix (1.0, weighted / total, min (1.0, 4.0 * total)) : 1.0;
-	}
-	else
-#endif
-		visibility = FETCH_PIXEL (filtered_ao, p, 0).x;
+	float visibility = UpsampleVisibility (p, depth);
 	float occlusion = 1.0 - visibility;
 	// Match world_common.inc: fog uses view-space depth (clip W), not radial distance.
 	float fog_distance = pc.settings.z * depth;

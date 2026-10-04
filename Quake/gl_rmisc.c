@@ -1755,9 +1755,9 @@ void R_CreateDescriptorPool ()
 {
 	ZEROED_STRUCT_ARRAY (VkDescriptorPoolSize, pool_sizes, 9);
 	pool_sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	pool_sizes[0].descriptorCount = MIN_NB_DESCRIPTORS_PER_TYPE + (MAX_SANITY_LIGHTMAPS * 2) + (MAX_GLTEXTURES + 1);
+	pool_sizes[0].descriptorCount = MIN_NB_DESCRIPTORS_PER_TYPE + (MAX_SANITY_LIGHTMAPS * 2) + (MAX_GLTEXTURES + 1) + SSAO_MAX_SAMPLED_DESCRIPTORS;
 	pool_sizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-	pool_sizes[1].descriptorCount = MIN_NB_DESCRIPTORS_PER_TYPE + MAX_GLTEXTURES + MAX_SANITY_LIGHTMAPS;
+	pool_sizes[1].descriptorCount = MIN_NB_DESCRIPTORS_PER_TYPE + MAX_GLTEXTURES + MAX_SANITY_LIGHTMAPS + SSAO_MAX_STORAGE_DESCRIPTORS;
 	pool_sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER;
 	pool_sizes[2].descriptorCount = MIN_NB_DESCRIPTORS_PER_TYPE;
 	pool_sizes[3].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -1775,7 +1775,7 @@ void R_CreateDescriptorPool ()
 
 	ZEROED_STRUCT (VkDescriptorPoolCreateInfo, descriptor_pool_create_info);
 	descriptor_pool_create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-	descriptor_pool_create_info.maxSets = MAX_GLTEXTURES + MAX_SANITY_LIGHTMAPS + 128;
+	descriptor_pool_create_info.maxSets = MAX_GLTEXTURES + MAX_SANITY_LIGHTMAPS + 128 + SSAO_MAX_DESCRIPTOR_SETS;
 	descriptor_pool_create_info.poolSizeCount = countof (pool_sizes);
 	descriptor_pool_create_info.pPoolSizes = pool_sizes;
 	descriptor_pool_create_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -2072,10 +2072,23 @@ void R_CreatePipelineLayouts ()
 		ssao_compute_layout.push_constant_range = range;
 		ssao_compute_layout.mboit_input_attachment_set = -1;
 		ssao_prepare_pipeline.layout = ssao_compute_layout;
-		ssao_evaluate_pipeline.layout = ssao_compute_layout;
+		ssao_evaluate_pipelines[0].layout = ssao_compute_layout;
 		ssao_filter_pipeline.layout = ssao_compute_layout;
-		VkDescriptorSetLayoutBinding bindings[6];
-		for (int i = 0; i < 6; ++i)
+		const VkDescriptorSetLayoutBinding lookup_bindings[] = {
+			{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL},
+			{1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}};
+		const VkDescriptorSetLayoutCreateInfo lookup_info = {
+			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = countof (lookup_bindings), .pBindings = lookup_bindings};
+		ssao_lookup_set_layout.num_combined_image_samplers = 2;
+		if (vkCreateDescriptorSetLayout (vulkan_globals.device, &lookup_info, NULL, &ssao_lookup_set_layout.handle) != VK_SUCCESS)
+			Sys_Error ("Couldn't create GTAO lookup descriptor layout");
+		layouts[1] = ssao_lookup_set_layout.handle;
+		if (vkCreatePipelineLayout (vulkan_globals.device, &info, NULL, &ssao_evaluate_pipelines[0].layout.handle) != VK_SUCCESS)
+			Sys_Error ("Couldn't create GTAO evaluator pipeline layout");
+		for (int i = 1; i < countof (ssao_evaluate_pipelines); ++i)
+			ssao_evaluate_pipelines[i].layout = ssao_evaluate_pipelines[0].layout;
+		VkDescriptorSetLayoutBinding bindings[7];
+		for (int i = 0; i < 7; ++i)
 			bindings[i] = (VkDescriptorSetLayoutBinding){
 				.binding = i,
 				.descriptorCount = 1,
@@ -2084,7 +2097,7 @@ void R_CreatePipelineLayouts ()
 		const VkDescriptorSetLayoutCreateInfo set_info = {
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = countof (bindings), .pBindings = bindings};
 		ssao_mip_set_layout.num_combined_image_samplers = 1;
-		ssao_mip_set_layout.num_storage_images = 5;
+		ssao_mip_set_layout.num_storage_images = 6;
 		if (vkCreateDescriptorSetLayout (vulkan_globals.device, &set_info, NULL, &ssao_mip_set_layout.handle) != VK_SUCCESS)
 			Sys_Error ("Couldn't create entity GTAO mip descriptor layout");
 		info.setLayoutCount = 1;
@@ -2145,7 +2158,7 @@ void R_CreatePipelineLayouts ()
 
 		ZEROED_STRUCT (VkPushConstantRange, push_constant_range);
 		push_constant_range.offset = 0;
-		push_constant_range.size = 3 * sizeof (uint32_t) + 8 * sizeof (float);
+		push_constant_range.size = 3 * sizeof (uint32_t) + 9 * sizeof (float);
 		push_constant_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
 		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, pipeline_layout_create_info);
@@ -4666,12 +4679,16 @@ static void R_CreatePostprocessPipelines ()
 		R_CreateComputePipeline (
 			&ssao_prepare_pipeline, vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? ssao_prepare_comp_module : ssao_prepare_msaa_comp_module, 0, NULL,
 			"ssao_prepare");
-		R_CreateComputePipeline (
-			&ssao_evaluate_pipeline,
-			vulkan_globals.stereo_active
-				? (vulkan_globals.shader_float16 ? ssao_evaluate_fp16_stereo_comp_module : ssao_evaluate_stereo_comp_module)
-				: (vulkan_globals.shader_float16 ? ssao_evaluate_fp16_comp_module : ssao_evaluate_comp_module),
-			0, NULL, "ssao_evaluate");
+		const VkSpecializationMapEntry quality_entry = {.constantID = 0, .offset = 0, .size = sizeof (uint32_t)};
+		for (uint32_t quality = 1; quality <= countof (ssao_evaluate_pipelines); ++quality)
+		{
+			const VkSpecializationInfo specialization = {.mapEntryCount = 1, .pMapEntries = &quality_entry, .dataSize = sizeof (quality), .pData = &quality};
+			R_CreateComputePipeline (
+				&ssao_evaluate_pipelines[quality - 1], vulkan_globals.stereo_active
+					? (vulkan_globals.shader_float16 ? ssao_evaluate_fp16_stereo_comp_module : ssao_evaluate_stereo_comp_module)
+					: (vulkan_globals.shader_float16 ? ssao_evaluate_fp16_comp_module : ssao_evaluate_comp_module), 0,
+				&specialization, "ssao_evaluate");
+		}
 		R_CreateComputePipeline (
 			&ssao_mip_pipeline,
 			vulkan_globals.screen_effects_sops
@@ -5160,9 +5177,13 @@ void R_DestroyPipelines (void)
 	vkDestroyPipeline (vulkan_globals.device, ssao_mip_pipeline.handle, NULL);
 	ssao_mip_pipeline.handle = VK_NULL_HANDLE;
 	vkDestroyPipeline (vulkan_globals.device, ssao_prepare_pipeline.handle, NULL);
-	vkDestroyPipeline (vulkan_globals.device, ssao_evaluate_pipeline.handle, NULL);
+	for (int i = 0; i < countof (ssao_evaluate_pipelines); ++i)
+	{
+		vkDestroyPipeline (vulkan_globals.device, ssao_evaluate_pipelines[i].handle, NULL);
+		ssao_evaluate_pipelines[i].handle = VK_NULL_HANDLE;
+	}
 	vkDestroyPipeline (vulkan_globals.device, ssao_filter_pipeline.handle, NULL);
-	ssao_prepare_pipeline.handle = ssao_evaluate_pipeline.handle = ssao_filter_pipeline.handle = VK_NULL_HANDLE;
+	ssao_prepare_pipeline.handle = ssao_filter_pipeline.handle = VK_NULL_HANDLE;
 	for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
 	{
 		vkDestroyPipeline (vulkan_globals.device, ssao_pipelines[variant].handle, NULL);

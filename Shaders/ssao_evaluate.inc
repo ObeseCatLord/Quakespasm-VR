@@ -20,9 +20,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// Specialize loop bounds while retaining the original sampling arithmetic.
+layout (constant_id = 0) const uint quality = 1;
+
 layout (local_size_x = 8, local_size_y = 8) in;
 layout (set = 0, binding = 0) uniform sampler2D world_depth;
 layout (set = 1, binding = 0) uniform usampler2D hilbert_lut;
+layout (set = 1, binding = 1) uniform usampler2D depth_mismatch;
 layout (r8, set = 2, binding = 0) uniform writeonly image2D out_working_ao_term;
 layout (r8, set = 3, binding = 0) uniform writeonly image2D out_working_edges;
 #include "gtao.inc"
@@ -83,6 +87,40 @@ half fast_acos (half in_x)
 	return (in_x >= half (0.0)) ? res : pi - res;
 }
 
+// Bound the receiver's samples in source tiles, including the coarsest depth
+// sampling grid. Tags require exactly matching encoded world and scene depths.
+bool matching_depth_footprint (uvec2 pixel, vec2 pixel_size, float radius)
+{
+	if (!(radius >= 0.0))
+		return false;
+	ivec2 size = textureSize (world_depth, 0);
+	ivec2 coarse_size = textureSize (world_depth, 4);
+	// Include the minimum sample offset, rounding, and FP16 coordinate error.
+	float extent = ceil (radius * 1.02 + 4.0);
+	vec2  uv_min = max ((vec2 (pixel) + 0.5 - extent) * pixel_size, vec2 (0.0));
+	vec2  uv_max = min ((vec2 (pixel) + 0.5 + extent) * pixel_size, vec2 (1.0));
+	ivec2 first = (min (ivec2 (uv_min * vec2 (coarse_size)), coarse_size - 1) * 16) >> 7;
+	ivec2 last = min (ivec2 (uv_max * vec2 (size)), size - 1) >> 7;
+	ivec2 first_word = first >> ivec2 (3, 2);
+	ivec2 last_word = last >> ivec2 (3, 2);
+	for (int y = first_word.y; y <= last_word.y; ++y)
+	{
+		uint y0 = uint (max (first.y - y * 4, 0));
+		uint y1 = uint (min (last.y - y * 4, 3));
+		uint rows = (0xffffffffu << (y0 * 8u)) & (0xffffffffu >> ((3u - y1) * 8u));
+		for (int x = first_word.x; x <= last_word.x; ++x)
+		{
+			uint flags = texelFetch (depth_mismatch, ivec2 (x, y), 0).r;
+			uint x0 = uint (max (first.x - x * 8, 0));
+			uint x1 = uint (min (last.x - x * 8, 7));
+			uint columns = ((0xffu << x0) & (0xffu >> (7u - x1))) * 0x01010101u;
+			if ((flags & rows & columns) != 0u)
+				return false;
+		}
+	}
+	return true;
+}
+
 void main ()
 {
 	uvec2		   pixel = tiled_global_invocation_id ();
@@ -97,7 +135,7 @@ void main ()
 	}
 	uint  index = texelFetch (hilbert_lut, ivec2 (pixel & 63u), 0).r;
 	half2 noise = half2 (fract (0.5 + float (index) * vec2 (0.75487766624669276, 0.56984029099805326)));
-	// Low: 1x2x2 = 4 samples; medium: 2x2x2 = 8; high: 3x3x2 = 18.
+	// Low: half resolution with Medium's 2x2x2 samples; High: 3x3x2.
 	half  slice_count = half (pc.settings.w);
 	half  steps_per_slice = slice_count < half (3.0) ? half (2.0) : half (3.0);
 
@@ -115,6 +153,14 @@ void main ()
 
 	half4 edges_lrtb = calculate_edges (viewspace_z, pix_lz, pix_rz, pix_tz, pix_bz);
 	imageStore (out_working_edges, ivec2 (pixel), vec4 (pack_edges (edges_lrtb)));
+
+	half mask_z = viewspace_z * half (0.99920);
+	half mask_radius = half (c.effect_radius) * half (1.457) / half (float (mask_z) * c.ndc_to_view_mul_x_pixel_size.x);
+	if (matching_depth_footprint (pixel, c.viewport_pixel_size, float (mask_radius)))
+	{
+		imageStore (out_working_ao_term, ivec2 (pixel), vec4 (2.0 / 3.0));
+		return;
+	}
 
 	vec3  center = compute_viewspace_position (normalized_screen_pos, viewspace_z);
 	vec3  left = compute_viewspace_position (normalized_screen_pos + vec2 (-1, 0) * c.viewport_pixel_size, pix_lz);
@@ -144,19 +190,21 @@ void main ()
 	half noise_slice = noise.x;
 	half noise_sample = noise.y;
 
-	half pixel_too_close_threshold = half (1.3);
+	// Keep the near-sample exclusion and small-radius fade in full-resolution pixels.
+	half resolution_scale = quality == 1u ? half (2.0) : half (1.0);
+	half pixel_too_close_threshold = half (1.3) / resolution_scale;
 
 	vec2 pixel_dir_rb_viewspace_size_at_center_z = vec2 (viewspace_z) * c.ndc_to_view_mul_x_pixel_size;
 
 	half screenspace_radius = effect_radius / half (pixel_dir_rb_viewspace_size_at_center_z.x);
 
-	half small_radius_fade = clamp ((half (10.0) - screenspace_radius) / half (100.0), half (0.0), half (1.0)) * half (0.5);
+	half small_radius_fade = clamp ((half (10.0) - screenspace_radius * resolution_scale) / half (100.0), half (0.0), half (1.0)) * half (0.5);
 	world_visibility += small_radius_fade;
 	scene_visibility += small_radius_fade;
 
 	half min_s = pixel_too_close_threshold / screenspace_radius;
 
-	for (half slice = half (0.0); slice < slice_count; slice++)
+	for (half slice = half (0.0); slice < half (max (quality, 2u)); slice++)
 	{
 		half slice_k = (slice + noise_slice) / slice_count;
 
@@ -193,7 +241,7 @@ void main ()
 		half scene_horizon_cos0 = low_horizon_cos0;
 		half scene_horizon_cos1 = low_horizon_cos1;
 
-		for (half step = half (0.0); step < steps_per_slice; step++)
+		for (half step = half (0.0); step < half (quality < 3u ? 2u : 3u); step++)
 		{
 			half step_base_noise = (slice + step * steps_per_slice) * half (0.6180339887498948482);
 			half step_noise = fract (noise_sample + step_base_noise);
@@ -298,7 +346,9 @@ void main ()
 	// Divide out world-only occlusion so only the entities' additional occlusion remains.
 	// The world/scene ratio is vkQuake-specific; retain its FP32 division before XeGTAO output processing.
 	half visibility = half (clamp (float (scene_visibility) / max (float (world_visibility), 1e-5), 0.0, 1.0));
-	visibility = pow (visibility, half (c.final_value_power));
+	// Fewer horizon samples underestimate occlusion; compensate without changing the radius or sample count.
+	half visibility_power = quality < 3u ? half (3.5) : half (c.final_value_power);
+	visibility = pow (visibility, visibility_power);
 	visibility = max (half (0.03), visibility);
 
 	visibility = clamp (visibility / half (1.5), half (0.0), half (1.0));

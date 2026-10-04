@@ -6352,6 +6352,18 @@ static qboolean SV_VRDirectMeleeContactSelected (client_t *client, edict_t *ent,
 	return true;
 }
 
+static void SV_PostThinkWaterOverride (edict_t *ent, client_t *client, qboolean wasunderwater)
+{
+	if (!client->active || client->edict != ent || ent->free)
+		return;
+	const qboolean forceunderwater = !wasunderwater && ent->v.waterlevel >= 3;
+	if (forceunderwater != ent->forcewater)
+	{
+		ent->forcewater = forceunderwater;
+		ent->sendforcewater = true;
+	}
+}
+
 static qboolean SV_PrivateWalkTrialStockFrozenState (client_t *client);
 
 static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
@@ -10182,7 +10194,11 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			SV_CoopRespawnFilterBorrowedInput (ent, NUM_FOR_EDICT (ent),
 				respawn_policy, &respawn_input_scope, &respawn_input_saved);
 			friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
+			{
+			const qboolean wasunderwater = ent->v.waterlevel >= 3;
 			PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+			SV_PostThinkWaterOverride (ent, client, wasunderwater);
+		}
 			if (friendly_fire_scope)
 				SV_CoopFriendlyFireEnd ();
 			SV_EndPrivateVRWeaponPoseGuarded (ent, &weapon_scope,
@@ -10707,7 +10723,11 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			SV_CoopRespawnFilterBorrowedInput (ent, NUM_FOR_EDICT (ent),
 				respawn_policy, &respawn_input_scope, &respawn_input_saved);
 		friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
-		PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+		{
+			const qboolean wasunderwater = ent->v.waterlevel >= 3;
+			PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+			SV_PostThinkWaterOverride (ent, client, wasunderwater);
+		}
 		if (friendly_fire_scope)
 			SV_CoopFriendlyFireEnd ();
 		SV_EndPrivateVRWeaponPoseGuarded (ent, &weapon_scope,
@@ -11372,8 +11392,6 @@ after_weapon_think:
 		break;
 	case MOVETYPE_NOCLIP:
 		VectorMA (ent->v.origin, host_frametime, ent->v.velocity, ent->v.origin);
-		if (!SV_TestEntityPosition (ent))
-			VectorCopy (ent->v.origin, ent->v.oldorigin);
 		break;
 	default:
 		Host_EndGame ("SV_Physics_client: bad movetype %i", (int)ent->v.movetype);
@@ -11408,7 +11426,11 @@ after_native_move:
 		SV_CoopRespawnFilterBorrowedInput (ent, num, respawn_policy,
 			&respawn_input_scope, &respawn_input_saved);
 	friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
-	PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+	{
+			const qboolean wasunderwater = ent->v.waterlevel >= 3;
+			PR_ExecuteProgram (pr_global_struct->PlayerPostThink);
+			SV_PostThinkWaterOverride (ent, client, wasunderwater);
+		}
 	if (friendly_fire_scope)
 		SV_CoopFriendlyFireEnd ();
 	SV_EndPrivateVRWeaponPoseGuarded (ent, &weapon_scope,

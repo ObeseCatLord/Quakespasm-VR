@@ -1206,8 +1206,10 @@ static void R_SetupViewBeforeMark (void)
 
 	if (r_waterwarp.value)
 	{
-		int contents = r_viewleaf->contents;
-		if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA)
+		int		 contents = r_viewleaf->contents;
+		qboolean forced = M_ForcedUnderwater ();
+		double	 warp_time = forced ? realtime : cl.time;
+		if (contents == CONTENTS_WATER || contents == CONTENTS_SLIME || contents == CONTENTS_LAVA || cl.forceunderwater || forced)
 		{
 			if (r_waterwarp.value == 1)
 				render_warp = true;
@@ -1215,8 +1217,8 @@ static void R_SetupViewBeforeMark (void)
 			{
 				// variance is a percentage of width, where width = 2 * tan(fov / 2) otherwise the effect is too dramatic at high FOV and too subtle at low FOV.
 				// what a mess!
-				r_fovx = atan (tan (DEG2RAD (r_refdef.fov_x) / 2) * (0.97 + sin (cl.time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
-				r_fovy = atan (tan (DEG2RAD (r_refdef.fov_y) / 2) * (1.03 - sin (cl.time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
+				r_fovx = atan (tan (DEG2RAD (r_refdef.fov_x) / 2) * (0.97 + sin (warp_time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
+				r_fovy = atan (tan (DEG2RAD (r_refdef.fov_y) / 2) * (1.03 - sin (warp_time * 1.5) * 0.03)) * 2 / M_PI_DIV_180;
 			}
 		}
 	}

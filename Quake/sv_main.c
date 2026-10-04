@@ -3054,6 +3054,8 @@ void SV_Init (void)
 	extern cvar_t sv_freezenonclients;
 	extern cvar_t sv_gameplayfix_spawnbeforethinks;
 	extern cvar_t sv_gameplayfix_bouncedownslopes;
+	extern cvar_t sv_gameplayfix_elevators;
+	extern cvar_t sv_gameplayfix_setmodelrealbox;
 	extern cvar_t sv_fastpushmove;
 	extern cvar_t sv_analyticphysics;
 	extern cvar_t sv_friction;
@@ -3102,6 +3104,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_gameplayfix_spawnbeforethinks);
 	Cvar_RegisterVariable (&sv_gameplayfix_bouncedownslopes);
 	Cvar_RegisterVariable (&sv_gameplayfix_elevators);
+	Cvar_RegisterVariable (&sv_gameplayfix_setmodelrealbox);
 	Cvar_RegisterVariable (&sv_fastpushmove);
 	Cvar_RegisterVariable (&sv_analyticphysics);
 	Cvar_RegisterVariable (&pr_checkextension);
@@ -3373,6 +3376,11 @@ CLIENT SPAWNING
 ==============================================================================
 */
 
+static qboolean SV_IsLocalClient (client_t *client)
+{
+	return strcmp (NET_QSocketGetTrueAddressString (client->netconnection), "LOCAL") == 0;
+}
+
 /*
 ================
 SV_SendServerinfo
@@ -3536,9 +3544,12 @@ void SV_SendServerinfo (client_t *client)
 	{ // try and flush the reliable NOW, in case the qc is evil
 		if (NET_CanSendMessage (host_client->netconnection))
 		{
-			if (NET_SendMessage (host_client->netconnection, &host_client->message) != -1)
+			if (NET_SendMessage (host_client->netconnection, &host_client->message) > 0)
 			{
 				SZ_Clear (&host_client->message);
+				if (host_client->signon_chunk_pending)
+					host_client->message.maxsize = host_client->signon_message_capacity;
+				host_client->signon_chunk_pending = false;
 				host_client->last_message = realtime;
 			}
 		}
@@ -4946,6 +4957,20 @@ qboolean SV_SendClientDatagram (client_t *client)
 
 /*
 =======================
+SV_WriteUnderwaterOverride
+=======================
+*/
+static void SV_WriteUnderwaterOverride (client_t *client)
+{
+	if (!client->edict->sendforcewater)
+		return;
+	client->edict->sendforcewater = false;
+	MSG_WriteByte (&client->message, svc_stufftext);
+	MSG_WriteString (&client->message, va ("//v_water %i\n", client->edict->forcewater));
+}
+
+/*
+=======================
 SV_UpdateToReliableMessages
 =======================
 */
@@ -4976,6 +5001,7 @@ void SV_UpdateToReliableMessages (void)
 	{
 		if (!client->active)
 			continue;
+		SV_WriteUnderwaterOverride (client);
 		SZ_Write (&client->message, sv.reliable_datagram.data, sv.reliable_datagram.cursize);
 	}
 
@@ -5634,6 +5660,50 @@ static int SV_MetadataDrain (client_t *client, qboolean include_userinfo,
 	return 1;
 }
 
+/* One remote native chunk per reliable-message lifetime. Metadata shares the
+ * receiver budget; an exact-fit chunk and the final marker are admitted separately. */
+static int SV_StageSignonMessage (client_t *client, char *reason, size_t reason_size)
+{
+	const qboolean local = SV_IsLocalClient (client);
+	const int capacity = client->message.maxsize;
+	const int limit = local ? capacity : q_min (capacity, 32000);
+	int result;
+	client->message.maxsize = limit;
+	result = SV_MetadataDrain (client, false, reason, reason_size);
+	client->message.maxsize = capacity;
+	if (result <= 0)
+		return result;
+	if (limit < 2 || client->message.cursize < 0 || client->message.cursize > limit)
+		goto impossible;
+	while (client->signonidx < sv.num_signon_buffers)
+	{
+		const sizebuf_t *chunk = sv.signon_buffers[client->signonidx];
+		if (!chunk || chunk->cursize < 0 || chunk->cursize > limit)
+			goto impossible;
+		if ((!local && client->signon_chunk_pending) || chunk->cursize > limit - client->message.cursize)
+			return 0;
+		SZ_Write (&client->message, chunk->data, chunk->cursize);
+		++client->signonidx;
+		if (!local)
+		{
+			client->signon_message_capacity = capacity;
+			client->signon_chunk_pending = true;
+			// Every later writer, including blocked-frame reliable updates, shares this envelope.
+			client->message.maxsize = limit;
+			break;
+		}
+	}
+	if (client->signonidx < sv.num_signon_buffers || limit - client->message.cursize < 2)
+		return 0;
+	MSG_WriteByte (&client->message, svc_signonnum);
+	MSG_WriteByte (&client->message, 2);
+	client->sendsignon = PRESPAWN_FLUSH;
+	return 1;
+impossible:
+	q_strlcpy (reason, "native signon exceeds the recipient reliable envelope", reason_size);
+	return -1;
+}
+
 void SV_SendClientMessages (void)
 {
 	int i;
@@ -5750,30 +5820,13 @@ void SV_SendClientMessages (void)
 			}
 			if (host_client->sendsignon == PRESPAWN_SIGNONMSG)
 			{
-				char reason[128] = "metadata envelope cannot be published";
-				int drained = SV_MetadataDrain (host_client, false, reason, sizeof (reason));
-				if (drained >= 0 && (sv.signon.cursize < 0 ||
-					host_client->message.maxsize < 2 ||
-					sv.signon.cursize > host_client->message.maxsize - 2))
+				char reason[128] = "signon envelope cannot be published";
+				if (SV_StageSignonMessage (host_client, reason, sizeof (reason)) < 0)
 				{
-					q_strlcpy (reason, "native signon exceeds the recipient reliable limit", sizeof (reason));
-					drained = -1;
-				}
-				if (drained < 0)
-				{
-					Con_Warning ("Disconnecting %s: metadata publication failed: %s\n",
-						host_client->name, reason);
+					Con_Warning ("Disconnecting %s: signon publication failed: %s\n", host_client->name, reason);
 					SZ_Clear (&host_client->message);
 					SV_DropClient (false);
 					continue;
-				}
-				if (drained > 0 && sv.signon.cursize + 2 <=
-					host_client->message.maxsize - host_client->message.cursize)
-				{
-					SZ_Write (&host_client->message, sv.signon.data, sv.signon.cursize);
-					MSG_WriteByte (&host_client->message, svc_signonnum);
-					MSG_WriteByte (&host_client->message, 2);
-					host_client->sendsignon = PRESPAWN_FLUSH;
 				}
 			}
 			if (host_client->sendsignon == PRESPAWN_SPAWN_METADATA)
@@ -5802,12 +5855,25 @@ void SV_SendClientMessages (void)
 		// changes level
 		if (host_client->message.overflowed)
 		{
+			if (host_client->signon_chunk_pending)
+				Con_Warning ("Disconnecting %s: native signon exceeds the recipient reliable envelope\n", host_client->name);
 			SZ_Clear (&host_client->message);
 			SV_DropClient (false);
 			continue;
 		}
 		SV_AppendAvatarOffers (host_client);
 		SV_FlushAvatarSlots (host_client);
+
+		// Check at the transport boundary even after PRESPAWN_FLUSH and blocked frames.
+		if (host_client->signon_chunk_pending &&
+			(host_client->message.overflowed || host_client->message.cursize < 0 ||
+			 host_client->message.cursize > q_min (host_client->message.maxsize, 32000)))
+		{
+			Con_Warning ("Disconnecting %s: native signon exceeds the recipient reliable envelope\n", host_client->name);
+			SZ_Clear (&host_client->message);
+			SV_DropClient (false);
+			continue;
+		}
 
 		if (host_client->message.cursize || host_client->dropasap)
 		{
@@ -5821,10 +5887,18 @@ void SV_SendClientMessages (void)
 				SV_DropClient (false); // went to another level
 			else
 			{
-				const qboolean sent = NET_SendMessage (host_client->netconnection, &host_client->message) != -1;
+				const int sent = NET_SendMessage (host_client->netconnection, &host_client->message);
+				if (sent < 0)
+				{
+					SV_DropClient (false);
+					continue;
+				}
 				if (!sent)
-					SV_DropClient (false); // if the message couldn't send, kick off
+					continue; // Keep the chunk flag and bytes until transport accepts them.
 				SZ_Clear (&host_client->message);
+				if (host_client->signon_chunk_pending)
+					host_client->message.maxsize = host_client->signon_message_capacity;
+				host_client->signon_chunk_pending = false;
 				host_client->last_message = realtime;
 				if (host_client->sendsignon == PRESPAWN_FLUSH)
 					host_client->sendsignon = PRESPAWN_DONE;
@@ -5843,6 +5917,40 @@ SERVER SPAWNING
 
 ==============================================================================
 */
+
+#define SIGNON_SIZE 31500 // QS has a MAX_DATAGRAM of 32000, try to play nice
+
+/*
+================
+SV_AddSignonBuffer
+================
+*/
+static void SV_AddSignonBuffer (void)
+{
+	sizebuf_t *sb;
+
+	if (sv.num_signon_buffers >= MAX_SIGNON_BUFFERS)
+		Host_Error ("SV_AddSignonBuffer overflow");
+
+	sb = (sizebuf_t *)Mem_Alloc (sizeof (sizebuf_t) + SIGNON_SIZE);
+	sb->data = (byte *)(sb + 1);
+	sb->maxsize = SIGNON_SIZE;
+	sv.signon_buffers[sv.num_signon_buffers++] = sb;
+	sv.signon = sb;
+}
+
+/*
+================
+SV_ReserveSignonSpace
+================
+*/
+void SV_ReserveSignonSpace (int numbytes)
+{
+	if (numbytes < 0 || numbytes > SIGNON_SIZE)
+		Host_Error ("Signon unit exceeds native chunk limit (%i bytes)", numbytes);
+	if (!sv.signon || sv.signon->cursize + numbytes > sv.signon->maxsize)
+		SV_AddSignonBuffer ();
+}
 
 /*
 ================
@@ -6148,7 +6256,7 @@ void SV_SpawnServer (const char *server)
 {
 	static char dummy[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 	edict_t	   *ent;
-	int			i;
+	int			i, signonsize;
 	qcvm_t	   *vm = qcvm;
 
 	// let's not have any servers with no name
@@ -6253,9 +6361,7 @@ void SV_SpawnServer (const char *server)
 	sv.reliable_datagram.cursize = 0;
 	sv.reliable_datagram.data = sv.reliable_datagram_buf;
 
-	sv.signon.maxsize = sizeof (sv.signon_buf);
-	sv.signon.cursize = 0;
-	sv.signon.data = sv.signon_buf;
+	SV_AddSignonBuffer ();
 
 	// leave slots at start for clients only:
 	qcvm->num_edicts = qcvm->reserved_edicts = svs.maxclients + 1;
@@ -6347,8 +6453,12 @@ void SV_SpawnServer (const char *server)
 	SV_CreateBaseline ();
 
 	// johnfitz -- warn if signon buffer larger than standard server can handle
-	if (sv.signon.cursize > 8000 - 2) // max size that will fit into 8000-sized client->message buffer with 2 extra bytes on the end
-		Con_DWarning ("%i byte signon buffer exceeds standard limit of 7998 (max = %d).\n", sv.signon.cursize, sv.signon.maxsize);
+	for (i = 0, signonsize = 0; i < sv.num_signon_buffers; i++)
+		signonsize += sv.signon_buffers[i]->cursize;
+	if (signonsize > 64000 - 2)
+		Con_DWarning ("%i byte signon buffer exceeds QS limit of 63998.\n", signonsize);
+	else if (signonsize > 8000 - 2) // max size that will fit into 8000-sized client->message buffer with 2 extra bytes on the end
+		Con_DWarning ("%i byte signon buffer exceeds standard limit of 7998.\n", signonsize);
 	// johnfitz
 
 	// send serverinfo to all connected clients

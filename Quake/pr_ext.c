@@ -68,7 +68,7 @@ static const char *PR_GetCvarString (const cvar_t *var)
 // one funky way is to allocate a single large buffer and just concatenate it for more tempstring space. don't forget to resize (dp).
 // alternatively, just allocate them persistently and purge them only when there appear to be no more references to it (fte). makes strzone redundant.
 
-extern cvar_t sv_gameplayfix_setmodelrealbox, r_fteparticles;
+extern cvar_t r_fteparticles;
 cvar_t pr_checkextension = {"pr_checkextension", "1", CVAR_NONE}; // spike - enables qc extensions. if 0 then they're ALL BLOCKED! MWAHAHAHA! *cough* *splutter*
 static int pr_ext_warned_particleeffectnum;						  // so these only spam once per map
 
@@ -1892,7 +1892,7 @@ static void PF_TraceToss (void)
 }
 
 // model stuff
-void		SetMinMaxSize (edict_t *e, float *minvec, float *maxvec, qboolean rotate);
+void		SetModelSize (edict_t *e, qmodel_t *mod);
 static void PF_sv_setmodelindex (void)
 {
 	edict_t		*e = G_EDICT (OFS_PARM0);
@@ -1901,17 +1901,7 @@ static void PF_sv_setmodelindex (void)
 	e->v.model = (newidx < MAX_MODELS) ? PR_SetEngineString (sv.model_precache[newidx]) : 0;
 	e->v.modelindex = newidx;
 
-	if (mod)
-	// johnfitz -- correct physics cullboxes for bmodels
-	{
-		if (mod->type == mod_brush || !sv_gameplayfix_setmodelrealbox.value)
-			SetMinMaxSize (e, mod->clipmins, mod->clipmaxs, true);
-		else
-			SetMinMaxSize (e, mod->mins, mod->maxs, true);
-	}
-	// johnfitz
-	else
-		SetMinMaxSize (e, vec3_origin, vec3_origin, true);
+	SetModelSize (e, mod);
 }
 static void PF_cl_setmodelindex (void)
 {
@@ -1921,17 +1911,7 @@ static void PF_cl_setmodelindex (void)
 	e->v.model = mod ? PR_SetEngineString (mod->name) : 0; // FIXME: is this going to cause issues with vid_restart?
 	e->v.modelindex = newidx;
 
-	if (mod)
-	// johnfitz -- correct physics cullboxes for bmodels
-	{
-		if (mod->type == mod_brush || !sv_gameplayfix_setmodelrealbox.value)
-			SetMinMaxSize (e, mod->clipmins, mod->clipmaxs, true);
-		else
-			SetMinMaxSize (e, mod->mins, mod->maxs, true);
-	}
-	// johnfitz
-	else
-		SetMinMaxSize (e, vec3_origin, vec3_origin, true);
+	SetModelSize (e, mod);
 }
 
 static void PF_modelnameforidx (void)
@@ -4621,14 +4601,16 @@ static void SV_Multicast (multicast_t to, float *org, int msg_entity, unsigned i
 
 	if (to == MULTICAST_INIT && sv.state != ss_loading)
 	{
-		SZ_Write (&sv.signon, sv.multicast.data, sv.multicast.cursize);
+		SV_ReserveSignonSpace (sv.multicast.cursize);
+		SZ_Write (sv.signon, sv.multicast.data, sv.multicast.cursize);
 		to = MULTICAST_ALL_R; // and send to players that are already on
 	}
 
 	switch (to)
 	{
 	case MULTICAST_INIT:
-		SZ_Write (&sv.signon, sv.multicast.data, sv.multicast.cursize);
+		SV_ReserveSignonSpace (sv.multicast.cursize);
+		SZ_Write (sv.signon, sv.multicast.data, sv.multicast.cursize);
 		break;
 	case MULTICAST_ALL_R:
 	case MULTICAST_ALL_U:
