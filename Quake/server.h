@@ -725,6 +725,10 @@ qboolean SV_EnyoAkimboAim (edict_t *ent, vec3_t muzzle);
 unsigned int SV_VRStockAxeContactProfile (void);
 unsigned int SV_VRQBJ3MeleeContactProfile (void);
 unsigned int SV_VREnyoMeleeContactProfile (void);
+/* Dormant exact Bonk recognition; these do not negotiate or admit contacts. */
+qboolean SV_BonkHammerProgramLoaded (void);
+qboolean SV_BonkHammerWeaponSelected (edict_t *ent);
+qboolean SV_BonkHammerAttackReady (edict_t *ent);
 int SV_VRStockAxeTraceStatement (void);
 void SV_VRStockAxeClearTraceScope (void);
 void SV_VRAxeTraceLeaveFunction (void);
