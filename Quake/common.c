@@ -3310,6 +3310,37 @@ qboolean COM_GameDirMatches (const char *tdirs)
 	return false;
 }
 
+/* Inherited OpenVR COM_FindNumberedPack policy, using the native enumerator.
+ * Windows-authored packs may be PAK0.PAK or Pak0.pak. Keep exact lowercase
+ * priority and choose other matches deterministically on case-sensitive hosts. */
+static qboolean COM_FindNumberedPack (const char *directory, int number,
+	char *path, size_t pathsize)
+{
+	char expected[32], best[MAX_QPATH] = "";
+	int written;
+	findfile_t *find;
+
+	q_snprintf (expected, sizeof (expected), "pak%i.pak", number);
+	written = q_snprintf (path, pathsize, "%s/%s", directory, expected);
+	if (written < 0 || (size_t)written >= pathsize)
+		return false;
+	if (Sys_FileType (path) == FS_ENT_FILE)
+		return true;
+
+	for (find = Sys_FindFirst (directory, "pak"); find; find = Sys_FindNext (find))
+	{
+		if ((find->attribs & FA_DIRECTORY) || q_strcasecmp (find->name, expected))
+			continue;
+		if (!best[0] || strcmp (find->name, best) < 0)
+			q_strlcpy (best, find->name, sizeof (best));
+	}
+	if (!best[0])
+		return false;
+	written = q_snprintf (path, pathsize, "%s/%s", directory, best);
+	return written >= 0 && (size_t)written < pathsize &&
+		Sys_FileType (path) == FS_ENT_FILE;
+}
+
 /*
 =================
 COM_AddGameDirectory -- johnfitz -- modified based on topaz's tutorial
@@ -3337,7 +3368,8 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 	// add any pak files in the format pak0.pak pak1.pak, ...
 	for (i = 0;; i++)
 	{
-		q_snprintf (pakfile, sizeof (pakfile), "%s/pak%i.pak", com_gamedir, i);
+		if (!COM_FindNumberedPack (com_gamedir, i, pakfile, sizeof (pakfile)))
+			break;
 		packfilesize = Sys_FileOpenRead (pakfile, &packhandle);
 		if (packfilesize < 0)
 			break;
@@ -3775,8 +3807,10 @@ qboolean COM_GameDirHasPak0 (const char *dir)
 
 	for (i = 0; i < com_numbasedirs; i++)
 	{
-		int written = q_snprintf (path, sizeof(path), "%s/%s/pak0.pak", com_basedirs[i], dir);
-		if (written >= 0 && (size_t)written < sizeof(path) && Sys_FileType (path) == FS_ENT_FILE)
+		char directory[MAX_OSPATH];
+		int written = q_snprintf (directory, sizeof (directory), "%s/%s", com_basedirs[i], dir);
+		if (written >= 0 && (size_t)written < sizeof (directory) &&
+			COM_FindNumberedPack (directory, 0, path, sizeof (path)))
 			return true;
 	}
 
