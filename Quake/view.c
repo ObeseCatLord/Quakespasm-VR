@@ -681,6 +681,11 @@ qboolean V_AkimboRecipeSupported (const char *source_model)
 		Mod_GetAkimboPairRecipe (source_model);
 	if (!recipe)
 		return false;
+	/* Reuse the paired-nailgun offer and existing two-pose producer. A Peril
+	 * server must pin/adapt its native QC before advertising this capability. */
+	if (!strcmp (recipe->game, "peril3.0") &&
+		!strcmp (recipe->source, "progs/v_nail.mdl"))
+		return cl.vr_qbj3_akimbo_supported;
 	if (!strcmp (recipe->game, "qbj3") &&
 		!strcmp (recipe->source, "progs/v_tnailgun.mdl"))
 		return cl.vr_qbj3_akimbo_supported;
@@ -986,7 +991,9 @@ qboolean V_AkimboRecipeUsesPairedCollision (const char *source_model)
 {
 	const mod_akimbo_pair_recipe_t *recipe = Mod_GetAkimboPairRecipe (source_model);
 	return recipe &&
-		((!strcmp (recipe->game, "qbj3") &&
+		((!strcmp (recipe->game, "peril3.0") &&
+			!strcmp (recipe->source, "progs/v_nail.mdl")) ||
+		(!strcmp (recipe->game, "qbj3") &&
 			!strcmp (recipe->source, "progs/v_tnailgun.mdl")) ||
 		V_AkimboRecipeIsQBJ3Fist (recipe) ||
 		(!strcmp (recipe->game, "enyo") &&

@@ -820,6 +820,13 @@ typedef struct
 } mod_akimbo_pair_t;
 
 static const mod_akimbo_pair_t mod_akimbo_pairs[] = {
+	/* Client capability stays closed until a pinned native Peril QC adapter
+	 * is offered. These are actual disjoint guns, including their flashes. */
+	{{"peril3.0", "progs/v_nail.mdl",
+		{"vr/peril3.0/progs/v_nail_vr_left.mdl", "vr/peril3.0/progs/v_nail_vr_right.mdl"},
+		9, 292, {146, 146},
+		{{39.18381116f, 7.23141697f, -6.20151462f},
+		 {39.00579011f, -8.25890088f, -5.84848383f}}}, PERIL_MDL_WEAPON_SMG},
 	{{"qbj3", "progs/v_tnailgun.mdl",
 		{"vr/qbj3/progs/v_tnailgun_vr_left.mdl", "vr/qbj3/progs/v_tnailgun_vr_right.mdl"},
 		19, 1968, {988, 980},

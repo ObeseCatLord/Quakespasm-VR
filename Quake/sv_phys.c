@@ -3901,6 +3901,7 @@ typedef struct sv_vr_weapon_pose_scope_s
 	/* Set only by a fully admitted Dwell pair path. */
 	qboolean dwell_berserk_pose_valid;
 	qboolean enyo_clearance_pending;
+	qboolean peril_muzzle_valid;
 	qboolean stock_id1_muzzle_valid;
 	qboolean stock_lightning_trace_applied;
 	qboolean stock_lightning_damage_started;
@@ -3911,6 +3912,7 @@ typedef struct sv_vr_weapon_pose_scope_s
 	vec3_t stock_lightning_end;
 	vec3_t stock_lightning_damage_end;
 	vec3_t akimbo_muzzle[2], akimbo_angles[2];
+	vec3_t peril_muzzle;
 	vec3_t enyo_clearance_start, enyo_clearance_end;
 	vec3_t enyo_clearance_adjusted_start;
 	float enyo_clearance_t0;
@@ -3958,6 +3960,7 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent)
 			scope->akimbo_invalidated = true;
 			scope->akimbo_pose_valid = false;
 			scope->enyo_clearance_pending = false;
+			scope->peril_muzzle_valid = false;
 			scope->stock_id1_muzzle_valid = false;
 			scope->stock_lightning_trace_applied = false;
 			scope->stock_lightning_damage_started = false;
@@ -4018,6 +4021,41 @@ qboolean SV_QBJ3TwinNailgunProgramLoaded (void)
 	return qcvm == &sv.qcvm && qcvm->progssize == 905470 &&
 		!memcmp (qcvm->progssha256, expected_sha256, sizeof (expected_sha256)) &&
 		!strcmp (COM_SkipPath (com_gamedir), "qbj3");
+}
+
+#define PERIL_SPIKES_FIRST_STATEMENT 69561
+#define PERIL_SPIKES_PARM_START 20408
+#define PERIL_SPIKES_MAKEVECTORS_STATEMENT 69577
+#define PERIL_SPIKES_AIM_STATEMENT 69582
+
+static qboolean SV_PerilSpikesFunction (const dfunction_t *function)
+{
+	return function && !strcmp (PR_GetString (function->s_name), "W_FireSpikes") &&
+		function->first_statement == PERIL_SPIKES_FIRST_STATEMENT &&
+		function->parm_start == PERIL_SPIKES_PARM_START &&
+		function->locals == 8 && function->numparms == 2 &&
+		function->parm_size[0] == 1 && function->parm_size[1] == 1;
+}
+
+qboolean SV_PerilAkimboProgramLoaded (void)
+{
+	static const byte expected_sha256[32] = {
+		0x5e, 0x69, 0xfe, 0xce, 0x92, 0xfb, 0x43, 0x23,
+		0x60, 0x9c, 0x8e, 0x12, 0x09, 0xa3, 0x9e, 0xec,
+		0xf4, 0xf7, 0x0c, 0x31, 0x61, 0xae, 0x17, 0xbe,
+		0xb5, 0x30, 0x63, 0xfe, 0x3e, 0x06, 0xc3, 0x40
+	};
+	return qcvm == &sv.qcvm && qcvm->progssize == 2347206 &&
+		!q_strcasecmp (COM_SkipPath (com_gamedir), "peril3.0") &&
+		!memcmp (qcvm->progssha256, expected_sha256, sizeof (expected_sha256)) &&
+		SV_PerilSpikesFunction (ED_FindFunction ("W_FireSpikes"));
+}
+
+static qboolean SV_PerilAkimboWeaponSelected (edict_t *ent)
+{
+	return ent && !ent->free && SV_PerilAkimboProgramLoaded () &&
+		ent->v.weapon == 4 &&
+		!strcmp (PR_GetString (ent->v.weaponmodel), "progs/v_nail.mdl");
 }
 
 #define ENYO_PROGS_SIZE 823998
@@ -4563,6 +4601,7 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 
 	if (!scope->akimbo_invalidated &&
 		(SV_QBJ3TwinNailgunProgramLoaded () || SV_EnyoAkimboProgramLoaded () ||
+		 SV_PerilAkimboWeaponSelected (ent) ||
 		 (SV_VRDwellBerserkMeleeEnabled () &&
 		  SV_DwellBerserkAkimboWeaponSelected (ent))) &&
 		SV_AkimboCommandValid (client, cmd, scope->body_origin))
@@ -4584,6 +4623,10 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	/* Dwell's pinned makevectors site selects the striking hand later. QC
 	 * before that site must continue to see the player's body pose. */
 	if (scope->dwell_berserk_pose_valid)
+		return;
+	/* Peril's native nail_upd sets the firing frame later. Keep its setup
+	 * callback at the body pose until the pinned makevectors site selects ox. */
+	if (scope->akimbo_pose_valid && SV_PerilAkimboWeaponSelected (ent))
 		return;
 	if (scope->akimbo_pose_valid && cmd->vr_akimbo_berserk)
 	{
@@ -4788,6 +4831,80 @@ qboolean SV_VRWeaponShotBasis (const vec3_t angles)
 	/* PF_makevectors has already computed the ordinary forward. */
 	VectorCopy (right, pr_global_struct->v_right);
 	VectorCopy (up, pr_global_struct->v_up);
+	return true;
+}
+
+static qboolean SV_PerilAkimboHand (edict_t *ent, int *hand, float *ox)
+{
+	int frame;
+	if (!SV_PerilAkimboWeaponSelected (ent) ||
+		!SV_PerilSpikesFunction (qcvm->xfunction) ||
+		!isfinite (ent->v.weaponframe) || ent->v.weaponframe < 1 ||
+		ent->v.weaponframe > 8)
+		return false;
+	frame = (int)ent->v.weaponframe;
+	if (ent->v.weaponframe != (float)frame)
+		return false;
+	/* Builtin arguments overwrite OFS_PARM1. ox remains in the local frame. */
+	*ox = qcvm->globals[PERIL_SPIKES_PARM_START + 1];
+	*hand = frame & 1; /* native +2 is anatomical right, -2 left */
+	return *ox == (*hand ? 2.0f : -2.0f);
+}
+
+qboolean SV_PerilAkimboMakevectors (void)
+{
+	edict_t *ent = SV_EnyoAkimboSelf ();
+	sv_vr_weapon_pose_scope_t *scope;
+	vec3_t muzzle, temporary_origin, forward, right, up, source;
+	int hand;
+	float ox;
+	if (!ent || !SV_PerilAkimboHand (ent, &hand, &ox) ||
+		qcvm->xstatement != PERIL_SPIKES_MAKEVECTORS_STATEMENT)
+		return false;
+	scope = SV_FindPrivateVRWeaponPose (ent);
+	if (!scope || !scope->applied || !scope->akimbo_pose_valid ||
+		scope->akimbo_invalidated ||
+		!SV_EnyoVectorIsFinite (scope->body_origin) ||
+		!SV_EnyoVectorIsFinite (ent->v.view_ofs))
+		return false;
+	scope->peril_muzzle_valid = false;
+	VectorCopy (scope->akimbo_muzzle[hand], muzzle);
+	VectorCopy (ent->v.origin, temporary_origin);
+	VectorCopy (scope->body_origin, ent->v.origin);
+	SV_ClampVRMuzzleToWorld (ent, muzzle);
+	VectorCopy (temporary_origin, ent->v.origin);
+	if (!SV_EnyoVectorIsFinite (muzzle))
+		return false;
+	AngleVectors (scope->akimbo_angles[hand], forward, right, up);
+	/* Native QC adds a world Z offset, not view_ofs or weapon up. Preserve
+	 * wrist roll in its lateral source basis while QC v_angle keeps zero roll. */
+	VectorScale (right, ox, source);
+	source[2] += 16.0f;
+	VectorSubtract (muzzle, source, ent->v.origin);
+	VectorCopy (scope->akimbo_angles[hand], ent->v.v_angle);
+	ent->v.v_angle[ROLL] = 0;
+	VectorCopy (forward, pr_global_struct->v_forward);
+	VectorCopy (right, pr_global_struct->v_right);
+	VectorCopy (up, pr_global_struct->v_up);
+	VectorCopy (muzzle, scope->peril_muzzle);
+	scope->peril_muzzle_valid = true;
+	return true;
+}
+
+qboolean SV_PerilAkimboAim (edict_t *ent, vec3_t muzzle)
+{
+	sv_vr_weapon_pose_scope_t *scope;
+	int hand;
+	float ox;
+	if (!ent || ent != SV_EnyoAkimboSelf () ||
+		!SV_PerilAkimboHand (ent, &hand, &ox) ||
+		qcvm->xstatement != PERIL_SPIKES_AIM_STATEMENT)
+		return false;
+	scope = SV_FindPrivateVRWeaponPose (ent);
+	if (!scope || !scope->applied || !scope->akimbo_pose_valid ||
+		scope->akimbo_invalidated || !scope->peril_muzzle_valid)
+		return false;
+	VectorCopy (scope->peril_muzzle, muzzle);
 	return true;
 }
 
