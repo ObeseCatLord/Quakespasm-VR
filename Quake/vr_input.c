@@ -56,6 +56,7 @@ typedef struct
 {
 	qboolean owned[MAX_KEYS];
 	qboolean wait_neutral;
+	qboolean wheel_touch_wait_release;
 	qboolean trigger_down;
 	qboolean identity_valid;
 	int menu_trigger_key;
@@ -430,6 +431,17 @@ static int VR_InputRoleForPhysicalHand (int physical_hand)
 {
 	const qboolean lefthanded = VR_InputFiniteCvar (&vr_lefthanded, 0.0f) != 0.0f;
 	return lefthanded ? 1 - physical_hand : physical_hand;
+}
+
+/* Index pad coordinates belong to wheel selection when its right-thumb
+ * source is bound to the wheel. Filter only private motion/key samples; the
+ * completed XR frame remains intact for the wheel and other consumers. */
+static void VR_InputFilterWheelPadAxes (vrxr_input_t *input, int physical_hand)
+{
+	if (input->profile == VRXR_PROFILE_INDEX &&
+		VR_InputRoleForPhysicalHand (physical_hand) == VR_INPUT_ROLE_RIGHT &&
+		keybindings[K_RTHUMB] && !strcmp (keybindings[K_RTHUMB], "+vr_weaponmenu"))
+		input->pad[0] = input->pad[1] = 0.0f;
 }
 
 static int VR_InputPhysicalHandForRole (int role)
@@ -3677,6 +3689,7 @@ static qboolean VR_InputReleaseAll (unsigned int dispatch_epoch)
 static void VR_InputGateHand (int hand)
 {
 	vr_input_hands[hand].wait_neutral = true;
+	vr_input_hands[hand].wheel_touch_wait_release = true;
 	vr_input_hands[hand].trigger_down = false;
 	vr_input_hands[hand].menu_trigger_key = 0;
 	if (VR_InputRoleForPhysicalHand (hand) == VR_INPUT_ROLE_LEFT)
@@ -3806,6 +3819,12 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 	if (pressed & selected_click)
 		VR_InputAddKey (desired, hand,
 			logical_left ? K_LTHUMB : (state->profile == VRXR_PROFILE_INDEX ? K_VR_ALTFIRE : K_RTHUMB));
+	/* The same right-thumb wheel binding uses Index pad touch. Preserve its
+	 * stick-click alternate fire and pad-click mapping as independent sources. */
+	if (!logical_left && state->profile == VRXR_PROFILE_INDEX &&
+		!state->wheel_touch_wait_release && (input->touched & VRXR_BUTTON_PAD) &&
+		(context->destination == key_game || context->binding_capture))
+		VR_InputAddKey (desired, hand, K_RTHUMB);
 	if (state->profile == VRXR_PROFILE_INDEX && (pressed & VRXR_BUTTON_PAD))
 		VR_InputAddKey (desired, hand, K_YBUTTON);
 	if (pressed & VRXR_BUTTON_GRIP)
@@ -3913,13 +3932,12 @@ static const vr_default_binding_t vr_default_bindings[] = {
 	{K_RTRIGGER, "+attack"},
 	{K_BBUTTON, "impulse 10"},
 	{K_LTHUMB, "+speed"},
-	{K_RTHUMB, "+jump"},
+	{K_RTHUMB, "+vr_weaponmenu"},
 	{K_VR_ALTFIRE, "+button3"},
 	{K_LSHOULDER, "+showscores"},
 	{K_RSHOULDER, "+showscores"},
 	{K_ABUTTON, "+showscores"},
 	{K_XBUTTON, "impulse 12"},
-	{K_VR_RIGHT_STICK_UP, "+vr_weaponmenu"},
 };
 
 static qboolean VR_CurrentGameDefinesLightHook (void)
@@ -3960,7 +3978,7 @@ typedef enum
 } vr_default_bindings_phase_t;
 
 static vr_default_bindings_phase_t vr_default_bindings_phase;
-/* Temporary exclusions over the existing eleven defaults, only while explicit
+/* Temporary exclusions over the existing defaults, only while explicit
  * restoration is pending. Startup filling retains its original policy. */
 static unsigned int vr_default_bindings_excluded;
 
@@ -4098,7 +4116,11 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	if (!VR_InputMotionContextAccepted (frame) || frame->reference_changed)
 		vr_input_roomscale_position_valid = false;
 	if (frame)
+	{
 		memcpy (input_hands, frame->hands, sizeof (input_hands));
+		for (int hand = 0; hand < 2; ++hand)
+			VR_InputFilterWheelPadAxes (&input_hands[hand], hand);
+	}
 	context = VR_InputCurrentContext ();
 	if (VR_WeaponCalibrationAdjustActive ())
 	{
@@ -4176,6 +4198,9 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 			continue;
 		}
 
+		if (!(input->touched & VRXR_BUTTON_PAD))
+			state->wheel_touch_wait_release = false;
+
 		if (state->wait_neutral)
 		{
 			if (VR_InputNeutral (input))
@@ -4190,7 +4215,8 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 			if (state->role == VR_INPUT_ROLE_RIGHT && state->profile == VRXR_PROFILE_VIVE &&
 				context.destination == key_game && !context.binding_capture &&
 				!context.input_grab && !impulse_blocked_at_entry &&
-				desired[hand][K_RTHUMB] && !state->owned[K_RTHUMB])
+				desired[hand][K_RTHUMB] && !state->owned[K_RTHUMB] &&
+				(!keybindings[K_RTHUMB] || strcmp (keybindings[K_RTHUMB], "+vr_weaponmenu")))
 			{
 				const float weapon_axis = VR_InputFilteredAxis (input, 0, 0.0f);
 				if (weapon_axis > 0.3f)
@@ -4975,6 +5001,8 @@ void VR_InputMove (usercmd_t *pending)
 
 	memcpy (&offhand_input, &frame->hands[offhand], sizeof (offhand_input));
 	memcpy (&dominant_input, &frame->hands[dominant], sizeof (dominant_input));
+	VR_InputFilterWheelPadAxes (&offhand_input, offhand);
+	VR_InputFilterWheelPadAxes (&dominant_input, dominant);
 	/* Continuous locomotion has its own stick-neutral gate. Holding grip
 	 * after an XR interruption must not trap a centered movement stick in
 	 * the independent button/trigger rearm gate. */
@@ -5275,6 +5303,7 @@ void VR_InputClear (void)
 		vr_input_hands[hand].trigger_down = false;
 		vr_input_hands[hand].menu_trigger_key = 0;
 		vr_input_hands[hand].wait_neutral = true;
+		vr_input_hands[hand].wheel_touch_wait_release = true;
 	}
 	vr_input_menu_panel_dispatch_epoch = vr_input_dispatch_epoch;
 	vr_input_context_valid = false;

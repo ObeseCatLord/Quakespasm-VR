@@ -408,7 +408,12 @@ int Cmd_Argc (void) { return 0; }
 const char *Cmd_Argv (int arg) { (void)arg; return ""; }
 qboolean Cmd_AliasExists (const char *name) { (void)name; return false; }
 double Cvar_VariableValue (const char *name) { (void)name; return 0; }
-void Cbuf_AddText (const char *text) { (void)text; }
+static int fixture_cycle_impulses;
+void Cbuf_AddText (const char *text)
+{
+	if (!strcmp (text, "impulse 10\n") || !strcmp (text, "impulse 12\n"))
+		++fixture_cycle_impulses;
+}
 void Key_SetBinding (int key, const char *binding) { (void)key; (void)binding; }
 byte *COM_LoadFile (const char *path, unsigned int *path_id) { (void)path; (void)path_id; return NULL; }
 const char *COM_GetWriteRoot (void) { return NULL; }
@@ -658,6 +663,78 @@ static void test_role_profile_and_duplicate_mapping (void)
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	expect_event (0, K_YBUTTON, 0);
+}
+
+static void test_index_wheel_touch (void)
+{
+	vrxr_frame_t frame = neutral_frame ();
+	char *saved_binding = keybindings[K_RTHUMB];
+	keybindings[K_RTHUMB] = "+vr_weaponmenu";
+	key_dest = key_game;
+	set_cvar ("vr_lefthanded", 0.0f);
+	frame.hands[0].profile = frame.hands[1].profile = VRXR_PROFILE_INDEX;
+	native_clear_then_neutral (&frame);
+	frame.hands[0].touched = VRXR_BUTTON_PAD;
+	VR_InputCommands (&frame);
+	assert (event_count == 0); /* Only the dominant touch opens the wheel. */
+	frame.hands[1].touched = VRXR_BUTTON_PAD;
+	VR_InputCommands (&frame);
+	assert (event_count == 1);
+	expect_event (0, K_RTHUMB, 1);
+	reset_events ();
+	frame.hands[1].touched = 0;
+	VR_InputCommands (&frame);
+	expect_event (0, K_RTHUMB, 0);
+
+	/* Focus recovery while a finger rests on the pad cannot reopen the wheel.
+	 * Discrete buttons independently rearm without waiting for that finger. */
+	frame.hands[1].touched = VRXR_BUTTON_PAD;
+	frame.hands[1].pad[0] = .8f;
+	frame.focused = 0;
+	VR_InputCommands (&frame);
+	reset_events ();
+	frame.focused = 1;
+	VR_InputCommands (&frame);
+	VR_InputCommands (&frame);
+	assert (event_count == 0);
+	frame.hands[1].pressed = VRXR_BUTTON_PRIMARY;
+	VR_InputCommands (&frame);
+	assert (event_count == 1);
+	expect_event (0, K_XBUTTON, 1);
+	frame.hands[1].pressed = 0;
+	VR_InputCommands (&frame);
+	reset_events ();
+	frame.hands[1].touched = 0;
+	VR_InputCommands (&frame);
+	frame.hands[1].touched = VRXR_BUTTON_PAD;
+	VR_InputCommands (&frame);
+	expect_event (0, K_RTHUMB, 1);
+
+	key_dest = key_menu;
+	waiting_for_binding = false;
+	frame.hands[0].touched = frame.hands[1].touched = 0;
+	native_clear_then_neutral (&frame);
+	frame.hands[1].touched = VRXR_BUTTON_PAD;
+	VR_InputCommands (&frame);
+	assert (event_count == 0); /* Ordinary menus ignore resting pad touches. */
+	waiting_for_binding = true;
+	frame.hands[1].touched = 0;
+	native_clear_then_neutral (&frame);
+	frame.hands[1].touched = VRXR_BUTTON_PAD;
+	VR_InputCommands (&frame);
+	expect_event (0, K_RTHUMB, 1);
+	waiting_for_binding = false;
+
+	key_dest = key_game;
+	set_cvar ("vr_lefthanded", 1.0f);
+	frame.hands[0].touched = frame.hands[1].touched = 0;
+	native_clear_then_neutral (&frame);
+	frame.hands[0].touched = VRXR_BUTTON_PAD;
+	VR_InputCommands (&frame);
+	expect_event (0, K_RTHUMB, 1);
+	set_cvar ("vr_lefthanded", 0.0f);
+	keybindings[K_RTHUMB] = saved_binding;
+	puts ("VR wheel: Index touch, release, focus rearm, binding capture and handedness passed");
 }
 
 static void test_button_profiles_and_menu_axes (void)
@@ -1167,6 +1244,74 @@ static void near_motion (float actual, float expected)
 	assert (fabsf (actual - expected) < .002f);
 }
 
+static void test_wheel_motion_and_vive_cycle (void)
+{
+	vrxr_frame_t frame = neutral_frame ();
+	char *saved_binding = keybindings[K_RTHUMB];
+	keybindings[K_RTHUMB] = "+vr_weaponmenu";
+	key_dest = key_game;
+	input_grab_active = waiting_for_binding = angle_locked = false;
+	cls.state = ca_connected;
+	cls.signon = SIGNONS;
+	cl.intermission = cl.paused = cls.demoplayback = false;
+	vr_aimmode.value = 7;
+	cl_forwardspeed.value = cl_upspeed.value = 200;
+	cl_movespeedkey.value = 2;
+	cl_desktop_vanilla_run.value = cl_alwaysrun.value = 0;
+	host_frametime = .01;
+	set_cvar ("vr_lefthanded", 0);
+	set_cvar ("vr_snap_turn", 45);
+	set_cvar ("vr_movement_mode", 0);
+	for (int i = 0; i < 3; ++i)
+		frame.devices[i].valid = true;
+	frame.hands[0].profile = frame.hands[1].profile = VRXR_PROFILE_INDEX;
+	VR_InputClear ();
+	motion_sample (&frame);
+	motion_sample (&frame);
+	frame.hands[1].touched = VRXR_BUTTON_PAD;
+	frame.hands[1].pad[0] = .8f;
+	fixture_turn_yaw = 0;
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, 0);
+	assert (frame.hands[1].pad[0] == .8f); /* Raw wheel input remains intact. */
+	frame.focused = false;
+	motion_sample (&frame);
+	frame.focused = true;
+	motion_sample (&frame);
+	motion_sample (&frame);
+	frame.hands[0].stick[1] = 1;
+	frame.hands[1].stick[0] = 1;
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, -45);
+	assert (cl.pendingcmd.vr_pending_move_valid);
+	near_motion (cl.pendingcmd.vr_pending_move[0], 200);
+	assert (frame.hands[1].pad[0] == .8f);
+
+	frame = neutral_frame ();
+	frame.hands[1].profile = VRXR_PROFILE_VIVE;
+	native_clear_then_neutral (&frame);
+	fixture_cycle_impulses = 0;
+	frame.hands[1].pressed = VRXR_BUTTON_PAD;
+	frame.hands[1].pad[0] = .8f;
+	VR_InputCommands (&frame);
+	int thumb_event = -1;
+	for (int i = 0; i < event_count; ++i)
+		if (events[i].key == K_RTHUMB)
+			thumb_event = i;
+	assert (thumb_event >= 0);
+	expect_event (thumb_event, K_RTHUMB, 1);
+	assert (fixture_cycle_impulses == 0);
+	keybindings[K_RTHUMB] = "+jump";
+	frame.hands[1].pressed = 0;
+	VR_InputCommands (&frame);
+	frame.hands[1].pressed = VRXR_BUTTON_PAD;
+	VR_InputCommands (&frame);
+	assert (fixture_cycle_impulses == 1); /* Custom click retains legacy cycling. */
+	keybindings[K_RTHUMB] = saved_binding;
+	fixture_frame = NULL;
+	puts ("VR wheel: off-center touch preserves stick motion and Vive wheel excludes cycling");
+}
+
 static void test_motion_ownership_and_tracking_loss (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
@@ -1595,6 +1740,7 @@ int main (void)
 	test_init_and_no_vr ();
 	test_lifecycle_and_hysteresis ();
 	test_role_profile_and_duplicate_mapping ();
+	test_index_wheel_touch ();
 	test_button_profiles_and_menu_axes ();
 	test_context_reentry_clear_and_nan ();
 	test_axis_threshold_edges_and_console_escape ();
@@ -1607,6 +1753,7 @@ int main (void)
 	test_modal_grab_only_emits_decision_keys ();
 	test_modal_cancel_wins_over_confirm ();
 	test_input_hands_are_snapshotted_before_release_callbacks ();
+	test_wheel_motion_and_vive_cycle ();
 	test_motion_ownership_and_tracking_loss ();
 	test_roomscale_command_accumulator ();
 	test_private_pose_preparation ();

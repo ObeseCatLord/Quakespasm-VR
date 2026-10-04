@@ -50,6 +50,7 @@ static void M_Menu_MPGameOptions_f (void);
 static void M_Menu_Search_f (enum slistScope_e scope);
 static void M_Menu_ServerList_f (void);
 static void M_Menu_Keys_f (void);
+static void M_Keys_SelectCommand (const char *command);
 static void M_Menu_Help_f (void);
 static void M_Menu_Mods_f (void);
 static void M_Menu_Maps_f (void);
@@ -2714,6 +2715,7 @@ static void M_VoiceOptions_Adjust (int dir, qboolean mouse)
 		{
 			M_Menu_Keys_f ();
 			m_keys_parent = m_voice;
+			M_Keys_SelectCommand ("+voicerecord");
 		}
 		return;
 	}
@@ -2827,7 +2829,7 @@ static void M_VoiceOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_RECEIVE, "Receive voice");
 	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_TRANSMIT, "Transmit microphone");
-	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_MODE, "Transmit mode");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_MODE, "Push-to-talk");
 	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_DEVICE, "Input device");
 	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_INPUT_GAIN, "Microphone gain");
 	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_VAD, "VAD sensitivity");
@@ -2837,15 +2839,14 @@ static void M_VoiceOptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_HUD, "Voice HUD");
 	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_SELF_REVERB, "Local mic reverb");
 	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_SELF_LEVEL, "Local reverb level");
-	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_CONTROLS, "Push-to-talk key");
+	M_Print (cbx, VOICE_OPTIONS_LABEL_X, top + CHARACTER_SIZE * VOICE_OPT_CONTROLS, "Bind push-to-talk");
 
 	if (state.available)
 	{
 		M_DrawCheckbox (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_RECEIVE,
 			Cvar_VariableValue ("voice_receive"));
 		M_DrawCheckbox (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_TRANSMIT, state.transmit);
-		M_Print (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_MODE,
-			state.mode ? "push-to-talk" : "voice activity");
+		M_DrawCheckbox (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_MODE, state.mode);
 		device = state.device[0] ? state.device : "system default";
 		M_PrintElided (cbx, VOICE_OPTIONS_VALUE_X, top + CHARACTER_SIZE * VOICE_OPT_DEVICE, device, 17);
 
@@ -4520,13 +4521,13 @@ static const menukeybind_t default_keybinds[] = {
 	{"+altmodifier", "Alt modifier"},
 	{"+moveup", "Swim up"},
 	{"+movedown", "Swim down"},
+#ifdef USE_VOICECHAT
+	{"+voicerecord", "Push-to-talk voice"},
+#endif
 	{"", ""},
 	{"*", ""}, // insertion point for bindlist.lst entries
 	{"", ""},
 	{"+attack", "Attack"},
-#ifdef USE_VOICECHAT
-	{"+voicerecord", "Push-to-talk voice"},
-#endif
 	{"+vr_weaponmenu", "Weapon Wheel"},
 	{"impulse 10", "Next weapon"},
 	{"impulse 12", "Previous weapon"},
@@ -4749,6 +4750,22 @@ void M_UnbindCommand (const char *command)
 extern qpic_t *pic_up, *pic_down;
 
 #define BINDS_PER_PAGE 19
+
+static void M_Keys_SelectCommand (const char *command)
+{
+	const int count = (int)VEC_SIZE (bindnames);
+
+	for (int i = 0; i < count; i++)
+	{
+		if (strcmp (bindnames[i].command, command))
+			continue;
+
+		keys_cursor = i;
+		first_key = CLAMP (0, keys_cursor - BINDS_PER_PAGE + 1,
+			q_max (0, count - BINDS_PER_PAGE));
+		return;
+	}
+}
 
 static void M_Keys_Draw (cb_context_t *cbx)
 {

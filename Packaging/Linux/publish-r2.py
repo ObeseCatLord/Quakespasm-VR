@@ -141,13 +141,13 @@ def publish(args):
         if name == 'manifest.tsv':
             continue
         url = args.public.rstrip('/') + '/' + name + '?sha256=' + digest
-        with urllib.request.urlopen(url, timeout=120) as response:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'QuakeSpasmVR-Updater/2.0'}), timeout=120) as response:
             actual = hashlib.file_digest(response, 'sha256').hexdigest()
         require(actual == digest, 'Public object mismatch: ' + name)
     for name in ['release.json', 'manifest.tsv']:
         subprocess.run(['rclone', 'copyto', str(out / name), args.remote.rstrip('/') + '/' + name,
                         '--s3-no-check-bucket'], check=True)
-        with urllib.request.urlopen(args.public.rstrip('/') + '/' + name + '?revision=' + revision, timeout=30) as response:
+        with urllib.request.urlopen(urllib.request.Request(args.public.rstrip('/') + '/' + name + '?revision=' + revision, headers={'User-Agent': 'QuakeSpasmVR-Updater/2.0'}), timeout=30) as response:
             require(hashlib.file_digest(response, 'sha256').hexdigest() == sha(out / name), 'Public metadata mismatch')
     print(json.dumps({'status': 'published', 'revision': revision, 'channel': args.public}))
 
