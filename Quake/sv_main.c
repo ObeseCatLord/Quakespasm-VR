@@ -5263,7 +5263,8 @@ static void SV_AppendAkimboProtocol (client_t *client)
 
 	/* Bits follow the four client command arguments. QBJ3's native paired
 	 * animation remains available even if immersive contact is disabled. */
-	offer_mask = SV_QBJ3TwinNailgunProgramLoaded () ?
+	offer_mask = (SV_QBJ3TwinNailgunProgramLoaded () ||
+		SV_PerilAkimboProgramLoaded ()) ?
 		AKIMBO_OFFER_TWIN : 0;
 	if (SV_VRQBJ3MeleeContactProfile () == VR_WEAPON_CONTACT_PROFILE_QBJ3)
 		offer_mask |= AKIMBO_OFFER_QBJ3_BERSERK;

@@ -247,6 +247,8 @@ makevectors(vector)
 */
 static void PF_makevectors (void)
 {
+	if (SV_PerilAkimboMakevectors ())
+		return;
 	if (SV_DwellBerserkAkimboMakevectors ())
 		return;
 	if (SV_EnyoAkimboMakevectors ())
@@ -1796,6 +1798,8 @@ static void PF_aim (void)
 	(void)speed; /* variable set but not used */
 
 	akimbo = SV_QBJ3AkimboAim (ent, physical_muzzle);
+	if (!akimbo)
+		akimbo = SV_PerilAkimboAim (ent, physical_muzzle);
 	if (!akimbo)
 		akimbo = SV_EnyoAkimboAim (ent, physical_muzzle);
 	if (akimbo)
