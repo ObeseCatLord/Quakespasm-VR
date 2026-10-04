@@ -1562,6 +1562,7 @@ static void Host_Changelevel_f (void)
 		Con_Printf ("Only the server may changelevel\n");
 		return;
 	}
+	Host_SavegameDrain ();
 
 	if (autoload.value && sv.lastsave[0] && !q_strcasecmp (sv.name, Cmd_Argv (1)) && current_skill == (int)(skill.value + 0.5) && svs.maxclients == 1 &&
 		!cl.intermission && svs.clients[0].active && (svs.clients[0].edict->v.health <= 0))
@@ -1605,6 +1606,7 @@ static void Host_Restart_f (void)
 
 	if (cmd_source != src_command)
 		return;
+	Host_SavegameDrain ();
 
 	if (autoload.value && sv.lastsave[0] && q_strcasecmp (Cmd_Argv (1), "noload") && q_strcasecmp (Cmd_Argv (1), "force"))
 	{
@@ -1649,7 +1651,7 @@ User command to connect to server
 */
 static void Host_Connect_f (void)
 {
-	char name[MAX_QPATH];
+	char name[MAX_OSPATH];
 	unsigned int legacy_qsvr = 0;
 	int host_arg = 1;
 
@@ -1672,7 +1674,8 @@ static void Host_Connect_f (void)
 	q_strlcpy (name, Cmd_Argv (host_arg), sizeof (name));
 	SCR_BeginLoadingPlaque ();
 	CL_EstablishConnection (name, legacy_qsvr);
-	Host_Reconnect_f ();
+	if (cls.state == ca_connected)
+		Host_Reconnect_f ();
 }
 
 /*
@@ -1727,16 +1730,138 @@ static void Host_SavegameComment (char text[SAVEGAME_COMMENT_LENGTH + 1])
 	}
 }
 
-static void Host_SavegameWriteClientName (FILE *f, const char *name)
+#define HOST_SAVEGAME_SLOT_COUNT 2
+
+typedef enum
 {
-	int i;
+	HOST_SAVEGAME_SLOT_IDLE,
+	HOST_SAVEGAME_SLOT_RESERVED,
+	HOST_SAVEGAME_SLOT_RUNNING,
+	HOST_SAVEGAME_SLOT_SUCCEEDED,
+	HOST_SAVEGAME_SLOT_FAILED
+} host_savegame_slot_state_t;
+
+typedef struct
+{
+	byte   *data;
+	size_t  length;
+	size_t  capacity;
+} host_savegame_buffer_t;
+
+typedef struct
+{
+	SDL_Thread	 *thread;
+	atomic_uint32_t state;
+	byte		 *data;
+	size_t		  length;
+	host_savegame_buffer_t capture;
+	edict_t *capture_edict;
+	char		  name[MAX_OSPATH];
+	char		  tempname[MAX_OSPATH];
+	char		  savename[sizeof (sv.lastsave)];
+	uint64_t	  request_sequence;
+	qboolean	  quiet;
+	qboolean	  lastsave_eligible;
+	qboolean	  autosave_mapstart;
+	int		  autosave_slots;
+	int		  autosave_next_slot;
+	int		  autosave_secrets;
+	int		  autosave_kill_bucket;
+	int		  autosave_serverflags;
+	double		  autosave_realtime;
+	double		  autosave_retry_delay;
+} host_savegame_slot_t;
+
+static host_savegame_slot_t host_savegame_slots[HOST_SAVEGAME_SLOT_COUNT];
+static uint64_t host_savegame_next_sequence;
+static uint64_t host_savegame_lastsave_sequence;
+static qboolean host_savegame_autosave_pending;
+
+static qboolean Host_SavegameSinkAppend (void *context, const char *data,
+	size_t length)
+{
+	host_savegame_buffer_t *buffer = (host_savegame_buffer_t *)context;
+	size_t needed, capacity;
+	byte *grown;
+
+	if (!buffer || (!data && length) || length > SIZE_MAX - buffer->length)
+		return false;
+	if (!length)
+		return true;
+	needed = buffer->length + length;
+	if (needed > buffer->capacity)
+	{
+		capacity = buffer->capacity ? buffer->capacity : 4096;
+		while (capacity < needed)
+		{
+			if (capacity > SIZE_MAX / 2)
+			{
+				capacity = needed;
+				break;
+			}
+			capacity *= 2;
+		}
+		grown = (byte *)Mem_Realloc (buffer->data, capacity);
+		if (!grown)
+			return false;
+		buffer->data = grown;
+		buffer->capacity = capacity;
+	}
+	memcpy (buffer->data + buffer->length, data, length);
+	buffer->length = needed;
+	return true;
+}
+
+static qboolean Host_SavegameSinkPrintf (savegame_sink_t *sink, const char *format, ...)
+{
+	char stack[512];
+	char *buffer = stack;
+	size_t capacity = sizeof (stack);
+	int written;
+	qboolean result;
+	va_list args;
+
+	for (;;)
+	{
+		va_start (args, format);
+		written = vsnprintf (buffer, capacity, format, args);
+		va_end (args);
+		if (written >= 0 && (size_t)written < capacity)
+			break;
+		if (capacity > SIZE_MAX / 2)
+		{
+			if (buffer != stack)
+				Mem_Free (buffer);
+			return false;
+		}
+		if (written >= 0)
+			capacity = (size_t)written + 1;
+		else
+			capacity *= 2;
+		if (buffer != stack)
+			Mem_Free (buffer);
+		buffer = (char *)Mem_AllocNonZero (capacity);
+		if (!buffer)
+			return false;
+	}
+	result = sink && sink->write && sink->write (sink->context, buffer, (size_t)written);
+	if (buffer != stack)
+		Mem_Free (buffer);
+	return result;
+}
+
+static qboolean Host_SavegameWriteClientName (savegame_sink_t *sink, const char *name)
+{
+	char encoded[(MAX_SCOREBOARDNAME - 1) * 2 + 2];
+	int i, offset = 0;
 
 	if (!name)
 		name = "";
-
 	for (i = 0; i < MAX_SCOREBOARDNAME - 1 && name[i]; i++)
-		fprintf (f, "%02x", (unsigned char)name[i]);
-	fprintf (f, "\n");
+		offset += q_snprintf (encoded + offset, sizeof (encoded) - (size_t)offset,
+			"%02x", (unsigned char)name[i]);
+	encoded[offset++] = '\n';
+	return sink && sink->write && sink->write (sink->context, encoded, (size_t)offset);
 }
 
 static qboolean Host_SavegameReplaceFile (const char *tempname, const char *name)
@@ -1753,6 +1878,165 @@ static qboolean Host_SavegameReplaceFile (const char *tempname, const char *name
 #else
 	return Sys_rename (tempname, name) == 0;
 #endif
+}
+
+static void Host_SavegameReleaseSlot (host_savegame_slot_t *slot)
+{
+	if (slot->data)
+		Mem_Free (slot->data);
+	if (slot->capture.data)
+		Mem_Free (slot->capture.data);
+	if (slot->capture_edict)
+		Mem_Free (slot->capture_edict);
+	memset (slot, 0, sizeof (*slot));
+	Atomic_StoreUInt32 (&slot->state, HOST_SAVEGAME_SLOT_IDLE);
+}
+
+static int Host_SavegameWriteThread (void *userdata)
+{
+	host_savegame_slot_t *slot = (host_savegame_slot_t *)userdata;
+	FILE *file;
+	qboolean succeeded;
+	qboolean closed = false;
+
+	file = Sys_fopen (slot->tempname, "w");
+	succeeded = file && fwrite (slot->data, 1, slot->length, file) == slot->length &&
+		!ferror (file) && fflush (file) == 0;
+	if (file)
+	{
+		closed = true;
+		if (fclose (file) != 0)
+			succeeded = false;
+	}
+	if (succeeded)
+		succeeded = Host_SavegameReplaceFile (slot->tempname, slot->name);
+	if (!succeeded)
+	{
+		if (file && !closed)
+			fclose (file);
+		Sys_remove (slot->tempname);
+	}
+
+	/* This release is the worker's final access to its slot. */
+	Atomic_StoreUInt32 (&slot->state, succeeded ? HOST_SAVEGAME_SLOT_SUCCEEDED :
+		HOST_SAVEGAME_SLOT_FAILED);
+	return 0;
+}
+
+static void Host_SavegameCompleteSlot (host_savegame_slot_t *slot)
+{
+	host_savegame_slot_state_t state = (host_savegame_slot_state_t)
+		Atomic_LoadUInt32 (&slot->state);
+
+	if (state != HOST_SAVEGAME_SLOT_SUCCEEDED && state != HOST_SAVEGAME_SLOT_FAILED)
+		return;
+	if (slot->thread)
+	{
+		SDL_WaitThread (slot->thread, NULL);
+		slot->thread = NULL;
+	}
+	if (state == HOST_SAVEGAME_SLOT_SUCCEEDED)
+	{
+		SaveList_Rebuild ();
+		if (slot->quiet)
+		{
+			sv.coop_autosave_next_slot = (slot->autosave_next_slot + 1) % slot->autosave_slots;
+			sv.coop_autosave_last_realtime = slot->autosave_realtime;
+			sv.coop_autosave_last_secrets = slot->autosave_secrets;
+			sv.coop_autosave_last_kill_bucket = slot->autosave_kill_bucket;
+			sv.coop_autosave_last_serverflags = slot->autosave_serverflags;
+			sv.coop_autosave_retry_realtime = 0;
+			if (slot->autosave_mapstart)
+				sv.coop_autosave_mapstart_done = true;
+			Con_Printf ("Coop autosaved %s.sav.\n", slot->savename);
+		}
+		else
+		{
+			Con_Printf ("done.\n");
+			if (slot->lastsave_eligible &&
+				slot->request_sequence > host_savegame_lastsave_sequence)
+			{
+				q_strlcpy (sv.lastsave, slot->savename, sizeof (sv.lastsave));
+				host_savegame_lastsave_sequence = slot->request_sequence;
+			}
+		}
+	}
+	else if (slot->quiet)
+	{
+		sv.coop_autosave_retry_realtime = realtime + slot->autosave_retry_delay;
+		Con_DPrintf ("Coop autosave: couldn't finalize %s\n", slot->name);
+	}
+	else
+		Con_Printf ("ERROR: couldn't finalize savegame.\n");
+	if (slot->quiet)
+		host_savegame_autosave_pending = false;
+	Host_SavegameReleaseSlot (slot);
+}
+
+void Host_SavegamePoll (void)
+{
+	int i;
+
+	for (i = 0; i < HOST_SAVEGAME_SLOT_COUNT; i++)
+	{
+		host_savegame_slot_t *slot = &host_savegame_slots[i];
+		host_savegame_slot_state_t state = (host_savegame_slot_state_t)
+			Atomic_LoadUInt32 (&slot->state);
+		if (state == HOST_SAVEGAME_SLOT_RESERVED && !slot->thread)
+			Host_SavegameReleaseSlot (slot);
+		else
+			Host_SavegameCompleteSlot (slot);
+	}
+}
+
+void Host_SavegameDrain (void)
+{
+	int i;
+
+	for (i = 0; i < HOST_SAVEGAME_SLOT_COUNT; i++)
+	{
+		host_savegame_slot_t *slot = &host_savegame_slots[i];
+		host_savegame_slot_state_t state = (host_savegame_slot_state_t)
+			Atomic_LoadUInt32 (&slot->state);
+		if (state == HOST_SAVEGAME_SLOT_RESERVED && !slot->thread)
+		{
+			Host_SavegameReleaseSlot (slot);
+			continue;
+		}
+		if (state == HOST_SAVEGAME_SLOT_RUNNING)
+		{
+			assert (slot->thread);
+			SDL_WaitThread (slot->thread, NULL);
+			slot->thread = NULL;
+		}
+		Host_SavegameCompleteSlot (slot);
+	}
+}
+
+static void Host_SavegameSetAutosaveMetadata (const char *savename, int slots,
+	int next_slot, int secrets, int kill_bucket, int serverflags, double saved_realtime,
+	double retry_delay, qboolean mapstart)
+{
+	int i;
+
+	for (i = 0; i < HOST_SAVEGAME_SLOT_COUNT; i++)
+	{
+		host_savegame_slot_t *slot = &host_savegame_slots[i];
+		if (!slot->quiet || strcmp (slot->savename, savename) ||
+			Atomic_LoadUInt32 (&slot->state) == HOST_SAVEGAME_SLOT_IDLE)
+			continue;
+		slot->autosave_slots = slots;
+		slot->autosave_next_slot = next_slot;
+		slot->autosave_secrets = secrets;
+		slot->autosave_kill_bucket = kill_bucket;
+		slot->autosave_serverflags = serverflags;
+		slot->autosave_realtime = saved_realtime;
+		slot->autosave_retry_delay = retry_delay;
+		slot->autosave_mapstart = mapstart;
+		host_savegame_autosave_pending = true;
+		return;
+	}
+	Sys_Error ("Host_SavegameSetAutosaveMetadata: submitted save missing");
 }
 
 static qboolean Host_LoadgameHasPendingClients (void)
@@ -1945,18 +2229,19 @@ Host_SavegameWrite
 ===============
 */
 #define HOST_SAVEGAME_ERROR(...) do { if (!quiet) Con_Printf (__VA_ARGS__); } while (0)
+#define HOST_SAVEGAME_CAPTURE(...) do { if (!Host_SavegameSinkPrintf (&sink, __VA_ARGS__)) goto capture_failed; } while (0)
 
 static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 {
 	char  name[MAX_OSPATH];
 	char  tempname[MAX_OSPATH];
-	FILE *f;
 	int	  i, j, path_length;
 	int	  frags;
 	char  comment[SAVEGAME_COMMENT_LENGTH + 1];
 	qboolean multiplayer_save, switched_qcvm;
-	qboolean write_failed;
-	edict_t *client_snapshot;
+	edict_t *client_snapshot = NULL;
+	host_savegame_slot_t *slot = NULL;
+	savegame_sink_t sink = {Host_SavegameSinkAppend, NULL};
 
 	if (qcvm && qcvm != &sv.qcvm)
 	{
@@ -2067,13 +2352,50 @@ static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 		HOST_SAVEGAME_ERROR ("ERROR: savegame path is too long.\n");
 		return false;
 	}
-	COM_AddExtension (name, ".sav", sizeof (name));
+	if (!q_strcasecmp (COM_FileGetExtension (name), "sav"))
+	{
+		name[strlen (name) - 4] = '\0';
+		q_strlcat (name, ".sav", sizeof (name));
+	}
+	else
+		COM_AddExtension (name, ".sav", sizeof (name));
 	path_length = q_snprintf (tempname, sizeof (tempname), "%s.tmp", name);
 	if (path_length < 0 || path_length >= (int)sizeof (tempname))
 	{
 		HOST_SAVEGAME_ERROR ("ERROR: savegame path is too long.\n");
 		return false;
 	}
+	Host_SavegamePoll ();
+	for (i = 0; i < HOST_SAVEGAME_SLOT_COUNT; i++)
+	{
+		host_savegame_slot_t *candidate = &host_savegame_slots[i];
+		host_savegame_slot_state_t state = (host_savegame_slot_state_t)
+			Atomic_LoadUInt32 (&candidate->state);
+		if (state != HOST_SAVEGAME_SLOT_IDLE && !q_strcasecmp (candidate->name, name))
+		{
+			HOST_SAVEGAME_ERROR ("Savegame is already being written.\n");
+			return false;
+		}
+		if (state == HOST_SAVEGAME_SLOT_IDLE && !slot)
+			slot = candidate;
+	}
+	if (!slot)
+	{
+		HOST_SAVEGAME_ERROR ("Savegame writer is busy.\n");
+		return false;
+	}
+	q_strlcpy (slot->name, name, sizeof (slot->name));
+	q_strlcpy (slot->tempname, tempname, sizeof (slot->tempname));
+	slot->lastsave_eligible = strlen (savename) < sizeof (sv.lastsave) - 1;
+	q_strlcpy (slot->savename, savename, sizeof (slot->savename));
+	if (slot->lastsave_eligible && !q_strcasecmp (COM_FileGetExtension (slot->savename), "sav"))
+		slot->savename[strlen (slot->savename) - 4] = '\0';
+	slot->quiet = quiet;
+	slot->request_sequence = ++host_savegame_next_sequence;
+	Atomic_StoreUInt32 (&slot->state, HOST_SAVEGAME_SLOT_RESERVED);
+	/* Slot ownership begins before QC serialization, including Host_Error
+	 * unwinding. A reserved, unsubmitted capture is released by lifecycle drain. */
+	sink.context = &slot->capture;
 
 	if (!quiet)
 	{
@@ -2081,104 +2403,106 @@ static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 		Con_LinkPrintf (name, "%s", name);
 		Con_SafePrintf ("...\n");
 	}
-	f = Sys_fopen (tempname, "w");
-	if (!f)
-	{
-		HOST_SAVEGAME_ERROR ("ERROR: couldn't open.\n");
-		if (quiet)
-			Con_DPrintf ("Coop autosave: couldn't open %s\n", name);
-		return false;
-	}
-
 	switched_qcvm = qcvm == NULL;
 	if (switched_qcvm)
 		PR_SwitchQCVM (&sv.qcvm);
 
-	fprintf (f, "%i\n", multiplayer_save ? SAVEGAME_VERSION_MULTIPLAYER : SAVEGAME_VERSION);
+	HOST_SAVEGAME_CAPTURE ("%i\n", multiplayer_save ? SAVEGAME_VERSION_MULTIPLAYER : SAVEGAME_VERSION);
 	Host_SavegameComment (comment);
-	fprintf (f, "%s\n", comment);
+	HOST_SAVEGAME_CAPTURE ("%s\n", comment);
 	/* Save the current parms. SetChangeParms is a level-transition callback. */
 	if (multiplayer_save)
 	{
-		fprintf (f, "%i\n", svs.maxclients);
+		HOST_SAVEGAME_CAPTURE ("%i\n", svs.maxclients);
 		for (i = 0; i < svs.maxclients; i++)
 		{
 			client_t *client = &svs.clients[i];
 			frags = client->edict ? (int)client->edict->v.frags : 0;
-			fprintf (f, "%i\n", client->active ? 1 : 0);
-			Host_SavegameWriteClientName (f, client->name);
-			fprintf (f, "%i\n", client->colors);
-			fprintf (f, "%i\n", frags);
+			HOST_SAVEGAME_CAPTURE ("%i\n", client->active ? 1 : 0);
+			if (!Host_SavegameWriteClientName (&sink, client->name))
+				goto capture_failed;
+			HOST_SAVEGAME_CAPTURE ("%i\n", client->colors);
+			HOST_SAVEGAME_CAPTURE ("%i\n", frags);
 			for (j = 0; j < NUM_BASIC_SPAWN_PARMS; j++)
-				fprintf (f, "%f\n", client->spawn_parms[j]);
+				HOST_SAVEGAME_CAPTURE ("%f\n", client->spawn_parms[j]);
 		}
 	}
 	else
 	{
 		for (i = 0; i < NUM_BASIC_SPAWN_PARMS; i++)
-			fprintf (f, "%f\n", svs.clients->spawn_parms[i]);
+			HOST_SAVEGAME_CAPTURE ("%f\n", svs.clients->spawn_parms[i]);
 	}
-	fprintf (f, "%d\n", current_skill);
-	fprintf (f, "%s\n", sv.name);
-	fprintf (f, "%f\n", qcvm->time);
+	HOST_SAVEGAME_CAPTURE ("%d\n", current_skill);
+	HOST_SAVEGAME_CAPTURE ("%s\n", sv.name);
+	HOST_SAVEGAME_CAPTURE ("%f\n", qcvm->time);
 
 	// write the light styles
 	for (i = 0; i < MAX_LIGHTSTYLES; i++)
 	{
 		if (sv.lightstyles[i])
-			fprintf (f, "%s\n", sv.lightstyles[i]);
+			HOST_SAVEGAME_CAPTURE ("%s\n", sv.lightstyles[i]);
 		else
-			fprintf (f, "m\n");
+			HOST_SAVEGAME_CAPTURE ("m\n");
 	}
 
-	ED_WriteGlobals (f);
+	if (!ED_WriteGlobalsToSink (&sink))
+		goto capture_failed;
 	client_snapshot = multiplayer_save ? (edict_t *)Mem_Alloc (qcvm->edict_size) : NULL;
+	slot->capture_edict = client_snapshot;
+	if (multiplayer_save && !client_snapshot)
+		goto capture_failed;
 	for (i = 0; i < qcvm->num_edicts; i++)
 	{
 		if (multiplayer_save && i > 0 && i <= svs.maxclients)
 		{
 			if (!svs.clients[i - 1].active)
-				fprintf (f, "{\n}\n");
+				HOST_SAVEGAME_CAPTURE ("{\n}\n");
 			else
 			{
 				SV_CoopRespawnSaveClientEdict (EDICT_NUM (i), client_snapshot);
-				ED_Write (f, client_snapshot);
+				if (!ED_WriteToSink (&sink, client_snapshot))
+					goto capture_failed;
 			}
 		}
 		else
-			ED_Write (f, EDICT_NUM (i));
+			if (!ED_WriteToSink (&sink, EDICT_NUM (i)))
+				goto capture_failed;
 	}
 	if (client_snapshot)
+	{
 		Mem_Free (client_snapshot);
+		client_snapshot = NULL;
+		slot->capture_edict = NULL;
+	}
 
 	// add extra info (lightstyles, precaches, etc) in a way that's supposed to be compatible with DP.
 	// sidenote - this provides extended lightstyles and support for late precaches
 	// it does NOT protect against spawnfunc precache changes - we would need to include makestatics here too (and optionally baselines, or just recalculate
 	// those).
-	fprintf (f, "/*\n");
-	fprintf (f, "// QuakeSpasm extended savegame\n");
+	HOST_SAVEGAME_CAPTURE ("/*\n");
+	HOST_SAVEGAME_CAPTURE ("// QuakeSpasm extended savegame\n");
 	for (i = MAX_LIGHTSTYLES; i < MAX_LIGHTSTYLES; i++)
 	{
 		if (sv.lightstyles[i])
-			fprintf (f, "sv.lightstyles %i \"%s\"\n", i, sv.lightstyles[i]);
+			HOST_SAVEGAME_CAPTURE ("sv.lightstyles %i \"%s\"\n", i, sv.lightstyles[i]);
 	}
 	for (i = 1; i < MAX_MODELS; i++)
 	{
 		if (sv.model_precache[i])
-			fprintf (f, "sv.model_precache %i \"%s\"\n", i, sv.model_precache[i]);
+			HOST_SAVEGAME_CAPTURE ("sv.model_precache %i \"%s\"\n", i, sv.model_precache[i]);
 	}
 	for (i = 1; i < MAX_SOUNDS; i++)
 	{
 		if (sv.sound_precache[i])
-			fprintf (f, "sv.sound_precache %i \"%s\"\n", i, sv.sound_precache[i]);
+			HOST_SAVEGAME_CAPTURE ("sv.sound_precache %i \"%s\"\n", i, sv.sound_precache[i]);
 	}
 	for (i = 1; i < MAX_PARTICLETYPES; i++)
 	{
 		if (sv.particle_precache[i])
-			fprintf (f, "sv.particle_precache %i \"%s\"\n", i, sv.particle_precache[i]);
+			HOST_SAVEGAME_CAPTURE ("sv.particle_precache %i \"%s\"\n", i, sv.particle_precache[i]);
 	}
 
-	fprintf (f, "sv.serverflags %i\n", svs.serverflags);
+	HOST_SAVEGAME_CAPTURE ("sv.serverflags %i\n", svs.serverflags);
 	if (multiplayer_save)
 	{
 		/* v7's fixed header stores only 16 parms per player. These private
@@ -2188,7 +2512,7 @@ static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 			if (!svs.clients[i].active)
 				continue;
 			for (j = NUM_BASIC_SPAWN_PARMS; j < NUM_TOTAL_SPAWN_PARMS; j++)
-				fprintf (f, "client_spawnparm %i %i \"%f\"\n",
+				HOST_SAVEGAME_CAPTURE ("client_spawnparm %i %i \"%f\"\n",
 					i + 1, j + 1, svs.clients[i].spawn_parms[j]);
 		}
 	}
@@ -2197,48 +2521,47 @@ static qboolean Host_SavegameWrite (const char *savename, qboolean quiet)
 		for (i = NUM_BASIC_SPAWN_PARMS; i < NUM_TOTAL_SPAWN_PARMS; i++)
 		{
 			if (svs.clients->spawn_parms[i])
-				fprintf (f, "spawnparm %i \"%f\"\n", i + 1, svs.clients->spawn_parms[i]);
+				HOST_SAVEGAME_CAPTURE ("spawnparm %i \"%f\"\n", i + 1, svs.clients->spawn_parms[i]);
 		}
 	}
 
 	const char *fog_cmd = Fog_GetFogCommand (true);
 	if (fog_cmd)
-		fprintf (f, "%s", &fog_cmd[1]);
+		HOST_SAVEGAME_CAPTURE ("%s", &fog_cmd[1]);
 
 	const char *sky_cmd = Sky_GetSkyCommand (true);
 	if (sky_cmd)
-		fprintf (f, "%s", &sky_cmd[1]);
+		HOST_SAVEGAME_CAPTURE ("%s", &sky_cmd[1]);
 
-	fprintf (f, "*/\n");
-
-	write_failed = ferror (f) != 0 || fflush (f) != 0;
-	if (fclose (f) != 0)
-		write_failed = true;
-	if (write_failed || !Host_SavegameReplaceFile (tempname, name))
-	{
-		Sys_remove (tempname);
-		if (switched_qcvm)
-			PR_SwitchQCVM (NULL);
-		HOST_SAVEGAME_ERROR ("ERROR: couldn't finalize savegame.\n");
-		if (quiet)
-			Con_DPrintf ("Coop autosave: couldn't finalize %s\n", name);
-		return false;
-	}
+	HOST_SAVEGAME_CAPTURE ("*/\n");
 
 	// Take the occasion to check the free-list
-	// this is a long operation anyway.
+	// while the immutable capture still owns the current QC state.
 	ED_CheckFreeList ();
-
-	if (!quiet)
-		Con_Printf ("done.\n");
 
 	if (switched_qcvm)
 		PR_SwitchQCVM (NULL);
-	SaveList_Rebuild ();
-
-	if (!quiet && strlen (savename) < sizeof (sv.lastsave) - 1)
-		strcpy (sv.lastsave, savename);
+	slot->data = slot->capture.data;
+	slot->length = slot->capture.length;
+	memset (&slot->capture, 0, sizeof (slot->capture));
+	Atomic_StoreUInt32 (&slot->state, HOST_SAVEGAME_SLOT_RUNNING);
+	slot->thread = SDL_CreateThread (Host_SavegameWriteThread, "Save writer", slot);
+	if (!slot->thread)
+	{
+		Host_SavegameReleaseSlot (slot);
+		HOST_SAVEGAME_ERROR ("ERROR: couldn't start savegame writer.\n");
+		return false;
+	}
 	return true;
+
+capture_failed:
+	if (switched_qcvm)
+		PR_SwitchQCVM (NULL);
+	Host_SavegameReleaseSlot (slot);
+	HOST_SAVEGAME_ERROR ("ERROR: couldn't capture savegame.\n");
+	if (quiet)
+		Con_DPrintf ("Coop autosave: couldn't capture %s\n", name);
+	return false;
 }
 
 void Host_CoopAutosaveFrame (void)
@@ -2261,6 +2584,8 @@ void Host_CoopAutosaveFrame (void)
 	 * untouched until saved client snapshots and deferred parms are consumed. */
 	if (sv.loadgame_multiplayer &&
 		(Host_LoadgameHasPendingClients () || Host_LoadgameHasPendingSpawnParms ()))
+		return;
+	if (host_savegame_autosave_pending)
 		return;
 
 	kill_interval_value = (double)sv_coop_autosave_kill_interval.value;
@@ -2374,16 +2699,10 @@ void Host_CoopAutosaveFrame (void)
 		sv.coop_autosave_retry_realtime = realtime + retry_delay;
 		return;
 	}
-
-	Con_Printf ("Coop autosaved %s.sav (%s).\n", savename, reason);
-	sv.coop_autosave_next_slot = (sv.coop_autosave_next_slot + 1) % slots;
-	sv.coop_autosave_last_realtime = realtime;
-	sv.coop_autosave_last_secrets = found_secrets;
-	sv.coop_autosave_last_kill_bucket = kill_bucket;
-	sv.coop_autosave_last_serverflags = serverflags;
-	sv.coop_autosave_retry_realtime = 0;
-	if (!strcmp (reason, "map start"))
-		sv.coop_autosave_mapstart_done = true;
+	Host_SavegameSetAutosaveMetadata (savename, slots,
+		sv.coop_autosave_next_slot % slots, found_secrets, kill_bucket, serverflags,
+		realtime, min_interval > COOP_AUTOSAVE_RETRY_DELAY ? min_interval : COOP_AUTOSAVE_RETRY_DELAY,
+		!strcmp (reason, "map start"));
 }
 
 static void Host_Savegame_f (void)
@@ -2399,6 +2718,7 @@ static void Host_Savegame_f (void)
 }
 
 #undef HOST_SAVEGAME_ERROR
+#undef HOST_SAVEGAME_CAPTURE
 
 static void Send_Spawn_Info (client_t *c, qboolean loadgame)
 {
@@ -2739,6 +3059,7 @@ static void Host_Loadgame_f (void)
 		Con_Printf ("%s <savename> : load a game\n", Cmd_Argv (0));
 		return;
 	}
+	Host_SavegameDrain ();
 
 	if (strstr (Cmd_Argv (1), ".."))
 	{

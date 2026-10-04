@@ -150,6 +150,16 @@ typedef void (*ED_AllocHook_func) (edict_t *allocated_ed);
 ED_AllocHook_func ED_AllocSetHook (ED_AllocHook_func alloc_hook);
 
 void		ED_Print (edict_t *ed);
+/* Both output adapters share the native v5/v7 serializer loops. */
+typedef qboolean (*savegame_sink_write_fn) (void *context, const char *data, size_t length);
+typedef struct
+{
+	savegame_sink_write_fn write;
+	void *context;
+} savegame_sink_t;
+qboolean ED_WriteToSink (savegame_sink_t *sink, edict_t *ed);
+qboolean ED_WriteGlobalsToSink (savegame_sink_t *sink);
+
 void		ED_Write (FILE *f, edict_t *ed);
 const char *ED_ParseEdict (const char *data, edict_t *ent);
 const char *ED_ParseSavedEdict (const char *data, edict_t *ent);
@@ -288,6 +298,7 @@ struct pr_extglobals_s
 	QCEXTGLOBAL_FLOAT (physics_mode)               \
 	// end
 #define QCEXTGLOBALS_CSQC                  \
+	QCEXTGLOBAL_FLOAT (clientcommandframe) \
 	QCEXTGLOBAL_FLOAT (servercommandframe) \
 	QCEXTGLOBAL_FLOAT (cltime)             \
 	QCEXTGLOBAL_FLOAT (clframetime)        \

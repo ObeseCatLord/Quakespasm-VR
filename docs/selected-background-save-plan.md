@@ -123,3 +123,43 @@ byte formatting and that all completion state is main-thread-owned.
 | Task handle epoch statement | Correct | Removed incorrect claim; dedicated SDL join handles own disk-job lifetime |
 | Shared serializer and immutable bytes | Adopt | One serializer with FILE and memory sinks; no worker QC accesses |
 | Capture failure and longjmp cleanup | Adopt | Reserved/submitted distinction; drain releases unsubmitted capture without awaiting it |
+
+## 2.0 implementation handoff
+
+`host_cmd.c` and `pr_edict.c` now implement the reviewed adapter: `ED_Write`
+and `ED_WriteGlobals` retain FILE wrappers over shared sink emitters, while save
+commands serialize v5/v7 bytes on the main thread into a checked growable
+buffer. Two fixed slots reserve the canonical `.sav` destination before
+capture. Each submitted slot owns one joinable SDL writer thread that has only
+the immutable bytes and final/temp paths. It performs text-mode temp output,
+checks write/flush/close/replace, removes only its temp file on failure, then
+publishes terminal state as its final slot access.
+
+Main-thread completion joins only terminal threads, rebuilds the save list on
+success, applies monotonic manual `lastsave`, and commits captured autosave
+rotation/progress/time only on success. Autosave failure schedules its captured
+retry delay from completion time. `load`, `restart`, and `changelevel` drain
+before they read a save or `lastsave`; their local hooks are present.
+
+The remaining owner integration must add these declarations to `server.h`:
+
+```c
+void Host_SavegamePoll (void);
+void Host_SavegameDrain (void);
+```
+
+Call `Host_SavegamePoll()` once per `_Host_Frame`, outside the `sv.active`
+server-frame branch and before normal frame work can select a save. Call
+`Host_SavegameDrain()` before `Host_ShutdownServer` changes server state,
+before `Host_ClearMemory` frees QC/server memory, at `Host_Shutdown` before
+I/O teardown, and in `COM_SwitchGame` immediately before
+`COM_ResetGameDirectories`. These drains also release a reserved-but-
+unsubmitted slot after a main-thread longjmp.
+
+`tests/background_save_snapshot_fixture.c` blocks the wrapped worker temp-file
+open, proves two-slot admission while a server frame and terminal polling keep
+running, rejects case/extension aliases and a full third slot, then compares
+unchanged v5 and v7 captures byte-for-byte. Run it only after the declarations
+and lifecycle hooks above are integrated, using the native-fixture make target
+with `NEGOTIATION_SOURCE=../tests/background_save_snapshot_fixture.c` and
+`-Wl,--wrap=Sys_fopen` added to `NEGOTIATION_EXTRA_LDFLAGS`.

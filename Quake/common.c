@@ -3511,6 +3511,7 @@ void COM_SwitchGame (const char *paths)
 	ExtraMaps_Clear ();
 	LOC_Shutdown ();
 
+	Host_SavegameDrain ();
 	COM_ResetGameDirectories (paths);
 
 	// clear out and reload appropriate data

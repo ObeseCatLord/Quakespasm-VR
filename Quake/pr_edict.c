@@ -946,7 +946,51 @@ ED_Write
 For savegames
 =============
 */
-void ED_Write (FILE *f, edict_t *ed)
+static qboolean ED_SavegameSinkWrite (savegame_sink_t *sink, const char *data,
+	size_t length)
+{
+	return sink && sink->write && sink->write (sink->context, data, length);
+}
+
+static qboolean ED_SavegameSinkPrintf (savegame_sink_t *sink, const char *format, ...)
+{
+	char stack[512];
+	char *buffer = stack;
+	size_t capacity = sizeof (stack);
+	int written;
+	qboolean result;
+	va_list args;
+
+	for (;;)
+	{
+		va_start (args, format);
+		written = vsnprintf (buffer, capacity, format, args);
+		va_end (args);
+		if (written >= 0 && (size_t)written < capacity)
+			break;
+		if (capacity > SIZE_MAX / 2)
+		{
+			if (buffer != stack)
+				Mem_Free (buffer);
+			return false;
+		}
+		if (written >= 0)
+			capacity = (size_t)written + 1;
+		else
+			capacity *= 2;
+		if (buffer != stack)
+			Mem_Free (buffer);
+		buffer = (char *)Mem_AllocNonZero (capacity);
+		if (!buffer)
+			return false;
+	}
+	result = ED_SavegameSinkWrite (sink, buffer, (size_t)written);
+	if (buffer != stack)
+		Mem_Free (buffer);
+	return result;
+}
+
+static qboolean ED_WriteToSinkInternal (savegame_sink_t *sink, edict_t *ed)
 {
 	ddef_t	   *d;
 	int		   *v;
@@ -956,11 +1000,11 @@ void ED_Write (FILE *f, edict_t *ed)
 
 	if (ed->free)
 	{
-		fprintf (f, "{\n}\n");
-		return;
+		return ED_SavegameSinkPrintf (sink, "{\n}\n");
 	}
 
-	fprintf (f, "{\n");
+	if (!ED_SavegameSinkPrintf (sink, "{\n"))
+		return false;
 
 	for (i = 1; i < qcvm->progs->numfielddefs; i++)
 	{
@@ -987,15 +1031,35 @@ void ED_Write (FILE *f, edict_t *ed)
 		if (type == ev_vector && !v[0] && !v[1] && !v[2])
 			continue;
 
-		fprintf (f, "\"%s\" \"%s\"\n", name, PR_UglyValueString (d->type, (eval_t *)v));
+		if (!ED_SavegameSinkPrintf (sink, "\"%s\" \"%s\"\n", name,
+			PR_UglyValueString (d->type, (eval_t *)v)))
+			return false;
 	}
 
 	// johnfitz -- save entity alpha manually when progs.dat doesn't know about alpha
 	if (qcvm->extfields.alpha < 0 && ed->alpha != ENTALPHA_DEFAULT)
-		fprintf (f, "\"alpha\" \"%f\"\n", ENTALPHA_TOSAVE (ed->alpha));
+		if (!ED_SavegameSinkPrintf (sink, "\"alpha\" \"%f\"\n", ENTALPHA_TOSAVE (ed->alpha)))
+			return false;
 	// johnfitz
 
-	fprintf (f, "}\n");
+	return ED_SavegameSinkPrintf (sink, "}\n");
+}
+
+static qboolean ED_FileSavegameSinkWrite (void *context, const char *data,
+	size_t length)
+{
+	return fwrite (data, 1, length, (FILE *)context) == length;
+}
+
+qboolean ED_WriteToSink (savegame_sink_t *sink, edict_t *ed)
+{
+	return ED_WriteToSinkInternal (sink, ed);
+}
+
+void ED_Write (FILE *f, edict_t *ed)
+{
+	savegame_sink_t sink = {ED_FileSavegameSinkWrite, f};
+	ED_WriteToSinkInternal (&sink, ed);
 }
 
 void ED_PrintNum (int ent)
@@ -1194,14 +1258,15 @@ FIXME: need to tag constants, doesn't really work
 ED_WriteGlobals
 =============
 */
-void ED_WriteGlobals (FILE *f)
+static qboolean ED_WriteGlobalsToSinkInternal (savegame_sink_t *sink)
 {
 	ddef_t	   *def;
 	int			i;
 	const char *name;
 	int			type;
 
-	fprintf (f, "{\n");
+	if (!ED_SavegameSinkPrintf (sink, "{\n"))
+		return false;
 	for (i = 0; i < qcvm->progs->numglobaldefs; i++)
 	{
 		def = &qcvm->globaldefs[i];
@@ -1215,10 +1280,22 @@ void ED_WriteGlobals (FILE *f)
 			continue;
 
 		name = PR_GetString (def->s_name);
-		fprintf (f, "\"%s\" ", name);
-		fprintf (f, "\"%s\"\n", PR_UglyValueString (type, (eval_t *)&qcvm->globals[def->ofs]));
+		if (!ED_SavegameSinkPrintf (sink, "\"%s\" \"%s\"\n", name,
+			PR_UglyValueString (type, (eval_t *)&qcvm->globals[def->ofs])))
+			return false;
 	}
-	fprintf (f, "}\n");
+	return ED_SavegameSinkPrintf (sink, "}\n");
+}
+
+qboolean ED_WriteGlobalsToSink (savegame_sink_t *sink)
+{
+	return ED_WriteGlobalsToSinkInternal (sink);
+}
+
+void ED_WriteGlobals (FILE *f)
+{
+	savegame_sink_t sink = {ED_FileSavegameSinkWrite, f};
+	ED_WriteGlobalsToSinkInternal (&sink);
 }
 
 /*
@@ -1822,7 +1899,18 @@ void		  PR_SwitchQCVM (qcvm_t *nvm)
 		Sys_Error ("PR_SwitchQCVM: A qcvm was already active");
 	qcvm = nvm;
 	if (qcvm)
+	{
 		pr_global_struct = (globalvars_t *)qcvm->globals;
+		/* Publish journal bounds at the existing CSQC entry boundary. They have
+		 * no independent lifetime: CL_ClearState resets the canonical journal. */
+		if (qcvm == &cl.qcvm)
+		{
+			if (qcvm->extglobals.clientcommandframe)
+				*qcvm->extglobals.clientcommandframe = cl.movemessages;
+			if (qcvm->extglobals.servercommandframe)
+				*qcvm->extglobals.servercommandframe = cl.ackedmovemessages;
+		}
+	}
 	else
 		pr_global_struct = NULL;
 }

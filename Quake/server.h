@@ -555,6 +555,8 @@ extern edict_t *sv_player;
 
 void SV_Init (void);
 void Host_CoopAutosaveFrame (void);
+void Host_SavegamePoll (void);
+void Host_SavegameDrain (void);
 
 void SV_StartParticle (vec3_t org, vec3_t dir, int color, int count);
 void SV_StartSound (edict_t *entity, float *origin, int channel, const char *sample, int volume, float attenuation);

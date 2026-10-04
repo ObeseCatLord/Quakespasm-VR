@@ -692,6 +692,7 @@ This only happens at the end of a game, not between levels
 */
 void Host_ShutdownServer (qboolean crash)
 {
+	Host_SavegameDrain ();
 	int		  i;
 	int		  count;
 	sizebuf_t buf;
@@ -767,6 +768,7 @@ not reinitialize anything.
 */
 void Host_ClearMemory (void)
 {
+	Host_SavegameDrain ();
 	SV_CoopFriendlyFireReset ();
 	SV_ClearVRWeaponPoseScope ();
 	if (cl.qcvm.extfuncs.CSQC_Shutdown)
@@ -1151,6 +1153,8 @@ static void _Host_Frame (double time)
 		return; // something bad happened, or the server disconnected
 	}
 
+	// Completion is independent of server physics and frame throttling.
+	Host_SavegamePoll ();
 	// keep the random time dependent
 	COM_Rand ();
 
@@ -1478,6 +1482,7 @@ void Host_Shutdown (void)
 		return;
 	}
 	isdown = true;
+	Host_SavegameDrain ();
 
 	// keep Con_Printf from trying to update the screen
 	scr_disabled_for_loading = true;
