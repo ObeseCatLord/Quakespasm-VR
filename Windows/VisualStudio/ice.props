@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Optional provider: no SDK path means the native UDP-only build is retained.
+       Supply a native x64 OpenSSL SDK and its matching notice, not system DLLs. -->
+  <PropertyGroup Condition="'$(IceOpenSslRoot)' != ''">
+    <IceOpenSslLibDir Condition="'$(IceOpenSslLibDir)' == ''">$(IceOpenSslRoot)\lib</IceOpenSslLibDir>
+    <IceOpenSslDllDir Condition="'$(IceOpenSslDllDir)' == ''">$(IceOpenSslRoot)\bin</IceOpenSslDllDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(IceOpenSslRoot)' != ''">
+    <ClCompile>
+      <AdditionalIncludeDirectories>$(IceOpenSslRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>USE_ICE;USE_OPENSSL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(IceOpenSslLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libssl.lib;libcrypto.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup Condition="'$(IceOpenSslRoot)' != ''">
+    <ClCompile Include="..\..\Quake\ice\ice_main.c;..\..\Quake\ice\ice_quake.c;..\..\Quake\ice\ice_socket.c;..\..\Quake\ice\ice_stream.c;..\..\Quake\ice\ice_sctp.c;..\..\Quake\ice\ice_mdns.c;..\..\Quake\ice\ice_gnutls.c;..\..\Quake\ice\ice_openssl.c;..\..\Quake\ice\json.c;..\..\Quake\ice\md5.c;..\..\Quake\ice\sha1.c;..\..\Quake\ice\sha2.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <CompileAs>CompileAsC</CompileAs>
+    </ClCompile>
+    <IceSslRuntime Include="$(IceOpenSslDllDir)\libssl*.dll" />
+    <IceCryptoRuntime Include="$(IceOpenSslDllDir)\libcrypto*.dll" />
+    <IceRuntime Include="@(IceSslRuntime);@(IceCryptoRuntime)" />
+  </ItemGroup>
+  <Target Name="ValidateIceProvider" BeforeTargets="PrepareForBuild" Condition="'$(IceOpenSslRoot)' != ''">
+    <Error Condition="!Exists('$(IceOpenSslRoot)\include\openssl\ssl.h')" Text="ICE requires the supplied OpenSSL SDK headers." />
+    <Error Condition="!Exists('$(IceOpenSslLibDir)\libssl.lib') Or !Exists('$(IceOpenSslLibDir)\libcrypto.lib')" Text="ICE requires x64 OpenSSL import libraries in IceOpenSslLibDir." />
+    <Error Condition="'@(IceSslRuntime)' == '' Or '@(IceCryptoRuntime)' == ''" Text="ICE requires matching OpenSSL SSL and crypto DLLs in IceOpenSslDllDir." />
+    <Error Condition="'$(IceOpenSslLicense)' == '' Or !Exists('$(IceOpenSslLicense)')" Text="Supply IceOpenSslLicense for the exact OpenSSL SDK being bundled." />
+  </Target>
+  <Target Name="CopyIceProvider" AfterTargets="Build" Condition="'$(IceOpenSslRoot)' != ''">
+    <Copy SourceFiles="@(IceRuntime)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(IceOpenSslLicense)" DestinationFiles="$(TargetDir)LICENSE.openssl.txt" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

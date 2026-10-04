@@ -17,6 +17,16 @@ Vendored mimalloc:
   Source: Quake/mimalloc
   License: mimalloc-LICENSE.txt in the installed notice directory.
 
+Optional ICE/WebRTC transport:
+  Source: Quake/ice, ported from QSS-M commit
+  03a498aabc411e2e739adc815c5536b161b9626e; FTE-derived transport and
+  per-file copyright/license notices are retained. Donor root GPL notice:
+  Quake/ice/LICENSE-QSS-M.txt. Matching source is in the product archive.
+  Libgcrypt-derived MD5/SHA2 helpers retain LGPL-2.1-or-later notices; the
+  unmodified license text and detailed notice are in LICENSES/ice.
+  Enabled builds require GnuTLS or OpenSSL. Include the exact provider's
+  notices and matching source access in redistributable packages.
+
 Optional Steam Audio SDK, supported version 4.8.1:
   Official license: LICENSES/steam-audio/LICENSE.md
   https://raw.githubusercontent.com/ValveSoftware/steam-audio/v4.8.1/LICENSE.md

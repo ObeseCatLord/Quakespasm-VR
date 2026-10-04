@@ -28,3 +28,50 @@ orientation. Toggle modes while a hidden brush moves with zero atlas light count
 check both forced static clearing and native re-entry after lights resume. Read
 status during task evaluation and verify it uses the completed renderer decision;
 no menu cvar changes should be required for fallback.
+
+## Standalone production compute fixture (execution deferred)
+
+`tests/cluster_lighting_vulkan_fixture.c` reuses the standalone device, shader-module,
+command submission and mapped-readback approach from `ssao_shared_mip_vulkan_fixture.c`.
+It creates its own instance/device/queue/buffers/fence and touches no game resources,
+GPU reset interfaces, or existing Vulkan devices. A Vulkan 1.1 software ICD is
+acceptable. Execute only after all selected implementation is finished:
+
+```sh
+glslc --target-env=vulkan1.1 -IShaders Shaders/cluster_lights.comp -o /tmp/qsvr-cluster-lights.spv
+cc -std=gnu11 -O0 tests/cluster_lighting_vulkan_fixture.c -lvulkan -lm -o /tmp/qsvr-cluster-lights
+/tmp/qsvr-cluster-lights /tmp/qsvr-cluster-lights.spv
+```
+
+To use a software ICD, set `VK_ICD_FILENAMES` to its installed manifest when running
+the final command. Exit 77 means Vulkan 1.1 compute/set-4/storage-range support is
+unavailable; exit 1 is a fixture failure; exit 0 is a pass. Expected evidence includes
+`CLUSTER_VULKAN_SPIRV_ABI_PASSED`, six `CLUSTER_VULKAN_CASE_PASSED` records, and the final
+`CLUSTER_LIGHTING_VULKAN_PASSED` record. **No compilation or execution has occurred.**
+
+The actual production SPIR-V is inspected for set 4/binding 2, all block/light-member
+offsets, matrix stride and nested array strides. The fixture uploads the real 265456-byte
+frame block at two separately aligned byte offsets (at least 256 bytes and the device's
+`minStorageBufferOffsetAlignment`). Immutable descriptors reuse those offsets across
+three submissions; sentinels in the alignment gaps and unchanged input headers catch
+wrong slot offsets or shader writes outside the masks. Both slots dispatch the real
+`cluster_lights.comp` and transfer the entire buffer into a separate readback allocation.
+Noncoherent allocations are flushed/invalidated; each submission's fence completes
+before the host checks or reuses its buffers.
+
+Coverage includes mono/zero and stereo/64 lights in distinct slots, then mono/64 and
+stereo/zero, plus isolated padding and stereo central-boundary witnesses. Known inverse
+reverse-Z matrices produce translated, asymmetric, oppositely canted eyes. Full mask
+readback is compared to independent double-precision finite-pyramid AABB calculations;
+explicit tiny-light witnesses cover interior and extreme tile coordinates, the zero-depth
+first slice, shared central tile/depth boundaries, and padding beyond an unpadded AABB.
+The last slice must contain every active bit, including light 63 positioned beyond 1M
+units. Every inactive-eye mask and zero-light mask must be empty.
+
+GPU `pow`/FMA versus the double oracle can differ around AABB tangencies. The fixture
+reports comparisons inside a `0.002 + far_slice_depth*1e-5` numerical margin and excludes
+only those from exact hit/rejection comparison. Explicit witness bits are always required,
+without that exemption. Passing verifies production compute/ABI/dispatch/readback for
+these inputs, not world fragment reconstruction, lighting/UNORM clamp, rendered dither,
+OpenXR runtime foveation, native atlas transitions, or game task/submission integration;
+the earlier graphics matrix remains required for those behaviors.
