@@ -1897,25 +1897,23 @@ static int Host_SavegameWriteThread (void *userdata)
 	host_savegame_slot_t *slot = (host_savegame_slot_t *)userdata;
 	FILE *file;
 	qboolean succeeded;
-	qboolean closed = false;
+	qboolean opened;
 
 	file = Sys_fopen (slot->tempname, "w");
+	opened = file != NULL;
 	succeeded = file && fwrite (slot->data, 1, slot->length, file) == slot->length &&
 		!ferror (file) && fflush (file) == 0;
 	if (file)
 	{
-		closed = true;
 		if (fclose (file) != 0)
 			succeeded = false;
 	}
 	if (succeeded)
 		succeeded = Host_SavegameReplaceFile (slot->tempname, slot->name);
-	if (!succeeded)
-	{
-		if (file && !closed)
-			fclose (file);
+	/* A failed open did not create this path. Preserve an existing directory
+	 * or inaccessible file instead of removing something the writer never owned. */
+	if (!succeeded && opened)
 		Sys_remove (slot->tempname);
-	}
 
 	/* This release is the worker's final access to its slot. */
 	Atomic_StoreUInt32 (&slot->state, succeeded ? HOST_SAVEGAME_SLOT_SUCCEEDED :

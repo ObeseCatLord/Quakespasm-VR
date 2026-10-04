@@ -100,4 +100,24 @@ The approved layout is Display / Lighting / Effects / Advanced. Advanced
 contains consumed sky controls, liquid opacity, texture LOD, far clip and depth
 fix. Effects includes a bounded particle-detail category using the same row
 mechanism. No global Graphics Apply button or staged renderer settings are
-introduced. Tests remain deferred until all selected implementation is done.
+introduced. The implementation gate is now complete. See final verification below.
+
+
+## Final native verification
+
+Strict Clang debug compilation and the standalone graphics/menu layout fixtures
+pass. A private licensed `start` profile rendered all five graphics categories
+and the 24-row mod browser. The native menu probe verified category navigation,
+AO enablement, independent model/movement/turn preferences, signed texture LOD,
+and hover/slider/scroll capture reset. Screenshots were inspected; long labels
+are bounded to their own column, gamma shows its 0.05 steps, and empty particle
+scripts are displayed as classic. The renderer reported 16x anisotropy on the
+host device. This does not qualify anisotropy on a physical Steam Frame.
+
+The same production renderer also completed ten selected-lighting cases under
+an isolated two-eye simulated Monado runtime with 4x MSAA. Requested/effective
+lighting, both-eye frame data, low/high dithering, transparency modes, task
+rendering, CPU-lightmap/dynamics-off/shadow fallbacks, and native re-entry were
+checked. No system runtime defaults, device drivers or user configurations
+were changed. Physical controller ergonomics, actual gaze foveation and measured
+performance remain user testing.

@@ -2164,6 +2164,9 @@ static void M_GraphicsSetCategory (graphics_category_t category)
 static void M_Menu_GraphicsOptions_f (void)
 {
 	M_MenuChanged ();
+	graphics_category_hover = -1;
+	slider_grab = false;
+	scrollbar_grab = false;
 	IN_Deactivate (true);
 	key_dest = key_menu;
 	m_state = m_graphics;
@@ -2689,7 +2692,7 @@ static void M_GraphicsDrawRow (cb_context_t *cbx, graphics_option_t option, int 
 	qboolean is_slider = false;
 	switch (option)
 	{
-	case GFX_GAMMA: name="Gamma"; slider=(1-vid_gamma.value)/.5f; value=va("%.1f",vid_gamma.value); is_slider=true; break;
+	case GFX_GAMMA: name="Gamma"; slider=(1-vid_gamma.value)/.5f; value=va("%.2f",vid_gamma.value); is_slider=true; break;
 	case GFX_CONTRAST: name="Contrast"; slider=vid_contrast.value-1; value=va("%.1f",vid_contrast.value); is_slider=true; break;
 	case GFX_FOV: name="Field of View"; slider=(scr_fov.value-80)/50; value=va("%.0f",scr_fov.value); is_slider=true; break;
 	case GFX_PALETTE: name="8-bit Color"; value=vid_palettize.value?"on":"off"; break;
@@ -2707,15 +2710,15 @@ static void M_GraphicsDrawRow (cb_context_t *cbx, graphics_option_t option, int 
 	case GFX_VIDEO: name="Video Settings"; value="open"; break;
 	case GFX_LIVE_PREVIEW: name="Live Preview"; value=ui_live_preview.value?"on":"off"; break;
 	case GFX_DYNAMIC_LIGHTS: name="Dynamic Lights"; value=r_dynamic.value?"on":"off"; break;
-	case GFX_LIGHT_MODE: name="Dynamic Light Mode"; value=r_clustered_lights.value?"Clustered":"Native"; break;
+	case GFX_LIGHT_MODE: name="Lighting Mode"; value=r_clustered_lights.value?"Clustered":"Native"; break;
 	case GFX_SHADOWS: name="Dynamic Shadows"; value=((const char *[]){"off","low","medium","high"})[(int)CLAMP(0,r_rtshadows.value,3)]; break;
 	case GFX_AO: name="Ambient Occlusion"; value=R_SSAOSupported()?((const char *[]){"off","low","medium","high"})[(int)CLAMP(0,r_ssao.value,3)]:"N/A"; break;
 	case GFX_AO_RADIUS: name="AO Radius"; slider=(Cvar_VariableValue("r_ssao_radius")-1)/127; value=va("%.0f",Cvar_VariableValue("r_ssao_radius")); is_slider=true; break;
 	case GFX_AO_STRENGTH: name="AO Strength"; slider=Cvar_VariableValue("r_ssao_strength"); value=va("%.2f",slider); is_slider=true; break;
 	case GFX_AO_VR: name="VR AO Evaluation"; value=Cvar_VariableValue("r_ssao_vr_half")?"half":"full"; break;
 	case GFX_LIGHTSTYLES: name="Lightstyle Interp"; value=((const char *[]){"off","selective","always"})[(int)CLAMP(0,r_lerplightstyles.value,2)]; break;
-	case GFX_FULLBRIGHTS: name="Fullbright Textures"; value=gl_fullbrights.value?"on":"off"; break;
-	case GFX_DITHER: name="Surface Dither"; slider=M_GraphicsDitherIndex()/3.0f; value=((const char *[]){"off","low","medium","high"})[M_GraphicsDitherIndex()]; is_slider=true; break;
+	case GFX_FULLBRIGHTS: name="Fullbrights"; value=gl_fullbrights.value?"on":"off"; break;
+	case GFX_DITHER: name="Surface Dither"; slider=M_GraphicsDitherIndex()/3.0f; value=((const char *[]){"off","low","med","high"})[M_GraphicsDitherIndex()]; is_slider=true; break;
 	case GFX_WATER_FX: name="Underwater FX"; value=((const char *[]){"off","Classic","glQuake"})[(int)CLAMP(0,r_waterwarp.value,2)]; break;
 	case GFX_TRANSPARENCY: name="Transparency"; value=((const char *[]){"Classic","Low","High"})[(int)CLAMP(0,r_oit.value,2)]; break;
 	case GFX_PARTICLES: name="Particles"; value=((const char *[]){"off","glQuake","Classic"})[(int)CLAMP(0,r_particles.value,2)]; break;
@@ -2725,28 +2728,29 @@ static void M_GraphicsDrawRow (cb_context_t *cbx, graphics_option_t option, int 
 	case GFX_MODEL_MOVE: name="Model Movement"; value=r_lerpmove.value?"on":"off"; break;
 	case GFX_MODEL_TURN: name="Model Turning"; value=r_lerpturn.value?"on":"off"; break;
 	case GFX_PARTICLE_DETAILS: name="Particle Details"; value="open"; break;
-	case GFX_FTE_PARTICLES: name="Scripted Particles"; value=Cvar_VariableValue("r_fteparticles")?"on":"off"; break;
-	case GFX_SOFT_DISTANCE: name="Soft Fade Distance"; slider=(Cvar_VariableValue("r_softparticledistance")-.5f)/15.5f; value=va("%.1f",Cvar_VariableValue("r_softparticledistance")); is_slider=true; break;
+	case GFX_FTE_PARTICLES: name="Particle Scripts"; value=Cvar_VariableValue("r_fteparticles")?"on":"off"; break;
+	case GFX_SOFT_DISTANCE: name="Soft Fade Range"; slider=(Cvar_VariableValue("r_softparticledistance")-.5f)/15.5f; value=va("%.1f",Cvar_VariableValue("r_softparticledistance")); is_slider=true; break;
 	case GFX_PARTICLE_DENSITY: name="Particle Density"; slider=Cvar_VariableValue("r_part_density")/2; value=va("%.1f",Cvar_VariableValue("r_part_density")); is_slider=true; break;
 	case GFX_RAIN: name="Rain"; value=Cvar_VariableValue("r_part_rain")?"on":"off"; break;
 	case GFX_RAIN_QUANTITY: name="Rain Quantity"; slider=Cvar_VariableValue("r_part_rain_quantity")/2; value=va("%.1f",Cvar_VariableValue("r_part_rain_quantity")); is_slider=true; break;
 	case GFX_SPARKS: name="Sparks"; value=Cvar_VariableValue("r_part_sparks")?"on":"off"; break;
 	case GFX_BEAMS: name="Beams"; value=Cvar_VariableValue("r_part_beams")?"on":"off"; break;
-	case GFX_PARTICLE_SCRIPT: name="Particle Script"; value=Cvar_VariableString("r_particledesc"); break;
+	case GFX_PARTICLE_SCRIPT: name="Particle Script"; value=Cvar_VariableString("r_particledesc"); if (!*value) value="classic"; break;
 	case GFX_FAST_SKY: name="Fast Sky"; value=Cvar_VariableValue("r_fastsky")?"on":"off"; break;
 	case GFX_SKY_ALPHA: name="Sky Opacity"; slider=Cvar_VariableValue("r_skyalpha"); value=va("%.2f",slider); is_slider=true; break;
 	case GFX_SKY_FOG: name="Sky Fog"; slider=Cvar_VariableValue("r_skyfog"); value=va("%.2f",slider); is_slider=true; break;
 	case GFX_SKY_WIND: name="Sky Wind"; slider=Cvar_VariableValue("r_skywind")/2; value=va("%.1f",Cvar_VariableValue("r_skywind")); is_slider=true; break;
 	case GFX_WATER_ALPHA: name="Water Opacity"; slider=r_wateralpha.value; value=va("%.2f",slider); is_slider=true; break;
-	case GFX_LAVA_ALPHA: name="Lava Opacity"; slider=Cvar_VariableValue("r_lavaalpha"); value=slider?va("%.2f",slider):"inherit"; is_slider=true; break;
-	case GFX_SLIME_ALPHA: name="Slime Opacity"; slider=Cvar_VariableValue("r_slimealpha"); value=slider?va("%.2f",slider):"inherit"; is_slider=true; break;
-	case GFX_TELE_ALPHA: name="Tele Opacity"; slider=Cvar_VariableValue("r_telealpha"); value=slider?va("%.2f",slider):"inherit"; is_slider=true; break;
+	case GFX_LAVA_ALPHA: name="Lava Opacity"; slider=Cvar_VariableValue("r_lavaalpha"); value=slider?va("%.2f",slider):"auto"; is_slider=true; break;
+	case GFX_SLIME_ALPHA: name="Slime Opacity"; slider=Cvar_VariableValue("r_slimealpha"); value=slider?va("%.2f",slider):"auto"; is_slider=true; break;
+	case GFX_TELE_ALPHA: name="Tele Opacity"; slider=Cvar_VariableValue("r_telealpha"); value=slider?va("%.2f",slider):"auto"; is_slider=true; break;
 	case GFX_AUTO_LOD: name="Auto Texture LOD"; value=r_lodbias.value?"on":"off"; break;
 	case GFX_LOD_BIAS: name="Texture LOD Bias"; slider=(gl_lodbias.value+2)/4; value=va("%.2f",gl_lodbias.value); is_slider=true; break;
 	case GFX_FAR_CLIP: name="Far Clip"; slider=(gl_farclip.value-1024)/31744; value=va("%.0f",gl_farclip.value); is_slider=true; break;
 	case GFX_ZFIX: name="Depth Fix"; value=gl_zfix.value?"on":"off"; break;
 	}
-	M_Print (cbx, MENU_LABEL_X, y, name);
+	M_GraphicsPrintValue (cbx, MENU_LABEL_X, y, name,
+		(is_slider ? GraphicsMenu_Layout ().slider_x - CHARACTER_SIZE : MENU_VALUE_X) - CHARACTER_SIZE);
 	if (is_slider) M_GraphicsDrawSlider (cbx, y, CLAMP(0,slider,1), value);
 	else M_GraphicsPrintValue (cbx, MENU_VALUE_X, y, value, GraphicsMenu_Layout ().list_right);
 }
