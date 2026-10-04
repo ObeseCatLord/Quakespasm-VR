@@ -41,6 +41,8 @@ typedef struct {
 } sa_progress_t;
 typedef struct {
     uint64_t blocks, clipped, nonfinite, snapshot_misses, underrun_frames, rt_allocations;
+    uint64_t room_nonfinite_blocks; /* callback-owned; one count per faulty room block */
+    uint64_t binaural_nonfinite_blocks; /* callback-owned; one count per faulty source-mix block */
     uint64_t render_ticks, max_render_ticks, max_pose_age_ticks;
     float output_peak;
     int active, stream_frames, dropped_frames, self_frames, self_dropped;
@@ -76,6 +78,7 @@ void SA_Reset(sa_renderer_t *r); /* callback excluded; retains allocations */
 void SA_ForgetSample(sa_renderer_t *r, const sa_sample_t *sample);
 void SA_ResetStream(sa_renderer_t *r, int stream); /* callback excluded */
 void SA_SetSource(sa_renderer_t *r, int index, const sa_source_t *source);
+/* Reject nonfinite origin or nonfinite or near-zero basis axes; retain the previous pose and timestamp. */
 void SA_SetListener(sa_renderer_t *r, const sa_listener_t *listener);
 void SA_SetSettings(sa_renderer_t *r, const sa_settings_t *settings);
 unsigned SA_Finished(sa_renderer_t *r, int index);
