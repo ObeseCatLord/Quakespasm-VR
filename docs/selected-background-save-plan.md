@@ -163,3 +163,13 @@ unchanged v5 and v7 captures byte-for-byte. Run it only after the declarations
 and lifecycle hooks above are integrated, using the native-fixture make target
 with `NEGOTIATION_SOURCE=../tests/background_save_snapshot_fixture.c` and
 `-Wl,--wrap=Sys_fopen` added to `NEGOTIATION_EXTRA_LDFLAGS`.
+
+
+## Final verification (2026-10-04)
+
+Strict native graph and delayed-write fixture pass: immutable v5/v7 byte
+captures, blocked disk I/O, two-slot admission, same-path alias/full rejection
+and main-thread completion. The existing native autosave check passes retry,
+backoff and recovery. A failed open now preserves a pre-existing temporary
+directory; cleanup removes only a path successfully opened by this writer.
+Main remains the sole owner of QC serialization and autosave/list state.

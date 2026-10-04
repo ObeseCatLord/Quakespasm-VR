@@ -180,11 +180,11 @@ Main also preserves the native UNORM lightmap storage range after fragment
 lighting: combined static/dynamic light is clamped to 0..2 (normal atlas) or
 0..8 (scaled atlas), before diffuse/fullbright/fog composition. The default-off
 path bypasses this new calculation entirely. Spatial sampling differs from
-atlas baking, so rendered equivalence still needs the deferred visual check.
+atlas baking, so the bounded native/cluster desktop captures pass visual inspection; the full visual matrix remains additional qualification.
 
 The CPU frame struct and GLSL std430 block span 265456 bytes. CPU offset/size
 assertions document the contract; shader reflection and uploaded-buffer validation
-remain deferred with compilation and GPU checks.
+passed the final production shader reflection and GPU dispatch/readback check.
 
 `tests/cluster_lighting_geometry_fixture.c` is an independent CPU numerical
 reference, not production GLSL execution. It supplies known synthetic inverse
@@ -195,4 +195,4 @@ and 0/1/31/32/33/63/64-light terminal masks. It also checks native 8/10-bit ligh
 scale and eye-facing KEX normal expectations. These numerical checks cannot prove
 GLSL transcription, descriptor ABI, synchronization, or pixels. The graphics
 fixture requires actual compute-mask inspection and rendering against those same
-witnesses. No fixture, shader compiler, build or GPU test has been run.
+witnesses. The final implementation batch has now passed CPU geometry, production GPU compute, strict shader compilation, and ten live renderer cases in desktop and two-eye simulated OpenXR. See `tests/cluster_lighting_graphics_cases.md` for exact evidence and limits.
