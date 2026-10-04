@@ -25,7 +25,7 @@ render diagnostics are excluded. This is menu work, not a renderer replacement.
 | Existing list menus already implement scrolling and pointer hits | `Quake/menu.c`, options/bind/mod browser |
 | `r_vfog` registration is commented out | `Quake/gl_fog.c`; exclude rather than invent a setting |
 
-## Proposed incremental design (pending Astra review)
+## Incremental design
 
 Retain the existing menu state, draw helpers, input owners and preview veil.
 Replace the page split with a small categorized list: Display, Lighting,
@@ -67,7 +67,7 @@ Considered keeping two pages, but additional controls already strain the fixed
 canvas. Considered expanding all menus' canvas; rejected because the mods
 browser's dedicated canvas does not justify changing every menu and VR panel.
 
-Implementation follows review. All builds/tests wait until the selected feature
+Implementation follows the completed review. All builds/tests wait until the selected feature
 implementation is complete. Final checks cover category row bounds, shared
 draw/hit mapping, supported MSAA choices, unsupported controls, scrolling and
 mouse/controller navigation, persistence, no altered defaults, and desktop/VR

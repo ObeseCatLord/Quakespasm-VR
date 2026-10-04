@@ -1139,7 +1139,7 @@ void Draw_FadeScreen (cb_context_t *cbx)
 	corner_verts[3].position[1] = glheight;
 
 	for (i = 0; i < 4; ++i)
-		corner_verts[i].color[3] = 128;
+		corner_verts[i].color[3] = (byte)(128.0f * M_MenuLivePreviewFadeAlpha ());
 
 	vertices[0] = corner_verts[0];
 	vertices[1] = corner_verts[1];
@@ -1497,10 +1497,11 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype newcanvas)
 			}
 			else
 			{
+				const float menu_height = M_MenuCanvasHeight ();
 				s = M_MenuCanvasScale ();
 				u = (glwidth - (320.0f * s)) / (2.0f * s);
-				v = (glheight - (200.0f * s)) / (2.0f * s);
-				GL_OrthoMatrix (cbx, -u, 320.0f + u, 200.0f + v, -v, -99999, 99999);
+				v = (glheight - (menu_height * s)) / (2.0f * s);
+				GL_OrthoMatrix (cbx, -u, 320.0f + u, menu_height + v, -v, -99999, 99999);
 				GL_Viewport (cbx, 0, 0, glwidth, glheight, 0.0f, 1.0f);
 			}
 		}

@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "vr_weapon_calibration.h"
 #include "view.h"
 #include "addon_catalog.h"
+#include "menu_layout.h"
 #include "custom_avatar.h"
 #include "voice.h"
 #include "mod_browser_keyboard.h"
@@ -149,7 +150,9 @@ extern cvar_t scr_style;
 extern cvar_t autoload;
 extern cvar_t autofastload;
 extern cvar_t r_rtshadows;
+extern cvar_t r_clustered_lights;
 extern cvar_t r_particles;
+extern cvar_t r_surface_dither;
 extern cvar_t r_softparticles;
 extern cvar_t r_oit;
 extern cvar_t r_enhancedmodels;
@@ -175,6 +178,38 @@ extern cvar_t crosshair_alpha;
 
 static qboolean slider_grab;
 static qboolean scrollbar_grab;
+static cvar_t ui_live_preview = {"ui_live_preview", "1", CVAR_ARCHIVE};
+static float m_live_preview_fraction;
+static double m_live_preview_until;
+
+/* Graphics cvars already own their renderer state. This only reveals that
+ * state briefly, without moving the view or staging a second renderer. */
+static qboolean M_LivePreview_GameAvailable (void)
+{
+	return cls.state == ca_connected && cls.signon == SIGNONS;
+}
+
+static void M_LivePreview_Kick (void)
+{
+	if (ui_live_preview.value && M_LivePreview_GameAvailable ())
+		m_live_preview_until = realtime + 1.5;
+}
+
+static void M_LivePreview_Update (void)
+{
+	const float target = ui_live_preview.value && key_dest == key_menu && m_state == m_graphics &&
+		M_LivePreview_GameAvailable () && realtime < m_live_preview_until ? 1.0f : 0.0f;
+	const float step = CLAMP (0.0f, host_frametime * 8.0f, 1.0f);
+
+	m_live_preview_fraction += (target - m_live_preview_fraction) * step;
+}
+
+float M_MenuLivePreviewFadeAlpha (void)
+{
+	if (key_dest != key_menu || m_state != m_graphics)
+		return 1.0f;
+	return 1.0f - 0.60f * CLAMP (0.0f, m_live_preview_fraction, 1.0f);
+}
 
 // clang-format off
 // crosshair_definitions
@@ -258,8 +293,13 @@ float M_GetScale ()
 
 float M_MenuCanvasScale (void)
 {
-	const float max_scale = q_min ((float)glwidth / 320.0f, (float)glheight / 200.0f);
+	const float max_scale = q_min ((float)glwidth / 320.0f, (float)glheight / M_MenuCanvasHeight ());
 	return CLAMP (1.0f, M_GetScale (), max_scale);
+}
+
+int M_MenuCanvasHeight (void)
+{
+	return m_state == m_mods ? MOD_BROWSER_CANVAS_HEIGHT : 200;
 }
 
 /*
@@ -272,10 +312,10 @@ static qboolean M_PixelToMenuCanvasCoord (int *x, int *y)
 	const float s = M_MenuCanvasScale ();
 	float local_x, local_y;
 	/* CANVAS_MENU may deliberately use its letterboxed margins. Its source
-	 * ortho spans the whole displayed eye, not just the central 320x200. */
+	 * ortho spans the whole displayed eye, not just the central menu source. */
 	const qboolean within_display = *x >= 0 && *x < glwidth && *y >= 0 && *y < glheight;
 	local_x = (*x - (glwidth - 320 * s) / 2) / s;
-	local_y = (*y - (glheight - 200 * s) / 2) / s;
+	local_y = (*y - (glheight - M_MenuCanvasHeight () * s) / 2) / s;
 	*x = local_x;
 	*y = local_y;
 	return within_display;
@@ -464,18 +504,24 @@ void M_MenuChanged ()
 M_DrawSlider
 ================
 */
-static void M_DrawSlider (cb_context_t *cbx, int x, int y, float value, const char *label)
+static void M_DrawSliderSized (cb_context_t *cbx, int x, int y, float value,
+	const char *label, int size)
 {
 	value = CLAMP (0.0f, value, 1.0f);
 	Draw_Character (cbx, x - CHARACTER_SIZE, y, 128);
 
-	for (int i = 0; i < SLIDER_SIZE; i++)
+	for (int i = 0; i < size; i++)
 		Draw_Character (cbx, x + i * CHARACTER_SIZE, y, 129);
 
-	Draw_Character (cbx, x + SLIDER_SIZE * CHARACTER_SIZE, y, 130);
-	Draw_Character (cbx, x + (SLIDER_SIZE - 1) * CHARACTER_SIZE * value, y, 131);
+	Draw_Character (cbx, x + size * CHARACTER_SIZE, y, 130);
+	Draw_Character (cbx, x + (size - 1) * CHARACTER_SIZE * value, y, 131);
 
-	M_Print (cbx, x + (SLIDER_SIZE + 1) * CHARACTER_SIZE, y, label);
+	M_Print (cbx, x + (size + 1) * CHARACTER_SIZE, y, label);
+}
+
+static void M_DrawSlider (cb_context_t *cbx, int x, int y, float value, const char *label)
+{
+	M_DrawSliderSized (cbx, x, y, value, label, SLIDER_SIZE);
 }
 
 /*
@@ -547,6 +593,17 @@ static void M_DrawCheckbox (cb_context_t *cbx, int x, int y, int on)
 
 int m_save_demonum;
 
+static qboolean M_CancelPendingConnection (void)
+{
+	if (!CL_ConnectionPending ())
+		return false;
+	CL_Disconnect_f ();
+	IN_Activate ();
+	key_dest = key_game;
+	m_state = m_none;
+	return true;
+}
+
 /*
 ================
 M_ToggleMenu_f
@@ -555,6 +612,8 @@ M_ToggleMenu_f
 void M_ToggleMenu_f (void)
 {
 	M_MenuChanged ();
+	if (M_CancelPendingConnection ())
+		return;
 
 	if (key_dest == key_menu)
 	{
@@ -2012,86 +2071,93 @@ static void M_GameOptions_Draw (cb_context_t *cbx)
 //=============================================================================
 /* GRAPHICS OPTIONS MENU */
 
-enum
+typedef enum
 {
-	GRAPHICS_OPT_GAMMA,
-	GRAPHICS_OPT_CONTRAST,
-	GRAPHICS_OPT_FOV,
-	GRAPHICS_OPT_8BIT_COLOR,
-	GRAPHICS_OPT_FILTER,
-	GRAPHICS_OPT_MENU_FILTER,
-	GRAPHICS_OPT_MAX_FPS,
-	GRAPHICS_OPT_ANTIALIASING_SAMPLES,
-	GRAPHICS_OPT_ANTIALIASING_MODE,
-	GRAPHICS_OPT_ANISOTROPY,
-	GRAPHICS_OPT_UNDERWATER,
-	GRAPHICS_OPT_TRANSPARENCY,
-	GRAPHICS_OPT_MODELS,
-	GRAPHICS_OPT_MODEL_INTERPOLATION,
-	GRAPHICS_OPT_PARTICLES,
-	GRAPHICS_OPT_SOFT_PARTICLES,
-	GRAPHICS_OPT_DYNAMIC_LIGHTS,
-	GRAPHICS_OPT_AMBIENT_OCCLUSION,
-	GRAPHICS_OPT_AMBIENT_OCCLUSION_RADIUS,
-	GRAPHICS_OPT_AMBIENT_OCCLUSION_STRENGTH,
-	GRAPHICS_OPT_AMBIENT_OCCLUSION_VR_HALF,
-	GRAPHICS_OPT_SHADOWS,
-	GRAPHICS_OPTIONS_ITEMS,
+	GRAPHICS_CATEGORY_DISPLAY,
+	GRAPHICS_CATEGORY_LIGHTING,
+	GRAPHICS_CATEGORY_EFFECTS,
+	GRAPHICS_CATEGORY_PARTICLES,
+	GRAPHICS_CATEGORY_ADVANCED,
+	GRAPHICS_CATEGORY_COUNT
+} graphics_category_t;
+
+typedef enum
+{
+	GFX_GAMMA, GFX_CONTRAST, GFX_FOV, GFX_PALETTE, GFX_FILTER, GFX_UI_FILTER,
+	GFX_MAX_FPS, GFX_AA_SAMPLES, GFX_AA_MODE, GFX_ANISOTROPY, GFX_VIDEO, GFX_LIVE_PREVIEW,
+	GFX_DYNAMIC_LIGHTS, GFX_LIGHT_MODE, GFX_SHADOWS, GFX_AO, GFX_AO_RADIUS, GFX_AO_STRENGTH,
+	GFX_AO_VR, GFX_LIGHTSTYLES, GFX_FULLBRIGHTS, GFX_DITHER,
+	GFX_WATER_FX, GFX_TRANSPARENCY, GFX_PARTICLES, GFX_SOFT_PARTICLES, GFX_MODELS,
+	GFX_MODEL_ANIMATION, GFX_MODEL_MOVE, GFX_MODEL_TURN, GFX_PARTICLE_DETAILS,
+	GFX_FTE_PARTICLES, GFX_SOFT_DISTANCE, GFX_PARTICLE_DENSITY, GFX_RAIN, GFX_RAIN_QUANTITY,
+	GFX_SPARKS, GFX_BEAMS, GFX_PARTICLE_SCRIPT,
+	GFX_FAST_SKY, GFX_SKY_ALPHA, GFX_SKY_FOG, GFX_SKY_WIND, GFX_WATER_ALPHA,
+	GFX_LAVA_ALPHA, GFX_SLIME_ALPHA, GFX_TELE_ALPHA, GFX_AUTO_LOD, GFX_LOD_BIAS,
+	GFX_FAR_CLIP, GFX_ZFIX
+} graphics_option_t;
+
+#define GFX_COUNT_DISPLAY 12
+#define GFX_COUNT_LIGHTING 10
+#define GFX_COUNT_EFFECTS 9
+#define GFX_COUNT_PARTICLES 8
+#define GFX_COUNT_ADVANCED 12
+
+static const graphics_option_t graphics_options[GRAPHICS_CATEGORY_COUNT][GRAPHICS_MENU_ROWS] = {
+	{GFX_GAMMA, GFX_CONTRAST, GFX_FOV, GFX_PALETTE, GFX_FILTER, GFX_UI_FILTER, GFX_MAX_FPS, GFX_AA_SAMPLES, GFX_AA_MODE, GFX_ANISOTROPY, GFX_VIDEO, GFX_LIVE_PREVIEW},
+	{GFX_DYNAMIC_LIGHTS, GFX_LIGHT_MODE, GFX_SHADOWS, GFX_AO, GFX_AO_RADIUS, GFX_AO_STRENGTH, GFX_AO_VR, GFX_LIGHTSTYLES, GFX_FULLBRIGHTS, GFX_DITHER},
+	{GFX_WATER_FX, GFX_TRANSPARENCY, GFX_PARTICLES, GFX_SOFT_PARTICLES, GFX_MODELS, GFX_MODEL_ANIMATION, GFX_MODEL_MOVE, GFX_MODEL_TURN, GFX_PARTICLE_DETAILS},
+	{GFX_FTE_PARTICLES, GFX_SOFT_DISTANCE, GFX_PARTICLE_DENSITY, GFX_RAIN, GFX_RAIN_QUANTITY, GFX_SPARKS, GFX_BEAMS, GFX_PARTICLE_SCRIPT},
+	{GFX_FAST_SKY, GFX_SKY_ALPHA, GFX_SKY_FOG, GFX_SKY_WIND, GFX_WATER_ALPHA, GFX_LAVA_ALPHA, GFX_SLIME_ALPHA, GFX_TELE_ALPHA, GFX_AUTO_LOD, GFX_LOD_BIAS, GFX_FAR_CLIP, GFX_ZFIX},
 };
+static const int graphics_option_counts[GRAPHICS_CATEGORY_COUNT] = {
+	GFX_COUNT_DISPLAY, GFX_COUNT_LIGHTING, GFX_COUNT_EFFECTS, GFX_COUNT_PARTICLES, GFX_COUNT_ADVANCED
+};
+static int graphics_category = GRAPHICS_CATEGORY_DISPLAY;
+static int graphics_cursor[GRAPHICS_CATEGORY_COUNT];
+static int graphics_first[GRAPHICS_CATEGORY_COUNT];
+static int graphics_category_hover = -1;
 
-static int graphics_options_cursor = 0;
-static qboolean graphics_options_effects_page;
+#define GRAPHICS_PARTICLE_PRESETS_MAX 32
+static char graphics_particle_presets[GRAPHICS_PARTICLE_PRESETS_MAX][MAX_QPATH];
+static int graphics_particle_preset_count;
 
-static qboolean M_GraphicsOptions_OptionVisible (int option)
+extern cvar_t r_lerplightstyles, gl_fullbrights, gl_farclip, gl_zfix;
+extern cvar_t r_lerpmodels, r_lerpmove, r_lerpturn, r_lodbias, gl_lodbias;
+extern VkSampleCountFlags VID_GraphicsAASampleMask (void);
+extern const char *R_ClusteredLightingStatus (void);
+
+static void M_GraphicsRefreshParticlePresets (void);
+
+static graphics_option_t M_GraphicsOption (void)
 {
-	if (option == GRAPHICS_OPT_AMBIENT_OCCLUSION ||
-		option == GRAPHICS_OPT_AMBIENT_OCCLUSION_RADIUS ||
-		option == GRAPHICS_OPT_AMBIENT_OCCLUSION_STRENGTH)
-		return R_SSAOSupported ();
-	if (option == GRAPHICS_OPT_AMBIENT_OCCLUSION_VR_HALF)
-		return R_SSAOSupported () && vulkan_globals.stereo_active;
-	if (option == GRAPHICS_OPT_SHADOWS)
-		return vulkan_globals.ray_query;
-	return true;
+	return graphics_options[graphics_category][graphics_cursor[graphics_category]];
 }
 
-static qboolean M_GraphicsOptions_OptionOnCurrentPage (int option)
+static qboolean M_GraphicsOptionIsSlider (graphics_option_t option)
 {
-	return M_GraphicsOptions_OptionVisible (option) &&
-		graphics_options_effects_page == (option >= GRAPHICS_OPT_DYNAMIC_LIGHTS);
-}
-
-static int M_GraphicsOptions_NumItems ()
-{
-	int count = 0;
-
-	for (int option = 0; option < GRAPHICS_OPTIONS_ITEMS; ++option)
-		if (M_GraphicsOptions_OptionOnCurrentPage (option))
-			++count;
-	return count;
-}
-
-static int M_GraphicsOptions_CursorOption (void)
-{
-	int cursor = 0;
-
-	for (int option = 0; option < GRAPHICS_OPTIONS_ITEMS; ++option)
+	switch (option)
 	{
-		if (!M_GraphicsOptions_OptionOnCurrentPage (option))
-			continue;
-		if (cursor++ == graphics_options_cursor)
-			return option;
+	case GFX_GAMMA: case GFX_CONTRAST: case GFX_FOV: case GFX_MAX_FPS:
+	case GFX_AO_RADIUS: case GFX_AO_STRENGTH: case GFX_DITHER: case GFX_SOFT_DISTANCE:
+	case GFX_PARTICLE_DENSITY: case GFX_RAIN_QUANTITY: case GFX_SKY_ALPHA: case GFX_SKY_FOG:
+	case GFX_SKY_WIND: case GFX_WATER_ALPHA: case GFX_LAVA_ALPHA: case GFX_SLIME_ALPHA:
+	case GFX_TELE_ALPHA: case GFX_LOD_BIAS: case GFX_FAR_CLIP:
+		return true;
+	default:
+		return false;
 	}
-	return GRAPHICS_OPT_GAMMA;
 }
 
-static void M_GraphicsOptions_SetEffectsPage (qboolean effects)
+static void M_GraphicsSetCategory (graphics_category_t category)
 {
-	if (graphics_options_effects_page == effects)
+	if (graphics_category == category)
 		return;
-	graphics_options_effects_page = effects;
-	graphics_options_cursor = 0;
+	graphics_category = category;
+	if (category == GRAPHICS_CATEGORY_PARTICLES)
+		M_GraphicsRefreshParticlePresets ();
+	M_MenuChanged ();
 	slider_grab = false;
+	scrollbar_grab = false;
 }
 
 static void M_Menu_GraphicsOptions_f (void)
@@ -2100,416 +2166,668 @@ static void M_Menu_GraphicsOptions_f (void)
 	key_dest = key_menu;
 	m_state = m_graphics;
 	m_entersound = true;
-	graphics_options_effects_page = false;
-	graphics_options_cursor = 0;
+	M_GraphicsSetCategory (GRAPHICS_CATEGORY_DISPLAY);
 }
 
-static void M_GraphicsOptions_ChooseNextAASamples (int dir)
+static int M_GraphicsSampleCount (VkSampleCountFlags samples)
 {
-	int value = vid_fsaa.value;
+	if (samples & VK_SAMPLE_COUNT_16_BIT) return 16;
+	if (samples & VK_SAMPLE_COUNT_8_BIT) return 8;
+	if (samples & VK_SAMPLE_COUNT_4_BIT) return 4;
+	if (samples & VK_SAMPLE_COUNT_2_BIT) return 2;
+	return 1;
+}
 
-	if (dir > 0)
-	{
-		if (value >= 16)
-			value = 0;
-		else if (value >= 8)
-			value = 16;
-		else if (value >= 4)
-			value = 8;
-		else if (value >= 2)
-			value = 4;
-		else
-			value = 2;
-	}
-	else
-	{
-		if (value <= 0)
-			value = 16;
-		else if (value <= 2)
-			value = 0;
-		else if (value <= 4)
-			value = 2;
-		else if (value <= 8)
-			value = 4;
-		else if (value <= 16)
-			value = 8;
-		else
-			value = 16;
-	}
+static qboolean M_GraphicsChooseAASamples (int dir)
+{
+	const int value = GraphicsMenu_NextAASample ((int)vid_fsaa.value, dir, (unsigned)VID_GraphicsAASampleMask ());
 
+	if ((int)vid_fsaa.value == value)
+		return false;
 	Cvar_SetValueQuick (&vid_fsaa, (float)value);
+	return true;
 }
 
-static void M_GraphicsOptions_ChooseNextParticles (int dir)
+static qboolean M_GraphicsChooseAnisotropy (int dir)
 {
-	int value = r_particles.value;
+	static const float values[] = {0, 1, 2, 4, 8, 16};
+	const float maximum = vulkan_globals.device_properties.limits.maxSamplerAnisotropy;
+	int index = 0;
 
-	if (dir > 0)
+	if (!vulkan_globals.device_features.samplerAnisotropy || maximum <= 1.0f)
+		return false;
+	for (int i = 1; i < (int)q_countof (values); ++i)
+		if (vid_anisotropic.value >= values[i]) index = i;
+	for (int i = 0; i < (int)q_countof (values); ++i)
 	{
-		if (value == 0)
-			value = 2;
-		else if (value == 2)
-			value = 1;
-		else
-			value = 0;
+		index = (index + (int)q_countof (values) + dir) % (int)q_countof (values);
+		if (values[index] <= 1.0f || values[index] <= maximum)
+		{
+			if (vid_anisotropic.value == values[index]) return false;
+			Cvar_SetValueQuick (&vid_anisotropic, values[index]);
+			return true;
+		}
 	}
-	else
-	{
-		if (value == 0)
-			value = 1;
-		else if (value == 2)
-			value = 0;
-		else
-			value = 2;
-	}
-
-	Cvar_SetValueQuick (&r_particles, (float)value);
+	return false;
 }
 
-static void M_GraphicsOptions_AdjustSliders (int dir, qboolean mouse)
+static int M_GraphicsDitherIndex (void)
 {
-	float f, clamped_mouse = CLAMP (SLIDER_START, (float)m_mouse_x, SLIDER_END);
+	static const float values[] = {0, .5f, 1, 2};
+	int result = 0;
+	for (int i = 1; i < (int)q_countof (values); ++i)
+		if (r_surface_dither.value >= (values[i - 1] + values[i]) * .5f) result = i;
+	return result;
+}
 
-	if (fabsf (clamped_mouse - (float)m_mouse_x) > 12.0f)
+static qboolean M_GraphicsParticlePresetNameIsSafe (const char *name)
+{
+	if (!name[0] || strlen (name) >= MAX_QPATH || strstr (name, ".."))
+		return false;
+	for (const char *p = name; *p; ++p)
+		if ((unsigned char)*p <= ' ' || *p == '/' || *p == '\\')
+			return false;
+	return true;
+}
+
+static void M_GraphicsAddParticlePreset (const char *name)
+{
+	int insert;
+
+	if (!M_GraphicsParticlePresetNameIsSafe (name))
+		return;
+	for (insert = 0; insert < graphics_particle_preset_count; ++insert)
+	{
+		const int order = q_strcasecmp (name, graphics_particle_presets[insert]);
+		if (!order)
+			return;
+		if (order < 0)
+			break;
+	}
+	if (graphics_particle_preset_count == GRAPHICS_PARTICLE_PRESETS_MAX)
+		return;
+	for (int i = graphics_particle_preset_count; i > insert; --i)
+		q_strlcpy (graphics_particle_presets[i], graphics_particle_presets[i - 1],
+			sizeof (graphics_particle_presets[i]));
+	q_strlcpy (graphics_particle_presets[insert], name,
+		sizeof (graphics_particle_presets[insert]));
+	++graphics_particle_preset_count;
+}
+
+static void M_GraphicsAddParticleConfigPath (const char *path)
+{
+	static const char prefix[] = "particles/";
+	const size_t prefix_length = sizeof (prefix) - 1;
+	const size_t length = strlen (path);
+	char name[MAX_QPATH];
+
+	if (length <= prefix_length + 4 || strncmp (path, prefix, prefix_length) ||
+		q_strcasecmp (path + length - 4, ".cfg") ||
+		length - prefix_length - 4 >= sizeof (name))
+		return;
+	memcpy (name, path + prefix_length, length - prefix_length - 4);
+	name[length - prefix_length - 4] = '\0';
+	M_GraphicsAddParticlePreset (name);
+}
+
+static void M_GraphicsRefreshParticlePresets (void)
+{
+	searchpath_t *search;
+
+	graphics_particle_preset_count = 0;
+	M_GraphicsAddParticlePreset ("classic");
+	if (COM_FileExists ("particles/scriptdefs.cfg", NULL) ||
+		COM_FileExists ("scriptdefs.cfg", NULL))
+		M_GraphicsAddParticlePreset ("scriptdefs");
+	if (COM_FileExists ("effectinfo.txt", NULL))
+		M_GraphicsAddParticlePreset ("effectinfo");
+	for (search = com_searchpaths; search; search = search->next)
+	{
+		if (search->pack)
+		{
+			for (int i = 0; i < search->pack->numfiles; ++i)
+				M_GraphicsAddParticleConfigPath (search->pack->files[i].name);
+		}
+		else if (search->filename[0])
+		{
+			char directory[MAX_OSPATH];
+			findfile_t *find;
+			const int directory_length = q_snprintf (directory, sizeof (directory),
+				"%s/particles", search->filename);
+			if (directory_length < 0 || (size_t)directory_length >= sizeof (directory))
+				continue;
+			find = Sys_FindFirst (directory, "cfg");
+			while (find)
+			{
+				if (!(find->attribs & FA_DIRECTORY))
+				{
+					char path[MAX_QPATH];
+					const int path_length = q_snprintf (path, sizeof (path),
+						"particles/%s", find->name);
+					if (path_length >= 0 && (size_t)path_length < sizeof (path))
+						M_GraphicsAddParticleConfigPath (path);
+				}
+				find = Sys_FindNext (find);
+			}
+		}
+	}
+}
+
+static qboolean M_GraphicsChooseParticlePreset (int dir)
+{
+	const char *current = Cvar_VariableString ("r_particledesc");
+	int index = -1;
+
+	M_GraphicsRefreshParticlePresets ();
+	for (int i = 0; i < graphics_particle_preset_count; ++i)
+		if (!strcmp (current, graphics_particle_presets[i]))
+		{
+			index = i;
+			break;
+		}
+	if (!graphics_particle_preset_count)
+		return false;
+	index = (index + graphics_particle_preset_count + dir) % graphics_particle_preset_count;
+	Cvar_Set ("r_particledesc", graphics_particle_presets[index]);
+	return true;
+}
+
+static int M_GraphicsSliderStart (void)
+{
+	return GraphicsMenu_Layout ().slider_x + 4;
+}
+
+static int M_GraphicsSliderEnd (void)
+{
+	const graphics_menu_layout_t layout = GraphicsMenu_Layout ();
+
+	return M_GraphicsSliderStart () + (layout.slider_size - 1) * CHARACTER_SIZE;
+}
+
+static float M_GraphicsSliderMousePos (float mouse)
+{
+	return SLIDER_START + (mouse - M_GraphicsSliderStart ()) * SLIDER_EXTENT /
+		(M_GraphicsSliderEnd () - M_GraphicsSliderStart ());
+}
+
+static qboolean M_GraphicsSetSlider (const char *name, float low, float high,
+	float step, qboolean backward, qboolean mouse, float clamped_mouse, int dir)
+{
+	const float old = Cvar_VariableValue (name);
+	const float value = M_GetSliderPos (low, high, old, backward, mouse,
+		M_GraphicsSliderMousePos (clamped_mouse), dir, step, 999);
+	if (value == old) return false;
+	Cvar_SetValue (name, value);
+	return true;
+}
+
+static qboolean M_GraphicsAdjustMaxFPS (int dir, qboolean mouse, float clamped_mouse)
+{
+	const float current = host_maxfps.value <= 0.0f ? MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP :
+		CLAMP (MIN_FPS_MENU_VALUE, host_maxfps.value, MAX_FPS_MENU_VALUE);
+	const float selected = roundf (M_GetSliderPos (MIN_FPS_MENU_VALUE, MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP,
+		current, false, mouse, M_GraphicsSliderMousePos (clamped_mouse), dir,
+		FPS_MENU_VALUE_STEP, 2.0f * MAX_FPS_MENU_VALUE));
+	const float value = selected >= MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP ? 0.0f : selected;
+
+	if (value == host_maxfps.value)
+		return false;
+	Cvar_SetValueQuick (&host_maxfps, value);
+	return true;
+}
+
+static qboolean M_GraphicsAdjust (int dir, qboolean mouse)
+{
+	const graphics_option_t option = M_GraphicsOption ();
+	const float clamped_mouse = CLAMP (M_GraphicsSliderStart (), (float)m_mouse_x, M_GraphicsSliderEnd ());
+	const qboolean near_slider = fabsf (clamped_mouse - (float)m_mouse_x) <= 12.0f;
+	qboolean changed = false;
+
+	if (mouse && M_GraphicsOptionIsSlider (option) && near_slider)
+		slider_grab = true;
+	else if (mouse)
 		mouse = false;
 
-	if (dir)
-		S_LocalSound ("misc/menu3.wav");
-
-	if (mouse)
-		slider_grab = true;
-
-	int option = M_GraphicsOptions_CursorOption ();
 	switch (option)
 	{
-	case GRAPHICS_OPT_GAMMA:
-		f = M_GetSliderPos (0.5, 1, vid_gamma.value, true, mouse, clamped_mouse, dir, 0.05, 999);
-		Cvar_SetValue ("gamma", f);
+	case GFX_GAMMA: changed = M_GraphicsSetSlider ("gamma", .5f, 1, .05f, true, mouse, clamped_mouse, dir); break;
+	case GFX_CONTRAST: changed = M_GraphicsSetSlider ("contrast", 1, 2, .1f, false, mouse, clamped_mouse, dir); break;
+	case GFX_FOV:
+		changed = M_GraphicsSetSlider ("fov", 80, 130, 5, false, mouse, clamped_mouse, dir); break;
+	case GFX_PALETTE: Cvar_SetValueQuick (&vid_palettize, !vid_palettize.value); changed = true; break;
+	case GFX_FILTER: Cvar_SetValueQuick (&vid_filter, !vid_filter.value); changed = true; break;
+	case GFX_UI_FILTER: Cvar_SetValueQuick (&scr_guifilter, ((int)scr_guifilter.value + 3 + dir) % 3); changed = true; break;
+	case GFX_MAX_FPS: changed = M_GraphicsAdjustMaxFPS (dir, mouse, clamped_mouse); break;
+	case GFX_AA_SAMPLES: changed = M_GraphicsChooseAASamples (dir); break;
+	case GFX_AA_MODE:
+		if (vulkan_globals.device_features.sampleRateShading && vid_fsaa.value >= 2) { Cvar_SetValueQuick (&vid_fsaamode, !vid_fsaamode.value); changed = true; }
 		break;
-	case GRAPHICS_OPT_CONTRAST:
-		f = M_GetSliderPos (1, 2, vid_contrast.value, false, mouse, clamped_mouse, dir, 0.1, 999);
-		Cvar_SetValue ("contrast", f);
+	case GFX_ANISOTROPY: changed = M_GraphicsChooseAnisotropy (dir); break;
+	case GFX_VIDEO: M_Menu_Video_f (); return false;
+	case GFX_LIVE_PREVIEW: Cvar_SetValueQuick (&ui_live_preview, !ui_live_preview.value); return false;
+	case GFX_DYNAMIC_LIGHTS: Cvar_SetValueQuick (&r_dynamic, !r_dynamic.value); changed = true; break;
+	case GFX_LIGHT_MODE: Cvar_SetValueQuick (&r_clustered_lights, !r_clustered_lights.value); changed = true; break;
+	case GFX_SHADOWS:
+		if (vulkan_globals.ray_query) { Cvar_SetValueQuick (&r_rtshadows, ((int)r_rtshadows.value + 4 + dir) % 4); changed = true; }
+		else if (r_rtshadows.value != 0) { Cvar_SetValueQuick (&r_rtshadows, 0); changed = true; }
 		break;
-	case GRAPHICS_OPT_FOV:
-		f = M_GetSliderPos (80, 130, scr_fov.value, false, mouse, clamped_mouse, dir, 5, 999);
-		Cvar_SetValue ("fov", f);
+	case GFX_AO:
+		if (R_SSAOSupported ()) { Cvar_SetValueQuick (&r_ssao, ((int)CLAMP (0, r_ssao.value, 3) + 4 + dir) % 4); changed = true; }
 		break;
-	case GRAPHICS_OPT_8BIT_COLOR:
-		Cvar_SetValueQuick (&vid_palettize, (float)(((int)vid_palettize.value + 2 + dir) % 2));
-		break;
-	case GRAPHICS_OPT_FILTER:
-		Cvar_SetValueQuick (&vid_filter, (float)(((int)vid_filter.value + 2 + dir) % 2));
-		break;
-	case GRAPHICS_OPT_MENU_FILTER:
-		Cvar_SetValueQuick (&scr_guifilter, (float)(((int)CLAMP (0, scr_guifilter.value, 2) + 3 + dir) % 3));
-		break;
-	case GRAPHICS_OPT_MAX_FPS:
+	case GFX_AO_RADIUS: if (R_SSAOSupported ()) changed = M_GraphicsSetSlider ("r_ssao_radius", 1, 128, 1, false, mouse, clamped_mouse, dir); break;
+	case GFX_AO_STRENGTH: if (R_SSAOSupported ()) changed = M_GraphicsSetSlider ("r_ssao_strength", 0, 1, .05f, false, mouse, clamped_mouse, dir); break;
+	case GFX_AO_VR: if (vulkan_globals.stereo_active && R_SSAOSupported ()) { Cvar_SetValue ("r_ssao_vr_half", !Cvar_VariableValue ("r_ssao_vr_half")); changed = true; } break;
+	case GFX_LIGHTSTYLES: Cvar_SetValueQuick (&r_lerplightstyles, ((int)r_lerplightstyles.value + 3 + dir) % 3); changed = true; break;
+	case GFX_FULLBRIGHTS: Cvar_SetValueQuick (&gl_fullbrights, !gl_fullbrights.value); changed = true; break;
+	case GFX_DITHER:
 	{
-		float clamped_host_maxfps = CLAMP (MIN_FPS_MENU_VALUE, host_maxfps.value, MAX_FPS_MENU_VALUE);
-
-		float host_fps_slider_value = (host_maxfps.value <= 0.0f) ? MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP : clamped_host_maxfps;
-
-		f = roundf (M_GetSliderPos (
-			MIN_FPS_MENU_VALUE, MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP, host_fps_slider_value, false, mouse, clamped_mouse, dir, FPS_MENU_VALUE_STEP,
-			2.0f * MAX_FPS_MENU_VALUE));
-
-		float changed_host_maxfps = (f >= MAX_FPS_MENU_VALUE + FPS_MENU_VALUE_STEP) ? 0.0f : f;
-
-		Cvar_SetValueQuick (&host_maxfps, changed_host_maxfps);
+		static const float values[] = {0, .5f, 1, 2}; int index = M_GraphicsDitherIndex ();
+		if (mouse) index = CLAMP (0, (int)roundf ((clamped_mouse - M_GraphicsSliderStart ()) * 3 /
+			(M_GraphicsSliderEnd () - M_GraphicsSliderStart ())), 3);
+		else index = (index + 4 + dir) % 4;
+		if (r_surface_dither.value != values[index]) { Cvar_SetValueQuick (&r_surface_dither, values[index]); changed = true; }
+		break;
 	}
-	break;
-	case GRAPHICS_OPT_ANTIALIASING_SAMPLES:
-		M_GraphicsOptions_ChooseNextAASamples (dir);
-		Cbuf_AddText ("vid_restart\n");
-		break;
-	case GRAPHICS_OPT_ANTIALIASING_MODE:
-		if (vulkan_globals.device_features.sampleRateShading)
-			Cvar_SetValueQuick (&vid_fsaamode, (float)(((int)vid_fsaamode.value + 2 + dir) % 2));
-		break;
-	case GRAPHICS_OPT_ANISOTROPY:
+	case GFX_WATER_FX: Cvar_SetValueQuick (&r_waterwarp, ((int)r_waterwarp.value + 3 + dir) % 3); changed = true; break;
+	case GFX_TRANSPARENCY: Cvar_SetValueQuick (&r_oit, ((int)CLAMP (0, r_oit.value, 2) + 3 + dir) % 3); changed = true; break;
+	case GFX_PARTICLES: Cvar_SetValueQuick (&r_particles, ((int)r_particles.value + 3 + dir) % 3); changed = true; break;
+	case GFX_SOFT_PARTICLES: Cvar_SetValueQuick (&r_softparticles, !r_softparticles.value); changed = true; break;
+	case GFX_MODELS: Cvar_SetValueQuick (&r_enhancedmodels, !r_enhancedmodels.value); changed = true; break;
+	case GFX_MODEL_ANIMATION: Cvar_SetValueQuick (&r_lerpmodels, ((int)r_lerpmodels.value + 3 + dir) % 3); changed = true; break;
+	case GFX_MODEL_MOVE: Cvar_SetValueQuick (&r_lerpmove, !r_lerpmove.value); changed = true; break;
+	case GFX_MODEL_TURN: Cvar_SetValueQuick (&r_lerpturn, !r_lerpturn.value); changed = true; break;
+	case GFX_PARTICLE_DETAILS: M_GraphicsSetCategory (GRAPHICS_CATEGORY_PARTICLES); return false;
+	case GFX_FTE_PARTICLES: Cvar_SetValue ("r_fteparticles", !Cvar_VariableValue ("r_fteparticles")); changed = true; break;
+	case GFX_SOFT_DISTANCE: changed = M_GraphicsSetSlider ("r_softparticledistance", .5f, 16, .5f, false, mouse, clamped_mouse, dir); break;
+	case GFX_PARTICLE_DENSITY: changed = M_GraphicsSetSlider ("r_part_density", 0, 2, .1f, false, mouse, clamped_mouse, dir); break;
+	case GFX_RAIN: Cvar_SetValue ("r_part_rain", !Cvar_VariableValue ("r_part_rain")); changed = true; break;
+	case GFX_RAIN_QUANTITY: changed = M_GraphicsSetSlider ("r_part_rain_quantity", 0, 2, .1f, false, mouse, clamped_mouse, dir); break;
+	case GFX_SPARKS: Cvar_SetValue ("r_part_sparks", !Cvar_VariableValue ("r_part_sparks")); changed = true; break;
+	case GFX_BEAMS: Cvar_SetValue ("r_part_beams", !Cvar_VariableValue ("r_part_beams")); changed = true; break;
+	case GFX_PARTICLE_SCRIPT: changed = M_GraphicsChooseParticlePreset (dir); break;
+	case GFX_FAST_SKY: Cvar_SetValue ("r_fastsky", !Cvar_VariableValue ("r_fastsky")); changed = true; break;
+	case GFX_SKY_ALPHA: changed = M_GraphicsSetSlider ("r_skyalpha", 0, 1, .05f, false, mouse, clamped_mouse, dir); break;
+	case GFX_SKY_FOG: changed = M_GraphicsSetSlider ("r_skyfog", 0, 1, .05f, false, mouse, clamped_mouse, dir); break;
+	case GFX_SKY_WIND: changed = M_GraphicsSetSlider ("r_skywind", 0, 2, .1f, false, mouse, clamped_mouse, dir); break;
+	case GFX_WATER_ALPHA: changed = M_GraphicsSetSlider ("r_wateralpha", 0, 1, .05f, false, mouse, clamped_mouse, dir); break;
+	case GFX_LAVA_ALPHA: changed = M_GraphicsSetSlider ("r_lavaalpha", 0, 1, .05f, false, mouse, clamped_mouse, dir); break;
+	case GFX_SLIME_ALPHA: changed = M_GraphicsSetSlider ("r_slimealpha", 0, 1, .05f, false, mouse, clamped_mouse, dir); break;
+	case GFX_TELE_ALPHA: changed = M_GraphicsSetSlider ("r_telealpha", 0, 1, .05f, false, mouse, clamped_mouse, dir); break;
+	case GFX_AUTO_LOD: Cvar_SetValueQuick (&r_lodbias, !r_lodbias.value); changed = true; break;
+	case GFX_LOD_BIAS: changed = M_GraphicsSetSlider ("gl_lodbias", -2, 2, .25f, false, mouse, clamped_mouse, dir); break;
+	case GFX_FAR_CLIP: changed = M_GraphicsSetSlider ("gl_farclip", 1024, 32768, 1024, false, mouse, clamped_mouse, dir); break;
+	case GFX_ZFIX: Cvar_SetValueQuick (&gl_zfix, !gl_zfix.value); changed = true; break;
+	}
+	if (changed) M_LivePreview_Kick ();
+	return changed;
+}
+
+static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_size)
+{
+	const char *cluster_reason;
+	const char *reason;
+	const float requested = vid_anisotropic.value;
+	const float actual = R_AnisotropyLevel ();
+
+	switch (option)
 	{
-		const float maximum = vulkan_globals.device_properties.limits.maxSamplerAnisotropy;
-		float current, next;
-		if (!vulkan_globals.device_features.samplerAnisotropy || maximum <= 1.0f)
-			break;
-		current = !isfinite (vid_anisotropic.value) || vid_anisotropic.value <= 0.0f ?
-			0.0f : R_AnisotropyLevel ();
-		if (dir > 0)
-			next = current <= 0.0f ? q_min (2.0f, maximum) :
-				current >= maximum ? 0.0f : q_min (current * 2.0f, maximum);
-		else if (current <= 0.0f)
-			next = maximum;
-		else if (current <= 2.0f)
-			next = 0.0f;
+	case GFX_FOV:
+		q_strlcpy (text, vulkan_globals.stereo_active ?
+			"Desktop FOV; headset view is unchanged" : "Desktop field of view", text_size);
+		break;
+	case GFX_VIDEO:
+		q_strlcpy (text, vulkan_globals.stereo_active ?
+			"OpenXR resolution is runtime-controlled" : "Video owns display and resolution", text_size);
+		break;
+	case GFX_AA_SAMPLES:
+		q_snprintf (text, text_size, "Requested %dx; active %dx",
+			(int)vid_fsaa.value, M_GraphicsSampleCount (vulkan_globals.sample_count));
+		break;
+	case GFX_AA_MODE:
+		q_strlcpy (text, vulkan_globals.supersampling ?
+			"Active: samples shade individually" : (vid_fsaamode.value ?
+			"Requested supersampling; active multisample" : "Active: multisample"), text_size);
+		break;
+	case GFX_ANISOTROPY:
+		if (!vulkan_globals.device_features.samplerAnisotropy ||
+			vulkan_globals.device_properties.limits.maxSamplerAnisotropy <= 1.0f)
+			q_snprintf (text, text_size, "Requested %gx; hardware uses %gx", requested, actual);
+		else if (requested <= 0.0f)
+			q_snprintf (text, text_size, "Off; active %gx", actual);
+		else if (requested <= 1.0f)
+			q_snprintf (text, text_size, "Auto uses hardware maximum: %gx", actual);
+		else if (actual < requested)
+			q_snprintf (text, text_size, "Requested %gx; clamped to %gx", requested, actual);
+		else
+			q_snprintf (text, text_size, "Requested %gx; active %gx", requested, actual);
+		break;
+	case GFX_LIGHT_MODE:
+		if (!r_clustered_lights.value)
+			q_strlcpy (text, "Requested Native: standard lighting", text_size);
+		else if (!(cluster_reason = R_ClusteredLightingStatus ()))
+			q_strlcpy (text, "Clustered: shade visible surfaces", text_size);
 		else
 		{
-			next = 2.0f;
-			while (next * 2.0f < current)
-				next *= 2.0f;
+			reason = cluster_reason;
+			if (!q_strncasecmp (reason, "Using Native:", 13))
+				reason += 13;
+			else if (!q_strncasecmp (reason, "Native:", 7))
+				reason += 7;
+			while (*reason == ' ')
+				++reason;
+			q_snprintf (text, text_size, "Using Native: %s", *reason ? reason : "renderer fallback");
 		}
-		Cvar_SetValueQuick (&vid_anisotropic, next);
+		break;
+	case GFX_SHADOWS:
+		q_strlcpy (text, vulkan_globals.ray_query ? "Off is always available" :
+			(r_rtshadows.value ? "Unavailable; activate to clear request" : "Ray-traced shadows unavailable"), text_size);
+		break;
+	case GFX_AO: case GFX_AO_RADIUS: case GFX_AO_STRENGTH:
+		q_strlcpy (text, R_SSAOSupported () ? "Ambient occlusion quality" : "Ambient occlusion unsupported", text_size);
+		break;
+	case GFX_AO_VR:
+		q_strlcpy (text, vulkan_globals.stereo_active ? "Shared desktop and VR quality setting" : "Only applies in VR", text_size);
+		break;
+	case GFX_MODEL_MOVE:
+		q_strlcpy (text, "Applies to eligible moving entities", text_size);
+		break;
+	case GFX_MODEL_TURN:
+		q_strlcpy (text, "Requires movement interpolation", text_size);
+		break;
+	case GFX_PARTICLE_DETAILS:
+		q_strlcpy (text, "Open particle detail controls", text_size);
+		break;
+	case GFX_PARTICLE_SCRIPT:
+		q_snprintf (text, text_size, "Choose classic or %d mounted presets",
+			q_max (0, graphics_particle_preset_count - 1));
+		break;
+	case GFX_WATER_ALPHA:
+		q_snprintf (text, text_size, "Req %.2f, now %.2f. Saved per-game; map may override.",
+			r_wateralpha.value, GL_WaterAlphaForTextureType (TEXTYPE_WATER));
+		break;
+	case GFX_LAVA_ALPHA: case GFX_SLIME_ALPHA: case GFX_TELE_ALPHA:
+	{
+		const char *name = option == GFX_LAVA_ALPHA ? "r_lavaalpha" :
+			(option == GFX_SLIME_ALPHA ? "r_slimealpha" : "r_telealpha");
+		const textype_t type = option == GFX_LAVA_ALPHA ? TEXTYPE_LAVA :
+			(option == GFX_SLIME_ALPHA ? TEXTYPE_SLIME : TEXTYPE_TELE);
+		const float value = Cvar_VariableValue (name);
+		if (value == 0.0f)
+			q_snprintf (text, text_size, "Req inherit, now %.2f. Session; zero inherits water/map.",
+				GL_WaterAlphaForTextureType (type));
+		else
+			q_snprintf (text, text_size, "Req %.2f, now %.2f. Session; map may override.", value,
+				GL_WaterAlphaForTextureType (type));
+		break;
 	}
+	case GFX_FAST_SKY: case GFX_SKY_ALPHA: case GFX_SKY_FOG:
+		q_strlcpy (text, "Session setting; map sky affects result", text_size);
 		break;
-	case GRAPHICS_OPT_UNDERWATER:
-		Cvar_SetValueQuick (&r_waterwarp, (float)(((int)r_waterwarp.value + 3 + dir) % 3));
+	case GFX_SKY_WIND:
+		q_strlcpy (text, "Archived; requires wind-enabled sky", text_size);
 		break;
-	case GRAPHICS_OPT_TRANSPARENCY:
-		Cvar_SetValueQuick (&r_oit, (float)(((int)CLAMP (0, r_oit.value, 2) + 3 + dir) % 3));
+	case GFX_AUTO_LOD: case GFX_LOD_BIAS:
+		q_strlcpy (text, "Sampler change applies immediately", text_size);
 		break;
-	case GRAPHICS_OPT_MODELS:
-		Cvar_SetValueQuick (&r_enhancedmodels, (float)(((int)r_enhancedmodels.value + 2 + dir) % 2));
+	case GFX_FAR_CLIP:
+		q_strlcpy (text, "Archived draw-distance preference", text_size);
 		break;
-	case GRAPHICS_OPT_MODEL_INTERPOLATION:
-		Cvar_SetValueQuick (&r_lerpmodels, (float)(((int)r_lerpmodels.value + 2 + dir) % 2));
-		Cvar_SetValueQuick (&r_lerpmove, r_lerpmodels.value);
-		Cvar_SetValueQuick (&r_lerpturn, r_lerpmodels.value);
-		break;
-	case GRAPHICS_OPT_PARTICLES:
-		M_GraphicsOptions_ChooseNextParticles (dir);
-		break;
-
-	case GRAPHICS_OPT_SOFT_PARTICLES:
-		Cvar_SetValueQuick (&r_softparticles, !r_softparticles.value);
-		break;
-	case GRAPHICS_OPT_DYNAMIC_LIGHTS:
-		Cvar_SetValueQuick (&r_dynamic, !r_dynamic.value);
-		break;
-	case GRAPHICS_OPT_AMBIENT_OCCLUSION:
-		if (R_SSAOSupported ())
-			Cvar_SetValueQuick (&r_ssao, (float)(((int)CLAMP (0, r_ssao.value, 3) + 4 + dir) % 4));
-		break;
-	case GRAPHICS_OPT_AMBIENT_OCCLUSION_RADIUS:
-		f = M_GetSliderPos (1, 128, Cvar_VariableValue ("r_ssao_radius"), false, mouse, clamped_mouse, dir, 1, 999);
-		Cvar_SetValue ("r_ssao_radius", f);
-		break;
-	case GRAPHICS_OPT_AMBIENT_OCCLUSION_STRENGTH:
-		f = M_GetSliderPos (0, 1, Cvar_VariableValue ("r_ssao_strength"), false, mouse, clamped_mouse, dir, 0.05f, 999);
-		Cvar_SetValue ("r_ssao_strength", f);
-		break;
-	case GRAPHICS_OPT_AMBIENT_OCCLUSION_VR_HALF:
-		Cvar_SetValue ("r_ssao_vr_half", !Cvar_VariableValue ("r_ssao_vr_half"));
-		break;
-	case GRAPHICS_OPT_SHADOWS:
-		if (vulkan_globals.ray_query)
-			Cvar_SetValueQuick (&r_rtshadows, (float)(((int)r_rtshadows.value + 4 + dir) % 4));
+	default:
+		q_strlcpy (text, "Left/right, click, or drag sliders", text_size);
 		break;
 	}
 }
 
-static void M_GraphicsOptions_Key (int k)
+static void M_GraphicsClipText (char *output, size_t output_size,
+	const char *text, int max_characters)
 {
-	if (k == K_MOUSE1 && M_Mouse_InRect (16, 304, 184, 192))
+	const size_t length = strlen (text);
+	const size_t max_length = q_min ((size_t)q_max (0, max_characters), output_size - 1);
+
+	if (length <= max_length)
+		q_strlcpy (output, text, output_size);
+	else if (max_length < 4)
 	{
-		M_GraphicsOptions_SetEffectsPage (!graphics_options_effects_page);
-		S_LocalSound ("misc/menu1.wav");
-		return;
+		memset (output, '.', max_length);
+		output[max_length] = '\0';
 	}
-
-	switch (k)
+	else
 	{
-	case K_MOUSE2:
-	case K_ESCAPE:
-	case K_BBUTTON:
-		M_Menu_Options_f ();
-		break;
-
-	case K_MOUSE1:
-	case K_ENTER:
-	case K_KP_ENTER:
-	case K_ABUTTON:
-		m_entersound = true;
-		M_GraphicsOptions_AdjustSliders (1, k == K_MOUSE1);
-		return;
-
-	case K_UPARROW:
-		S_LocalSound ("misc/menu1.wav");
-		graphics_options_cursor--;
-		if (graphics_options_cursor < 0)
-			graphics_options_cursor = M_GraphicsOptions_NumItems () - 1;
-		break;
-
-	case K_DOWNARROW:
-		S_LocalSound ("misc/menu1.wav");
-		graphics_options_cursor++;
-		if (graphics_options_cursor >= M_GraphicsOptions_NumItems ())
-			graphics_options_cursor = 0;
-		break;
-
-	case K_LEFTARROW:
-		M_GraphicsOptions_AdjustSliders (-1, false);
-		break;
-
-	case K_RIGHTARROW:
-		M_GraphicsOptions_AdjustSliders (1, false);
-		break;
-
-	case K_TAB:
-	case K_PGUP:
-	case K_PGDN:
-	case K_LTHUMB:
-	case K_RTHUMB:
-		M_GraphicsOptions_SetEffectsPage (!graphics_options_effects_page);
-		S_LocalSound ("misc/menu1.wav");
-		break;
+		memcpy (output, text, max_length - 3);
+		memcpy (output + max_length - 3, "...", 4);
 	}
 }
+
+static void M_GraphicsPrintValue (cb_context_t *cbx, int x, int y,
+	const char *value, int right)
+{
+	char clipped[64];
+
+	M_GraphicsClipText (clipped, sizeof (clipped), value,
+		(right - x) / CHARACTER_SIZE);
+	M_Print (cbx, x, y, clipped);
+}
+
+static void M_GraphicsDrawSlider (cb_context_t *cbx, int y, float value,
+	const char *label)
+{
+	const graphics_menu_layout_t layout = GraphicsMenu_Layout ();
+	const int label_x = layout.slider_x + (layout.slider_size + 1) * CHARACTER_SIZE;
+	char clipped[64];
+
+	M_GraphicsClipText (clipped, sizeof (clipped), label,
+		(layout.list_right - label_x) / CHARACTER_SIZE);
+	M_DrawSliderSized (cbx, layout.slider_x, y, value, clipped, layout.slider_size);
+}
+
+static const char *M_GraphicsNextHelpLine (const char *text, char *line,
+	size_t line_size)
+{
+	size_t used = 0;
+	const size_t max_length = line_size - 1;
+
+	while (*text == ' ')
+		++text;
+	while (*text)
+	{
+		const char *word = text;
+		size_t word_length;
+		while (*text && *text != ' ')
+			++text;
+		word_length = (size_t)(text - word);
+		if (used && used + 1 + word_length > max_length)
+		{
+			text = word;
+			break;
+		}
+		if (!used && word_length > max_length)
+		{
+			M_GraphicsClipText (line, line_size, word, (int)max_length);
+			while (*text == ' ')
+				++text;
+			return text;
+		}
+		if (used)
+			line[used++] = ' ';
+		memcpy (line + used, word, word_length);
+		used += word_length;
+		while (*text == ' ')
+			++text;
+	}
+	line[used] = '\0';
+	return text;
+}
+
+static void M_GraphicsPrintHelp (cb_context_t *cbx,
+	const graphics_menu_layout_t *layout, const char *text)
+{
+	char first[38] = "";
+	char second[38] = "";
+	const char *remaining = M_GraphicsNextHelpLine (text, first, sizeof (first));
+
+	remaining = M_GraphicsNextHelpLine (remaining, second, sizeof (second));
+	if (*remaining)
+	{
+		const size_t length = strlen (second);
+		const size_t cut = q_min (length, sizeof (second) - 4);
+		memcpy (second + cut, "...", 4);
+	}
+	M_PrintWhite (cbx, 16, layout->help_y, first);
+	M_PrintWhite (cbx, 16, layout->detail_help_y, second);
+}
+
+static void M_GraphicsDrawRow (cb_context_t *cbx, graphics_option_t option, int y)
+{
+	const char *name = "";
+	const char *value = NULL;
+	float slider = 0;
+	qboolean is_slider = false;
+	switch (option)
+	{
+	case GFX_GAMMA: name="Gamma"; slider=(1-vid_gamma.value)/.5f; value=va("%.1f",vid_gamma.value); is_slider=true; break;
+	case GFX_CONTRAST: name="Contrast"; slider=vid_contrast.value-1; value=va("%.1f",vid_contrast.value); is_slider=true; break;
+	case GFX_FOV: name="Field of View"; slider=(scr_fov.value-80)/50; value=va("%.0f",scr_fov.value); is_slider=true; break;
+	case GFX_PALETTE: name="8-bit Color"; value=vid_palettize.value?"on":"off"; break;
+	case GFX_FILTER: name="World Textures"; value=vid_filter.value?"classic":"smooth"; break;
+	case GFX_UI_FILTER: name="UI Textures"; value=((int)scr_guifilter.value==0)?"classic":((int)scr_guifilter.value==1)?"smooth":"xBR"; break;
+	case GFX_MAX_FPS:
+		name="Max FPS"; slider=host_maxfps.value<=0?1:((CLAMP(MIN_FPS_MENU_VALUE,host_maxfps.value,MAX_FPS_MENU_VALUE)-MIN_FPS_MENU_VALUE)/(MAX_FPS_MENU_VALUE+FPS_MENU_VALUE_STEP-MIN_FPS_MENU_VALUE));
+		value=host_maxfps.value<=0?"none":va("%.0f",host_maxfps.value); is_slider=true; break;
+	case GFX_AA_SAMPLES: name="Antialiasing"; value=vid_fsaa.value >= 2 ? va("%dx -> %dx",(int)vid_fsaa.value,M_GraphicsSampleCount(vulkan_globals.sample_count)) : va("off -> %dx",M_GraphicsSampleCount(vulkan_globals.sample_count)); break;
+	case GFX_AA_MODE: name="AA Mode"; value=vulkan_globals.supersampling?"supersample":"multisample"; break;
+	case GFX_ANISOTROPY:
+		name="Anisotropic";
+		value=vid_anisotropic.value<=0?va("off -> %gx",R_AnisotropyLevel ()):vid_anisotropic.value<=1?va("auto -> %gx",R_AnisotropyLevel ()):va("%gx -> %gx",vid_anisotropic.value,R_AnisotropyLevel ());
+		break;
+	case GFX_VIDEO: name="Video Settings"; value="open"; break;
+	case GFX_LIVE_PREVIEW: name="Live Preview"; value=ui_live_preview.value?"on":"off"; break;
+	case GFX_DYNAMIC_LIGHTS: name="Dynamic Lights"; value=r_dynamic.value?"on":"off"; break;
+	case GFX_LIGHT_MODE: name="Dynamic Light Mode"; value=r_clustered_lights.value?"Clustered":"Native"; break;
+	case GFX_SHADOWS: name="Dynamic Shadows"; value=((const char *[]){"off","low","medium","high"})[(int)CLAMP(0,r_rtshadows.value,3)]; break;
+	case GFX_AO: name="Ambient Occlusion"; value=R_SSAOSupported()?((const char *[]){"off","low","medium","high"})[(int)CLAMP(0,r_ssao.value,3)]:"N/A"; break;
+	case GFX_AO_RADIUS: name="AO Radius"; slider=(Cvar_VariableValue("r_ssao_radius")-1)/127; value=va("%.0f",Cvar_VariableValue("r_ssao_radius")); is_slider=true; break;
+	case GFX_AO_STRENGTH: name="AO Strength"; slider=Cvar_VariableValue("r_ssao_strength"); value=va("%.2f",slider); is_slider=true; break;
+	case GFX_AO_VR: name="VR AO Evaluation"; value=Cvar_VariableValue("r_ssao_vr_half")?"half":"full"; break;
+	case GFX_LIGHTSTYLES: name="Lightstyle Interp"; value=((const char *[]){"off","selective","always"})[(int)CLAMP(0,r_lerplightstyles.value,2)]; break;
+	case GFX_FULLBRIGHTS: name="Fullbright Textures"; value=gl_fullbrights.value?"on":"off"; break;
+	case GFX_DITHER: name="Surface Dither"; slider=M_GraphicsDitherIndex()/3.0f; value=((const char *[]){"off","low","medium","high"})[M_GraphicsDitherIndex()]; is_slider=true; break;
+	case GFX_WATER_FX: name="Underwater FX"; value=((const char *[]){"off","Classic","glQuake"})[(int)CLAMP(0,r_waterwarp.value,2)]; break;
+	case GFX_TRANSPARENCY: name="Transparency"; value=((const char *[]){"Classic","Low","High"})[(int)CLAMP(0,r_oit.value,2)]; break;
+	case GFX_PARTICLES: name="Particles"; value=((const char *[]){"off","glQuake","Classic"})[(int)CLAMP(0,r_particles.value,2)]; break;
+	case GFX_SOFT_PARTICLES: name="Soft Particles"; value=r_softparticles.value?"on":"off"; break;
+	case GFX_MODELS: name="Models"; value=r_enhancedmodels.value?"enhanced":"classic"; break;
+	case GFX_MODEL_ANIMATION: name="Model Animation"; value=((const char *[]){"off","respect","force"})[(int)CLAMP(0,r_lerpmodels.value,2)]; break;
+	case GFX_MODEL_MOVE: name="Model Movement"; value=r_lerpmove.value?"on":"off"; break;
+	case GFX_MODEL_TURN: name="Model Turning"; value=r_lerpturn.value?"on":"off"; break;
+	case GFX_PARTICLE_DETAILS: name="Particle Details"; value="open"; break;
+	case GFX_FTE_PARTICLES: name="Scripted Particles"; value=Cvar_VariableValue("r_fteparticles")?"on":"off"; break;
+	case GFX_SOFT_DISTANCE: name="Soft Fade Distance"; slider=(Cvar_VariableValue("r_softparticledistance")-.5f)/15.5f; value=va("%.1f",Cvar_VariableValue("r_softparticledistance")); is_slider=true; break;
+	case GFX_PARTICLE_DENSITY: name="Particle Density"; slider=Cvar_VariableValue("r_part_density")/2; value=va("%.1f",Cvar_VariableValue("r_part_density")); is_slider=true; break;
+	case GFX_RAIN: name="Rain"; value=Cvar_VariableValue("r_part_rain")?"on":"off"; break;
+	case GFX_RAIN_QUANTITY: name="Rain Quantity"; slider=Cvar_VariableValue("r_part_rain_quantity")/2; value=va("%.1f",Cvar_VariableValue("r_part_rain_quantity")); is_slider=true; break;
+	case GFX_SPARKS: name="Sparks"; value=Cvar_VariableValue("r_part_sparks")?"on":"off"; break;
+	case GFX_BEAMS: name="Beams"; value=Cvar_VariableValue("r_part_beams")?"on":"off"; break;
+	case GFX_PARTICLE_SCRIPT: name="Particle Script"; value=Cvar_VariableString("r_particledesc"); break;
+	case GFX_FAST_SKY: name="Fast Sky"; value=Cvar_VariableValue("r_fastsky")?"on":"off"; break;
+	case GFX_SKY_ALPHA: name="Sky Opacity"; slider=Cvar_VariableValue("r_skyalpha"); value=va("%.2f",slider); is_slider=true; break;
+	case GFX_SKY_FOG: name="Sky Fog"; slider=Cvar_VariableValue("r_skyfog"); value=va("%.2f",slider); is_slider=true; break;
+	case GFX_SKY_WIND: name="Sky Wind"; slider=Cvar_VariableValue("r_skywind")/2; value=va("%.1f",Cvar_VariableValue("r_skywind")); is_slider=true; break;
+	case GFX_WATER_ALPHA: name="Water Opacity"; slider=r_wateralpha.value; value=va("%.2f",slider); is_slider=true; break;
+	case GFX_LAVA_ALPHA: name="Lava Opacity"; slider=Cvar_VariableValue("r_lavaalpha"); value=slider?va("%.2f",slider):"inherit"; is_slider=true; break;
+	case GFX_SLIME_ALPHA: name="Slime Opacity"; slider=Cvar_VariableValue("r_slimealpha"); value=slider?va("%.2f",slider):"inherit"; is_slider=true; break;
+	case GFX_TELE_ALPHA: name="Tele Opacity"; slider=Cvar_VariableValue("r_telealpha"); value=slider?va("%.2f",slider):"inherit"; is_slider=true; break;
+	case GFX_AUTO_LOD: name="Auto Texture LOD"; value=r_lodbias.value?"on":"off"; break;
+	case GFX_LOD_BIAS: name="Texture LOD Bias"; slider=(gl_lodbias.value+2)/4; value=va("%.2f",gl_lodbias.value); is_slider=true; break;
+	case GFX_FAR_CLIP: name="Far Clip"; slider=(gl_farclip.value-1024)/31744; value=va("%.0f",gl_farclip.value); is_slider=true; break;
+	case GFX_ZFIX: name="Depth Fix"; value=gl_zfix.value?"on":"off"; break;
+	}
+	M_Print (cbx, MENU_LABEL_X, y, name);
+	if (is_slider) M_GraphicsDrawSlider (cbx, y, CLAMP(0,slider,1), value);
+	else M_GraphicsPrintValue (cbx, MENU_VALUE_X, y, value, GraphicsMenu_Layout ().list_right);
+}
+
+static void M_GraphicsOptions_Key (int key)
+{
+	const graphics_menu_layout_t layout = GraphicsMenu_Layout ();
+	static const graphics_category_t root_categories[] = {
+		GRAPHICS_CATEGORY_DISPLAY, GRAPHICS_CATEGORY_LIGHTING, GRAPHICS_CATEGORY_EFFECTS, GRAPHICS_CATEGORY_ADVANCED};
+	int *cursor = &graphics_cursor[graphics_category];
+	int *first = &graphics_first[graphics_category];
+	const int count = graphics_option_counts[graphics_category];
+	int root_index = 0;
+
+	for (int i = 0; i < (int)q_countof (root_categories); ++i)
+		if (root_categories[i] == graphics_category) root_index = i;
+	if (graphics_category == GRAPHICS_CATEGORY_PARTICLES) root_index = 2;
+
+	if (key == K_MOUSE1 && graphics_category_hover >= 0)
+	{
+		M_GraphicsSetCategory ((graphics_category_t)graphics_category_hover);
+		return;
+	}
+	if (M_HandleScrollBarKeys (key, cursor, first, count, layout.rows)) return;
+	switch (key)
+	{
+	case K_MOUSE2: case K_ESCAPE: case K_BBUTTON:
+		if (graphics_category == GRAPHICS_CATEGORY_PARTICLES) M_GraphicsSetCategory (GRAPHICS_CATEGORY_EFFECTS);
+		else M_Menu_Options_f ();
+		break;
+	case K_MOUSE1: case K_ENTER: case K_KP_ENTER: case K_ABUTTON:
+		m_entersound = true; M_GraphicsAdjust (1, key == K_MOUSE1); break;
+	case K_LEFTARROW: M_GraphicsAdjust (-1, false); break;
+	case K_RIGHTARROW: M_GraphicsAdjust (1, false); break;
+	case K_TAB:
+		M_GraphicsSetCategory (root_categories[(root_index + (keydown[K_SHIFT] ?
+			(int)q_countof (root_categories) - 1 : 1)) % (int)q_countof (root_categories)]);
+		break;
+	case K_RTHUMB:
+		M_GraphicsSetCategory (root_categories[(root_index + 1) % (int)q_countof (root_categories)]); break;
+	case K_LTHUMB:
+		M_GraphicsSetCategory (root_categories[(root_index + (int)q_countof (root_categories) - 1) % (int)q_countof (root_categories)]); break;
+	}
+}
+
 static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 {
-	float	  r = 0.0f;
-	qpic_t	 *p;
-	const int top = MENU_TOP;
+	const graphics_menu_layout_t layout = GraphicsMenu_Layout ();
+	static const char *const names[] = {"Display", "Lighting", "Effects", "Particles", "Advanced"};
+	qpic_t *p;
+	int *cursor = &graphics_cursor[graphics_category];
+	int *first = &graphics_first[graphics_category];
+	const int count = graphics_option_counts[graphics_category];
+	int visible;
+	const int tab_category = graphics_category == GRAPHICS_CATEGORY_PARTICLES ? GRAPHICS_CATEGORY_EFFECTS : graphics_category;
+	static const graphics_category_t root_categories[] = {
+		GRAPHICS_CATEGORY_DISPLAY, GRAPHICS_CATEGORY_LIGHTING, GRAPHICS_CATEGORY_EFFECTS, GRAPHICS_CATEGORY_ADVANCED};
 
+	*cursor = CLAMP (0, *cursor, count - 1);
+	*first = CLAMP (0, *first, q_max (0, count - layout.rows));
+	visible = GraphicsMenu_VisibleRows (count, *first);
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
-
-	if (!graphics_options_effects_page)
+	graphics_category_hover = -1;
+	for (int index = 0; index < (int)q_countof (root_categories); ++index)
 	{
-	// Draw the general items in the order of the enum defined above:
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GAMMA, "Gamma");
-	r = (1.0 - vid_gamma.value) / 0.5;
-	M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GAMMA, r, va ("%.1f", vid_gamma.value));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CONTRAST, "Contrast");
-	r = vid_contrast.value - 1.0;
-	M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * GRAPHICS_OPT_CONTRAST, r, va ("%.1f", vid_contrast.value));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FOV, "Field of View");
-	r = (scr_fov.value - 80) / (130 - 80);
-	M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FOV, r, va ("%.0f", scr_fov.value));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_8BIT_COLOR, "8-bit Color");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_8BIT_COLOR, vid_palettize.value);
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, "World Textures");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_FILTER, (vid_filter.value == 0) ? "smooth" : "classic");
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MENU_FILTER, "UI Textures");
-	M_Print (
-		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MENU_FILTER,
-		(scr_guifilter.value == 0)	 ? "classic"
-		: (scr_guifilter.value == 1) ? "smooth"
-									 : "xBR");
-
-	// Max FPS special display
+		const graphics_category_t category = root_categories[index];
+		const int x = 16 + index * 72;
+		if (category == tab_category) M_PrintWhite (cbx, x, layout.category_y, names[category]);
+		else M_Print (cbx, x, layout.category_y, names[category]);
+		M_Mouse_UpdateCursor (&graphics_category_hover, x - 2, x + 62, layout.category_y, CHARACTER_SIZE, category);
+	}
+	for (int row = 0; row < visible; ++row)
+		M_GraphicsDrawRow (cbx, graphics_options[graphics_category][GraphicsMenu_RowIndex (*first, row)], GraphicsMenu_RowY (row));
+	M_Mouse_UpdateListCursor (cursor, MENU_CURSOR_X + 8, layout.list_right, layout.list_top, layout.row_height, visible, *first);
+	Draw_Character (cbx, MENU_CURSOR_X, GraphicsMenu_RowY (*cursor - *first), 12 + ((int)(realtime * 4) & 1));
+	if (count > layout.rows)
+		M_DrawScrollbar (cbx, MENU_SCROLLBAR_X, layout.list_top + CHARACTER_SIZE, (float)*first / (count - layout.rows), layout.rows - 2);
 	{
-		M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, "Max FPS");
-
-		if (host_maxfps.value <= 0)
-		{
-			M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, 1.0, "no limit");
-		}
-		else
-		{
-			const float max_r_value = 1.0 - (FPS_MENU_VALUE_STEP / MAX_FPS_MENU_VALUE);
-
-			// slider knob normal range is [0.0, max_r_value] because 1.0 is reserved for "no limit"
-			float clamped_fps = CLAMP (MIN_FPS_MENU_VALUE, host_maxfps.value, MAX_FPS_MENU_VALUE);
-			r = (max_r_value * (clamped_fps - MIN_FPS_MENU_VALUE)) / (MAX_FPS_MENU_VALUE - MIN_FPS_MENU_VALUE);
-
-			// label displays the real host_fps value if > 0
-			M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MAX_FPS, r, va ("%.0f", host_maxfps.value));
-		}
+		char help[160];
+		M_GraphicsHelp (M_GraphicsOption (), help, sizeof (help));
+		M_GraphicsPrintHelp (cbx, &layout, help);
 	}
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANTIALIASING_SAMPLES, "Antialiasing");
-	M_Print (
-		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANTIALIASING_SAMPLES,
-		((int)vid_fsaa.value >= 2) ? va ("%ix", CLAMP (2, (int)vid_fsaa.value, 16)) : "off");
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANTIALIASING_MODE, "AA mode");
-	M_Print (
-		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANTIALIASING_MODE,
-		(((int)vid_fsaamode.value == 0) || !vulkan_globals.device_features.sampleRateShading) ? "Multisample" : "Supersample");
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANISOTROPY, "Anisotropic");
-	M_Print (
-		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_ANISOTROPY,
-		!vulkan_globals.device_features.samplerAnisotropy ||
-		vulkan_globals.device_properties.limits.maxSamplerAnisotropy <= 1.0f ? "N/A" :
-		!isfinite (vid_anisotropic.value) || vid_anisotropic.value <= 0.0f ? "off" :
-		va ("on (%gx)", R_AnisotropyLevel ()));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_UNDERWATER, "Underwater FX");
-	M_Print (
-		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_UNDERWATER,
-		(r_waterwarp.value == 0) ? "off" : ((r_waterwarp.value == 1) ? "Classic" : "glQuake"));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_TRANSPARENCY, "Transparency");
-	{
-		const char *transparency_modes[] = {"Classic", "Low", "High"};
-		M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_TRANSPARENCY, transparency_modes[(int)CLAMP (0, r_oit.value, 2)]);
-	}
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODELS, "Models");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODELS, (r_enhancedmodels.value == 0) ? "classic" : "enhanced");
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODEL_INTERPOLATION, "Animations");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_MODEL_INTERPOLATION, (r_lerpmodels.value == 0) ? "classic" : "smooth");
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES, "Particles");
-	M_Print (
-		cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_PARTICLES,
-		((int)r_particles.value == 0) ? "off" : (((int)r_particles.value == 2) ? "Classic" : "glQuake"));
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SOFT_PARTICLES, "Soft Particles");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SOFT_PARTICLES, r_softparticles.value);
-	}
-
-	if (graphics_options_effects_page)
-	{
-		int row = 0;
-
-		M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "Dynamic Lights");
-		M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row, r_dynamic.value);
-		++row;
-
-		if (R_SSAOSupported ())
-		{
-			float value;
-			const char *ao_modes[] = {"off", "low", "medium", "high"};
-
-			M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "Ambient Occlusion");
-			M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row, ao_modes[(int)CLAMP (0, r_ssao.value, 3)]);
-			++row;
-
-			value = CLAMP (1, Cvar_VariableValue ("r_ssao_radius"), 128);
-			M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "AO Radius");
-			M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * row, (value - 1.0f) / 127.0f, va ("%.0f", value));
-			++row;
-
-			value = CLAMP (0, Cvar_VariableValue ("r_ssao_strength"), 1);
-			M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "AO Strength");
-			M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * row, value, va ("%.2f", value));
-			++row;
-
-			if (vulkan_globals.stereo_active)
-			{
-				M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "VR AO Evaluation");
-				M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row,
-					Cvar_VariableValue ("r_ssao_vr_half") > 0 ? "half" : "full");
-				++row;
-			}
-		}
-
-		if (vulkan_globals.ray_query)
-		{
-			const char *shadow_modes[] = {"off", "low", "medium", "high"};
-			M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "Dynamic Shadows");
-			M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row,
-				shadow_modes[(int)CLAMP (0, r_rtshadows.value, 3)]);
-		}
-	}
-
-	M_PrintWhite (cbx, 16, 184, graphics_options_effects_page ? "Click/Tab/Stick: General" : "Click/Tab/Stick: Effects");
-
-	// cursor
-	graphics_options_cursor = CLAMP (0, graphics_options_cursor, M_GraphicsOptions_NumItems () - 1);
-	M_Mouse_UpdateListCursor (&graphics_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, M_GraphicsOptions_NumItems (), 0);
-	Draw_Character (cbx, MENU_CURSOR_X, top + graphics_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
 }
 
-//=============================================================================
 /* SOUND OPTIONS MENU */
 
 enum
@@ -4942,9 +5260,10 @@ static void M_Help_Key (int key)
 //=============================================================================
 /* MODS MENU */
 
-#define MAX_MODS_ON_SCREEN MAX_MENU_LINES
+#define MAX_MODS_ON_SCREEN MOD_BROWSER_ROWS
 #define MODS_SEARCH_MAX 32
 #define MODS_SEARCH_WIDTH 29
+#define MODS_SEARCH_FIELD_WIDTH (MODS_SEARCH_WIDTH - 3)
 
 static int				 num_mods = 0;
 static int				 first_mod = 0;
@@ -5382,6 +5701,7 @@ static void M_Mods_KeyboardDraw (cb_context_t *cbx)
 
 static void M_Mods_Draw (cb_context_t *cbx)
 {
+	const mod_browser_layout_t layout = ModBrowser_Layout ();
 	M_Mods_FinishCatalogueInstall ();
 	if (mods_catalogue_view)
 	{
@@ -5463,13 +5783,13 @@ static void M_Mods_Draw (cb_context_t *cbx)
 
 	if (mods_catalogue_view)
 	{
-		M_PrintWhite (cbx, 16, 144, "Installed: Tab/L3");
-		M_PrintWhite (cbx, 216, 144, "Refresh: X/F1");
+		M_PrintWhite (cbx, 16, layout.controls_y, "Installed: Tab/L3");
+		M_PrintWhite (cbx, 216, layout.controls_y, "Refresh: X/F1");
 	}
 	else
 	{
-		M_PrintWhite (cbx, 16, 144, "Catalogue: Tab/L3");
-		M_PrintWhite (cbx, 216, 144, "Scan: X/F1");
+		M_PrintWhite (cbx, 16, layout.controls_y, "Catalogue: Tab/L3");
+		M_PrintWhite (cbx, 216, layout.controls_y, "Scan: X/F1");
 	}
 
 	for (int i = 0; i < mods_height; ++i)
@@ -5481,10 +5801,10 @@ static void M_Mods_Draw (cb_context_t *cbx)
 			addon_catalog_entry_t item;
 			if (M_Mods_CatalogueEntry (first_mod + i, &item) < 0)
 				continue;
-			M_PrintScroll (cbx, MENU_LABEL_X, 32 + i * CHARACTER_SIZE,
+			M_PrintScroll (cbx, MENU_LABEL_X, layout.list_top + i * layout.row_height,
 				20 * CHARACTER_SIZE, item.name,
 				selected ? m_mods_ticker.scroll_time : 0.0, true);
-			M_PrintWhite (cbx, 240, 32 + i * CHARACTER_SIZE,
+			M_PrintWhite (cbx, 240, layout.list_top + i * layout.row_height,
 				(item.installed || M_Mods_IsInstalledGameDir (item.gamedir)) ? "Installed" :
 				(item.verified ? "Verified" : "Unverified"));
 		}
@@ -5493,7 +5813,7 @@ static void M_Mods_Draw (cb_context_t *cbx)
 			filelist_item_t *item = mods_filtered[first_mod + i];
 			const char *fullname = Modlist_GetFullName (item);
 			M_PrintScroll (
-				cbx, MENU_LABEL_X, 32 + i * CHARACTER_SIZE, 32 * CHARACTER_SIZE, fullname ? fullname : item->name,
+				cbx, MENU_LABEL_X, layout.list_top + i * layout.row_height, 32 * CHARACTER_SIZE, fullname ? fullname : item->name,
 				selected ? m_mods_ticker.scroll_time : 0.0, true);
 		}
 	}
@@ -5504,45 +5824,46 @@ static void M_Mods_Draw (cb_context_t *cbx)
 		{
 			const addon_catalog_state_t state = AddonCatalog_State ();
 			if (mods_search[0])
-				M_PrintWhite (cbx, MENU_LABEL_X, 32, "No catalogue matches.");
+				M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, "No catalogue matches.");
 			else if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_ERROR || state == ADDON_CATALOG_UNAVAILABLE)
-				M_PrintScroll (cbx, MENU_LABEL_X, 32, 32 * CHARACTER_SIZE,
+				M_PrintScroll (cbx, MENU_LABEL_X, layout.list_top, 32 * CHARACTER_SIZE,
 					AddonCatalog_Message (), 0.0, true);
 			else
-				M_PrintWhite (cbx, MENU_LABEL_X, 32, "F1 to refresh the catalogue.");
+				M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, "F1 to refresh the catalogue.");
 		}
 		else
-			M_PrintWhite (cbx, MENU_LABEL_X, 32, mods_search[0] ? "No installed mods match." : "No installed mods found.");
+			M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, mods_search[0] ? "No installed mods match." : "No installed mods found.");
 	}
-	M_PrintWhite (cbx, 16, 160, "Filter:");
-	M_PrintWhite (cbx, 16, 180, "Y: search keyboard");
-	M_DrawTextBox (cbx, 72, 152, MODS_SEARCH_WIDTH, 1);
+	M_PrintWhite (cbx, 16, layout.search_text_y, "Filter (Y):");
+	M_DrawTextBox (cbx, 96, layout.search_box_y, MODS_SEARCH_FIELD_WIDTH, 1);
 	{
 		const int length = (int)strlen (mods_search);
-		const int ofs = q_max (0, length + 1 - MODS_SEARCH_WIDTH);
+		const int ofs = q_max (0, length + 1 - MODS_SEARCH_FIELD_WIDTH);
 		int		 i;
 		for (i = ofs; i < length; ++i)
-			Draw_Character (cbx, 80 + (i - ofs) * CHARACTER_SIZE, 160, mods_search[i]);
-		Draw_Character (cbx, 80 + (i - ofs) * CHARACTER_SIZE, 160, 10 + ((int)(realtime * 4) & 1));
+			Draw_Character (cbx, 104 + (i - ofs) * CHARACTER_SIZE, layout.search_text_y, mods_search[i]);
+		Draw_Character (cbx, 104 + (i - ofs) * CHARACTER_SIZE, layout.search_text_y, 10 + ((int)(realtime * 4) & 1));
 	}
 
-	M_Mouse_UpdateListCursor (&mods_cursor, 12, 400, 32, CHARACTER_SIZE, mods_height, first_mod);
+	M_Mouse_UpdateListCursor (&mods_cursor, 12, layout.list_right, layout.list_top, layout.row_height, mods_height, first_mod);
 	/* Register the labelled controls with the common hover gate so the VR
 	 * pointer can activate them as well as an ordinary mouse click. */
-	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, mods_catalogue_view ? 200 : 208, 144, 7, 0);
+	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, mods_catalogue_view ? 200 : 208, layout.controls_y, CHARACTER_SIZE, 0);
 	if (mods_catalogue_view)
-		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, 144, 7, 1);
+		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, layout.controls_y, CHARACTER_SIZE, 1);
 	else
-		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 208, 312, 144, 7, 1);
-	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 72, 312, 152, 24, 2);
+		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 208, 312, layout.controls_y, CHARACTER_SIZE, 1);
+	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 96, 312, layout.search_box_y, 24, 2);
 	if (num_mods > 0)
-		Draw_Character (cbx, MENU_CURSOR_X, 32 + (mods_cursor - first_mod) * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
+		Draw_Character (cbx, MENU_CURSOR_X, layout.list_top + (mods_cursor - first_mod) * layout.row_height, 12 + ((int)(realtime * 4) & 1));
 	if (num_mods > MAX_MODS_ON_SCREEN)
-		M_DrawScrollbar (cbx, MENU_SCROLLBAR_X, 32 + 8, (float)(first_mod) / (float)(num_mods - MAX_MODS_ON_SCREEN), MAX_MODS_ON_SCREEN - 2);
+		M_DrawScrollbar (cbx, MENU_SCROLLBAR_X, layout.list_top + CHARACTER_SIZE,
+			(float)(first_mod) / (float)(num_mods - MAX_MODS_ON_SCREEN), MAX_MODS_ON_SCREEN - 2);
 }
 
 static void M_Mods_Key (int key)
 {
+	const mod_browser_layout_t layout = ModBrowser_Layout ();
 	if (mods_keyboard)
 	{
 		M_Mods_KeyboardKey (key);
@@ -5579,13 +5900,14 @@ static void M_Mods_Key (int key)
 		return;
 	}
 
-	if (key == K_YBUTTON || (key == K_MOUSE1 && !scrollbar_grab && M_Mouse_InRect (72, 312, 152, 176)))
+	if (key == K_YBUTTON || (key == K_MOUSE1 && !scrollbar_grab &&
+		M_Mouse_InRect (96, 312, layout.search_box_y, layout.search_box_y + 24)))
 	{
 		M_Mods_KeyboardSet (true);
 		return;
 	}
 
-	if (key == K_MOUSE1 && m_mouse_y >= 144 && m_mouse_y < 152)
+	if (key == K_MOUSE1 && m_mouse_y >= layout.controls_y && m_mouse_y < layout.controls_y + CHARACTER_SIZE)
 	{
 		if (!mods_catalogue_view && m_mouse_x >= 12 && m_mouse_x < 208)
 		{
@@ -5685,8 +6007,8 @@ static void M_Mods_Key (int key)
 		break;
 
 	case K_MOUSE1:
-		if (m_mouse_x < 12 || m_mouse_x > 400 || m_mouse_y < 32 ||
-			m_mouse_y >= 32 + q_min (MAX_MODS_ON_SCREEN, q_max (0, num_mods - first_mod)) * CHARACTER_SIZE)
+		if (m_mouse_x < 12 || m_mouse_x > layout.list_right || m_mouse_y < layout.list_top ||
+			m_mouse_y >= layout.list_top + q_min (MAX_MODS_ON_SCREEN, q_max (0, num_mods - first_mod)) * layout.row_height)
 			break;
 		if (mods_catalogue_view)
 		{
@@ -7843,6 +8165,7 @@ static void M_Menu_Credits_f (void) {}
 
 void M_Init (void)
 {
+	Cvar_RegisterVariable (&ui_live_preview);
 	Cmd_AddCommand ("togglemenu", M_ToggleMenu_f);
 
 	Cmd_AddCommand ("menu_main", M_Menu_Main_f);
@@ -7919,10 +8242,7 @@ void M_UpdateMouse (void)
 	}
 	else if (slider_grab)
 	{
-		const int graphic_option = M_GraphicsOptions_CursorOption ();
-		const bool graphic_option_has_sliders = (graphic_option >= GRAPHICS_OPT_GAMMA && graphic_option <= GRAPHICS_OPT_FOV) ||
-			graphic_option == GRAPHICS_OPT_MAX_FPS || graphic_option == GRAPHICS_OPT_AMBIENT_OCCLUSION_RADIUS ||
-			graphic_option == GRAPHICS_OPT_AMBIENT_OCCLUSION_STRENGTH;
+		const bool graphic_option_has_sliders = M_GraphicsOptionIsSlider (M_GraphicsOption ());
 
 		const bool game_option_has_sliders = ((game_options_cursor >= GAME_OPT_SCALE) && (game_options_cursor <= GAME_OPT_VIEWROLL)) ||
 											 (game_options_cursor == GAME_OPT_CROSSHAIR_SIZE) || (game_options_cursor == GAME_OPT_CROSSHAIR_OPACITY);
@@ -7930,7 +8250,7 @@ void M_UpdateMouse (void)
 		if (keydown[K_MOUSE1] && (m_state == m_game) && game_option_has_sliders)
 			M_GameOptions_AdjustSliders (0, true);
 		else if (keydown[K_MOUSE1] && (m_state == m_graphics) && graphic_option_has_sliders)
-			M_GraphicsOptions_AdjustSliders (0, true);
+			M_GraphicsAdjust (0, true);
 		else if (keydown[K_MOUSE1] && (m_state == m_sound) && (sound_options_cursor >= SOUND_OPT_SNDVOL) && (sound_options_cursor <= SOUND_OPT_MUSICVOL))
 			M_SoundOptions_AdjustSliders (0, true);
 		else if (keydown[K_MOUSE1] && (m_state == m_voice) && M_VoiceOptions_CursorHasSlider ())
@@ -7954,7 +8274,7 @@ void M_SetVRPointerPosition (int x, int y, qboolean valid)
 	}
 
 	m_vr_pointer_override = true;
-	/* The menu canvas can extend beyond 320x200 when scaled or letterboxed.
+	/* The menu canvas can extend beyond its normal height when scaled or letterboxed.
 	 * The panel/ray owner supplies validity using the displayed canvas bounds. */
 	m_vr_pointer_moved = valid && (!m_vr_pointer_valid || m_vr_pointer_x != x || m_vr_pointer_y != y);
 	m_vr_pointer_update_pending = true;
@@ -7996,6 +8316,7 @@ void M_Draw (cb_context_t *cbx)
 	const qboolean recursive = m_recursiveDraw;
 	m_mouse_hover_state = m_none;
 	m_mouse_hover_cursor = NULL;
+	M_LivePreview_Update ();
 
 	if (m_state == m_none || key_dest != key_menu)
 		return;
@@ -8018,7 +8339,7 @@ void M_Draw (cb_context_t *cbx)
 
 	GL_SetCanvas (cbx, CANVAS_MENU); // johnfitz
 	if (cbx->ui_panel_active && !recursive)
-		Draw_Fill (cbx, 0, 0, 320, 200, 0, 0.72f);
+		Draw_Fill (cbx, 0, 0, 320, M_MenuCanvasHeight (), 0, 0.72f * M_MenuLivePreviewFadeAlpha ());
 
 	switch (m_state)
 	{
@@ -8170,6 +8491,9 @@ qboolean M_VRPointerBindingGrab (void)
 
 void M_Keydown (int key, qboolean repeat)
 {
+	if (key == K_ESCAPE && key_dest == key_menu && M_CancelPendingConnection ())
+		return;
+
 	// Repeat navigation and editing, but never menu activation or binding capture.
 	if (repeat)
 	{

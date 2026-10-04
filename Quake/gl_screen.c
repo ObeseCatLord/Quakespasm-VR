@@ -1920,7 +1920,7 @@ static void SCR_VRMenuPrepare (void)
 		vr_menu_anchor.valid = 0;
 	vr_menu_panel_mode = requested_mode;
 	if (requested_mode == VR_PANEL_MENU && m_state == m_mods)
-		scale *= 1.35f;
+		scale *= (float)M_MenuCanvasHeight () / 200.0f;
 	canvas_scale = M_MenuCanvasScale ();
 	if (!isfinite (canvas_scale) || canvas_scale <= 0)
 	{
@@ -2544,7 +2544,8 @@ static void SCR_DrawGUI (void *unused)
 				const float scale = M_MenuCanvasScale ();
 				/* Match M_PixelToMenuCanvasCoord so source units scale with menu glyphs. */
 				const float pointer_x = (vr_menu_panel.pointer_x - (glwidth - 320.0f * scale) * 0.5f) / scale;
-				const float pointer_y = (vr_menu_panel.pointer_y - (glheight - 200.0f * scale) * 0.5f) / scale;
+				const float pointer_y = (vr_menu_panel.pointer_y -
+					(glheight - M_MenuCanvasHeight () * scale) * 0.5f) / scale;
 
 				GL_SetCanvas (cbx, CANVAS_MENU);
 				Draw_Fill (cbx, pointer_x - 4, pointer_y - 1, 9, 3, 15, 1.0f);

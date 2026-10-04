@@ -73,6 +73,8 @@ qboolean M_WaitingForKeyBinding (void);
 void	 M_ToggleMenu_f (void);
 float	 M_GetScale ();
 float	 M_MenuCanvasScale (void);
+int	 M_MenuCanvasHeight (void);
+float	 M_MenuLivePreviewFadeAlpha (void);
 void	 M_UpdateMouse ();
 void	 M_MenuChanged ();
 void	 M_SetVRPointerPosition (int x, int y, qboolean valid);
