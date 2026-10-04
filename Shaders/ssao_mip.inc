@@ -181,7 +181,8 @@ void main ()
 		return;
 	// Replicate the last valid mip-1 value for partial tiles, matching the existing reduction.
 	// Full tiles stay entirely in registers and use the subgroup reduction below.
-	if (any (greaterThan (origin + 8, imageSize (mip1))))
+	bool partial_tile = any (greaterThan (origin + 8, imageSize (mip1)));
+	if (partial_tile)
 	{
 		depths1[local.y * 8 + local.x] = depth;
 		barrier ();
@@ -190,93 +191,102 @@ void main ()
 	}
 	if (all (lessThan (p, imageSize (mip1))))
 		imageStore (mip1, p, vec4 (depth, 0, 0));
-#ifdef SHARED_MIPS
-	// Same filter and edge replication as the optimized path, without any
-	// subgroup-size, shuffle or full-subgroup requirement. All 64 lanes reach
-	// each barrier, including lanes outside the valid image tile.
-	// Partial-tile readers above must finish before their input is overwritten.
-	barrier ();
-	depths1[local.y * 8 + local.x] = depth;
-	barrier ();
-	if (index < 16)
+#ifndef SHARED_MIPS
+	// Partial tiles need image-size clamping at every mip, not just mip 1.
+	// This condition is uniform across the workgroup, including its edge lanes.
+	if (partial_tile)
+#endif
 	{
-		ivec2 pos = ivec2 (index & 3u, index >> 2u);
-		ivec2 base = pos * 2;
-		depth = reduce (depths1[base.y * 8 + base.x], depths1[base.y * 8 + base.x + 1],
-			depths1[(base.y + 1) * 8 + base.x], depths1[(base.y + 1) * 8 + base.x + 1]);
-		depths2[index] = depth;
-		ivec2 target = ivec2 (gl_WorkGroupID.xy) * 4 + pos;
-		if (all (lessThan (target, imageSize (mip2))))
-			imageStore (mip2, target, vec4 (depth, 0, 0));
-	}
-	barrier ();
-	if (index < 4)
-	{
-		ivec2 pos = ivec2 (index & 1u, index >> 1u);
-		ivec2 base = pos * 2;
-		depth = reduce (read2 (base), read2 (base + ivec2 (1, 0)), read2 (base + ivec2 (0, 1)), read2 (base + ivec2 (1)));
-		depths3[index] = depth;
-		ivec2 target = ivec2 (gl_WorkGroupID.xy) * 2 + pos;
-		if (all (lessThan (target, imageSize (mip3))))
-			imageStore (mip3, target, vec4 (depth, 0, 0));
-	}
-	barrier ();
-	if (index == 0 && all (lessThan (ivec2 (gl_WorkGroupID.xy), imageSize (mip4))))
-		imageStore (mip4, ivec2 (gl_WorkGroupID.xy), vec4 (reduce (read3 (ivec2 (0)), read3 (ivec2 (1, 0)), read3 (ivec2 (0, 1)), read3 (ivec2 (1))), 0, 0));
-#else
-	half2 a = depth;
-	half2 b = shuffle_depth (depth, 1);
-	half2 c = shuffle_depth (depth, 2);
-	half2 d = shuffle_depth (depth, 3);
-	depth = reduce (a, b, c, d);
-	if ((index & 3u) == 0)
-	{
-		if (gl_SubgroupSize < 16)
-			depths2[(local.y / 2) * 4 + local.x / 2] = depth;
-		if (all (lessThan (p / 2, imageSize (mip2))))
-			imageStore (mip2, p / 2, vec4 (depth, 0, 0));
-	}
-	if (gl_SubgroupSize >= 16)
-	{
-		a = depth;
-		b = shuffle_depth (depth, 4);
-		c = shuffle_depth (depth, 8);
-		d = shuffle_depth (depth, 12);
-		depth = reduce (a, b, c, d);
-		if ((index & 15u) == 0)
+		// Same filter and edge replication as the optimized path, without any
+		// subgroup-size, shuffle or full-subgroup requirement. All 64 lanes reach
+		// each barrier, including lanes outside the valid image tile.
+		// Partial-tile readers above must finish before their input is overwritten.
+		barrier ();
+		depths1[local.y * 8 + local.x] = depth;
+		barrier ();
+		if (index < 16)
 		{
-			if (gl_SubgroupSize < 64)
-				depths3[(local.y / 4) * 2 + local.x / 4] = depth;
-			if (all (lessThan (p / 4, imageSize (mip3))))
-				imageStore (mip3, p / 4, vec4 (depth, 0, 0));
+			ivec2 pos = ivec2 (index & 3u, index >> 2u);
+			ivec2 base = pos * 2;
+			depth = reduce (depths1[base.y * 8 + base.x], depths1[base.y * 8 + base.x + 1],
+				depths1[(base.y + 1) * 8 + base.x], depths1[(base.y + 1) * 8 + base.x + 1]);
+			depths2[index] = depth;
+			ivec2 target = ivec2 (gl_WorkGroupID.xy) * 4 + pos;
+			if (all (lessThan (target, imageSize (mip2))))
+				imageStore (mip2, target, vec4 (depth, 0, 0));
 		}
-		if (gl_SubgroupSize >= 64)
+		barrier ();
+		if (index < 4)
 		{
-			a = depth;
-			b = shuffle_depth (depth, 16);
-			c = shuffle_depth (depth, 32);
-			d = shuffle_depth (depth, 48);
-			if (index == 0 && all (lessThan (ivec2 (gl_WorkGroupID.xy), imageSize (mip4))))
-				imageStore (mip4, ivec2 (gl_WorkGroupID.xy), vec4 (reduce (a, b, c, d), 0, 0));
-			return;
+			ivec2 pos = ivec2 (index & 1u, index >> 1u);
+			ivec2 base = pos * 2;
+			depth = reduce (read2 (base), read2 (base + ivec2 (1, 0)), read2 (base + ivec2 (0, 1)), read2 (base + ivec2 (1)));
+			depths3[index] = depth;
+			ivec2 target = ivec2 (gl_WorkGroupID.xy) * 2 + pos;
+			if (all (lessThan (target, imageSize (mip3))))
+				imageStore (mip3, target, vec4 (depth, 0, 0));
 		}
+		barrier ();
+		if (index == 0 && all (lessThan (ivec2 (gl_WorkGroupID.xy), imageSize (mip4))))
+			imageStore (mip4, ivec2 (gl_WorkGroupID.xy), vec4 (reduce (read3 (ivec2 (0)), read3 (ivec2 (1, 0)), read3 (ivec2 (0, 1)), read3 (ivec2 (1))), 0, 0));
 	}
+#ifndef SHARED_MIPS
 	else
 	{
-		barrier ();
-		if (gl_LocalInvocationIndex < 4)
+		half2 a = depth;
+		half2 b = shuffle_depth (depth, 1);
+		half2 c = shuffle_depth (depth, 2);
+		half2 d = shuffle_depth (depth, 3);
+		depth = reduce (a, b, c, d);
+		if ((index & 3u) == 0)
 		{
-			ivec2 pos = ivec2 (gl_LocalInvocationIndex & 1u, gl_LocalInvocationIndex >> 1u);
-			q = pos * 2;
-			depth = reduce (read2 (q), read2 (q + ivec2 (1, 0)), read2 (q + ivec2 (0, 1)), read2 (q + ivec2 (1, 1)));
-			depths3[gl_LocalInvocationIndex] = depth;
-			p = ivec2 (gl_WorkGroupID.xy) * 2 + pos;
-			if (all (lessThan (p, imageSize (mip3))))
-				imageStore (mip3, p, vec4 (depth, 0, 0));
+			if (gl_SubgroupSize < 16)
+				depths2[(local.y / 2) * 4 + local.x / 2] = depth;
+			if (all (lessThan (p / 2, imageSize (mip2))))
+				imageStore (mip2, p / 2, vec4 (depth, 0, 0));
 		}
+		if (gl_SubgroupSize >= 16)
+		{
+			a = depth;
+			b = shuffle_depth (depth, 4);
+			c = shuffle_depth (depth, 8);
+			d = shuffle_depth (depth, 12);
+			depth = reduce (a, b, c, d);
+			if ((index & 15u) == 0)
+			{
+				if (gl_SubgroupSize < 64)
+					depths3[(local.y / 4) * 2 + local.x / 4] = depth;
+				if (all (lessThan (p / 4, imageSize (mip3))))
+					imageStore (mip3, p / 4, vec4 (depth, 0, 0));
+			}
+			if (gl_SubgroupSize >= 64)
+			{
+				a = depth;
+				b = shuffle_depth (depth, 16);
+				c = shuffle_depth (depth, 32);
+				d = shuffle_depth (depth, 48);
+				if (index == 0 && all (lessThan (ivec2 (gl_WorkGroupID.xy), imageSize (mip4))))
+					imageStore (mip4, ivec2 (gl_WorkGroupID.xy), vec4 (reduce (a, b, c, d), 0, 0));
+				return;
+			}
+		}
+		else
+		{
+			barrier ();
+			if (gl_LocalInvocationIndex < 4)
+			{
+				ivec2 pos = ivec2 (gl_LocalInvocationIndex & 1u, gl_LocalInvocationIndex >> 1u);
+				q = pos * 2;
+				depth = reduce (read2 (q), read2 (q + ivec2 (1, 0)), read2 (q + ivec2 (0, 1)), read2 (q + ivec2 (1, 1)));
+				depths3[gl_LocalInvocationIndex] = depth;
+				p = ivec2 (gl_WorkGroupID.xy) * 2 + pos;
+				if (all (lessThan (p, imageSize (mip3))))
+					imageStore (mip3, p, vec4 (depth, 0, 0));
+			}
+		}
+		barrier ();
+		if (gl_LocalInvocationIndex == 0 && all (lessThan (ivec2 (gl_WorkGroupID.xy), imageSize (mip4))))
+			imageStore (mip4, ivec2 (gl_WorkGroupID.xy), vec4 (reduce (read3 (ivec2 (0)), read3 (ivec2 (1, 0)), read3 (ivec2 (0, 1)), read3 (ivec2 (1))), 0, 0));
 	}
-	barrier ();
-	if (gl_LocalInvocationIndex == 0 && all (lessThan (ivec2 (gl_WorkGroupID.xy), imageSize (mip4))))
-		imageStore (mip4, ivec2 (gl_WorkGroupID.xy), vec4 (reduce (read3 (ivec2 (0)), read3 (ivec2 (1, 0)), read3 (ivec2 (0, 1)), read3 (ivec2 (1))), 0, 0));
 #endif
 }
