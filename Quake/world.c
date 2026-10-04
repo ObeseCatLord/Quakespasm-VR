@@ -967,6 +967,12 @@ static const sv_coop_shared_field_t sv_coop_shared_fields[SV_COOP_SHARED_FIELD_C
 
 typedef struct
 {
+	qboolean valid; /* Ownership plus one complete, actually acquired config. */
+	float config[5]; /* finished, time, airmax, height, forward */
+} sv_coop_jumpboots_t;
+
+typedef struct
+{
 	int		items;
 	float		ammo_shells;
 	float		ammo_nails;
@@ -975,6 +981,7 @@ typedef struct
 	qboolean	worldtype_valid;
 	float		worldtype;
 	sv_coop_shared_value_t	extra[SV_COOP_SHARED_FIELD_COUNT];
+	sv_coop_jumpboots_t	jumpboots;
 } sv_coop_shared_inventory_t;
 
 #define SV_COOP_SHARED_STOCK_KEY_BITS (IT_KEY1 | IT_KEY2 | IT_SIGIL1 | IT_SIGIL2 | IT_SIGIL3 | IT_SIGIL4)
@@ -1599,6 +1606,117 @@ static qboolean SV_CoopSharedGetField (edict_t *ent, int index, eval_t **val_out
 	return val_out && *val_out;
 }
 
+#define SV_COOP_JUMPBOOTS_BIT 1048576
+#define SV_COOP_MODITEMS_INDEX 2 /* moditems in sv_coop_shared_fields */
+static const char *sv_coop_jumpboots_fields[8] = {
+	"jumpboots_finished", "jumpboots_time", "jumpboots_airmax",
+	"jumpboots_height", "jumpboots_forward", "jumpboots_airlvl",
+	"jumpboots_onground", "jumpboots_sound"};
+
+static qboolean SV_CoopSharedJumpBootFields (edict_t *player, eval_t **values)
+{
+	static dprograms_t *cached_progs;
+	static unsigned short cached_crc;
+	static ddef_t *defs[countof(sv_coop_jumpboots_fields)];
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->progscrc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->progscrc;
+		for (int i = 0; i < countof(defs); ++i)
+			defs[i] = ED_FindField(sv_coop_jumpboots_fields[i]);
+	}
+	for (int i = 0; i < countof(defs); ++i)
+		if (!defs[i] || (defs[i]->type & ~DEF_SAVEGLOBAL) != ev_float ||
+		    !(values[i] = GetEdictFieldValue(player, defs[i]->ofs)))
+			return false;
+	return true;
+}
+
+/* A declared boots namespace reserves this bit for the typed bundle, including
+ * incompatible schemas. Partial namespaces are conservatively reserved too;
+ * a different mod reusing these names/bit may need an explicit adapter. */
+static qboolean SV_CoopSharedJumpBootNamespace (void)
+{
+	for (int i = 0; i < countof(sv_coop_jumpboots_fields); ++i)
+		if (ED_FindField(sv_coop_jumpboots_fields[i]))
+			return true;
+	return false;
+}
+
+static qboolean SV_CoopSharedJumpBootLive (const sv_coop_jumpboots_t *boots)
+{
+	/* Native QC expires strictly before time; -1 is permanent. */
+	return boots->valid && (boots->config[0] == -1 ||
+		(boots->config[0] > 0 && boots->config[0] >= qcvm->time));
+}
+
+static void SV_CoopSharedCaptureJumpBoots (edict_t *player,
+	sv_coop_shared_inventory_t *inventory)
+{
+	eval_t *values[countof(sv_coop_jumpboots_fields)];
+	sv_coop_jumpboots_t *boots = &inventory->jumpboots;
+	if (!coop.value || deathmatch.value ||
+	    !inventory->extra[SV_COOP_MODITEMS_INDEX].valid ||
+	    !(inventory->extra[SV_COOP_MODITEMS_INDEX].bits & SV_COOP_JUMPBOOTS_BIT) ||
+	    !SV_CoopSharedJumpBootFields(player, values))
+		return;
+	for (int i = 0; i < countof(boots->config); ++i)
+	{
+		boots->config[i] = values[i]->_float;
+		if (!isfinite(boots->config[i]))
+			return;
+	}
+	boots->valid = boots->config[1] >= 0 &&
+		(boots->config[2] == -1 || boots->config[2] >= 0) &&
+		boots->config[3] > 0 && boots->config[4] >= 0;
+	boots->valid = SV_CoopSharedJumpBootLive(boots);
+}
+
+static qboolean SV_CoopSharedJumpBootGain (
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after,
+	const sv_coop_shared_inventory_t *declared)
+{
+	if (!SV_CoopSharedJumpBootLive(&after->jumpboots))
+		return false;
+	if (!before->extra[SV_COOP_MODITEMS_INDEX].valid ||
+	    !(before->extra[SV_COOP_MODITEMS_INDEX].bits & SV_COOP_JUMPBOOTS_BIT))
+		return true; /* New typed ownership is an actual inventory gain. */
+	/* Native artifacts declare the boot bit and reset time=1 on acquisition.
+	 * Warning timers and hazard reductions on unrelated triggers are not gains.
+	 * A confirmed replacement may lower a tier/timer: copy that acquired tuple. */
+	if (!declared || !declared->extra[SV_COOP_MODITEMS_INDEX].valid ||
+	    !(declared->extra[SV_COOP_MODITEMS_INDEX].bits & SV_COOP_JUMPBOOTS_BIT) ||
+	    after->jumpboots.config[1] != 1)
+		return false;
+	return before->jumpboots.config[0] != after->jumpboots.config[0] ||
+		memcmp(before->jumpboots.config + 2, after->jumpboots.config + 2,
+			3 * sizeof(float)) != 0;
+}
+
+static void SV_CoopSharedApplyJumpBoots (edict_t *player,
+	const sv_coop_jumpboots_t *boots)
+{
+	eval_t *values[countof(sv_coop_jumpboots_fields)], *moditems;
+	int type, bits;
+	if (!coop.value || deathmatch.value ||
+	    !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !SV_IsCoopInventoryClient(player) || !SV_CoopSharedJumpBootLive(boots) ||
+	    !SV_CoopSharedJumpBootFields(player, values) ||
+	    !SV_CoopSharedGetField(player, SV_COOP_MODITEMS_INDEX, &moditems, &type))
+		return;
+	bits = type == ev_ext_integer ? moditems->_int : (int)moditems->_float;
+	for (int i = 0; i < countof(boots->config); ++i)
+		values[i]->_float = boots->config[i];
+	/* Native acquisition initializes airlvl=0. Existing owners keep their own
+	 * consumed charges; onground/sound always remain native player state. */
+	if (!(bits & SV_COOP_JUMPBOOTS_BIT))
+		values[5]->_float = 0;
+	bits |= SV_COOP_JUMPBOOTS_BIT;
+	if (type == ev_ext_integer) moditems->_int = bits;
+	else moditems->_float = (float)bits;
+}
+
 static void SV_CoopSharedCopyNamedField (edict_t *source, edict_t *target,
 	const char *name, int expected_type)
 {
@@ -1691,6 +1809,8 @@ static void SV_CoopSharedRememberLevelProgress (
 
 	if (!source || !after)
 		return;
+	if (!sv_coop_shared_level_progress_valid)
+		sv_coop_shared_level_progress.jumpboots = after->jumpboots;
 	sv_coop_shared_level_progress.items =
 		after->items & SV_CoopSharedStockKeyMask();
 	if (SV_CoopUsesCountedKeys() && after->worldtype_valid)
@@ -2035,6 +2155,7 @@ void SV_CoopSharedApplyToJoiningClient (edict_t *player)
 	 * snapshot is not a new pickup: use today's exact team key state, while
 	 * retaining the additive handling above for non-key progression. */
 	SV_CoopSharedApplyCanonicalKeys(player);
+	SV_CoopSharedApplyJumpBoots(player, &sv_coop_shared_level_progress.jumpboots);
 	SV_CoopRespawnRefreshClientInventory(player);
 }
 
@@ -2076,6 +2197,7 @@ static void SV_CaptureCoopSharedInventory (edict_t *player, sv_coop_shared_inven
 			inventory->extra[i].value = val->_float;
 		}
 	}
+	SV_CoopSharedCaptureJumpBoots(player, inventory);
 }
 
 void SV_CoopSharedMergeRestoredClient (edict_t *source)
@@ -2097,6 +2219,9 @@ void SV_CoopSharedMergeRestoredClient (edict_t *source)
 	}
 	else
 	{
+		/* Preserve one restored bundle, never synthesize a tier by field maxima. */
+		if (!SV_CoopSharedJumpBootLive(&sv_coop_shared_level_progress.jumpboots))
+			sv_coop_shared_level_progress.jumpboots = current.jumpboots;
 		sv_coop_shared_level_progress.items = CoopInventoryPolicy_UnionBits(
 			sv_coop_shared_level_progress.items,
 			current.items & SV_CoopSharedStockKeyMask());
@@ -2209,6 +2334,7 @@ static qboolean SV_CoopSharedInventoryHasAmmoGain (
 static qboolean SV_CoopSharedInventoryHasAcceptedGain (
 	const sv_coop_shared_inventory_t *before,
 	const sv_coop_shared_inventory_t *after,
+	const sv_coop_shared_inventory_t *declared,
 	qboolean counted_keys)
 {
 	int	i;
@@ -2219,6 +2345,8 @@ static qboolean SV_CoopSharedInventoryHasAcceptedGain (
 		after->ammo_shells, after->ammo_nails, after->ammo_rockets,
 		after->ammo_cells};
 
+	if (SV_CoopSharedJumpBootGain(before, after, declared))
+		return true;
 	if (CoopInventoryPolicy_HasAcceptedBaseGain(before->items, after->items,
 		before_ammo, after_ammo,
 		sizeof(before_ammo) / sizeof(before_ammo[0])) ||
@@ -2401,6 +2529,9 @@ static void SV_CoopSharedApplyInventoryGain (
 				gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(
 					after->extra[i].bits, declared->extra[i].bits,
 					SV_CoopSharedExtraKeyMask(sv_coop_shared_fields[i].name));
+			if (i == SV_COOP_MODITEMS_INDEX && (gain & SV_COOP_JUMPBOOTS_BIT) &&
+			    SV_CoopSharedJumpBootNamespace())
+				gain &= ~SV_COOP_JUMPBOOTS_BIT;
 			if (!gain)
 				continue;
 
@@ -2639,6 +2770,7 @@ static void SV_ShareCoopPickupInventory (
 	const char	*classname;
 	qboolean	share_key_counts;
 	qboolean	key_gain;
+	qboolean	boots_gain;
 
 	if (!pickup || !declared)
 		return;
@@ -2646,10 +2778,11 @@ static void SV_ShareCoopPickupInventory (
 	classname = pickup->v.classname ? PR_GetString(pickup->v.classname) : "trigger";
 	share_key_counts = SV_CoopUsesCountedKeys();
 
-	if (!SV_CoopSharedInventoryHasAcceptedGain(before, after, share_key_counts))
+	if (!SV_CoopSharedInventoryHasAcceptedGain(before, after, declared, share_key_counts))
 		return;
 	key_gain = SV_CoopSharedInventoryHasKeyGain(before, after,
 		share_key_counts);
+	boots_gain = SV_CoopSharedJumpBootGain(before, after, declared);
 
 	for (i = 1; i <= svs.maxclients; i++)
 	{
@@ -2660,12 +2793,19 @@ static void SV_ShareCoopPickupInventory (
 			direct_weapon_touch);
 		if (key_gain)
 			SV_CoopSharedCopyCustomKeyMetadata(source, client, before, after);
+		if (boots_gain)
+			SV_CoopSharedApplyJumpBoots(client, &after->jumpboots);
 	}
 
 	if (key_gain)
 		SV_CoopSharedRebuildTeamKeys(source);
 	else if (SV_CoopSharedHasPersistentProgressGain(before, after))
 		SV_CoopSharedRememberLevelProgress(source, after);
+	if (boots_gain)
+	{
+		sv_coop_shared_level_progress.jumpboots = after->jumpboots;
+		sv_coop_shared_level_progress_valid = true;
+	}
 
 	Con_DPrintf("coop pickup share: %s from %s\n",
 		classname,
@@ -2790,6 +2930,7 @@ static void SV_TouchLinks (edict_t *ent)
 			SV_CaptureCoopSharedInventory (ent, &shared_after);
 		target_accepted = (weapon_targetfix || pickup_targetfix) &&
 			SV_CoopSharedInventoryHasAcceptedGain (&shared_before, &shared_after,
+				shared_pickup ? &shared_declared : NULL,
 				SV_CoopUsesCountedKeys());
 		if (shared_pickup)
 		{
