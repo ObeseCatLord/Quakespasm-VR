@@ -175,7 +175,7 @@ static qboolean CSQCPrediction_RunPMove (edict_t *entity)
 	if (csqc_prediction_pmove_active || qcvm != &cl.qcvm || !entity || entity->free ||
 		!qcvm->worldmodel || qcvm->worldmodel->needload || qcvm->worldmodel->type != mod_brush ||
 		!cl.worldmodel || cl.worldmodel->needload || cl.worldmodel->type != mod_brush ||
-		qcvm->numareanodes <= 0 || qcvm->numareanodes > AREA_NODES || !qcvm->areanodes ||
+		qcvm->numareanodes <= 0 || qcvm->numareanodes > AREA_NODES ||
 		!CSQCPrediction_FiniteVector (entity->v.origin) ||
 		!CSQCPrediction_FiniteVector (entity->v.velocity) ||
 		!CSQCPrediction_FiniteVector (entity->v.angles) ||

@@ -391,11 +391,12 @@ def main():
     ):
         source_hashes[name] = hashlib.sha256((REPO / name).read_bytes()).hexdigest()
     graph_hash = hashlib.sha256((graph / "build.ninja").read_bytes()).hexdigest()
+    object_count = sum(item.endswith(".o") for item in native_link_recipe(graph, output))
     print("CSQC_ENTITY_NATIVE_BUILD_PASSED assertions=enabled link_recipe=native_debug_replacement_only "
-          "engine_objects=225 replaced_owners=4 graph_sha256=" + graph_hash)
+          f"engine_objects={object_count} replaced_owners=4 graph_sha256=" + graph_hash)
     print("CSQC_ENTITY_NATIVE_SOURCE head=" + git_head + " program_sha256=" + program_hash +
           " source_sha256=" + ",".join(key + ":" + value for key, value in source_hashes.items()))
-    print("CSQC_ENTITY_NATIVE_PRIVATE_BUILD_ROOT=" + str(graph) + " engine_objects=225 assertions=enabled")
+    print("CSQC_ENTITY_NATIVE_PRIVATE_BUILD_ROOT=" + str(graph) + f" engine_objects={object_count} assertions=enabled")
     print("CSQC_ENTITY_NATIVE_PRIVATE_PROFILE=" + str(profile))
     print("CSQC_ENTITY_NATIVE_PRIVATE_QC_PACK=" + str(qc_pack))
 

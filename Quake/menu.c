@@ -2198,11 +2198,11 @@ static qboolean M_GraphicsChooseAnisotropy (int dir)
 
 	if (!vulkan_globals.device_features.samplerAnisotropy || maximum <= 1.0f)
 		return false;
-	for (int i = 1; i < (int)q_countof (values); ++i)
+	for (int i = 1; i < (int)countof (values); ++i)
 		if (vid_anisotropic.value >= values[i]) index = i;
-	for (int i = 0; i < (int)q_countof (values); ++i)
+	for (int i = 0; i < (int)countof (values); ++i)
 	{
-		index = (index + (int)q_countof (values) + dir) % (int)q_countof (values);
+		index = (index + (int)countof (values) + dir) % (int)countof (values);
 		if (values[index] <= 1.0f || values[index] <= maximum)
 		{
 			if (vid_anisotropic.value == values[index]) return false;
@@ -2217,7 +2217,7 @@ static int M_GraphicsDitherIndex (void)
 {
 	static const float values[] = {0, .5f, 1, 2};
 	int result = 0;
-	for (int i = 1; i < (int)q_countof (values); ++i)
+	for (int i = 1; i < (int)countof (values); ++i)
 		if (r_surface_dither.value >= (values[i - 1] + values[i]) * .5f) result = i;
 	return result;
 }
@@ -2761,7 +2761,7 @@ static void M_GraphicsOptions_Key (int key)
 	const int count = graphics_option_counts[graphics_category];
 	int root_index = 0;
 
-	for (int i = 0; i < (int)q_countof (root_categories); ++i)
+	for (int i = 0; i < (int)countof (root_categories); ++i)
 		if (root_categories[i] == graphics_category) root_index = i;
 	if (graphics_category == GRAPHICS_CATEGORY_PARTICLES) root_index = 2;
 
@@ -2783,12 +2783,12 @@ static void M_GraphicsOptions_Key (int key)
 	case K_RIGHTARROW: M_GraphicsAdjust (1, false); break;
 	case K_TAB:
 		M_GraphicsSetCategory (root_categories[(root_index + (keydown[K_SHIFT] ?
-			(int)q_countof (root_categories) - 1 : 1)) % (int)q_countof (root_categories)]);
+			(int)countof (root_categories) - 1 : 1)) % (int)countof (root_categories)]);
 		break;
 	case K_RTHUMB:
-		M_GraphicsSetCategory (root_categories[(root_index + 1) % (int)q_countof (root_categories)]); break;
+		M_GraphicsSetCategory (root_categories[(root_index + 1) % (int)countof (root_categories)]); break;
 	case K_LTHUMB:
-		M_GraphicsSetCategory (root_categories[(root_index + (int)q_countof (root_categories) - 1) % (int)q_countof (root_categories)]); break;
+		M_GraphicsSetCategory (root_categories[(root_index + (int)countof (root_categories) - 1) % (int)countof (root_categories)]); break;
 	}
 }
 
@@ -2812,7 +2812,7 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
 	graphics_category_hover = -1;
-	for (int index = 0; index < (int)q_countof (root_categories); ++index)
+	for (int index = 0; index < (int)countof (root_categories); ++index)
 	{
 		const graphics_category_t category = root_categories[index];
 		const int x = 16 + index * 72;
