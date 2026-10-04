@@ -2525,7 +2525,9 @@ zero/excessive deadzones. It checks clickable-panel mouse selection, Enter
 fallback, held-trigger stability across hover changes, matching release events,
 and OpenXR menu haptics. It also covers Escape opening the menu, handedness, the
 master toggle, capture and modal-grab mappings, and context/focus loss gates.
-Motion coverage includes prepared roomscale deltas, repeated-frame
+Motion coverage includes stick-neutral recovery with grip held after focus
+loss, rejection of a still-deflected stick, and application of recovered
+movement to the native command. Motion coverage also includes prepared roomscale deltas, repeated-frame
 deduplication, nonconsuming preview, focus loss, outlier rejection and angle
 locks. A focused
 render-frame case checks pinned private muzzle/hand preparation, roomscale
@@ -2551,6 +2553,21 @@ cc -std=gnu11 -DUSE_SDL3 -Wall -Wextra -Werror \
   $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/qsvr-controller-input-asan
 /tmp/qsvr-controller-input-asan
+```
+
+The scoped shot-roll fixture invokes production private-pose begin/end and
+shot-basis helpers. It covers repeated matching calls, nested masking and
+cleanup, body/hand source math, restoration, and relocation invalidation.
+Calibration and tracing use typed fixture seams; specialized paired weapons
+and live QuakeC firing remain outside its scope.
+
+```sh
+cc -std=gnu11 -O1 -g -D_GNU_SOURCE -DUSE_SDL3 \
+  -ffunction-sections -fdata-sections -fsanitize=address,undefined \
+  -fno-omit-frame-pointer -IQuake $(pkg-config --cflags sdl3) \
+  tests/vr_shot_roll_scope_fixture.c Quake/mathlib.c \
+  -Wl,--gc-sections -lm -o /tmp/qsvr-shot-roll-scope-asan
+/tmp/qsvr-shot-roll-scope-asan
 ```
 
 The focused production-source default-binding fixture runs independently:

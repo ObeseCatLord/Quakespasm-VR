@@ -46,10 +46,13 @@ temporary origin as a fresh generic shot.
 ## Focused fixture
 
 `tests/vr_shot_roll_scope_fixture.c` includes the production `sv_phys.c`
-adapter with a minimal QC VM. It verifies a 90-degree roll rotates spread and
-source right/up axes, keeps camera roll zero, accepts repeated exact player
-calls, and rejects a different `self`, player world angles, and relocation
-invalidation. It does not launch a game or automate VR.
+adapter with a minimal QC VM. It invokes the actual private-pose begin/end
+functions and verifies body/hand source reconstruction, a 90-degree rolled
+calibration input, zero camera roll, repeated matching shot bases, nested-scope
+masking and cleanup, restored origin/angles/globals, and relocation invalidation.
+Tracing and calibration are typed fixture seams; calibration database parsing
+is covered separately. It rejects a different `self` and player world angles.
+The ASAN/UBSAN fixture passes. It does not launch a game or automate VR.
 
 ## Exclusions
 

@@ -48,3 +48,29 @@ Linux build and isolated fixture results are recorded with the repair artifacts;
 native ARM deployment uses the existing matched library package and executable
 backups. Device feel, filtering appearance, and the unlocalized crash still need
 the user's reproduction; no complete-crash-fix claim is made by this checkpoint.
+
+## Build and deployment checkpoint
+
+Production source checkpoint: `46e132d356520b66e53999f4bc7ff51639c96983`.
+Linux debug engine links successfully. ASAN/UBSAN input, calibration-reload and
+actual private-pose shot-roll fixtures pass; SDL2/SDL3 audio-focus checks and
+OpenXR Vulkan creation checks pass. The input follow-up checks both a held
+deflection remaining blocked and recovered movement reaching the command.
+
+Native ARM compilation and installation pass with the existing Steam Audio and
+OpenXR dependency package. Changed source hashes are verified against the source
+manifest. An initial incremental attempt performed no compilation because the
+patch archive carried epoch timestamps; that output was rejected. Source mtimes
+were corrected, and the accepted build log includes actual compilation of all
+changed compiled owners and engine linking.
+
+Frame installation: `frame-gameplay-46e132d3-20261004-013238/arm`.
+Installed engine SHA256:
+`57168e29b403f26df53f6448baf179318f010d1067e45066491bd59307c42d7a`.
+The engine uses `$ORIGIN/../lib`; its loader check succeeds and imported GLIBC
+versions remain at or below 2.39. All 44 existing packaged library files retain
+their hashes. The executable-only backup is `executable-backups/20261004-013238`
+and contains just the preceding `quakespasm-openvr.bin` executable. The wrapper,
+GUI launcher, update helper, launcher settings, mods, saves and configs are
+unchanged. The canonical engine link is switched atomically; no running game is
+stopped and a new launch is required. No new headset session is claimed tested.

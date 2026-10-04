@@ -18,6 +18,8 @@ movement on menu/context transitions. No new recovery state machine or timer.
 
 Extend the actual input fixture: focus loss releases controls; after focus
 returns, hold left grip while centering its stick, then deflect it. Verify normal
-movement resumes while button rearming remains gated. Test at the end alongside
-the other gameplay repairs. This fixes a demonstrated persistent gate, not the
-unknown source of the black flash itself.
+movement resumes while button rearming remains gated. Verify that a still-held
+deflection remains blocked until centered and that recovered movement reaches
+`VR_InputApplyPending`. These ASAN/UBSAN checks pass alongside the other gameplay
+repairs. This fixes a demonstrated persistent gate, not the unknown source of
+the black flash itself.
