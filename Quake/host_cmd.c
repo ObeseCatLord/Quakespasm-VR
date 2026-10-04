@@ -2923,10 +2923,10 @@ static void Host_CoopAutosaveFrame (void)
 static void Host_SingleplayerAutosaveFrame (void)
 {
 	float health_change, speed, elapsed, score;
-	edict_t *sv_player = svs.clients[0].edict;
+	edict_t *autosave_player = svs.clients[0].edict;
 
-	if (!sv_player || sv_player->free || !svs.clients[0].active || !svs.clients[0].spawned ||
-		sv.paused || sv.nomonsters || deathmatch.value || realtime < sv.autosave.retry_realtime || !sv_autosave.value || sv_autosave_interval.value <= 0.f || svs.maxclients != 1 || sv_player->v.health <= 0.f || cl.intermission )
+	if (!autosave_player || autosave_player->free || !svs.clients[0].active || !svs.clients[0].spawned ||
+		sv.paused || sv.nomonsters || deathmatch.value || realtime < sv.autosave.retry_realtime || !sv_autosave.value || sv_autosave_interval.value <= 0.f || svs.maxclients != 1 || autosave_player->v.health <= 0.f || cl.intermission )
 		return;
 
 	if (Host_IsSaving ())
@@ -2949,19 +2949,19 @@ static void Host_SingleplayerAutosaveFrame (void)
 
 	// Track health changes
 	if (!sv.autosave.prev_health)
-		sv.autosave.prev_health = sv_player->v.health;
-	health_change = sv_player->v.health - sv.autosave.prev_health;
+		sv.autosave.prev_health = autosave_player->v.health;
+	health_change = autosave_player->v.health - sv.autosave.prev_health;
 	if (health_change < 0.f)
-		if (health_change < -3.f || sv_player->v.health < 100.f || sv_player->v.watertype == CONTENTS_SLIME || sv_player->v.watertype == CONTENTS_LAVA)
+		if (health_change < -3.f || autosave_player->v.health < 100.f || autosave_player->v.watertype == CONTENTS_SLIME || autosave_player->v.watertype == CONTENTS_LAVA)
 			sv.autosave.hurt_time = qcvm->time;
-	sv.autosave.prev_health = sv_player->v.health;
+	sv.autosave.prev_health = autosave_player->v.health;
 
 	// Track attacking
-	if (sv_player->v.button0)
+	if (autosave_player->v.button0)
 		sv.autosave.shoot_time = qcvm->time;
 
 	// Time spent with cheats active doesn't count
-	if (sv_player->v.movetype == MOVETYPE_NOCLIP || (int)sv_player->v.flags & (FL_GODMODE | FL_NOTARGET))
+	if (autosave_player->v.movetype == MOVETYPE_NOCLIP || (int)autosave_player->v.flags & (FL_GODMODE | FL_NOTARGET))
 	{
 		sv.autosave.cheat += host_frametime;
 		return;
@@ -2976,13 +2976,13 @@ static void Host_SingleplayerAutosaveFrame (void)
 		return;
 
 	// Only save when the player slows down a bit
-	speed = VectorLength (sv_player->v.velocity);
+	speed = VectorLength (autosave_player->v.velocity);
 	if (speed > 100.f)
 		return;
 
 	// Copper's func_void holds the player at the bottom for a bit before inflicting damage,
 	// so we can't assume it's safe to save just because we're no longer falling
-	if ((int)sv_player->v.movetype == MOVETYPE_NONE)
+	if ((int)autosave_player->v.movetype == MOVETYPE_NONE)
 		return;
 
 	// Don't save too often
@@ -2995,7 +2995,7 @@ static void Host_SingleplayerAutosaveFrame (void)
 	// Base value is the fraction of the autosave interval already passed
 	score = elapsed / sv_autosave_interval.value;
 	// Scale down the score if health + armor is below 100 (save less often with lower health)
-	score *= q_min (100.f, (sv_player->v.health + sv_player->v.armortype * sv_player->v.armorvalue)) / 100.f;
+	score *= q_min (100.f, (autosave_player->v.health + autosave_player->v.armortype * autosave_player->v.armorvalue)) / 100.f;
 	// Boost the score right after picking up health
 	score += q_max (0.f, health_change) / 100.f;
 	// Lower score a bit based on speed (favor standing still/slowing down)
@@ -3003,7 +3003,7 @@ static void Host_SingleplayerAutosaveFrame (void)
 	// Boost the score after finding a secret
 	score += sv.autosave.secret_boost * 0.25f;
 	// Boost the score after teleporting
-	score += CLAMP (0.f, 1.f - (qcvm->time - sv_player->v.teleport_time) / 1.5f, 1.f) * 0.5f;
+	score += CLAMP (0.f, 1.f - (qcvm->time - autosave_player->v.teleport_time) / 1.5f, 1.f) * 0.5f;
 
 	// Only save if the score is high enough
 	if (score < 1.f)
