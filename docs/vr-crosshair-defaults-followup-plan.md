@@ -102,7 +102,8 @@ desktop/novr, active VR reset, and later intentional defaults overrides;
 The fixture is prepared, not compiled or executed. This is source acceptance,
 not native config execution, Vulkan validation, or headset qualification.
 
-The fresh-profile default remains **pending main's default.cfg hook**. Runtime
+Main added the `default.cfg` hook in `3ead2faf`; fresh desktop and simulated
+OpenXR native execution passed. See the follow-up qualification document. Runtime
 `vr_enable 1` without `-openxr` deliberately does not migrate an existing
 desktop preference; an explicit VR defaults reset can invoke the command.
 No saved-value heuristics, archived migration marker, or repeated override

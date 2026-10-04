@@ -119,3 +119,11 @@ the simplification of deleting the redundant outer room transaction: each
 existing `add_wet` already commits a complete validated branch. Adapted wording:
 listener validation rejects nonfinite/near-zero individual axes; it does not
 claim orthogonality validation for nonzero malformed frames not observed here.
+
+Final integration: the full native mixer passes 81 injected binaural failures,
+including tail, HRTF-off/dry and finite-gain overflow, retaining an independent
+healthy sound plus dry music and zero callback allocations. The simplified
+room transaction still passes all 288 faults. Actual PC desktop and simulated
+OpenXR rooftop callbacks now report zero final invalid samples with advancing
+clock and output; the simulated run also executes private normal movement
+commands and exits normally. The original late physical cutoff is unconfirmed.
