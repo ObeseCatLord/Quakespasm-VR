@@ -1,3 +1,20 @@
+# Quakespasm VR 2.0
+
+Quakespasm VR 2.0 is based on [vkQuake](https://github.com/Novum/vkQuake), with OpenXR VR, Vulkan rendering, desktop play and modern predictive co-op networking. The vkQuake commit history is retained so upstream updates can be merged into the maintained engine.
+
+- `main` is the maintained 2.0 engine. `2.0` remains an alias for existing release tooling and launcher updates.
+- `legacy1.0` preserves the former Quakespasm/OpenVR engine and its history.
+- Supported release targets are Windows x64, Linux x86-64 and Linux ARM64, including Steam Frame native play. PC streaming uses the PC build and its installed OpenXR runtime.
+- Start VR with `-openxr`; the packaged `quakespasm-openvr` wrapper also accepts legacy launchers' `-vr`. Start desktop play with `-novr`.
+- The headset runtime owns VR render resolution. The graphics menu exposes vkQuake's supported lighting, SSAO, filtering, MSAA, effects and advanced controls. SSAO uses its desktop or VR implementation automatically.
+- Eye tracking is optional and selected through the foveation mode. Fixed foveation is an explicit option, never an automatic fallback. Unsupported features remain disabled without preventing ordinary VR.
+
+The updater channel is [2.0](https://quack.shrubdragon.studio/2.0/release.json); matching platform runtimes, source access and license notices are listed in that release record. Keep the mod launcher and your own game/mod data. Quake data is required and is not included in engine releases.
+
+For builds and release packaging see [portable Linux builds](Packaging/Linux/README.md) and the platform build files. The upstream vkQuake documentation below is retained as a reference; its release links point to upstream's desktop builds.
+
+## Upstream vkQuake documentation
+
 # 🌋 vkQuake
 [![Windows CI](https://github.com/Novum/vkQuake/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-windows.yml) [![Windows CI](https://github.com/Novum/vkQuake/actions/workflows/build-mingw.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-mingw.yml) [![Windows CI](https://github.com/Novum/vkQuake/actions/workflows/build-msys2-clangarm64.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-msys2-clangarm64.yml) [![Linux CI](https://github.com/Novum/vkQuake/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-linux.yml) [![macOS CI](https://github.com/Novum/vkQuake/actions/workflows/build-mac.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-mac.yml) [![Formatting](https://github.com/Novum/vkQuake/actions/workflows/clang-format-check.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/clang-format-check.yml)
 
