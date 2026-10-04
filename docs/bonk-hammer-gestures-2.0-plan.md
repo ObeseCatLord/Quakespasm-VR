@@ -13,8 +13,10 @@ The behavioral reference is the original `w_hammer.qc`: charge multipliers
 `.2`, `2`, and `4`, a `.4` hammer cooldown, floor-dependent hop, and airborne
 whiff dash. `vr.c` rows 7139--7225 supply the 29 audited held-model recipes.
 
-## Completed mechanical stage, 2026-10-04
+## Prior mechanical stage, 2026-10-04 (historical status)
 
+This section records the mechanical commit before full authorization. Its
+dormant/unfinished descriptions apply only to that prior stage.
 Baseline: `7cc8cdb20db55f550addf1b11b71ec4bbd93b8c6`, branch `2.0`.
 All 29 donor held recipes now live in the existing `gl_model.c` table, with
 source topology from the existing splitter and unchanged generated size/CRC,
@@ -43,7 +45,7 @@ SHA, size, function signatures and field offsets were read directly.
 No behavioral tests were added or run. No native attacks are suppressed and
 no Bonk contacts are offered/published. The full adapter is unfinished.
 
-## Mechanical implementation in this change
+## Adapter implementation scope (approved)
 
 1. Pin the exact Bonk VM identity and the `W_SwingHammer`, `hithammer`, and
    `saf` ABI entry points before recognizing Bonk on the server.
@@ -122,5 +124,4 @@ and rejection for program/model/skin, ready model selection, trigger
 suppression, three tier selection and first-hit lock, floor versus wall
 classification, grounded whiff, cooldown, stale/discontinuous reset, and no
 publication for other physical families. The final user-facing proof must also
-cover head-versus-weapon divergence in every movement mode once the adapter is
-approved.
+cover head-versus-weapon divergence in every movement mode against the approved design.
