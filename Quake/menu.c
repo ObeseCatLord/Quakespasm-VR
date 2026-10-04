@@ -2667,6 +2667,9 @@ static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_si
 		else
 			q_snprintf (text, text_size, "Requested %gx; active %gx", requested, actual);
 		break;
+	case GFX_DYNAMIC_LIGHTS:
+		q_strlcpy (text, "Lights from active effects; baked map lighting stays visible", text_size);
+		break;
 	case GFX_LIGHT_MODE:
 		if (!r_clustered_lights.value)
 			q_strlcpy (text, "Requested Native: standard lighting", text_size);
@@ -2688,7 +2691,10 @@ static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_si
 		q_strlcpy (text, vulkan_globals.ray_query ? "Off is always available" :
 			(r_rtshadows.value ? "Unavailable; activate to clear request" : "Ray-traced shadows unavailable"), text_size);
 		break;
-	case GFX_AO: case GFX_AO_RADIUS: case GFX_AO_STRENGTH:
+	case GFX_AO:
+		q_strlcpy (text, R_SSAOSupported () ? "Contact occlusion near entity models; baked wall lighting stays visible" : "Ambient occlusion unsupported", text_size);
+		break;
+	case GFX_AO_RADIUS: case GFX_AO_STRENGTH:
 		q_strlcpy (text, R_SSAOSupported () ? "Ambient occlusion quality" : "Ambient occlusion unsupported", text_size);
 		break;
 	case GFX_AO_VR:
