@@ -4121,3 +4121,33 @@ SDK returned-buffer NaN/infinities/finite overflow; they do not establish
 recovery from corrupted internal SDK histories or the original late gameplay
 mute. See the follow-up qualification document for native renderer/audio proof
 and limits.
+
+## Uphill support and compact collision bounds
+
+`run_slope_reconciliation_native.py` reuses actual QC/BSP, negotiated command
+receipt, snapshots and committed client replay from a prepared Debug graph.
+Honey checks flat/uphill/downhill no-jump equality at the same completed
+sequence and separately checks authored jump acceptance, stationary and running
+uphill landing/rejump, and swimming. Generic-QC jump trajectory differences
+are reported separately. Commands and transport delivery are prepared/captured;
+these checks do not prove physical OpenXR input or UDP pacing.
+
+```sh
+python3 tests/run_slope_reconciliation_native.py --build-dir /path/to/prepared-debug \
+  --assets /path/to/licensed/game-root --game honey --map start --client-msec 4 8 16
+python3 tests/run_slope_reconciliation_native.py --build-dir /path/to/prepared-debug \
+  --assets /path/to/licensed/game-root --game honey --map start --vr-command
+python3 tests/run_slope_reconciliation_native.py --build-dir /path/to/prepared-debug \
+  --assets /path/to/licensed/game-root --game honey --map honey --swim-only
+python3 tests/run_solid_size_native.py --build-dir /path/to/prepared-debug
+```
+
+The slope fixture deliberately requires the generic shared-QC owner; installed
+exact-q30/AD programs use their existing q30 fixtures or initialized local probes.
+Exit77 indicates missing required real geometry, not a passing test.
+`solid_size_roundtrip_native_fixture.c` exercises the real entity writer and
+delta decoder at compact height boundaries and beyond, unaligned dimensions,
+maximum byte extents and reserved sentinels. Ordinary public compact bytes stay
+unchanged; out-of-range public upper extents saturate, while private packets
+use their already-supported32-bit packed hull format. Neither runner builds or
+modifies the prepared graph or installed game assets/configuration.
