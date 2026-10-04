@@ -19,4 +19,6 @@ ENGINE_DIR="$(dirname -- "$ENGINE")"
 # Legacy launchers put SteamVR and the old engine libraries first. Keep the
 # matching SDL/Vulkan/Steam Audio package ahead of those inherited paths.
 export LD_LIBRARY_PATH="$ENGINE_DIR/../lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-exec "$ENGINE" "${args[@]}"
+# The native cmdline cvar has a bounded length. Do not spend its budget on
+# the immutable runtime's long installation path before +map/+connect.
+exec -a quakespasm-openvr "$ENGINE" "${args[@]}"
