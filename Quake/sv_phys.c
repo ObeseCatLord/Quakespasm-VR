@@ -4164,6 +4164,105 @@ unsigned int SV_VREnyoMeleeContactProfile (void)
 		VR_WEAPON_CONTACT_PROFILE_ENYO : VR_WEAPON_CONTACT_PROFILE_NONE;
 }
 
+/* Recognition only until the complete Bonk outcome adapter is installed.
+ * This does not offer a contact profile or admit a direct-melee stroke. */
+qboolean SV_BonkHammerProgramLoaded (void)
+{
+	static const byte expected_sha256[32] = {
+		0xb5, 0x4e, 0x33, 0xe5, 0x0a, 0xd0, 0x6d, 0x56,
+		0x28, 0x13, 0x2a, 0x26, 0xbb, 0x6b, 0x08, 0x95,
+		0x34, 0xd0, 0x91, 0xbd, 0x2b, 0x67, 0x56, 0x79,
+		0x9a, 0x15, 0xb6, 0x1e, 0x7a, 0xf4, 0x98, 0x11
+	};
+	static const byte scalar[] = {1}, hammer_parms[] = {1, 3, 3, 1, 1};
+
+	return qcvm == &sv.qcvm && qcvm->progs && qcvm->globals &&
+		!q_strcasecmp (COM_SkipPath (com_gamedir), "bonkjam") &&
+		qcvm->progssize == 684974 &&
+		!memcmp (qcvm->progssha256, expected_sha256, sizeof (expected_sha256)) &&
+		qcvm->progs->numstatements == 49492 &&
+		qcvm->progs->numfunctions == 3306 && qcvm->progs->numglobals == 7652 &&
+		SV_DwellFunctionPin (412, "W_ResetWeaponState", 10722, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (409, "SuperDamageSound", 10635, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (420, "W_Attack", 11111, 6345, 1, 0, NULL) &&
+		SV_DwellFunctionPin (426, "W_WeaponFrame", 11363, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (460, "Hammer_Whiff_Sound", 12613, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (470, "W_SwingHammer", 13514, 6513, 19, 1, scalar) &&
+		SV_DwellFunctionPin (471, "hithammer", 13746, 6532, 13, 5, hammer_parms) &&
+		SV_DwellFunctionPin (474, "saf", 13998, 6547, 1, 1, scalar) &&
+		ED_FindFieldOffset ("attack_finished_hammer") == 127 &&
+		ED_FindFieldOffset ("customflags") == 217;
+}
+
+qboolean SV_BonkHammerWeaponSelected (edict_t *ent)
+{
+	/* Native W_SetCurrentAmmo selector order, independent of splitter IDs. */
+	static const char *const skins[] = {
+		"default", "default_bloody", "alkaline_axe", "baseball",
+		"moving_past_it", "mailbox", "heavy_rocket", "brown_brick", "sblade",
+		"burger", "buster_sword", "guitar", "pickaxe", "dwarven", "jester_mallet",
+		"error", "sailor_sceptre", "floyd", "kebby_gears", "squeaky", "sentinel",
+		"katana", "pirate_skull", "default_gold", "default_gold_bloody",
+		"blocky_axe", "mace", "stop_sign", "copper_axe"
+	};
+	eval_t *customflags;
+	float choice;
+	const char *skin = "error";
+	char model[MAX_QPATH];
+
+	if (!ent || ent->free || !SV_BonkHammerProgramLoaded () ||
+		!isfinite (ent->v.health) || ent->v.health <= 0 ||
+		!isfinite (ent->v.deadflag) || ent->v.deadflag != DEAD_NO ||
+		!isfinite (ent->v.weapon) || ent->v.weapon != IT_AXE ||
+		!isfinite (ent->v.items) || (double)ent->v.items < -2147483648.0 ||
+		(double)ent->v.items >= 2147483648.0 || !((int)ent->v.items & IT_AXE))
+		return false;
+	customflags = GetEdictFieldValue (ent, 217);
+	if (!customflags || !isfinite (customflags->_float) ||
+		(double)customflags->_float < -2147483648.0 ||
+		(double)customflags->_float >= 2147483648.0 ||
+		((int)customflags->_float & 2112)) /* CFL_PLUNGE | CFL_LIMBO */
+		return false;
+	choice = qcvm->globals[873]; /* hammer_skin, pinned by the complete image */
+	if (!isfinite (choice))
+		return false;
+	if (choice >= 1 && choice <= countof (skins) && choice == floorf (choice))
+		skin = skins[(int)choice - 1];
+	q_snprintf (model, sizeof (model), "progs/v_hammer_%s.mdl", skin);
+	return !strcmp (PR_GetString (ent->v.weaponmodel), model);
+}
+
+qboolean SV_BonkHammerAttackReady (edict_t *ent)
+{
+	eval_t *cooldown;
+	int think;
+
+	if (!SV_BonkHammerWeaponSelected (ent) || !isfinite (qcvm->time) ||
+		!isfinite ((float)qcvm->time))
+		return false;
+	cooldown = GetEdictFieldValue (ent, 127);
+	if (!cooldown || !isfinite (cooldown->_float) ||
+		cooldown->_float > (float)qcvm->time)
+		return false;
+	/* Only harmless native idle/recovery thinks, never a pending charged hit.
+ * Do not cancel these thinks or reset the QC animation state. */
+	think = ent->v.think;
+	if (think >= 553 && think <= 568)
+	{
+		char name[32];
+		const int first = think < 561 ? 553 : 561;
+		q_snprintf (name, sizeof (name), "p_hammer_%s_%02d",
+			think < 561 ? "autoanim" : "cooldown", think - first + 1);
+		return SV_DwellFunctionPin (think, name,
+			think < 561 ? 14736 + 7 * (think - 553) :
+			14792 + 6 * (think - 561), 0, 0, 0, NULL);
+	}
+	return (think == 667 && SV_DwellFunctionPin (667, "player_stand1",
+		19532, 0, 0, 0, NULL)) ||
+		(think == 668 && SV_DwellFunctionPin (668, "player_run",
+			19569, 0, 0, 0, NULL));
+}
+
 /* QBJ3's native has_berserk tests the item bit or the float QC expiry. The
  * model and weapon bit must still be the currently selected melee weapon. */
 static qboolean SV_VRQBJ3MeleeSelected (edict_t *ent, qboolean *berserk)

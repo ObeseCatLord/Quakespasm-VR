@@ -202,6 +202,46 @@ static const vr_weapon_schema_entry_t vr_copper_axe_fallback[] = {
 	},
 };
 
+/* Bonk has no authored hammer offsets in the donor InitAllWeaponCVars or
+ * installed schema. Preserve its neutral source-model calibration (0,0,0; 1)
+ * for every audited cosmetic. File/user schema fields still override these.
+ * These held-only entries deliberately do not enable gesture attack input. */
+#define VR_BONK_HELD(path) \
+	{ .viewmodel_path = path, .held_offset = {0.0f, 0.0f, 0.0f}, \
+	  .has_held_offset = true, .held_scale = 1.0f, .has_held_scale = true }
+static const vr_weapon_schema_entry_t vr_bonk_hammer_fallbacks[] = {
+	VR_BONK_HELD("progs/v_hammer_default.mdl"),
+	VR_BONK_HELD("progs/v_hammer_default_bloody.mdl"),
+	VR_BONK_HELD("progs/v_hammer_default_gold.mdl"),
+	VR_BONK_HELD("progs/v_hammer_default_gold_bloody.mdl"),
+	VR_BONK_HELD("progs/v_hammer_alkaline_axe.mdl"),
+	VR_BONK_HELD("progs/v_hammer_sblade.mdl"),
+	VR_BONK_HELD("progs/v_hammer_buster_sword.mdl"),
+	VR_BONK_HELD("progs/v_hammer_pickaxe.mdl"),
+	VR_BONK_HELD("progs/v_hammer_katana.mdl"),
+	VR_BONK_HELD("progs/v_hammer_copper_axe.mdl"),
+	VR_BONK_HELD("progs/v_hammer_baseball.mdl"),
+	VR_BONK_HELD("progs/v_hammer_moving_past_it.mdl"),
+	VR_BONK_HELD("progs/v_hammer_mailbox.mdl"),
+	VR_BONK_HELD("progs/v_hammer_heavy_rocket.mdl"),
+	VR_BONK_HELD("progs/v_hammer_burger.mdl"),
+	VR_BONK_HELD("progs/v_hammer_guitar.mdl"),
+	VR_BONK_HELD("progs/v_hammer_dwarven.mdl"),
+	VR_BONK_HELD("progs/v_hammer_jester_mallet.mdl"),
+	VR_BONK_HELD("progs/v_hammer_error.mdl"),
+	VR_BONK_HELD("progs/v_hammer_sailor_sceptre.mdl"),
+	VR_BONK_HELD("progs/v_hammer_floyd.mdl"),
+	VR_BONK_HELD("progs/v_hammer_kebby_gears.mdl"),
+	VR_BONK_HELD("progs/v_hammer_squeaky.mdl"),
+	VR_BONK_HELD("progs/v_hammer_sentinel.mdl"),
+	VR_BONK_HELD("progs/v_hammer_pirate_skull.mdl"),
+	VR_BONK_HELD("progs/v_hammer_stop_sign.mdl"),
+	VR_BONK_HELD("progs/v_hammer_blocky_axe.mdl"),
+	VR_BONK_HELD("progs/v_hammer_brown_brick.mdl"),
+	VR_BONK_HELD("progs/v_hammer_mace.mdl"),
+};
+#undef VR_BONK_HELD
+
 /* Donor Alkaline axe defaults, also present in the installed alk profile.
  * LimJam uses the same viewmodel but omits its calibration from vr_weapons.txt. */
 static const vr_weapon_schema_entry_t vr_alk_axe_fallback[] = {
@@ -2848,6 +2888,10 @@ static qboolean VR_WeaponCalibrationBuildPreset(
 	if (VR_WeaponCalibrationGameIs("enhanced"))
 		preset = VR_WEAPON_PRESET_ENHANCED;
 	if (!VR_WeaponCalibrationPresetAppendGeneric(entries, count, preset, false))
+		return false;
+	if (VR_WeaponCalibrationGameIs("bonkjam") &&
+		!VR_WeaponCalibrationPresetAppendSchema(entries, count,
+			vr_bonk_hammer_fallbacks, countof(vr_bonk_hammer_fallbacks), false))
 		return false;
 	if ((preset == VR_WEAPON_PRESET_BLOCKQUAKE || preset == VR_WEAPON_PRESET_AD) &&
 		!reload_defaults)
