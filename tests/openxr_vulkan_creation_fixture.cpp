@@ -7,6 +7,8 @@ namespace {
 static XrResult wrapper_result;
 static bool threaded, multiple_creates, multiple_instances, reused_device, bypass;
 static bool use_cached_device, missing_instance_proc, missing_device_proc;
+static bool shared_device_dispatch;
+static bool uncaptured_device_output, unselected_device;
 static PFN_vkCreateDevice cached_device;
 static const char *instance_extra, *device_extra;
 static uint32_t merged_api;
@@ -18,7 +20,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL spy_instance(const VkInstanceCreateInfo *i
  *out=reinterpret_cast<VkInstance>(uintptr_t(101 + driver_instances++));return VK_SUCCESS;
 }
 static VKAPI_ATTR VkResult VKAPI_CALL spy_device(VkPhysicalDevice selected, const VkDeviceCreateInfo *info, const VkAllocationCallbacks *allocator, VkDevice *out) {
- assert(!allocator && selected==physical && info->queueCreateInfoCount==2);
+ assert(!allocator && selected==(unselected_device ? reinterpret_cast<VkPhysicalDevice>(302) : physical) && info->queueCreateInfoCount==2);
  assert(info->pQueueCreateInfos[1].queueFamilyIndex==7 && info->pQueueCreateInfos[1].flags==VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT);
  assert(info->enabledExtensionCount==2 && !std::strcmp(info->ppEnabledExtensionNames[1],device_extra));
  *out=reinterpret_cast<VkDevice>(uintptr_t(201 + (reused_device ? 0 : driver_devices)));++driver_devices;return VK_SUCCESS;
@@ -31,7 +33,7 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL spy_proc(VkInstance instance, co
  if(!std::strcmp(name,"vkCreateInstance")) return missing_instance_proc ? nullptr : reinterpret_cast<PFN_vkVoidFunction>(spy_instance);
  if(!std::strcmp(name,"vkCreateDevice")) {
   if(missing_device_proc) return nullptr;
-  return instance==reinterpret_cast<VkInstance>(999) ? reinterpret_cast<PFN_vkVoidFunction>(unrelated_device) : reinterpret_cast<PFN_vkVoidFunction>(spy_device);
+  return instance==reinterpret_cast<VkInstance>(999) && !shared_device_dispatch ? reinterpret_cast<PFN_vkVoidFunction>(unrelated_device) : reinterpret_cast<PFN_vkVoidFunction>(spy_device);
  }
  if(!std::strcmp(name,"vkGetInstanceProcAddr")) return reinterpret_cast<PFN_vkVoidFunction>(spy_proc);
  return arbitrary_proc;
@@ -67,8 +69,10 @@ static XrResult XRAPI_PTR wrapped_device(XrInstance, const XrVulkanDeviceCreateI
  if(device_extra) names.push_back(device_extra);
  merged.ppEnabledExtensionNames=names.data();merged.enabledExtensionCount=uint32_t(names.size());
  auto invoke=[&] {
-  auto create=use_cached_device ? cached_device : reinterpret_cast<PFN_vkCreateDevice>(info->pfnGetInstanceProcAddr(g.vk.instance,"vkCreateDevice"));assert(create);
-  *result=create(info->vulkanPhysicalDevice,&merged,info->vulkanAllocator,out);
+  auto create=use_cached_device ? cached_device : reinterpret_cast<PFN_vkCreateDevice>(info->pfnGetInstanceProcAddr(
+   shared_device_dispatch ? reinterpret_cast<VkInstance>(999) : g.vk.instance,"vkCreateDevice"));assert(create);
+  *result=create(unselected_device ? reinterpret_cast<VkPhysicalDevice>(302) : info->vulkanPhysicalDevice,&merged,info->vulkanAllocator,out);
+  if(uncaptured_device_output) *out=reinterpret_cast<VkDevice>(9999);
   if(multiple_creates) {
    VkDevice ignored;
    VkPhysicalDeviceMultiviewFeatures later={VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES};
@@ -87,6 +91,8 @@ static void setup() {
  g.xr.CreateVulkanInstance=wrapped_instance;g.xr.CreateVulkanDevice=wrapped_device;g.xr.DestroyInstance=destroy_instance;
  wrapper_result=XR_SUCCESS;threaded=multiple_creates=multiple_instances=reused_device=bypass=false;driver_instances=driver_devices=0;
  use_cached_device=missing_instance_proc=missing_device_proc=false;cached_device=nullptr;
+ shared_device_dispatch=false;
+ uncaptured_device_output=unselected_device=false;
  instance_extra="VK_FAKE_runtime_instance";device_extra=VK_EXT_FRAGMENT_DENSITY_MAP_EXTENSION_NAME;merged_api=VK_API_VERSION_1_2;
  physical=reinterpret_cast<VkPhysicalDevice>(301);
 }
@@ -114,11 +120,27 @@ static void spy_checks() {
  VkDevice device;
  missing_device_proc=true;assert(!VRXR_CreateVulkanDevice(&device_info,&device));assert(!device && !driver_devices);
  missing_device_proc=false;
+ // Successful creation cannot authorize a different returned handle or GPU.
+ for(int negative=0;negative<2;++negative) {
+  uncaptured_device_output=negative==0;unselected_device=negative==1;
+  assert(!VRXR_CreateVulkanDevice(&device_info,&device));
+  assert(device && !g.vk.device && !g_creation.device && !g_creation.physicalDevice);
+  assert(g_creation.deviceExtensions.empty() && g_creation.queues.empty() && !g_creation.multiview && !g_creation.densityMap);
+  assert(g.vk.physicalDevice==physical && g_creation.instance==instance && g_creation.apiVersion==merged_api);
+ }
+ uncaptured_device_output=unselected_device=false;
  wrapper_result=XR_ERROR_RUNTIME_FAILURE;assert(!VRXR_CreateVulkanDevice(&device_info,&device));
  assert(device && !g.vk.device && !g_creation.device && g_creation.deviceExtensions.empty());
  wrapper_result=XR_SUCCESS;assert(VRXR_CreateVulkanDevice(&device_info,&device));
  assert(g_creation.device==device && g_creation.deviceExtensions[1]==device_extra && g_creation.multiview && g_creation.densityMap);
  assert(g.vk.queues.size()==2 && g.vk.queues[1].flags==VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT);
+ // SteamVR can resolve the same loader function using an internal instance.
+ // Keep capture/output validation while preserving genuinely foreign dispatch.
+ g.vk.device=VK_NULL_HANDLE;g_creation.device=VK_NULL_HANDLE;
+ shared_device_dispatch=true;use_cached_device=false;
+ assert(VRXR_CreateVulkanDevice(&device_info,&device));
+ assert(g_creation.device==device && g_creation.physicalDevice==physical && g_creation.multiview && g_creation.densityMap);
+ shared_device_dispatch=false;
  // Simulate a runtime replacing a destroyed device with a recycled handle;
  // distinguish the later create's features so selecting the old record fails.
  g.vk.device=VK_NULL_HANDLE;g_creation.device=VK_NULL_HANDLE;

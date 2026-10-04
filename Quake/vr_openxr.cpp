@@ -220,15 +220,19 @@ static VKAPI_ATTR VkResult VKAPI_CALL capture_device(VkPhysicalDevice physical, 
 	return result;
 }
 static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL capture_proc(VkInstance instance, const char *name) {
-	PFN_vkGetInstanceProcAddr getProc; bool active; VkInstance target;
-	{ std::lock_guard<std::mutex> lock(g_capture.mutex); getProc=g_capture.getProc; active=g_capture.active; target=g_capture.instance; }
+	PFN_vkGetInstanceProcAddr getProc; PFN_vkCreateDevice createDevice; bool active; VkInstance target;
+	{ std::lock_guard<std::mutex> lock(g_capture.mutex); getProc=g_capture.getProc; createDevice=g_capture.createDevice; active=g_capture.active; target=g_capture.instance; }
 	PFN_vkVoidFunction real=getProc(instance,name);
 	if(active && real) {
 		if(!std::strcmp(name,"vkGetInstanceProcAddr")) return reinterpret_cast<PFN_vkVoidFunction>(capture_proc);
 		if(!instance && !std::strcmp(name,"vkCreateInstance")) {
 			return reinterpret_cast<PFN_vkVoidFunction>(capture_instance);
 		}
-		if(instance && instance==target && !std::strcmp(name,"vkCreateDevice")) {
+		/* A runtime can obtain the loader's shared device-creation dispatch
+		 * using its own instance. Capture that identical function without
+		 * redirecting a foreign instance's distinct dispatch or repinning ours. */
+		if(instance && (instance==target || real==reinterpret_cast<PFN_vkVoidFunction>(createDevice)) &&
+		   !std::strcmp(name,"vkCreateDevice")) {
 			return reinterpret_cast<PFN_vkVoidFunction>(capture_device);
 		}
 	}

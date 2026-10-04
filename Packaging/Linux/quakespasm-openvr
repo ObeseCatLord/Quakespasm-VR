@@ -1,0 +1,14 @@
+#!/bin/bash
+# Preserve existing launcher names while selecting the packaged 2.0 runtime.
+set -e
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd -P)"
+args=()
+for arg in "$@"; do
+    if [[ "$arg" == "-vr" ]]; then args+=("-openxr"); else args+=("$arg"); fi
+done
+ENGINE="$(readlink -f -- "$SCRIPT_DIR/quakespasm-openvr.bin")"
+ENGINE_DIR="$(dirname -- "$ENGINE")"
+# Legacy launchers put SteamVR and the old engine libraries first. Keep the
+# matching SDL/Vulkan/Steam Audio package ahead of those inherited paths.
+export LD_LIBRARY_PATH="$ENGINE_DIR/../lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$ENGINE" "${args[@]}"
