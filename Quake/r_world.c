@@ -1361,7 +1361,7 @@ void R_DrawTextureChains_Water (cb_context_t *cbx, qmodel_t *model, entity_t *en
 		vulkan_globals.vk_cmd_bind_descriptor_sets (
 			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 0, 1, &greytexture->descriptor_set, 0, NULL);
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
-		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &vulkan_globals.bmodel_instances_desc_set, 0, NULL);
+		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &(VkDescriptorSet){R_BModelInstancesDescriptorSet ()}, 0, NULL);
 	uint32_t brushpasses = 0;
 	for (type = TEXTYPE_FIRSTLIQUID; type <= TEXTYPE_LASTLIQUID; ++type)
 	{
@@ -1439,7 +1439,7 @@ static void R_DrawTextureChains_Multitexture (
 		vulkan_globals.vk_cmd_bind_descriptor_sets (
 			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 0, 1, &greytexture->descriptor_set, 0, NULL);
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
-		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &vulkan_globals.bmodel_instances_desc_set, 0, NULL);
+		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &(VkDescriptorSet){R_BModelInstancesDescriptorSet ()}, 0, NULL);
 	uint32_t brushpasses = 0;
 	for (i = texstart; i < texend; ++i)
 	{

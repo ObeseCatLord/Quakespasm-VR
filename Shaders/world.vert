@@ -31,6 +31,8 @@ layout (location = 2) in vec2 in_texcoord2;
 
 layout (location = 0) out vec4 out_texcoords;
 layout (location = 1) out float out_fog_frag_coord;
+layout (location = 2) flat out uint out_instance_flags;
+layout (location = 3) flat out uint out_eye_index;
 
 out gl_PerVertex
 {
@@ -41,6 +43,12 @@ void main ()
 {
 	out_texcoords.xy = in_texcoord1.xy;
 	out_texcoords.zw = in_texcoord2.xy;
+	out_instance_flags = push_constants.instance_base;
+#if defined(STEREO)
+	out_eye_index = gl_ViewIndex;
+#else
+	out_eye_index = 0u;
+#endif
 
 	vec3 position = in_position;
 	const uint instance_base = push_constants.instance_base & 0x7fffffffu;

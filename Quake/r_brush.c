@@ -29,7 +29,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <limits.h>
 #include <stdint.h>
 
-extern cvar_t gl_fullbrights, r_drawflat, r_gpulightmapupdate, r_rtshadows;
+extern cvar_t gl_fullbrights, r_drawflat, r_gpulightmapupdate, r_rtshadows, r_clustered_lights, r_surface_dither, gl_farclip;
 
 static const r_vrik_prepared_palette_t *R_TLASVRIKPalette (const entity_t *e)
 {
@@ -393,6 +393,37 @@ typedef struct lm_compute_light_s
 } lm_compute_light_t;
 COMPILE_TIME_ASSERT (lm_compute_light_t, sizeof (lm_compute_light_t) == 48);
 
+#define CLUSTER_LIGHT_TILES_X 32
+#define CLUSTER_LIGHT_TILES_Y 16
+#define CLUSTER_LIGHT_TILES_Z 32
+#define CLUSTER_LIGHT_COUNT (CLUSTER_LIGHT_TILES_X * CLUSTER_LIGHT_TILES_Y * CLUSTER_LIGHT_TILES_Z)
+
+/* std430 layout shared by clustered_lighting.inc.  The two descriptor sets
+ * each expose one whole immutable frame slot; no recorded command retargets a
+ * set while that slot can still be executing. */
+typedef struct cluster_lighting_frame_s
+{
+	float			 inverse_view_projection[2][16];
+	float			 eye_origin[2][4];
+	float			 eye_forward[2][4];
+	float			 viewport[4];
+	float			 params[4]; /* near, far, dither intensity, effective mode */
+	uint32_t	 counts[4]; /* fragment lights, eye count, VRS x/y padding */
+	lm_compute_light_t lights[MAX_DLIGHTS];
+	uint32_t	 masks[2][CLUSTER_LIGHT_COUNT][2];
+} cluster_lighting_frame_t;
+/* Binding 2 std430 ABI: matrices 0, origins 128, forwards 160, viewport
+ * 192, params 208, counts 224, lights 240 (stride 48), masks 3312
+ * (uvec2 stride 8, eye stride 131072), payload size 265456. Descriptor
+ * frame-slot stride is separately aligned to the device's storage limit. */
+COMPILE_TIME_ASSERT (cluster_forward_offset, offsetof (cluster_lighting_frame_t, eye_forward) == 160);
+COMPILE_TIME_ASSERT (cluster_viewport_offset, offsetof (cluster_lighting_frame_t, viewport) == 192);
+COMPILE_TIME_ASSERT (cluster_params_offset, offsetof (cluster_lighting_frame_t, params) == 208);
+COMPILE_TIME_ASSERT (cluster_counts_offset, offsetof (cluster_lighting_frame_t, counts) == 224);
+COMPILE_TIME_ASSERT (cluster_lights_offset, offsetof (cluster_lighting_frame_t, lights) == 240);
+COMPILE_TIME_ASSERT (cluster_masks_offset, offsetof (cluster_lighting_frame_t, masks) == 3312);
+COMPILE_TIME_ASSERT (cluster_frame_size, sizeof (cluster_lighting_frame_t) == 265456);
+
 #define WORKGROUP_BOUNDS_BUFFER_SIZE ((LMBLOCK_WIDTH / 8) * (LMBLOCK_HEIGHT / 8) * sizeof (lm_compute_workgroup_bounds_t))
 
 vulkan_memory_t			   frame_upload_buffers_memory;
@@ -420,6 +451,9 @@ static vulkan_memory_t	   vertex_submodels_buffer_memory;
 static VkBuffer			   vertex_submodels_buffer;
 static VkBuffer			   bmodel_instances_buffer;
 static bmodel_instance_t  *bmodel_instances_buffer_mapped;
+static VkBuffer			   cluster_lighting_buffer;
+static byte *cluster_lighting_buffer_mapped;
+static VkDeviceSize cluster_lighting_slot_stride;
 
 // The first entity drawing a submodel through the indirect path each frame claims its instance slot,
 // additional entities sharing the submodel fall back to per-entity drawing
@@ -433,6 +467,41 @@ static int bmodel_instances_index;
 static int num_worldmodel_submodels;
 
 static int current_compute_buffer_index;
+static qboolean clustered_lighting_effective;
+static qboolean clustered_lighting_previous_effective;
+
+typedef enum
+{
+	CLUSTER_STATUS_NOT_EVALUATED,
+	CLUSTER_STATUS_OFF,
+	CLUSTER_STATUS_RT_SHADOWS,
+	CLUSTER_STATUS_CPU_LIGHTMAPS,
+	CLUSTER_STATUS_DYNAMICS_OFF,
+	CLUSTER_STATUS_PIPELINE_UNAVAILABLE,
+	CLUSTER_STATUS_CHEAT,
+	CLUSTER_STATUS_INVALID_MATRIX,
+	CLUSTER_STATUS_ACTIVE,
+} cluster_lighting_status_t;
+
+/* UI may read while the lightmap task evaluates the next frame.  Publish one
+ * enum, never a mutable string or independently re-evaluated cvar predicates. */
+static atomic_uint32_t clustered_lighting_status;
+
+const char *R_ClusteredLightingStatus (void)
+{
+	static const char *const reasons[] = {
+		"Clustered: not evaluated",
+		"Native: clustered lights off",
+		"Native: RT shadows enabled",
+		"Native: GPU lightmaps disabled",
+		"Native: dynamic lights off",
+		"Native: cluster pipeline unavailable",
+		"Native: lighting cheat mode",
+		"Native: invalid scene matrix",
+		NULL,
+	};
+	return reasons[Atomic_LoadUInt32 (&clustered_lighting_status)];
+}
 
 /*
 ================
@@ -765,8 +834,18 @@ R_ClearBModelInstanceClaims
 */
 void R_ClearBModelInstanceClaims (void)
 {
-	bmodel_instances_index = current_compute_buffer_index;
+	R_LatchBModelInstanceFrame ();
 	memset ((void *)bmodel_instance_claims, 0, num_worldmodel_submodels * sizeof (bmodel_instance_claims[0]));
+}
+
+void R_LatchBModelInstanceFrame (void)
+{
+	bmodel_instances_index = current_compute_buffer_index;
+}
+
+VkDescriptorSet R_BModelInstancesDescriptorSet (void)
+{
+	return vulkan_globals.bmodel_instances_desc_set[bmodel_instances_index];
 }
 
 /*
@@ -1081,7 +1160,7 @@ void R_DrawIndirectBrushesFiltered (
 			vulkan_globals.vk_cmd_bind_descriptor_sets (
 				cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 0, 1, &greytexture->descriptor_set, 0, NULL);
 		vulkan_globals.vk_cmd_bind_descriptor_sets (
-			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &vulkan_globals.bmodel_instances_desc_set, 0, NULL);
+			cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &(VkDescriptorSet){R_BModelInstancesDescriptorSet ()}, 0, NULL);
 	}
 
 	gltexture_t *lastfullbright = NULL;
@@ -1198,7 +1277,7 @@ void R_DrawIndirectBrushes_ShowTris (cb_context_t *cbx)
 							  : vulkan_globals.showtris_indirect_depth_test_pipeline[cbx->pipeline_variant]);
 
 	vulkan_globals.vk_cmd_bind_descriptor_sets (
-		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &vulkan_globals.bmodel_instances_desc_set, 0, NULL);
+		cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.world_pipeline_layout.handle, 4, 1, &(VkDescriptorSet){R_BModelInstancesDescriptorSet ()}, 0, NULL);
 	const uint32_t instance_base = ((uint32_t)bmodel_instances_index * MAX_MODELS) + 1;
 	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 21 * sizeof (float), sizeof (uint32_t), &instance_base);
 
@@ -1768,13 +1847,18 @@ void R_AllocateLightmapComputeBuffers ()
 	size_t lights_buffer_size = MAX_DLIGHTS * 2 * sizeof (lm_compute_light_t) * 2;
 	size_t submodel_transforms_buffer_size = MAX_MODELS * 12 * sizeof (float) * 2;
 	size_t bmodel_instances_buffer_size = MAX_MODELS * sizeof (bmodel_instance_t) * 2;
+	const VkDeviceSize cluster_alignment = q_max ((VkDeviceSize)1,
+		vulkan_globals.device_properties.limits.minStorageBufferOffsetAlignment);
+	cluster_lighting_slot_stride = (sizeof (cluster_lighting_frame_t) + cluster_alignment - 1) / cluster_alignment * cluster_alignment;
+	size_t cluster_lighting_buffer_size = (size_t)(2 * cluster_lighting_slot_stride);
 
 	Sys_Printf ("Allocating lightstyles buffer (%u KB)\n", (int)lightstyles_buffer_size / 1024);
 	Sys_Printf ("Allocating lights buffer (%u KB)\n", (int)lights_buffer_size / 1024);
 	Sys_Printf ("Allocating submodel transforms buffer (%u KB)\n", (int)submodel_transforms_buffer_size / 1024);
 	Sys_Printf ("Allocating bmodel instances buffer (%u KB)\n", (int)bmodel_instances_buffer_size / 1024);
+	Sys_Printf ("Allocating clustered-lighting buffer (%u KB)\n", (int)cluster_lighting_buffer_size / 1024);
 
-	buffer_create_info_t buffer_create_infos[4] = {
+	buffer_create_info_t buffer_create_infos[5] = {
 		{&lightstyles_scales_buffer, lightstyles_buffer_size, 0, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, (void **)&lightstyles_scales_buffer_mapped, NULL,
 		 "Lightstyle scales"},
 		{&lights_buffer, lights_buffer_size, 0, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, (void **)&lights_buffer_mapped, NULL, "Lights"},
@@ -1782,6 +1866,8 @@ void R_AllocateLightmapComputeBuffers ()
 		 "Submodel transforms"},
 		{&bmodel_instances_buffer, bmodel_instances_buffer_size, 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, (void **)&bmodel_instances_buffer_mapped, NULL,
 		 "BModel instances"},
+		{&cluster_lighting_buffer, cluster_lighting_buffer_size, 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+		 (void **)&cluster_lighting_buffer_mapped, NULL, "Clustered lighting"},
 	};
 	R_CreateBuffers (
 		countof (buffer_create_infos), buffer_create_infos, &frame_upload_buffers_memory, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
@@ -2831,36 +2917,41 @@ void GL_BuildBModelVertexBuffer (void)
 	if (released_poly_bytes)
 		Con_DPrintf ("Released %.1f MiB of uploaded brush polygons\n", (double)released_poly_bytes / (1024.0 * 1024.0));
 
-	if (vulkan_globals.bmodel_instances_desc_set != VK_NULL_HANDLE)
-		R_FreeDescriptorSet (vulkan_globals.bmodel_instances_desc_set, &vulkan_globals.bmodel_instances_set_layout);
-	vulkan_globals.bmodel_instances_desc_set = R_AllocateDescriptorSet (&vulkan_globals.bmodel_instances_set_layout);
-
 	ZEROED_STRUCT (VkDescriptorBufferInfo, vertex_submodels_buffer_info);
 	vertex_submodels_buffer_info.buffer = vertex_submodels_buffer;
 	vertex_submodels_buffer_info.offset = 0;
 	vertex_submodels_buffer_info.range = VK_WHOLE_SIZE;
 
-	ZEROED_STRUCT (VkDescriptorBufferInfo, bmodel_instances_buffer_info);
-	bmodel_instances_buffer_info.buffer = bmodel_instances_buffer;
-	bmodel_instances_buffer_info.offset = 0;
-	bmodel_instances_buffer_info.range = VK_WHOLE_SIZE;
+	for (int slot = 0; slot < 2; ++slot)
+	{
+		if (vulkan_globals.bmodel_instances_desc_set[slot] != VK_NULL_HANDLE)
+			R_FreeDescriptorSet (vulkan_globals.bmodel_instances_desc_set[slot], &vulkan_globals.bmodel_instances_set_layout);
+		vulkan_globals.bmodel_instances_desc_set[slot] = R_AllocateDescriptorSet (&vulkan_globals.bmodel_instances_set_layout);
 
-	ZEROED_STRUCT_ARRAY (VkWriteDescriptorSet, instance_writes, 2);
-	instance_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	instance_writes[0].dstBinding = 0;
-	instance_writes[0].dstArrayElement = 0;
-	instance_writes[0].descriptorCount = 1;
-	instance_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	instance_writes[0].dstSet = vulkan_globals.bmodel_instances_desc_set;
-	instance_writes[0].pBufferInfo = &vertex_submodels_buffer_info;
-	instance_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	instance_writes[1].dstBinding = 1;
-	instance_writes[1].dstArrayElement = 0;
-	instance_writes[1].descriptorCount = 1;
-	instance_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	instance_writes[1].dstSet = vulkan_globals.bmodel_instances_desc_set;
-	instance_writes[1].pBufferInfo = &bmodel_instances_buffer_info;
-	vkUpdateDescriptorSets (vulkan_globals.device, countof (instance_writes), instance_writes, 0, NULL);
+		VkDescriptorBufferInfo bmodel_instances_buffer_info = {
+			.buffer = bmodel_instances_buffer,
+			.offset = (VkDeviceSize)slot * MAX_MODELS * sizeof (bmodel_instance_t),
+			.range = MAX_MODELS * sizeof (bmodel_instance_t),
+		};
+		VkDescriptorBufferInfo cluster_lighting_buffer_info = {
+			.buffer = cluster_lighting_buffer,
+			.offset = (VkDeviceSize)slot * cluster_lighting_slot_stride,
+			.range = sizeof (cluster_lighting_frame_t),
+		};
+		ZEROED_STRUCT_ARRAY (VkWriteDescriptorSet, instance_writes, 3);
+		for (int binding = 0; binding < countof (instance_writes); ++binding)
+		{
+			instance_writes[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			instance_writes[binding].dstBinding = binding;
+			instance_writes[binding].descriptorCount = 1;
+			instance_writes[binding].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+			instance_writes[binding].dstSet = vulkan_globals.bmodel_instances_desc_set[slot];
+		}
+		instance_writes[0].pBufferInfo = &vertex_submodels_buffer_info;
+		instance_writes[1].pBufferInfo = &bmodel_instances_buffer_info;
+		instance_writes[2].pBufferInfo = &cluster_lighting_buffer_info;
+		vkUpdateDescriptorSets (vulkan_globals.device, countof (instance_writes), instance_writes, 0, NULL);
+	}
 }
 
 /*
@@ -3906,6 +3997,177 @@ static void R_IndirectComputeDispatch (cb_context_t *cbx)
 	R_EndDebugUtilsLabel (cbx);
 }
 
+static qboolean R_InvertMatrix4x4 (const float in[16], float out[16])
+{
+	double a[4][8];
+	for (int row = 0; row < 4; ++row)
+		for (int column = 0; column < 4; ++column)
+		{
+			a[row][column] = in[column * 4 + row];
+			a[row][column + 4] = row == column ? 1.0 : 0.0;
+		}
+	for (int column = 0; column < 4; ++column)
+	{
+		int pivot = column;
+		for (int row = column + 1; row < 4; ++row)
+			if (fabs (a[row][column]) > fabs (a[pivot][column]))
+				pivot = row;
+		if (!isfinite (a[pivot][column]) || fabs (a[pivot][column]) < 1e-12)
+			return false;
+		if (pivot != column)
+			for (int i = 0; i < 8; ++i)
+			{
+				double t = a[column][i];
+				a[column][i] = a[pivot][i];
+				a[pivot][i] = t;
+			}
+		const double reciprocal = 1.0 / a[column][column];
+		for (int i = 0; i < 8; ++i)
+			a[column][i] *= reciprocal;
+		for (int row = 0; row < 4; ++row)
+			if (row != column)
+			{
+				const double factor = a[row][column];
+				for (int i = 0; i < 8; ++i)
+					a[row][i] -= factor * a[column][i];
+			}
+	}
+	for (int row = 0; row < 4; ++row)
+		for (int column = 0; column < 4; ++column)
+		{
+			if (!isfinite (a[row][column + 4]))
+				return false;
+			out[column * 4 + row] = (float)a[row][column + 4];
+		}
+	return true;
+}
+
+static cluster_lighting_status_t R_EvaluateClusteredLighting (void)
+{
+	if (r_clustered_lights.value == 0.0f)
+		return CLUSTER_STATUS_OFF;
+	if (r_rtshadows.value > 0.0f)
+		return CLUSTER_STATUS_RT_SHADOWS;
+	if (r_gpulightmapupdate.value == 0.0f)
+		return CLUSTER_STATUS_CPU_LIGHTMAPS;
+	if (r_dynamic.value == 0.0f)
+		return CLUSTER_STATUS_DYNAMICS_OFF;
+	if (vulkan_globals.cluster_lights_pipeline.handle == VK_NULL_HANDLE)
+		return CLUSTER_STATUS_PIPELINE_UNAVAILABLE;
+	if (r_fullbright_cheatsafe || r_lightmap_cheatsafe)
+		return CLUSTER_STATUS_CHEAT;
+	return CLUSTER_STATUS_ACTIVE;
+}
+
+static qboolean R_PublishClusteredLightingFrame (cb_context_t *cbx, int num_fragment_lights, const lm_compute_light_t *lights)
+{
+	const int slot = bmodel_instances_index;
+	assert (slot == current_compute_buffer_index);
+	cluster_lighting_frame_t *frame = (cluster_lighting_frame_t *)(cluster_lighting_buffer_mapped + slot * cluster_lighting_slot_stride);
+	const int eye_count = vulkan_globals.stereo_active ? 2 : 1;
+	cluster_lighting_status_t status = R_EvaluateClusteredLighting ();
+
+	for (int eye = 0; eye < eye_count; ++eye)
+	{
+		float actual_view_projection[16];
+		memcpy (actual_view_projection, vulkan_globals.view_projection_matrix, sizeof (actual_view_projection));
+		if (vulkan_globals.stereo_active)
+		{
+			memcpy (actual_view_projection, vulkan_globals.stereo_scene_clip_from_center[eye], sizeof (actual_view_projection));
+			MatrixMultiply (actual_view_projection, vulkan_globals.view_projection_matrix);
+			VectorCopy (r_stereo_origins[eye], frame->eye_origin[eye]);
+		}
+		else
+			VectorCopy (r_refdef.vieworg, frame->eye_origin[eye]);
+		frame->eye_origin[eye][3] = 1.0f;
+		memset (frame->eye_forward[eye], 0, sizeof (frame->eye_forward[eye]));
+		if (!R_InvertMatrix4x4 (actual_view_projection, frame->inverse_view_projection[eye]))
+		{
+			if (status == CLUSTER_STATUS_ACTIVE)
+				status = CLUSTER_STATUS_INVALID_MATRIX;
+			continue;
+		}
+		/* Reverse Vulkan Z: NDC (0,0,1) is the actual eye's near point.
+		 * Its direction from the true eye defines positive plane depth even
+		 * for asymmetric/canted scene projections.  Never subtract far from near. */
+		const float *inverse = frame->inverse_view_projection[eye];
+		const float near_w = inverse[11] + inverse[15];
+		if (!isfinite (near_w) || fabsf (near_w) < 1e-20f)
+		{
+			if (status == CLUSTER_STATUS_ACTIVE)
+				status = CLUSTER_STATUS_INVALID_MATRIX;
+			continue;
+		}
+		float length2 = 0.0f;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			frame->eye_forward[eye][axis] = (inverse[8 + axis] + inverse[12 + axis]) / near_w - frame->eye_origin[eye][axis];
+			length2 += frame->eye_forward[eye][axis] * frame->eye_forward[eye][axis];
+		}
+		if (!isfinite (length2) || length2 < 1e-16f)
+		{
+			if (status == CLUSTER_STATUS_ACTIVE)
+				status = CLUSTER_STATUS_INVALID_MATRIX;
+		}
+		else
+			VectorScale (frame->eye_forward[eye], 1.0f / sqrtf (length2), frame->eye_forward[eye]);
+	}
+	if (eye_count == 1)
+	{
+		memcpy (frame->inverse_view_projection[1], frame->inverse_view_projection[0], sizeof (frame->inverse_view_projection[0]));
+		memcpy (frame->eye_origin[1], frame->eye_origin[0], sizeof (frame->eye_origin[0]));
+		memcpy (frame->eye_forward[1], frame->eye_forward[0], sizeof (frame->eye_forward[0]));
+	}
+
+	const qboolean effective = status == CLUSTER_STATUS_ACTIVE;
+	const uint32_t density_pad_x = vulkan_globals.openxr_fragment_density_map_active ? vulkan_globals.openxr_fragment_density_map_max_texel_size.width : 1;
+	const uint32_t density_pad_y = vulkan_globals.openxr_fragment_density_map_active ? vulkan_globals.openxr_fragment_density_map_max_texel_size.height : 1;
+	const uint32_t rate_pad_x = vulkan_globals.openxr_fragment_shading_rate_active ? vulkan_globals.openxr_fragment_shading_rate_texel_size.width : 1;
+	const uint32_t rate_pad_y = vulkan_globals.openxr_fragment_shading_rate_active ? vulkan_globals.openxr_fragment_shading_rate_texel_size.height : 1;
+	frame->viewport[0] = r_scene_vrect.x;
+	frame->viewport[1] = r_scene_vrect.y;
+	frame->viewport[2] = q_max (r_scene_vrect.width, 1);
+	frame->viewport[3] = q_max (r_scene_vrect.height, 1);
+	frame->params[0] = 4.0f;
+	frame->params[1] = q_max (gl_farclip.value, frame->params[0] + 1.0f);
+	frame->params[2] = q_max (0.0f, r_surface_dither.value);
+	frame->params[3] = effective ? 1.0f : 0.0f;
+	frame->counts[0] = effective ? (uint32_t)num_fragment_lights : 0;
+	frame->counts[1] = eye_count;
+	frame->counts[2] = q_max (density_pad_x, rate_pad_x);
+	frame->counts[3] = q_max (density_pad_y, rate_pad_y);
+	if (effective && num_fragment_lights > 0)
+		memcpy (frame->lights, lights, (size_t)num_fragment_lights * sizeof (*lights));
+
+	clustered_lighting_effective = effective;
+	Atomic_StoreUInt32 (&clustered_lighting_status, (uint32_t)status);
+
+	VkBufferMemoryBarrier barrier = {
+		.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT,
+		.dstAccessMask = effective ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT : VK_ACCESS_SHADER_READ_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.buffer = cluster_lighting_buffer,
+		.offset = (VkDeviceSize)slot * cluster_lighting_slot_stride,
+		.size = sizeof (*frame),
+	};
+	if (!effective)
+	{
+		vkCmdPipelineBarrier (cbx->cb, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 1, &barrier, 0, NULL);
+		return false;
+	}
+	vkCmdPipelineBarrier (cbx->cb, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 1, &barrier, 0, NULL);
+	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_COMPUTE, vulkan_globals.cluster_lights_pipeline);
+	const VkDescriptorSet set = R_BModelInstancesDescriptorSet ();
+	vkCmdBindDescriptorSets (cbx->cb, VK_PIPELINE_BIND_POINT_COMPUTE, vulkan_globals.cluster_lights_pipeline.layout.handle, 4, 1, &set, 0, NULL);
+	vkCmdDispatch (cbx->cb, (CLUSTER_LIGHT_TILES_X + 7) / 8, (CLUSTER_LIGHT_TILES_Y + 7) / 8, CLUSTER_LIGHT_TILES_Z * 2);
+	barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+	barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	vkCmdPipelineBarrier (cbx->cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 1, &barrier, 0, NULL);
+	return true;
+}
+
 /*
 =============
 R_UpdateLightmapsAndIndirect
@@ -3915,6 +4177,21 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 {
 	cb_context_t *cbx = &vulkan_globals.primary_cb_contexts[PCBX_UPDATE_LIGHTMAPS];
 	R_BeginDebugUtilsLabel (cbx, "Update Lightmaps");
+
+	/* CPU lightmaps retain their native R_PushDlights path.  Still publish a
+	 * disabled frame header here so tasks-off cannot sample a prior slot's
+	 * clustered mask after this cvar changes. */
+	if (!r_gpulightmapupdate.value)
+	{
+		R_PublishClusteredLightingFrame (cbx, 0, NULL);
+		clustered_lighting_previous_effective = clustered_lighting_effective;
+		R_EndDebugUtilsLabel (cbx);
+		/* This frame still consumes the disabled header. Advance its slot just
+		 * like a GPU-lightmap frame so consecutive CPU frames cannot overwrite
+		 * a header that the preceding queue submission is still reading. */
+		current_compute_buffer_index = (current_compute_buffer_index + 1) % 2;
+		return;
+	}
 
 	for (int i = 0; i < MAX_LIGHTSTYLES; ++i)
 	{
@@ -3948,13 +4225,23 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 		used_dlights[num_used_dlights++] = i;
 	}
 	memcpy (lights_buffer_mapped + (current_compute_buffer_index * MAX_DLIGHTS * 2), cached_dlights, sizeof (lm_compute_light_t) * num_used_dlights);
+	const int fragment_light_count = num_used_dlights;
+	R_PublishClusteredLightingFrame (cbx, fragment_light_count, cached_dlights);
+	const qboolean force_lightmap_rebuild = clustered_lighting_effective != clustered_lighting_previous_effective;
+	clustered_lighting_previous_effective = clustered_lighting_effective;
+	/* The atlas and fragment paths have separate light counts.  In clustered
+	 * mode the native compute still refreshes static styles, but dynamic
+	 * additions are omitted so they cannot be baked and added again. */
+	const int atlas_current_dlights = clustered_lighting_effective ? 0 : num_used_dlights;
+	const int atlas_cached_dlights = clustered_lighting_effective ? 0 : num_cached_dlights;
 
 	// Movable brush submodels are lit in entity space: upload the current model to world transform for each submodel.
 	// The GPU culls dlights against the transformed workgroup bounds, the CPU only schedules updates for the cull
-	// blocks containing submodel surfaces while dlights are active. The transforms are only read while dlight
-	// updates are dispatched, skip all of it when no dlights are active
-	const qboolean any_dlight_updates = (num_used_dlights > 0) || (num_cached_dlights > 0);
-	if (any_dlight_updates)
+	// blocks containing submodel surfaces while dlights are active. Static-only native compute does not
+	// read transforms, but publish them on every forced rebuild too so both transition directions have
+	// current moved/hidden brush transforms independently of the atlas light counts.
+	const qboolean any_dlight_updates = (atlas_current_dlights > 0) || (atlas_cached_dlights > 0);
+	if (any_dlight_updates || force_lightmap_rebuild)
 	{
 		float *transforms = submodel_transforms_buffer_mapped + ((size_t)current_compute_buffer_index * MAX_MODELS * 12);
 		for (int i = 0; i < num_worldmodel_submodels; ++i)
@@ -4004,17 +4291,27 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 			modified |= lm->modified[i];
 			lm->modified[i] = 0;
 		}
-		if (modified == 0)
+		if (!force_lightmap_rebuild && modified == 0)
 			continue;
 
 		qboolean any_needs_dlight_update = false;
 		uint32_t used_lightstyles = 0;
 		int		 num_blocks = 0;
-		for (int y = 0; y < LMBLOCK_HEIGHT / LM_CULL_BLOCK_H; y++)
+		if (force_lightmap_rebuild)
+		{
+			for (int y = 0; y < LMBLOCK_HEIGHT / LM_CULL_BLOCK_H; y++)
+				for (int x = 0; x < LMBLOCK_WIDTH / LM_CULL_BLOCK_W; x++)
+				{
+					regions[y][x] = 2;
+					lm->active_dlights[y][x] = false;
+					++num_blocks;
+				}
+		}
+		else for (int y = 0; y < LMBLOCK_HEIGHT / LM_CULL_BLOCK_H; y++)
 			for (int x = 0; x < LMBLOCK_WIDTH / LM_CULL_BLOCK_W; x++)
 			{
 				qboolean needs_update = false;
-				for (int i = 0; i < num_used_dlights; i++)
+				for (int i = 0; i < atlas_current_dlights; i++)
 				{
 					float sq_dist = 0.0f;
 					for (int j = 0; j < 3; j++)
@@ -4070,7 +4367,7 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 						}
 					}
 			}
-		if (!any_needs_dlight_update && !(used_lightstyles & modified))
+		if (!force_lightmap_rebuild && !any_needs_dlight_update && !(used_lightstyles & modified))
 			continue;
 		else
 		{
@@ -4119,15 +4416,16 @@ void R_UpdateLightmapsAndIndirect (void *unused)
 		if (num_batch_lightmaps == UPDATE_LIGHTMAP_BATCH_SIZE)
 		{
 			R_FlushUpdateLightmaps (
-				cbx, num_batch_lightmaps, pre_lm_image_barriers, post_lm_image_barriers, lightmap_indexes, lightmap_regions, num_used_dlights,
-				num_cached_dlights);
+				cbx, num_batch_lightmaps, pre_lm_image_barriers, post_lm_image_barriers, lightmap_indexes, lightmap_regions, atlas_current_dlights,
+				atlas_cached_dlights);
 			num_batch_lightmaps = 0;
 		}
 	}
 
 	if (num_batch_lightmaps > 0)
 		R_FlushUpdateLightmaps (
-			cbx, num_batch_lightmaps, pre_lm_image_barriers, post_lm_image_barriers, lightmap_indexes, lightmap_regions, num_used_dlights, num_cached_dlights);
+			cbx, num_batch_lightmaps, pre_lm_image_barriers, post_lm_image_barriers, lightmap_indexes, lightmap_regions, atlas_current_dlights,
+			atlas_cached_dlights);
 
 	num_cached_dlights = num_used_dlights;
 

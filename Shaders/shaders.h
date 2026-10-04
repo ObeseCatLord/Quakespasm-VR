@@ -51,6 +51,7 @@ DECLARE_SHADER_SPV (draw_pic_xbr_vert);
 DECLARE_SHADER_SPV (basic_ui_stereo_vert);
 DECLARE_SHADER_SPV (draw_pic_xbr_ui_stereo_vert);
 DECLARE_SHADER_SPV (world_vert);
+DECLARE_SHADER_SPV (cluster_lights_comp);
 DECLARE_SHADER_SPV (world_stereo_vert);
 DECLARE_SHADER_SPV (world_frag);
 DECLARE_SHADER_SPV (world_hidden_area_frag);

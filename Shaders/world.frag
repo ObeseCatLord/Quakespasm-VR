@@ -32,6 +32,8 @@ layout (set = 2, binding = 0) uniform sampler2D fullbright_tex;
 
 layout (location = 0) in vec4 in_texcoords;
 layout (location = 1) in float in_fog_frag_coord;
+layout (location = 2) flat in uint in_instance_flags;
+layout (location = 3) flat in uint in_eye_index;
 
 layout (constant_id = 0) const bool use_fullbright = false;
 layout (constant_id = 1) const bool use_alpha_test = false;
@@ -39,6 +41,8 @@ layout (constant_id = 2) const bool use_alpha_blend = false;
 layout (constant_id = 3) const bool quantize_lm = false;
 layout (constant_id = 4) const bool scaled_lm = false;
 
+#include "clustered_lighting.inc"
+#include "surface_dither.inc"
 #include "world_common.inc"
 
 #if MBOIT

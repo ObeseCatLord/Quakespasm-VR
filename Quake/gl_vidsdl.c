@@ -1557,9 +1557,8 @@ static void GL_SelectRenderFormats (VkBool32 extended_format_support)
 	Con_Printf ("\n");
 }
 
-static VkSampleCountFlagBits GL_SelectNativeSampleCount (void)
+VkSampleCountFlags VID_GraphicsAASampleMask (void)
 {
-	const int fsaa = (int)vid_fsaa.value;
 	ZEROED_STRUCT (VkImageFormatProperties, image_format_properties);
 	const VkResult result = vkGetPhysicalDeviceImageFormatProperties (
 		vulkan_physical_device, vulkan_globals.color_format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
@@ -1568,15 +1567,26 @@ static VkSampleCountFlagBits GL_SelectNativeSampleCount (void)
 		0, &image_format_properties);
 	if (result != VK_SUCCESS)
 		return VK_SAMPLE_COUNT_1_BIT;
+	VkSampleCountFlags mask = image_format_properties.sampleCounts | VK_SAMPLE_COUNT_1_BIT;
+	// Keep the menu and allocator's Intel workaround under one owner.
+	if (vulkan_globals.device_properties.vendorID == 0x8086)
+		mask &= ~VK_SAMPLE_COUNT_16_BIT;
+	return mask;
+}
+
+static VkSampleCountFlagBits GL_SelectNativeSampleCount (void)
+{
+	const int fsaa = (int)vid_fsaa.value;
+	const VkSampleCountFlags mask = VID_GraphicsAASampleMask ();
 
 	// Workaround: Intel advertises 16 samples but crashes when using it.
-	if ((fsaa >= 16) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_16_BIT) && (vulkan_globals.device_properties.vendorID != 0x8086))
+	if ((fsaa >= 16) && (mask & VK_SAMPLE_COUNT_16_BIT))
 		return VK_SAMPLE_COUNT_16_BIT;
-	if ((fsaa >= 8) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_8_BIT))
+	if ((fsaa >= 8) && (mask & VK_SAMPLE_COUNT_8_BIT))
 		return VK_SAMPLE_COUNT_8_BIT;
-	if ((fsaa >= 4) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_4_BIT))
+	if ((fsaa >= 4) && (mask & VK_SAMPLE_COUNT_4_BIT))
 		return VK_SAMPLE_COUNT_4_BIT;
-	if ((fsaa >= 2) && (image_format_properties.sampleCounts & VK_SAMPLE_COUNT_2_BIT))
+	if ((fsaa >= 2) && (mask & VK_SAMPLE_COUNT_2_BIT))
 		return VK_SAMPLE_COUNT_2_BIT;
 	return VK_SAMPLE_COUNT_1_BIT;
 }

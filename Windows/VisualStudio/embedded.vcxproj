@@ -683,6 +683,10 @@ $(VULKAN_SDK)\bin\spirv-opt.exe -Os --canonicalize-ids --strip-debug "$(Solution
     <CustomBuild Include="..\..\Shaders\mesh_interpolate.comp">
       <FileType>Document</FileType>
     </CustomBuild>
+    <CustomBuild Include="..\..\Shaders\cluster_lights.comp">
+      <FileType>Document</FileType>
+      <AdditionalInputs>..\..\Shaders\clustered_lighting.inc;%(AdditionalInputs)</AdditionalInputs>
+    </CustomBuild>
     <None Include="..\..\Shaders\alias_common.inc" />
     <None Include="..\..\Shaders\ssao_composite.inc" />
     <None Include="..\..\Shaders\gtao.inc" />

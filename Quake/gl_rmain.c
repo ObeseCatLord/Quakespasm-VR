@@ -175,6 +175,8 @@ qboolean r_drawworld_cheatsafe, r_fullbright_cheatsafe, r_lightmap_cheatsafe; //
 
 cvar_t r_gpulightmapupdate = {"r_gpulightmapupdate", "1", CVAR_NONE};
 cvar_t r_rtshadows = {"r_rtshadows", "2", CVAR_ARCHIVE};
+cvar_t r_clustered_lights = {"r_clustered_lights", "0", CVAR_ARCHIVE};
+cvar_t r_surface_dither = {"r_surface_dither", "0", CVAR_ARCHIVE};
 
 cvar_t r_tasks = {"r_tasks", "1", CVAR_NONE};
 
@@ -1036,6 +1038,10 @@ void R_PrepareStereoFrame (void)
 			&vulkan_globals.stereo_scene_descriptor_set);
 		memcpy (data, &uniform, sizeof (uniform));
 	}
+	/* The clustered-light header reconstructs from this exact scene clip, not
+	 * the display/reference clip.  Keep it alongside the descriptor publication
+	 * so underwater and per-eye scene overrides cannot diverge. */
+	memcpy (vulkan_globals.stereo_scene_clip_from_center, scene_clip, sizeof (scene_clip));
 	if (stereo_liquid_categories_valid &&
 		(stereo_wet_eye_mask == 1u || stereo_wet_eye_mask == 2u) && R_UseAlphaSort ())
 	{
@@ -1153,6 +1159,7 @@ static void R_SetupFrameBeforeMark (void)
 	if (!r_gpulightmapupdate.value)
 		R_PushDlights ();
 	R_AnimateLight ();
+	R_LatchBModelInstanceFrame ();
 }
 
 /*
@@ -3200,10 +3207,10 @@ void R_RenderView (
 		R_DrawParticlesTask (NULL);
 		R_DrawViewModelTask (NULL);
 		if (r_gpulightmapupdate.value)
-		{
 			R_BuildTopLevelAccelerationStructure (NULL);
-			R_UpdateLightmapsAndIndirect (NULL);
-		}
+		/* The update command also publishes the disabled clustered header when
+		 * CPU lightmaps are selected; it performs no GPU lightmap work then. */
+		R_UpdateLightmapsAndIndirect (NULL);
 		R_PrintStats (draw_stats_ready);
 	}
 }

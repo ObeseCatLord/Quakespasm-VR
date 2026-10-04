@@ -565,6 +565,7 @@ typedef struct
 	vulkan_pipeline_t		 md5_debug_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 update_lightmap_pipeline;
 	vulkan_pipeline_t		 update_lightmap_rt_pipeline;
+	vulkan_pipeline_t		 cluster_lights_pipeline;
 	vulkan_pipeline_t		 indirect_draw_pipeline;
 	vulkan_pipeline_t		 indirect_clear_pipeline;
 	vulkan_pipeline_t		 ray_debug_pipeline;
@@ -589,7 +590,7 @@ typedef struct
 	vulkan_desc_set_layout_t lightmap_compute_set_layout;
 	VkDescriptorSet			 indirect_compute_desc_set;
 	vulkan_desc_set_layout_t indirect_compute_set_layout;
-	VkDescriptorSet			 bmodel_instances_desc_set;
+	VkDescriptorSet			 bmodel_instances_desc_set[2];
 	vulkan_desc_set_layout_t bmodel_instances_set_layout;
 	vulkan_desc_set_layout_t ray_query_push_set_layout;
 	VkDescriptorSet			 ray_debug_desc_set;
@@ -612,6 +613,9 @@ typedef struct
 	float projection_matrix[16];
 	float view_matrix[16];
 	float view_projection_matrix[16];
+	/* Actual scene correction published for each eye.  This differs from the
+	 * display clip during underwater scene warps and eye-specific passes. */
+	float stereo_scene_clip_from_center[2][16];
 
 	// Dispatch table
 	PFN_vkCmdBindPipeline			vk_cmd_bind_pipeline;
@@ -1144,6 +1148,12 @@ byte		 *R_UniformAllocate (int size, VkBuffer *buffer, uint32_t *buffer_offset, 
 byte		 *R_StorageAllocate (int size, VkBuffer *buffer, VkDeviceSize *buffer_offset, VkDeviceAddress *device_address);
 
 void R_AllocateLightmapComputeBuffers ();
+void R_LatchBModelInstanceFrame (void);
+VkDescriptorSet R_BModelInstancesDescriptorSet (void);
+void R_CreateClusteredLightingPipeline (VkShaderModule module);
+/* Latched renderer status: NULL when clustered lighting is active. */
+const char *R_ClusteredLightingStatus (void);
+VkSampleCountFlags VID_GraphicsAASampleMask (void);
 
 void GL_SetObjectName (uint64_t object, VkObjectType object_type, const char *name);
 

@@ -1,0 +1,91 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shading_language_420pack : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#define CLUSTER_LIGHTING_COMPUTE
+#include "clustered_lighting.inc"
+
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+bool ClusterRay (uint eye, vec2 ndc, out vec3 plane_ray)
+{
+	/* NDC Z=1 is near with reversed Vulkan depth.  Ray from true eye,
+	 * scaled to one unit of positive eye-forward plane depth, not radial length. */
+	vec4 near_point = cluster_data.inverse_view_projection[eye] * vec4 (ndc, 1.0f, 1.0f);
+	if (isnan (near_point.w) || isinf (near_point.w) || abs (near_point.w) < 1e-20f)
+		return false;
+	const vec3 ray = near_point.xyz / near_point.w - cluster_data.eye_origin[eye].xyz;
+	const float depth = dot (ray, cluster_data.eye_forward[eye].xyz);
+	if (any (isnan (ray)) || any (isinf (ray)) || isnan (depth) || isinf (depth) || depth <= 1e-6f)
+		return false;
+	plane_ray = ray / depth;
+	return !any (isnan (plane_ray)) && !any (isinf (plane_ray));
+}
+
+uvec2 ClusterActiveLightMask ()
+{
+	uvec2 result = uvec2 (0u);
+	for (uint light = 0u; light < min (cluster_data.counts.x, uint (MAX_CLUSTER_LIGHTS)); ++light)
+		result[light >> 5u] |= 1u << (light & 31u);
+	return result;
+}
+
+bool SphereTouchesCluster (const cluster_light_t light, vec3 mins, vec3 maxs)
+{
+	if (isnan (light.radius) || isinf (light.radius) || light.radius <= 0.0f)
+		return false;
+	const vec3 delta = max (max (mins - light.origin, light.origin - maxs), vec3 (0.0f));
+	return dot (delta, delta) <= light.radius * light.radius;
+}
+
+void main ()
+{
+	const uvec3 id = gl_GlobalInvocationID;
+	if (id.x >= CLUSTER_LIGHT_TILES_X || id.y >= CLUSTER_LIGHT_TILES_Y || id.z >= CLUSTER_LIGHT_TILES_Z * 2u)
+		return;
+	const uint eye = id.z / CLUSTER_LIGHT_TILES_Z;
+	const uint slice = id.z % CLUSTER_LIGHT_TILES_Z;
+	const uint cluster = id.x + id.y * CLUSTER_LIGHT_TILES_X + slice * CLUSTER_LIGHT_TILES_X * CLUSTER_LIGHT_TILES_Y;
+	if (eye >= cluster_data.counts.y)
+	{
+		cluster_data.masks[eye][cluster] = uvec2 (0u);
+		return;
+	}
+	/* The terminal slice covers arbitrary depth.  Keep all active lights;
+	 * fragment range/cone tests reject irrelevant ones without any far bound. */
+	if (slice + 1u == CLUSTER_LIGHT_TILES_Z)
+	{
+		cluster_data.masks[eye][cluster] = ClusterActiveLightMask ();
+		return;
+	}
+	const float near_depth = slice == 0u ? 0.0f :
+		cluster_data.params.x * pow (cluster_data.params.y / cluster_data.params.x, float (slice) / float (CLUSTER_LIGHT_TILES_Z));
+	const float far_depth =
+		cluster_data.params.x * pow (cluster_data.params.y / cluster_data.params.x, float (slice + 1u) / float (CLUSTER_LIGHT_TILES_Z));
+	const vec2 pad = 2.0f * vec2 (cluster_data.counts.z, cluster_data.counts.w) / cluster_data.viewport.zw;
+	const vec2 tile_min = -1.0f + 2.0f * vec2 (id.xy) / vec2 (CLUSTER_LIGHT_TILES_X, CLUSTER_LIGHT_TILES_Y) - pad;
+	const vec2 tile_max = -1.0f + 2.0f * vec2 (id.xy + uvec2 (1u)) / vec2 (CLUSTER_LIGHT_TILES_X, CLUSTER_LIGHT_TILES_Y) + pad;
+	vec3 mins = vec3 (3.402823e38f);
+	vec3 maxs = vec3 (-3.402823e38f);
+	for (uint corner = 0u; corner < 4u; ++corner)
+	{
+		const vec2 ndc = vec2 ((corner & 1u) != 0u ? tile_max.x : tile_min.x, (corner & 2u) != 0u ? tile_max.y : tile_min.y);
+		vec3 ray;
+		if (!ClusterRay (eye, ndc, ray))
+		{
+			/* Padding may cross an eye-plane horizon.  Avoid a false negative. */
+			cluster_data.masks[eye][cluster] = ClusterActiveLightMask ();
+			return;
+		}
+		const vec3 a = cluster_data.eye_origin[eye].xyz + ray * near_depth;
+		const vec3 b = cluster_data.eye_origin[eye].xyz + ray * far_depth;
+		mins = min (mins, min (a, b));
+		maxs = max (maxs, max (a, b));
+	}
+	uvec2 result = uvec2 (0u);
+	for (uint light = 0u; light < cluster_data.counts.x; ++light)
+		if (SphereTouchesCluster (cluster_data.lights[light], mins, maxs))
+			result[light >> 5u] |= 1u << (light & 31u);
+	cluster_data.masks[eye][cluster] = result;
+}

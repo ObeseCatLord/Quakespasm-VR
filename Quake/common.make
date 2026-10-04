@@ -260,6 +260,7 @@ SHADER_OBJS = \
 	showtris_vert.o \
 	md5_debug_vert.o \
 	update_lightmap_8bit_comp.o \
+	cluster_lights_comp.o \
 	update_lightmap_8bit_rt_comp.o \
 	update_lightmap_10bit_comp.o \
 	update_lightmap_10bit_rt_comp.o \
@@ -406,6 +407,7 @@ define SHADER_VARIANT
 endef
 
 $(eval $(call SHADER_VARIANT,basic_oit_frag,basic.frag,-DWBOIT=1))
+$(eval $(call SHADER_VARIANT,cluster_lights_comp,cluster_lights.comp,--target-env vulkan1.1))
 $(eval $(call SHADER_VARIANT,basic_mboit_moment_frag,basic.frag,-DMBOIT=1))
 $(eval $(call SHADER_VARIANT,basic_mboit_composite_frag,basic.frag,-DMBOIT=1 -DMBOIT_COMPOSITE=1))
 $(eval $(call SHADER_VARIANT,basic_mboit_composite_msaa_frag,basic.frag,-DMBOIT=1 -DMBOIT_COMPOSITE=1 -DMSAA=1))

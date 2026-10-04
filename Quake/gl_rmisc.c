@@ -72,6 +72,8 @@ extern cvar_t r_alphasort;
 
 extern cvar_t r_gpulightmapupdate;
 extern cvar_t r_rtshadows;
+extern cvar_t r_clustered_lights;
+extern cvar_t r_surface_dither;
 extern cvar_t r_indirect;
 extern cvar_t r_tasks;
 extern cvar_t r_parallelmark;
@@ -1673,7 +1675,7 @@ void R_CreateDescriptorSetLayouts ()
 	}
 
 	{
-		ZEROED_STRUCT_ARRAY (VkDescriptorSetLayoutBinding, bmodel_instances_layout_bindings, 2);
+		ZEROED_STRUCT_ARRAY (VkDescriptorSetLayoutBinding, bmodel_instances_layout_bindings, 3);
 		bmodel_instances_layout_bindings[0].binding = 0;
 		bmodel_instances_layout_bindings[0].descriptorCount = 1;
 		bmodel_instances_layout_bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -1682,12 +1684,16 @@ void R_CreateDescriptorSetLayouts ()
 		bmodel_instances_layout_bindings[1].descriptorCount = 1;
 		bmodel_instances_layout_bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 		bmodel_instances_layout_bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		bmodel_instances_layout_bindings[2].binding = 2;
+		bmodel_instances_layout_bindings[2].descriptorCount = 1;
+		bmodel_instances_layout_bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+		bmodel_instances_layout_bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
 		descriptor_set_layout_create_info.bindingCount = countof (bmodel_instances_layout_bindings);
 		descriptor_set_layout_create_info.pBindings = bmodel_instances_layout_bindings;
 
 		memset (&vulkan_globals.bmodel_instances_set_layout, 0, sizeof (vulkan_globals.bmodel_instances_set_layout));
-		vulkan_globals.bmodel_instances_set_layout.num_storage_buffers = 2;
+		vulkan_globals.bmodel_instances_set_layout.num_storage_buffers = 3;
 
 		err = vkCreateDescriptorSetLayout (vulkan_globals.device, &descriptor_set_layout_create_info, NULL, &vulkan_globals.bmodel_instances_set_layout.handle);
 		if (err != VK_SUCCESS)
@@ -1907,6 +1913,24 @@ void R_CreatePipelineLayouts ()
 		GL_SetObjectName ((uint64_t)vulkan_globals.world_pipeline_layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT, "world_pipeline_layout");
 		vulkan_globals.world_pipeline_layout.push_constant_range = push_constant_range;
 		vulkan_globals.world_pipeline_layout.mboit_input_attachment_set = 3;
+	}
+
+	{
+		/* Compute retains world set numbering.  It only consumes set 4, but the
+		 * preceding identities keep the layout compatible with world graphics. */
+		VkDescriptorSetLayout cluster_descriptor_set_layouts[5] = {
+			vulkan_globals.single_texture_set_layout.handle, vulkan_globals.single_texture_set_layout.handle,
+			vulkan_globals.single_texture_set_layout.handle, vulkan_globals.mboit_input_attachment_set_layout.handle,
+			vulkan_globals.bmodel_instances_set_layout.handle};
+		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, cluster_pipeline_layout_create_info);
+		cluster_pipeline_layout_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		cluster_pipeline_layout_create_info.setLayoutCount = countof (cluster_descriptor_set_layouts);
+		cluster_pipeline_layout_create_info.pSetLayouts = cluster_descriptor_set_layouts;
+		err = R_CreateGraphicsPipelineLayout (&cluster_pipeline_layout_create_info, &vulkan_globals.cluster_lights_pipeline.layout.handle);
+		if (err != VK_SUCCESS)
+			Sys_Error ("vkCreatePipelineLayout failed with code %i", (int)err);
+		GL_SetObjectName ((uint64_t)vulkan_globals.cluster_lights_pipeline.layout.handle, VK_OBJECT_TYPE_PIPELINE_LAYOUT,
+			"cluster_lights_pipeline_layout");
 	}
 
 	{
@@ -2723,6 +2747,7 @@ DECLARE_SHADER_MODULE (update_lightmap_8bit_comp);
 DECLARE_SHADER_MODULE (update_lightmap_8bit_rt_comp);
 DECLARE_SHADER_MODULE (update_lightmap_10bit_comp);
 DECLARE_SHADER_MODULE (update_lightmap_10bit_rt_comp);
+DECLARE_SHADER_MODULE (cluster_lights_comp);
 DECLARE_SHADER_MODULE (ray_debug_comp);
 DECLARE_SHADER_MODULE (mesh_interpolate_comp);
 DECLARE_SHADER_MODULE (skinning_comp);
@@ -4816,6 +4841,13 @@ static void R_CreateIndirectComputePipelines ()
 	R_CreateComputePipeline (&vulkan_globals.indirect_clear_pipeline, indirect_clear_comp_module, 0, NULL, "indirect_clear");
 }
 
+/* Shader module registration is owned by the build/shader integration. */
+void R_CreateClusteredLightingPipeline (VkShaderModule module)
+{
+	if (module != VK_NULL_HANDLE)
+		R_CreateComputePipeline (&vulkan_globals.cluster_lights_pipeline, module, 0, NULL, "cluster_lights");
+}
+
 /*
 ===============
 R_CreateShaderModules
@@ -4954,6 +4986,7 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (update_lightmap_10bit_comp);
 	CREATE_SHADER_MODULE_COND (update_lightmap_8bit_rt_comp, vulkan_globals.ray_query);
 	CREATE_SHADER_MODULE_COND (update_lightmap_10bit_rt_comp, vulkan_globals.ray_query);
+	CREATE_SHADER_MODULE (cluster_lights_comp);
 #ifdef _DEBUG
 	CREATE_SHADER_MODULE_COND (ray_debug_comp, vulkan_globals.ray_query);
 #endif
@@ -5075,6 +5108,7 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (update_lightmap_8bit_rt_comp);
 	DESTROY_SHADER_MODULE (update_lightmap_10bit_comp);
 	DESTROY_SHADER_MODULE (update_lightmap_10bit_rt_comp);
+	DESTROY_SHADER_MODULE (cluster_lights_comp);
 	DESTROY_SHADER_MODULE (ray_debug_comp);
 	DESTROY_SHADER_MODULE (mesh_interpolate_comp);
 	DESTROY_SHADER_MODULE (skinning_comp);
@@ -5107,6 +5141,7 @@ void R_CreatePipelines ()
 	R_CreatePostprocessPipelines ();
 	R_CreateScreenEffectsPipelines ();
 	R_CreateUpdateLightmapPipelines ();
+	R_CreateClusteredLightingPipeline (cluster_lights_comp_module);
 	R_CreateIndirectComputePipelines ();
 	R_CreateRayDebugPipelines ();
 	R_CreateAnimComputePipelines ();
@@ -5335,6 +5370,11 @@ void R_DestroyPipelines (void)
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.update_lightmap_rt_pipeline.handle, NULL);
 		vulkan_globals.update_lightmap_rt_pipeline.handle = VK_NULL_HANDLE;
 	}
+	if (vulkan_globals.cluster_lights_pipeline.handle != VK_NULL_HANDLE)
+	{
+		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.cluster_lights_pipeline.handle, NULL);
+		vulkan_globals.cluster_lights_pipeline.handle = VK_NULL_HANDLE;
+	}
 	if (vulkan_globals.ray_debug_pipeline.handle != VK_NULL_HANDLE)
 	{
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.ray_debug_pipeline.handle, NULL);
@@ -5478,6 +5518,8 @@ void R_Init (void)
 
 	Cvar_RegisterVariable (&r_gpulightmapupdate);
 	Cvar_RegisterVariable (&r_rtshadows);
+	Cvar_RegisterVariable (&r_clustered_lights);
+	Cvar_RegisterVariable (&r_surface_dither);
 	Cvar_SetCallback (&r_rtshadows, R_SetRTShadows_f);
 	Cvar_RegisterVariable (&r_indirect);
 	Cvar_RegisterVariable (&r_tasks);
