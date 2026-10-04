@@ -18,6 +18,12 @@
 extern jmp_buf host_abortserver;
 
 static qboolean hold_client_send;
+#ifdef UPSTREAM_ACCEPTANCE_NATIVE_FIXTURE
+static qboolean upstream_remote_signon, upstream_remote_can_send;
+static int upstream_remote_send_result, upstream_remote_send_calls;
+static int upstream_remote_sent_size;
+static byte upstream_remote_sent[NET_MAXMESSAGE];
+#endif
 static byte receive_bytes[NET_MAXMESSAGE];
 static unsigned query_count, full_count, empty_full_count, increment_count;
 static unsigned userinfo_count, signon2_count, signon3_count;
@@ -49,10 +55,30 @@ static char signon_limit[16] = "none";
 qboolean __real_NET_CanSendMessage (qsocket_t *socket);
 qboolean __wrap_NET_CanSendMessage (qsocket_t *socket)
 {
+#ifdef UPSTREAM_ACCEPTANCE_NATIVE_FIXTURE
+	if (upstream_remote_signon && socket == svs.clients[0].netconnection)
+		return upstream_remote_can_send;
+#endif
 	if (hold_client_send && socket == cls.netcon)
 		return false;
 	return __real_NET_CanSendMessage (socket);
 }
+
+#ifdef UPSTREAM_ACCEPTANCE_NATIVE_FIXTURE
+int __real_NET_SendMessage (qsocket_t *socket, sizebuf_t *message);
+int __wrap_NET_SendMessage (qsocket_t *socket, sizebuf_t *message)
+{
+	if (!upstream_remote_signon || socket != svs.clients[0].netconnection)
+		return __real_NET_SendMessage (socket, message);
+	/* Only the transport result is controlled. The production sender owns
+	 * chunk admission, reliable bytes, flush state, and its pending flag. */
+	assert (upstream_remote_can_send && message->cursize <= 32000 && !message->overflowed);
+	++upstream_remote_send_calls;
+	upstream_remote_sent_size = message->cursize;
+	memcpy (upstream_remote_sent, message->data, message->cursize);
+	return upstream_remote_send_result;
+}
+#endif
 
 #ifdef METADATA_LIVE_ADMISSION_FIXTURE
 void __real_PR_AutoCvarChanged (cvar_t *var);
@@ -990,8 +1016,137 @@ static void ReleaseClientPressure (void)
 	hold_client_send = false;
 }
 
+#ifdef UPSTREAM_ACCEPTANCE_NATIVE_FIXTURE
+static void UpstreamRemoteRetained (client_t *peer, int index, const byte *bytes, int size)
+{
+	for (int frame = 0; frame < 8; ++frame)
+	{
+		SV_SendClientMessages ();
+		assert (peer->active && peer->signonidx == index &&
+			peer->message.cursize == size && !peer->message.overflowed &&
+			!memcmp (peer->message.data, bytes, size));
+	}
+}
+
+/* This is a sender/message-lifetime witness with a controlled remote socket
+ * boundary. Complete remote two-process gameplay is qualified separately. */
+static int UpstreamRemoteSignon (int argc, char **argv)
+{
+	byte chunk_bytes[31500], retained[NET_MAXMESSAGE], metadata_bytes[NET_MAXMESSAGE];
+	sizebuf_t chunks[2] = {
+		{.data = chunk_bytes, .maxsize = sizeof (chunk_bytes), .cursize = sizeof (chunk_bytes)},
+		{.data = chunk_bytes, .maxsize = sizeof (chunk_bytes), .cursize = sizeof (chunk_bytes)}
+	};
+	sizebuf_t metadata = {.data = metadata_bytes, .maxsize = sizeof (metadata_bytes)};
+	sizebuf_t *original[MAX_SIGNON_BUFFERS];
+	char reason[128], blob[711];
+	Fixture_InitNativeEngine (argc, argv, "e1m1", false);
+	assert (svs.maxclients == 1);
+	client_t *peer = &svs.clients[0];
+	peer->netconnection = NET_NewQSocket ();
+	assert (peer->netconnection && peer->edict);
+	q_strlcpy (peer->netconnection->trueaddress, "REMOTE", sizeof (peer->netconnection->trueaddress));
+	peer->active = true;
+	peer->message.data = peer->msgbuf;
+	peer->message.maxsize = sizeof (peer->msgbuf);
+	peer->offered_metadata = QSVR_METADATA_VERSION;
+	peer->sendsignon = PRESPAWN_SIGNONMSG;
+	assert (peer->message.maxsize > 63000 && !SV_IsLocalClient (peer));
+	const int original_count = sv.num_signon_buffers;
+	memcpy (original, sv.signon_buffers, sizeof (original));
+	memset (chunk_bytes, svc_nop, sizeof (chunk_bytes));
+	sv.num_signon_buffers = 2;
+	sv.signon_buffers[0] = &chunks[0]; sv.signon_buffers[1] = &chunks[1];
+	SZ_Clear (&sv.reliable_datagram);
+	svs.serverinfo[0] = 0;
+	Info_SetKey (svs.serverinfo, sizeof (svs.serverinfo), "fixture", "small");
+	peer->metadata_serverinfo_pending = true;
+	upstream_remote_signon = true;
+	SV_SendClientMessages ();
+	const int size = peer->message.cursize;
+	assert (peer->signonidx == 1 && peer->signon_chunk_pending &&
+		peer->message.maxsize == 32000 &&
+		!peer->metadata_serverinfo_pending && size > 31500 && size <= 32000 &&
+		Contains (peer->message.data, size, "//fullserverinfo"));
+	memcpy (retained, peer->message.data, size);
+	UpstreamRemoteRetained (peer, 1, retained, size);
+	assert (!upstream_remote_send_calls && peer->signon_chunk_pending);
+	upstream_remote_can_send = true; /* Transport still rejects the send with zero. */
+	UpstreamRemoteRetained (peer, 1, retained, size);
+	assert (upstream_remote_send_calls == 8 && peer->signon_chunk_pending &&
+		upstream_remote_sent_size == size && !memcmp (upstream_remote_sent, retained, size));
+	upstream_remote_send_result = 1;
+	SV_SendClientMessages ();
+	assert (!peer->message.cursize && !peer->signon_chunk_pending && peer->signonidx == 1 &&
+		peer->message.maxsize == sizeof (peer->msgbuf));
+	/* No test code clears the pending flag: successful production sends do. */
+	peer->message.maxsize = 31500;
+	SV_SendClientMessages ();
+	assert (peer->signonidx == 2 && peer->sendsignon == PRESPAWN_SIGNONMSG &&
+		upstream_remote_sent_size == 31500 && !memcmp (upstream_remote_sent, chunk_bytes, 31500) &&
+		!peer->message.cursize && !peer->signon_chunk_pending);
+	peer->message.maxsize = 2;
+	SV_SendClientMessages ();
+	assert (upstream_remote_sent_size == 2 && upstream_remote_sent[0] == svc_signonnum &&
+		upstream_remote_sent[1] == 2 && peer->sendsignon == PRESPAWN_DONE && !peer->message.cursize);
+	puts ("UPSTREAM_REMOTE_SIGNON_RETAINED_PASSED cannot-send/zero-send frames exact-fit-chunk separate-two-byte-marker");
+
+	/* Start another fixture signon. Metadata's real encoder determines the
+	 * budget. An occupied envelope retries the same dirty unit without loss. */
+	peer->sendsignon = PRESPAWN_SIGNONMSG;
+	peer->signonidx = 0;
+	memset (blob, 'm', sizeof (blob) - 1); blob[sizeof (blob) - 1] = 0;
+	Info_SetKey (svs.serverinfo, sizeof (svs.serverinfo), "fixture", blob);
+	peer->metadata_serverinfo_pending = true;
+	assert (SV_MetadataServerUnit (peer, &metadata, reason, sizeof (reason)) && metadata.cursize > 500);
+	peer->message.maxsize = metadata.cursize;
+	MSG_WriteByte (&peer->message, svc_nop);
+	upstream_remote_can_send = false;
+	retained[0] = svc_nop;
+	UpstreamRemoteRetained (peer, 0, retained, 1);
+	assert (peer->metadata_serverinfo_pending && !peer->signon_chunk_pending);
+	upstream_remote_can_send = true;
+	SV_SendClientMessages ();
+	assert (peer->metadata_serverinfo_pending && upstream_remote_sent_size == 1 && !peer->message.cursize);
+	peer->message.maxsize = sizeof (peer->msgbuf);
+	upstream_remote_can_send = false;
+	SV_SendClientMessages ();
+	assert (!peer->metadata_serverinfo_pending && !peer->signonidx && !peer->signon_chunk_pending &&
+		peer->message.cursize == metadata.cursize && !memcmp (peer->message.data, metadata.data, metadata.cursize));
+	memcpy (retained, peer->message.data, metadata.cursize);
+	UpstreamRemoteRetained (peer, 0, retained, metadata.cursize);
+	upstream_remote_can_send = true;
+	SV_SendClientMessages ();
+	assert (!peer->message.cursize && !peer->signonidx);
+	SV_SendClientMessages ();
+	assert (peer->signonidx == 1 && upstream_remote_sent_size == 31500 && !peer->signon_chunk_pending);
+	SV_SendClientMessages ();
+	assert (peer->signonidx == 2 && upstream_remote_sent_size == 31502 && peer->sendsignon == PRESPAWN_DONE);
+	puts ("UPSTREAM_REMOTE_SIGNON_BUDGET_RETRY_PASSED metadata-dirty-retry metadata-consumes-remote-headroom successful-send-rearms");
+
+	peer->sendsignon = PRESPAWN_SIGNONMSG;
+	peer->signonidx = 0;
+	peer->message.maxsize = 31499;
+	assert (SV_StageSignonMessage (peer, reason, sizeof (reason)) == -1 &&
+		!peer->signonidx && !peer->message.cursize && !peer->signon_chunk_pending &&
+		strstr (reason, "reliable envelope"));
+	peer->metadata_serverinfo_pending = true;
+	peer->message.maxsize = metadata.cursize - 1;
+	assert (SV_StageSignonMessage (peer, reason, sizeof (reason)) == -1 &&
+		peer->metadata_serverinfo_pending && !peer->message.cursize && strstr (reason, "metadata unit"));
+	memcpy (sv.signon_buffers, original, sizeof (original));
+	sv.num_signon_buffers = original_count;
+	puts ("UPSTREAM_REMOTE_SIGNON_NATIVE_PASSED real-sender/staging owners permanent-chunk/metadata-limits socket-boundary-controlled");
+	return 0;
+}
+#endif
+
 int main (int argc, char **argv)
 {
+#ifdef UPSTREAM_ACCEPTANCE_NATIVE_FIXTURE
+	for (int i = 1; i < argc; ++i)
+		if (!strcmp (argv[i], "-upstream-remote-signon")) return UpstreamRemoteSignon (argc, argv);
+#endif
 	const char *mode = NULL;
 	qboolean mid_signon_changed = false;
 	for (int i = 1; i + 1 < argc; ++i)
