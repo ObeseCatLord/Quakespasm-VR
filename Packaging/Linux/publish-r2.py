@@ -40,7 +40,7 @@ def stage(args):
     with tarfile.open(args.source) as source:
         source_notices = {member.name: source.extractfile(member).read() for member in source
                           if member.isfile() and (member.name.startswith('LICENSES/') or
-                          member.name in ['LICENSE-GPL-3.0.txt', 'LICENSE-COMPONENTS.txt', 'Packaging/Linux/quakespasm-openvr'])}
+                          member.name in ['LICENSE-GPL-3.0.txt', 'LICENSE-COMPONENTS.txt', 'Packaging/Linux/quakespasm-openvr', 'docs/release-notes-2.0.md'])}
     for runtime, package in [('linux-x64', args.linux), ('linux-arm64', args.arm)]:
         manifest = json.loads((package / 'artifact-manifest.json').read_text())
         require(manifest['architecture'] == ('x86_64' if runtime == 'linux-x64' else 'aarch64'), 'Native architecture mismatch')
@@ -58,6 +58,8 @@ def stage(args):
                 # The updater has no symlink action: materialize SONAME aliases.
                 copy(source, root / 'lib' / source.relative_to(package / 'lib'))
         shutil.copytree(package / 'share', root / 'share')
+        if 'docs/release-notes-2.0.md' in source_notices:
+            (root / 'README.md').write_bytes(source_notices['docs/release-notes-2.0.md'])
         for path in sorted(root.rglob('*')):
             if path.is_file():
                 rows.append((sha(path), path.relative_to(out).as_posix(), path.relative_to(root).as_posix(), runtime))
@@ -87,6 +89,8 @@ def stage(args):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
+        if 'docs/release-notes-2.0.md' in source_notices:
+            (root / 'README.md').write_bytes(source_notices['docs/release-notes-2.0.md'])
         for path in sorted(root.rglob('*')):
             if path.is_file():
                 rows.append((sha(path), path.relative_to(out).as_posix(), path.relative_to(root).as_posix(), 'win-x64'))
