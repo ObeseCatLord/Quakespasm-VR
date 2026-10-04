@@ -122,7 +122,7 @@ Clang fixture compilation and all eight `glslc` compilations / `spirv-val`
 checks passed. The runner returned 0 and confirmed unchanged source hashes.
 Logs and `qualification.json` are in `build/ssao-mip-partial-fix/`.
 
-## Separate renderer/MSAA evidence and remaining integration check
+## Separate renderer/MSAA qualification
 
 Main reported native desktop renderer smoke passing all 12 combinations of
 AO quality 1/2/3, half resolution 0/1, and MSAA sample count 1/4 in
@@ -131,14 +131,17 @@ stereo renderer smoke passing those same 12 combinations in
 `/tmp/qsvr-final-render-4_ydmka1/stereo/native.log`. These are renderer runtime
 results, distinct from the compute fixture's MSAA compile/validation coverage.
 
-Both renderer runs preceded the shader edge fix. After importing the fix,
-main confirmed importing `cf4cbbf2`, rebuilding the affected shader modules,
-and planning the desktop and stereo MSAA repeats. Those post-fix runtime
-results remain pending and are not included in the four-variant pass. Stereo
-image capture review also remains main-owned. No XR engine issue or global
-runtime/GPU changes were attributed to the initial launch problems: main
-reported resolving a private Monado stdin EOF and then an overlong fixture
-argument truncating `+map`, using relative profile paths.
+Those initial renderer runs preceded the shader edge fix. After importing it
+as `e2b0f1c6` and rebuilding the affected modules, the main integrator ran
+`tests/upstream_ssao_native_smoke.gdb` again against the actual final renderer:
+desktop and private simulated Monado stereo each passed all 12 combinations.
+The final private receipt root is `/tmp/qsvr-final-render-kwvroiaa`. The desktop
+captures show the stock start map. The default disabled VR mirror does not
+produce window screenshots; stereo software qualification uses actual native
+renderer assertions plus the independent two-eye GPU readbacks above.
+Physical headset appearance remains unverified. Neither initial launch issue
+required an engine or global runtime/GPU change: a private Monado stdin setup
+and overlong fixture arguments were corrected using a pipe and relative paths.
 
 Main separately reported the final production anisotropy acceptance passing:
 actual texture-manager uploads and 2/4/8/16 GPU readbacks, with evidence under
