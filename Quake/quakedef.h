@@ -111,7 +111,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #define MAX_STYLESTRING 64
 
-#define CMDLINE_LENGTH 256
+#define CMDLINE_LENGTH 4096
 
 //
 // stats are integers communicated to the client by the server

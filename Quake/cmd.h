@@ -67,6 +67,8 @@ void Cbuf_Waited (void);
 
 void Cmd_QueuePostConfig (void);
 void Cmd_QueuePostConfigAfterGameChange (void);
+// Non-NULL only for an explicitly opted-in OS profile after the postcfg batch finishes.
+const char *Cmd_PostConfigWritePath (void);
 
 //===========================================================================
 

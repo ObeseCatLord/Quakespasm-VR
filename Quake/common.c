@@ -2148,6 +2148,7 @@ COM_InitArgv
 void COM_InitArgv (int argc, char **argv)
 {
 	int i, j, n;
+	qboolean truncated = false;
 
 	// reconstitute the command line for the cmdline externally visible cvar
 	n = 0;
@@ -2160,6 +2161,11 @@ void COM_InitArgv (int argc, char **argv)
 		{
 			com_cmdline[n++] = argv[j][i++];
 		}
+		if (argv[j][i] || (n == CMDLINE_LENGTH - 1 && j + 1 < argc && j + 1 < MAX_NUM_ARGVS))
+		{
+			truncated = true;
+			break;
+		}
 
 		if (n < (CMDLINE_LENGTH - 1))
 			com_cmdline[n++] = ' ';
@@ -2167,7 +2173,14 @@ void COM_InitArgv (int argc, char **argv)
 			break;
 	}
 
-	if (n > 0 && com_cmdline[n - 1] == ' ')
+	com_cmdline[n] = 0;
+	if (truncated)
+	{
+		// Never run a partly reconstructed +command. Option parsing retains argv.
+		com_cmdline[0] = 0;
+		Con_Warning ("Command line exceeds %d bytes; skipping +commands\n", CMDLINE_LENGTH - 1);
+	}
+	else if (n > 0 && com_cmdline[n - 1] == ' ')
 		com_cmdline[n - 1] = 0; // johnfitz -- kill the trailing space
 
 	Con_Printf ("Command line: %s\n", com_cmdline);

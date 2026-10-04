@@ -44,6 +44,8 @@ cmdalias_t *cmd_alias;
 static qboolean cmd_wait;
 static unsigned cmd_postcfg_generation;
 static unsigned cmd_postcfg_executed_generation = UINT_MAX;
+static unsigned cmd_postcfg_completed_generation = UINT_MAX;
+static char cmd_postcfg_write_path[MAX_OSPATH];
 
 //=============================================================================
 
@@ -254,7 +256,8 @@ void Cmd_StuffCmds_f (void)
 {
 	extern cvar_t cmdline;
 	char		  cmds[CMDLINE_LENGTH];
-	int			  i, j, plus;
+	size_t		  i, j;
+	int			  plus;
 
 	plus = false; // On Unix, argv[0] is command name
 
@@ -265,6 +268,8 @@ void Cmd_StuffCmds_f (void)
 			plus = true;
 			if (j > 0)
 			{
+				if (j >= sizeof (cmds) - 1)
+					goto overflow;
 				cmds[j - 1] = ';';
 				cmds[j++] = ' ';
 			}
@@ -272,11 +277,19 @@ void Cmd_StuffCmds_f (void)
 		else if (cmdline.string[i] == '-' && (i == 0 || cmdline.string[i - 1] == ' ')) // johnfitz -- allow hypenated map names with +map
 			plus = false;
 		else if (plus)
+		{
+			if (j >= sizeof (cmds) - 1)
+				goto overflow;
 			cmds[j++] = cmdline.string[i];
+		}
 	}
 	cmds[j] = 0;
 
 	Cbuf_InsertText (cmds);
+	return;
+
+overflow:
+	Con_Warning ("Command-line +commands exceed %d bytes; skipping batch\n", CMDLINE_LENGTH - 1);
 }
 
 void Cmd_Exec_f (void)
@@ -310,42 +323,67 @@ static qboolean Cmd_IsAbsoluteOSPath (const char *path)
 		(path[0] && path[1] == ':');
 }
 
-static char *Cmd_LoadPostConfig (const char *filename)
+static char *Cmd_LoadPostConfig (const char *filename, qboolean *os_loaded)
 {
 	char os_path[MAX_OSPATH];
 	char *buf;
+	*os_loaded = false;
 
 	if (Cmd_IsAbsoluteOSPath (filename))
-		return (char *)COM_LoadMallocFile_TextMode_OSPath (filename, NULL);
+	{
+		buf = (char *)COM_LoadMallocFile_TextMode_OSPath (filename, NULL);
+		*os_loaded = buf != NULL;
+		return buf;
+	}
 
 	if ((size_t)q_snprintf (os_path, sizeof (os_path), "%s/%s", com_basedir, filename) >= sizeof (os_path))
 		return NULL;
 	buf = (char *)COM_LoadMallocFile_TextMode_OSPath (os_path, NULL);
 	if (buf)
+	{
+		*os_loaded = true;
 		return buf;
+	}
 
 	return (char *)COM_LoadFile (filename, NULL);
 }
 
-static void Cmd_InsertPostConfig (const char *filename)
+static qboolean Cmd_TryInsertPostConfigText (const char *text)
 {
-	char *buf = Cmd_LoadPostConfig (filename);
+	// Include the newline and all pending text; Cbuf_InsertText has no status.
+	if (strlen (text) + 1 >= (size_t)(cmd_text.maxsize - cmd_text.cursize))
+	{
+		Con_Warning ("Postcfg exceeds remaining command buffer; skipping script\n");
+		return false;
+	}
+	Cbuf_InsertText (text);
+	return true;
+}
+
+static qboolean Cmd_InsertPostConfig (const char *filename, qboolean *os_loaded)
+{
+	char *buf = Cmd_LoadPostConfig (filename, os_loaded);
+	qboolean inserted;
 
 	if (!buf)
 	{
 		Con_Printf ("couldn't exec postcfg %s\n", filename);
-		return;
+		return false;
 	}
 
 	Con_Printf ("execing postcfg %s\n", filename);
-	Cbuf_InsertText (buf);
+	inserted = Cmd_TryInsertPostConfigText (buf);
 	Mem_Free (buf);
+	return inserted;
 }
 
 static void Cmd_InsertPostConfigFiles (void)
 {
 	const char *filenames[MAX_NUM_ARGVS];
 	int i, count = 0;
+	qboolean os_loaded, inserted = true;
+	cmd_postcfg_write_path[0] = 0;
+	cmd_postcfg_completed_generation = UINT_MAX;
 
 	for (i = 1; i < com_argc; ++i)
 	{
@@ -360,8 +398,36 @@ static void Cmd_InsertPostConfigFiles (void)
 		filenames[count++] = com_argv[++i];
 	}
 
+	if (count > 0)
+	{
+		if (!Cmd_TryInsertPostConfigText (va ("exec_postcfg_done %u\n", cmd_postcfg_generation)))
+			return;
+		// The explicit write-back contract selects the final override only.
+		const char *last = filenames[--count];
+		inserted = Cmd_InsertPostConfig (last, &os_loaded);
+		if (inserted && os_loaded && COM_CheckParm ("-writepostcfg"))
+		{
+			if (Cmd_IsAbsoluteOSPath (last))
+			{
+				if (strlen (last) < sizeof (cmd_postcfg_write_path))
+					q_strlcpy (cmd_postcfg_write_path, last, sizeof (cmd_postcfg_write_path));
+			}
+			else if ((size_t)q_snprintf (cmd_postcfg_write_path, sizeof (cmd_postcfg_write_path),
+				"%s/%s", com_basedir, last) >= sizeof (cmd_postcfg_write_path))
+				cmd_postcfg_write_path[0] = 0;
+		}
+	}
 	while (count > 0)
-		Cmd_InsertPostConfig (filenames[--count]);
+		if (!Cmd_InsertPostConfig (filenames[--count], &os_loaded))
+			inserted = false;
+	if (!inserted)
+		cmd_postcfg_write_path[0] = 0;
+}
+
+const char *Cmd_PostConfigWritePath (void)
+{
+	return cmd_postcfg_completed_generation == cmd_postcfg_generation && cmd_postcfg_write_path[0] ?
+		cmd_postcfg_write_path : NULL;
 }
 
 static qboolean Cmd_ParsePostConfigGeneration (const char *text, unsigned *value_out)
@@ -400,6 +466,14 @@ static void Cmd_ExecPostConfig_f (void)
 	Cmd_InsertPostConfigFiles ();
 }
 
+static void Cmd_ExecPostConfigDone_f (void)
+{
+	unsigned generation;
+	if (Cmd_Argc () == 2 && Cmd_ParsePostConfigGeneration (Cmd_Argv (1), &generation) &&
+		generation == cmd_postcfg_generation && generation == cmd_postcfg_executed_generation)
+		cmd_postcfg_completed_generation = generation;
+}
+
 static void Cmd_QueuePostConfigCommand (qboolean supersede_pending)
 {
 	if (!COM_CheckParm ("-postcfg"))
@@ -407,6 +481,8 @@ static void Cmd_QueuePostConfigCommand (qboolean supersede_pending)
 
 	if (supersede_pending)
 	{
+		cmd_postcfg_write_path[0] = 0;
+		cmd_postcfg_completed_generation = UINT_MAX;
 		if (cmd_postcfg_generation == UINT_MAX - 1)
 		{
 			cmd_postcfg_generation = 0;
@@ -724,6 +800,7 @@ void Cmd_Init (void)
 	Cmd_AddCommand ("stuffcmds", Cmd_StuffCmds_f);
 	Cmd_AddCommand ("exec", Cmd_Exec_f);
 	Cmd_AddCommand ("exec_postcfg", Cmd_ExecPostConfig_f);
+	Cmd_AddCommand ("exec_postcfg_done", Cmd_ExecPostConfigDone_f);
 	Cmd_AddCommand ("echo", Cmd_Echo_f);
 	Cmd_AddCommand ("alias", Cmd_Alias_f);
 	Cmd_AddCommand ("cmd", Cmd_ForwardToServer);
