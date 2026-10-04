@@ -1374,7 +1374,7 @@ static void VR_InputFBTUnassign_f (void)
 	Con_Printf ("FBT: unassigned %s\n", VR_InputFBTRoleName (role));
 }
 
-static qboolean VR_InputHandAccepted (const vrxr_frame_t *frame, int hand)
+static qboolean VR_InputHandIdentityAccepted (const vrxr_frame_t *frame, int hand)
 {
 	const vr_input_hand_state_t *state;
 	const vrxr_input_t *input;
@@ -1383,8 +1383,14 @@ static qboolean VR_InputHandAccepted (const vrxr_frame_t *frame, int hand)
 		return false;
 	state = &vr_input_hands[hand];
 	input = &frame->hands[hand];
-	return state->identity_valid && !state->wait_neutral && input->active &&
+	return state->identity_valid && input->active &&
 		state->role == VR_InputRoleForPhysicalHand (hand) && state->profile == input->profile;
+}
+
+static qboolean VR_InputHandAccepted (const vrxr_frame_t *frame, int hand)
+{
+	return VR_InputHandIdentityAccepted (frame, hand) &&
+		!vr_input_hands[hand].wait_neutral;
 }
 
 qboolean VR_InputPhysicalHandAccepted (const vrxr_frame_t *frame,
@@ -1991,6 +1997,7 @@ static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame, int hand)
 	vec3_t render[2], offsets[2], points[2], motion[2], direction;
 	vec3_t grip, angles, tracking_grip;
 	float yaw, speed[2], point_motion, metres;
+	float accumulation_speed;
 	double seconds;
 	int endpoint;
 
@@ -2001,6 +2008,8 @@ static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame, int hand)
 		!V_TrackedPresentationYaw (&yaw) ||
 		!V_TrackedPresentationHandAngles (identity.hand, angles))
 		goto reset;
+	/* Explicit slow-gesture profiles retain their authored threshold. */
+	accumulation_speed = fminf (0.4f, identity.profile.speed);
 	/* Keep head-relative physical points in a fixed tracking basis. Virtual
 	 * smooth turning, body interpolation and viewheight cannot add swing arc. */
 	for (int axis = 0; axis < 3; ++axis)
@@ -2056,7 +2065,7 @@ static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame, int hand)
 		goto reset;
 	VectorCopy (motion[endpoint], direction);
 	VectorNormalize (direction);
-	if (fmaxf (speed[0], speed[1]) < 0.25f ||
+	if (fmaxf (speed[0], speed[1]) < accumulation_speed ||
 		(state->consumed && point_motion > 0.0001f &&
 		 endpoint == state->endpoint &&
 		 DotProduct (direction, state->direction) < -0.25f))
@@ -2064,10 +2073,10 @@ static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame, int hand)
 		state->arc = 0;
 		state->consumed = false;
 	}
-	if (!state->consumed && fmaxf (speed[0], speed[1]) >= 0.25f)
+	if (!state->consumed && fmaxf (speed[0], speed[1]) >= accumulation_speed)
 	{
 		state->arc += metres;
-		if (state->arc >= 0.03f &&
+		if (state->arc >= 0.06f &&
 			point_motion > 0.0001f &&
 			fmaxf (speed[0], speed[1]) >= identity.profile.speed)
 		{
@@ -3714,6 +3723,13 @@ static qboolean VR_InputAbortForContextChange (unsigned int dispatch_epoch)
 	return false;
 }
 
+static qboolean VR_InputStickNeutral (const vrxr_input_t *input)
+{
+	return input && input->active && VR_InputAxesFinite (input) &&
+		VR_InputFilteredAxis (input, 0, 0.0f) == 0.0f &&
+		VR_InputFilteredAxis (input, 1, 0.0f) == 0.0f;
+}
+
 static qboolean VR_InputNeutral (const vrxr_input_t *input)
 {
 	const uint32_t buttons = VRXR_BUTTON_TRIGGER | VRXR_BUTTON_GRIP | VRXR_BUTTON_STICK |
@@ -3724,10 +3740,7 @@ static qboolean VR_InputNeutral (const vrxr_input_t *input)
 		return false;
 	if (!isfinite (input->trigger) || VR_InputTriggerValue (input) >= 0.45f)
 		return false;
-	if (!VR_InputAxesFinite (input))
-		return false;
-	return VR_InputFilteredAxis (input, 0, 0.0f) == 0.0f &&
-		   VR_InputFilteredAxis (input, 1, 0.0f) == 0.0f;
+	return VR_InputStickNeutral (input);
 }
 
 static void VR_InputAddKey (qboolean desired[2][MAX_KEYS], int hand, int key)
@@ -4962,7 +4975,10 @@ void VR_InputMove (usercmd_t *pending)
 
 	memcpy (&offhand_input, &frame->hands[offhand], sizeof (offhand_input));
 	memcpy (&dominant_input, &frame->hands[dominant], sizeof (dominant_input));
-	offhand_accepted = VR_InputHandAccepted (frame, offhand) && VR_InputAxesFinite (&offhand_input);
+	/* Continuous locomotion has its own stick-neutral gate. Holding grip
+	 * after an XR interruption must not trap a centered movement stick in
+	 * the independent button/trigger rearm gate. */
+	offhand_accepted = VR_InputHandIdentityAccepted (frame, offhand) && VR_InputAxesFinite (&offhand_input);
 	dominant_accepted = VR_InputHandAccepted (frame, dominant) && VR_InputAxesFinite (&dominant_input);
 
 	// Tracking must be usable before neutral can rearm a motion channel.
@@ -4979,7 +4995,7 @@ void VR_InputMove (usercmd_t *pending)
 
 	move_armed = offhand_accepted && selected_valid && (!controller_aim || command_valid) && !vr_input_move_wait_neutral;
 	if (offhand_accepted && selected_valid && (!controller_aim || command_valid) &&
-		vr_input_move_wait_neutral && VR_InputNeutral (&offhand_input))
+		vr_input_move_wait_neutral && VR_InputStickNeutral (&offhand_input))
 		vr_input_move_wait_neutral = false;
 
 	turn_armed = dominant_accepted && mapping_valid && !vr_input_turn_wait_neutral;

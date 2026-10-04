@@ -38,6 +38,14 @@ active eye render aspect ratio instead of stretching a fixed framebuffer
 rectangle. `GL_BeginUIPanel` then applies each eye's existing multiview
 projection; no same-NDC-per-eye placement remains.
 
+Senior review identified that closed-console notifications use the top edge of
+`CANVAS_CONSOLE`, so the menu-centered matrix can put them outside the field of
+view at large eye extents. Notifications now use a second matrix from the same
+frozen pose: a physical width of `min(320 * vr_menu_scale, 64)` units, console
+aspect ratio, and a top edge 8 units above the forward anchor. Its size and top
+edge no longer grow with runtime eye dimensions. Centerprint retains the menu
+matrix and both paths retain the existing stereo UI projection.
+
 ## Implementation and acceptance
 
 1. Publish a finite `vr_text_popup_panel` only for active, focused, tracked

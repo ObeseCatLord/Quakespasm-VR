@@ -85,6 +85,9 @@ Local repair artifacts are under
 `/home/obesecatlord/FastGames/qsvr-deploy-2.0-mtpuw_db`;
 remote receipts and launch logs are under
 `/home/steamos/.qsvr-deploy-2.0.BsQmrE`.
-The final installed-path launch receipt is `ad-vr-installed-launch.json`.
+The installed-path promotion receipt is `frame-launch-fix-installed.json`.
+Subsequent user launches use the installed engine, as confirmed by the running
+process command and Steam's game output log; no automated final VR session was
+started over the user's testing session.
 The evidence establishes engine initialization and map entry on the physical
 Frame; the user judges visible rendering, tracking, controls and play quality.

@@ -38,6 +38,11 @@ their selected hand and source origin. Snack calibration/source rules remain
 in the existing calibration helper and receive the same scoped raw angles as
 every other admitted non-paired ranged pose.
 
+Senior review narrowed generic raw-basis admission to the outermost same-player
+scope with no inherited relocation/invalidation. Nested source reconstruction
+retains its existing behavior; the new roll adapter cannot admit that borrowed
+temporary origin as a fresh generic shot.
+
 ## Focused fixture
 
 `tests/vr_shot_roll_scope_fixture.c` includes the production `sv_phys.c`

@@ -25,6 +25,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "in_sdl.h"
 
 static qboolean textmode;
+static qboolean window_has_focus = true;
 
 cvar_t in_debugkeys = {"in_debugkeys", "0", CVAR_NONE};
 
@@ -931,9 +932,34 @@ void IN_Move (usercmd_t *cmd)
 
 void IN_ClearStates (void) {}
 
+static void IN_UpdateSoundFocus (void)
+{
+	/* The desktop mirror does not own headset focus. Reconcile every frame
+	 * so attaching/detaching XR also restores the appropriate audio state. */
+	if (vulkan_globals.stereo_active || window_has_focus)
+		S_UnblockSound ();
+	else
+		S_BlockSound ();
+}
+
+void IN_WindowFocusChanged (qboolean focused)
+{
+	if (window_has_focus != focused)
+		Con_DPrintf ("SDL mirror focus %s at %.3f (OpenXR stereo %s)\n",
+			focused ? "gained" : "lost", Sys_DoubleTime (),
+			vulkan_globals.stereo_active ? "attached" : "detached");
+	window_has_focus = focused;
+	if (focused)
+		VID_FocusGained ();
+	else
+		VID_FocusLost ();
+	IN_UpdateSoundFocus ();
+}
+
 void IN_UpdateInputMode (void)
 {
 	qboolean want_textmode = Key_TextEntry ();
+	IN_UpdateSoundFocus ();
 	if (textmode != want_textmode)
 	{
 		textmode = want_textmode;

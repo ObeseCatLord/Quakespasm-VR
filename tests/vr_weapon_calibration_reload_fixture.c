@@ -283,6 +283,7 @@ int main(void)
 	vec3_t muzzle;
 	vec3_t held;
 	float held_scale;
+	vr_melee_gesture_profile_t melee;
 
 	strcpy(com_gamedir, "/fixtures/id1");
 
@@ -400,19 +401,58 @@ int main(void)
 	assert(file_load_count == 9 && file_free_count == 5);
 	AssertADRootProfiles();
 
-	/* q30a1024 gets missing AD profiles; authored schema fields still win. */
+	/* q30's old generic profile must not override the matching AD root meshes.
+	 * It retains non-AD paths and a changed complete classic triple. */
 	strcpy(com_gamedir, "/fixtures/q30a1024");
 	fixture_file_contents =
-		"{ viewmodel progs/v_shot.mdl held_scale 1 "
-		"held_offset 9 8 7 muzzle_offset 6 5 4 }";
+		"{ viewmodel progs/v_axe.mdl held_scale 0.33 "
+		"held_offset -4 24 37 muzzle_offset 0 0 37 } "
+		"{ viewmodel progs/v_shot.mdl held_scale 0.5 "
+		"held_offset 1.5 1 10 muzzle_offset 0 0 10 } "
+		"{ viewmodel progs/v_shot2.mdl held_scale 0.8 "
+		"held_offset -3.5 1 8.5 muzzle_offset 0 0 8.5 } "
+		"{ viewmodel progs/v_nail.mdl held_scale 0.5 "
+		"held_offset -5 3 15 muzzle_offset 0 0 15 } "
+		"{ viewmodel progs/v_nail2.mdl held_scale 0.5 "
+		"held_offset 0 3 19 muzzle_offset 0 0 19 } "
+		"{ viewmodel progs/v_rock.mdl held_scale 0.5 "
+		"held_offset 10 1.5 13 muzzle_offset 0 0 13 } "
+		"{ viewmodel progs/v_rock2.mdl held_scale 0.5 "
+		"held_offset 10 7 19 muzzle_offset 0 0 19 } "
+		"{ viewmodel progs/v_light.mdl held_scale 0.5 "
+		"held_offset 3 4 13 muzzle_offset 0 0 13 } "
+		"{ viewmodel progs/v_hammer.mdl held_scale 0.33 "
+		"held_offset -4 17.5 36 muzzle_offset 0 0 36 } "
+		"{ viewmodel progs/v_laserg.mdl held_scale 0.33 "
+		"held_offset 65 3.7 15 muzzle_offset 0 0 15 } "
+		"{ viewmodel progs/v_prox.mdl held_scale 0.5 "
+		"held_offset 10 1.5 13 muzzle_offset 0 0 13 } "
+		"{ viewmodel progs/v_lava.mdl held_scale 0.5 "
+		"held_offset -5 3 15 muzzle_offset 0 0 15 } "
+		"{ viewmodel progs/v_lava2.mdl held_scale 0.5 "
+		"held_offset 0 3 19 muzzle_offset 0 0 19 } "
+		"{ viewmodel progs/v_multi.mdl held_scale 0.5 "
+		"held_offset 10 1.5 13 muzzle_offset 0 0 13 } "
+		"{ viewmodel progs/v_multi2.mdl held_scale 0.5 "
+		"held_offset 10 7 19 muzzle_offset 0 0 19 } "
+		"{ viewmodel progs/v_plasma.mdl held_scale 0.5 "
+		"held_offset 3 4 13 muzzle_offset 0 0 13 } "
+		"{ viewmodel progs/v_axe2.mdl held_scale 0.33 "
+		"held_offset -3.5 34 41.5 muzzle_offset 0 0 41.5 }";
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 10 && file_free_count == 6);
-	AssertClassicProfile("progs/v_shot.mdl", 9.0f, 8.0f, 7.0f, 1.0f,
+	AssertADRootProfiles();
+	AssertClassicProfile("progs/v_axe.mdl", -4.0f, 24.0f, 37.0f,
+		0.33f, 0.0f, 0.0f, 37.0f);
+	AssertClassicProfile("progs/v_axe2.mdl", -3.5f, 34.0f, 41.5f,
+		0.33f, 0.0f, 0.0f, 41.5f);
+	fixture_file_contents =
+		"{ viewmodel progs/v_shot.mdl held_scale 0.6 "
+		"held_offset 9 8 7 muzzle_offset 6 5 4 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(file_load_count == 11 && file_free_count == 7);
+	AssertClassicProfile("progs/v_shot.mdl", 9.0f, 8.0f, 7.0f, 0.6f,
 		6.0f, 5.0f, 4.0f);
-	AssertClassicProfile("progs/v_shot3.mdl", -3.5f, 0.4f, 8.5f, 0.8f,
-		0.0f, 0.0f, 8.5f);
-	AssertClassicProfile("progs/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f,
-		0.25f, 0.0f, 0.0f, 41.0f);
 	/* q30's nail QuakeC uses self.origin + 16 up; rockets retain the
 	 * ordinary eight-forward source. */
 	{
@@ -429,7 +469,7 @@ int main(void)
 	strcpy(com_gamedir, "/fixtures/mjolnir");
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
-	assert(file_load_count == 11 && file_free_count == 6);
+	assert(file_load_count == 12 && file_free_count == 7);
 	AssertAD171AliasProfiles();
 	assert(!VR_WeaponCalibrationLookupHeld(
 		"progs/ad171/v_shot2.mdl", false, held, &held_scale));
@@ -452,14 +492,14 @@ int main(void)
 		"{ viewmodel progs/ad171/v_shot.mdl held_scale 0.6 "
 		"held_offset 12 13 14 muzzle_offset 2 3 4 }";
 	assert(VR_WeaponCalibrationReloadGame());
-	assert(file_load_count == 12 && file_free_count == 7);
+	assert(file_load_count == 13 && file_free_count == 8);
 	AssertClassicProfile("progs/ad171/v_shot.mdl", 12.0f, 13.0f, 14.0f,
 		0.6f, 2.0f, 3.0f, 4.0f);
 	AssertClassicProfile("progs/ad171/v_rock.mdl", -3.0f, 1.25f,
 		17.0f, 0.5f, 0.0f, 0.0f, 17.0f);
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
-	assert(file_load_count == 13 && file_free_count == 7);
+	assert(file_load_count == 14 && file_free_count == 8);
 	AssertClassicProfile("progs/ad171/v_shot.mdl", 1.5f, 1.7f, 17.5f,
 		0.33f, 0.0f, 0.0f, 17.5f);
 
@@ -534,6 +574,70 @@ int main(void)
 	strcpy(com_gamedir, "/fixtures/hwjam2");
 	assert(VR_WeaponCalibrationReloadGame());
 	AssertADRootProfiles();
+
+	/* Unauthored melee profiles require deliberate motion; authored speed
+	 * continues to take precedence over the safer default. */
+	strcpy(com_gamedir, "/fixtures/id1");
+	fixture_file_contents = NULL;
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(VR_WeaponCalibrationLookupMelee("progs/v_axe.mdl", &melee));
+	assert(fabsf(melee.speed - 1.25f) < 0.0001f);
+	assert(!melee.has_speed);
+	fixture_file_contents =
+		"{ viewmodel progs/v_axe.mdl melee_speed 0.5 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(VR_WeaponCalibrationLookupMelee("progs/v_axe.mdl", &melee));
+	assert(fabsf(melee.speed - 0.5f) < 0.0001f);
+	assert(melee.has_speed);
+
+	/* Legacy detection must never consume a partially customized classic
+	 * triple, including representably different values within save tolerance. */
+	strcpy(com_gamedir, "/fixtures/q30a1024");
+	fixture_file_contents =
+		"{ viewmodel progs/v_shot.mdl held_scale 0.5 "
+		"held_offset 1.5 1 10.00005 muzzle_offset 0 0 10 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	AssertClassicProfile("progs/v_shot.mdl", 1.5f, 1.0f, 10.00005f,
+		0.5f, 0.0f, 0.0f, 10.0f);
+	fixture_file_contents =
+		"{ viewmodel progs/v_shot.mdl held_scale 0.500002 "
+		"held_offset 1.5 1 10 muzzle_offset 0 0 10 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	AssertClassicProfile("progs/v_shot.mdl", 1.5f, 1.0f, 10.0f,
+		0.500002f, 0.0f, 0.0f, 10.0f);
+	fixture_file_contents =
+		"{ viewmodel progs/v_shot.mdl held_scale 0.5 "
+		"held_offset 1.5 1 10 muzzle_offset 0 0 10.00005 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	AssertClassicProfile("progs/v_shot.mdl", 1.5f, 1.0f, 10.0f,
+		0.5f, 0.0f, 0.0f, 10.00005f);
+	fixture_file_contents =
+		"{ viewmodel progs/v_shot.mdl held_scale 0.5 held_offset 1.5 1 10 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", false, held, &held_scale));
+	AssertVector(held, 1.5f, 1.0f, 10.0f);
+	assert(held_scale == 0.5f);
+	fixture_file_contents =
+		"{ viewmodel progs/v_shot.mdl held_scale 0.5 "
+		"held_offset 1.5 1 10 muzzle_offset 0 0 10 "
+		"enhanced_held_offset 11 12 13 enhanced_muzzle_offset 14 15 16 "
+		"melee 1 melee_speed 0.75 "
+		"muzzle_source_offset 2 3 4 muzzle_source_viewofs 0 }";
+	assert(VR_WeaponCalibrationReloadGame());
+	AssertClassicProfile("progs/v_shot.mdl", 1.5f, 1.7f, 17.5f,
+		0.33f, 0.0f, 0.0f, 17.5f);
+	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", true, held, &held_scale));
+	AssertVector(held, 11.0f, 12.0f, 13.0f);
+	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", true, muzzle));
+	AssertVector(muzzle, 14.0f, 15.0f, 16.0f);
+	assert(VR_WeaponCalibrationLookupMelee("progs/v_shot.mdl", &melee));
+	assert(melee.has_speed && melee.speed == 0.75f);
+	{
+		const vec3_t angles = {0.0f, 0.0f, 0.0f};
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_shot.mdl",
+			IT_SHOTGUN, angles, 16.0f, muzzle);
+		AssertVector(muzzle, 12.0f, -2.0f, 19.0f);
+	}
 
 	puts("VR weapon calibration reload fixture passed");
 	return 0;

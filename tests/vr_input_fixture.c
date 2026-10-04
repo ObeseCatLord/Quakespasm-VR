@@ -1313,6 +1313,26 @@ static void test_motion_ownership_and_tracking_loss (void)
 	frame.hands[0].profile = VRXR_PROFILE_INDEX;
 	motion_sample (&frame);
 	near_motion (fixture_turn_yaw, prior_turn - 2);
+
+	/* A tracking/focus interruption must not make left locomotion depend on
+	 * releasing grip. Its centered stick can rearm while button edges remain
+	 * gated, then deliver movement on the following deflection. */
+	frame.hands[0].stick[1] = 0;
+	frame.hands[1].stick[0] = 0;
+	frame.hands[0].pressed = VRXR_BUTTON_GRIP;
+	frame.focused = false;
+	motion_sample (&frame);
+	assert (!cl.pendingcmd.vr_pending_move_valid);
+	reset_events ();
+	frame.focused = true;
+	motion_sample (&frame);
+	motion_sample (&frame);
+	frame.hands[0].stick[1] = 1;
+	motion_sample (&frame);
+	assert (cl.pendingcmd.vr_pending_move_valid);
+	near_motion (cl.pendingcmd.vr_pending_move[0], 200);
+	assert (event_count == 0); /* held grip does not re-press native bindings */
+	frame.hands[0].pressed = 0;
 	fixture_frame = NULL;
 }
 

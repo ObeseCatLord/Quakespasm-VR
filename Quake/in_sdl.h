@@ -8,6 +8,7 @@ void	 IN_GyroSample (const float sample[3]);
 qboolean IN_HasGyro (void);
 void	 IN_BeginIgnoringMouseEvents (void);
 void	 IN_EndIgnoringMouseEvents (void);
+void     IN_WindowFocusChanged (qboolean focused);
 
 #ifdef USE_SDL3
 extern SDL_Gamepad *joy_active_controller;

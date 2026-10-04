@@ -154,13 +154,11 @@ void IN_SendKeyEvents (void)
 		case SDL_WINDOWEVENT:
 			if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
 			{
-				S_UnblockSound ();
-				VID_FocusGained ();
+				IN_WindowFocusChanged (true);
 			}
 			else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
 			{
-				S_BlockSound ();
-				VID_FocusLost ();
+				IN_WindowFocusChanged (false);
 			}
 			else if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
 			{

@@ -4474,7 +4474,8 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	 * makevectors call needs the full tracked basis for lateral spread. */
 	/* Paired weapons own their selected-hand basis and source at their pinned
 	 * adapters. Do not give their setup callbacks this generic pose. */
-	if (!scope->akimbo_pose_valid && SV_EnyoVectorIsFinite (ent->v.v_angle))
+	if (!previous && !scope->akimbo_invalidated && !scope->akimbo_pose_valid &&
+		SV_EnyoVectorIsFinite (ent->v.v_angle))
 	{
 		VectorCopy (ent->v.v_angle, scope->shot_angles);
 		scope->shot_basis_valid = true;

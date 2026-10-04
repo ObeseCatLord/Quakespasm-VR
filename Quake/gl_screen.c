@@ -1761,6 +1761,8 @@ typedef struct
 {
 	qboolean valid;
 	float world_from_ndc[16];
+	qboolean notify_valid;
+	float notify_world_from_ndc[16];
 } vr_text_popup_panel_t;
 
 static vr_text_popup_panel_t vr_text_popup_panel;
@@ -1994,6 +1996,7 @@ static void SCR_VRTextPopupPrepare (void)
 	float scale, canvas_scale;
 
 	vr_text_popup_panel.valid = false;
+	vr_text_popup_panel.notify_valid = false;
 	if (!vulkan_globals.stereo_active || !frame || !frame->should_render || !frame->focused ||
 		!frame->devices[0].valid || !frame->devices[0].tracked || frame->devices[0].kind != VRXR_DEVICE_HEAD ||
 		frame->devices[0].hand != -1 || key_dest != key_game || m_state != m_none ||
@@ -2032,6 +2035,28 @@ static void SCR_VRTextPopupPrepare (void)
 	}
 	vr_text_popup_panel.world_from_ndc[15] = 1.0f;
 	vr_text_popup_panel.valid = true;
+	/* Notify starts at the console canvas's top edge, not the menu centre.
+	 * Bound its physical width independently of eye resolution and place
+	 * that top edge just above the forward view. Keep console glyph aspect. */
+	if (vid.conwidth > 0 && vid.conheight > 0)
+	{
+		const float width = fminf (320.0f * vr_menu_scale.value, 64.0f);
+		const float height = width * (float)vid.conheight / vid.conwidth;
+		if (!isfinite (width) || !isfinite (height) || height <= 0.0f)
+			return;
+		memset (vr_text_popup_panel.notify_world_from_ndc, 0,
+			sizeof (vr_text_popup_panel.notify_world_from_ndc));
+		for (int i = 0; i < 3; ++i)
+		{
+			vr_text_popup_panel.notify_world_from_ndc[i] = right[i] * width * 0.5f;
+			vr_text_popup_panel.notify_world_from_ndc[4 + i] = down[i] * height * 0.5f;
+			vr_text_popup_panel.notify_world_from_ndc[8 + i] = normal[i];
+			vr_text_popup_panel.notify_world_from_ndc[12 + i] =
+				center[i] + up[i] * 8.0f + down[i] * height * 0.5f;
+		}
+		vr_text_popup_panel.notify_world_from_ndc[15] = 1.0f;
+		vr_text_popup_panel.notify_valid = true;
+	}
 }
 
 static void SCR_DrawTextPopupCenterString (cb_context_t *cbx)
@@ -2045,10 +2070,10 @@ static void SCR_DrawTextPopupCenterString (cb_context_t *cbx)
 
 static void SCR_DrawTextPopupConsole (cb_context_t *cbx)
 {
-	if (vr_text_popup_panel.valid)
-		GL_BeginUIPanel (cbx, vr_text_popup_panel.world_from_ndc);
+	if (vr_text_popup_panel.notify_valid)
+		GL_BeginUIPanel (cbx, vr_text_popup_panel.notify_world_from_ndc);
 	SCR_DrawConsole (cbx);
-	if (vr_text_popup_panel.valid)
+	if (vr_text_popup_panel.notify_valid)
 		GL_EndUIPanel (cbx);
 }
 

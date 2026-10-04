@@ -318,6 +318,7 @@ struct State {
 	XrView views[kViews];
 	XrFrameState frameState;
 	XrSessionState sessionState;
+	XrResult lastActionSync;
 	XrReferenceSpaceType appSpaceType, pendingReferenceType;
 	XrTime pendingReferenceTime;
 	XrEnvironmentBlendMode blend;
@@ -335,7 +336,7 @@ struct State {
 	State() : loader(0), log(0), xr(), useVulkan(false), legacyVulkan(false), localFloorSupported(false), instance(XR_NULL_HANDLE), system(0), session(XR_NULL_HANDLE),
 		appSpace(XR_NULL_HANDLE), viewSpace(XR_NULL_HANDLE), handSpace(), gazeSpace(XR_NULL_HANDLE), actions(XR_NULL_HANDLE), gazeActions(XR_NULL_HANDLE), action(), gazeAction(XR_NULL_HANDLE), trackerAction(XR_NULL_HANDLE),
 		handPath(), chain(), trackers(), trackerSources(), trackerVersion(0), htcxSupported(false), trackersDirty(false), xdevList(XR_NULL_HANDLE), views(), frameState(),
-		sessionState(XR_SESSION_STATE_IDLE), appSpaceType(XR_REFERENCE_SPACE_TYPE_LOCAL), pendingReferenceType(XR_REFERENCE_SPACE_TYPE_LOCAL),
+		sessionState(XR_SESSION_STATE_IDLE), lastActionSync(XR_SUCCESS), appSpaceType(XR_REFERENCE_SPACE_TYPE_LOCAL), pendingReferenceType(XR_REFERENCE_SPACE_TYPE_LOCAL),
 		pendingReferenceTime(0), blend(XR_ENVIRONMENT_BLEND_MODE_OPAQUE), initialized(false), sessionRunning(false), terminal(false),
 		frameBegun(false), shouldRender(false), stopReason(VRXR_STOP_NONE), discoveredGaze(false), discoveredHtcx(false), discoveredXdev(false), foveationSupported(false), foveationEyeSupported(false), vulkanSwapchainImageFlagsSupported(false), foveationFixedAvailable(false), foveationEyeAvailable(false), foveationOff(XR_NULL_HANDLE), foveationFixed(XR_NULL_HANDLE), foveationEye(XR_NULL_HANDLE), foveationEyePolicy(), gazeSupported(false), gazeEnabled(false), trackerEnabled(false), xdevSupported(false), frameSupported(false), maskSupported(false),
 		referenceChanged(false), referencePending(false), runtime(), systemName() {}
@@ -989,6 +990,10 @@ static bool locate_frame(vrxr_frame_t *frame) {
 	XrActiveActionSet active[]={{g.actions,XR_NULL_PATH},{g.gazeActions,XR_NULL_PATH}};
 	XrActionsSyncInfo sync={XR_TYPE_ACTIONS_SYNC_INFO}; sync.countActiveActionSets=g.gazeEnabled && g.gazeSupported && g.gazeActions ? 2 : 1; sync.activeActionSets=active;
 	XrResult synced=g.xr.SyncActions(g.session,&sync);
+	if (synced!=g.lastActionSync) {
+		sayf("xrSyncActions focus transition",synced);
+		g.lastActionSync=synced;
+	}
 	const bool focused=synced==XR_SUCCESS && g.sessionState==XR_SESSION_STATE_FOCUSED;
 	if (synced!=XR_SUCCESS && synced!=XR_SESSION_NOT_FOCUSED) { ok("xrSyncActions",synced); return false; }
 	frame->focused=focused;
@@ -1101,6 +1106,12 @@ static void poll_events() {
 		if (event.type!=XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) continue;
 		XrEventDataSessionStateChanged *state=reinterpret_cast<XrEventDataSessionStateChanged*>(&event);
 		if(!g.session || state->session!=g.session) continue;
+		if (g.sessionState!=state->state) {
+			char message[128];
+			std::snprintf(message,sizeof(message),"OpenXR: session state %d -> %d (runtime time %lld)",
+				(int)g.sessionState,(int)state->state,(long long)state->time);
+			say(message);
+		}
 		g.sessionState=state->state;
 		if (state->state==XR_SESSION_STATE_READY && !g.sessionRunning && !g.terminal) { XrSessionBeginInfo begin={XR_TYPE_SESSION_BEGIN_INFO}; begin.primaryViewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO; if(ok("xrBeginSession",g.xr.BeginSession(g.session,&begin))) g.sessionRunning=true; else g.terminal=true; }
 		else if (state->state==XR_SESSION_STATE_STOPPING && g.sessionRunning && !g.terminal) { if(!ok("xrEndSession",g.xr.EndSession(g.session))) g.terminal=true; g.sessionRunning=false; }

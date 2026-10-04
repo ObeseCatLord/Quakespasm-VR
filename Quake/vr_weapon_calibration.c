@@ -2951,6 +2951,54 @@ static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 		VR_WeaponCalibrationApplyAD171Aliases();
 }
 
+/* q30's legacy profile contains complete generic classic triples for models
+ * whose loose assets are byte-identical to AD's. Ignore only an entire exact
+ * triple on a path with an AD profile so q30 inherits AD's matching defaults.
+ * Other paths and any changed triple remain authored. Never rewrite the file. */
+static void VR_WeaponCalibrationFilterLegacyQ30GenericDefaults(
+	vr_weapon_schema_entry_t *entries, size_t count)
+{
+	size_t index;
+
+	if (!VR_WeaponCalibrationGameIs("q30a1024"))
+		return;
+	for (index = 0; index < count; ++index)
+	{
+		vr_weapon_schema_entry_t *entry = &entries[index];
+		size_t generic_index;
+
+		for (generic_index = 0;
+			 generic_index < countof(vr_stock_classic_fallbacks);
+			 ++generic_index)
+		{
+			const vr_weapon_schema_entry_t *generic =
+				&vr_stock_classic_fallbacks[generic_index];
+			size_t ad_index;
+
+			if (strcmp(entry->viewmodel_path, generic->viewmodel_path))
+				continue;
+			for (ad_index = 0; ad_index < countof(vr_ad_weapon_fallbacks);
+				 ++ad_index)
+				if (!strcmp(entry->viewmodel_path,
+					vr_ad_weapon_fallbacks[ad_index].viewmodel_path))
+					break;
+			if (ad_index == countof(vr_ad_weapon_fallbacks) ||
+				!entry->has_held_offset || !entry->has_held_scale ||
+				!entry->has_muzzle_offset ||
+				!VectorCompare(entry->held_offset, generic->held_offset) ||
+				entry->held_scale != generic->held_scale ||
+				entry->muzzle_offset[0] != 0.0f ||
+				entry->muzzle_offset[1] != 0.0f ||
+				entry->muzzle_offset[2] != generic->held_offset[2])
+				break;
+			entry->has_held_offset = false;
+			entry->has_held_scale = false;
+			entry->has_muzzle_offset = false;
+			break;
+		}
+	}
+}
+
 qboolean VR_WeaponCalibrationReloadGame(void)
 {
 	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
@@ -2976,6 +3024,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 	Mem_Free(file);
 	if (!parsed)
 		return false;
+	VR_WeaponCalibrationFilterLegacyQ30GenericDefaults(entries, count);
 
 	applied = VR_WeaponCalibrationApplySchema(entries, count);
 	if (!applied)
@@ -3023,7 +3072,7 @@ qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 	for (size_t i = 0; i < sizeof(default_melee_models) / sizeof(default_melee_models[0]); ++i)
 		if (!strcmp(default_name, default_melee_models[i]))
 			out->enabled = true;
-	out->speed = 1.0f;
+	out->speed = 1.25f;
 	out->ready_frame = 0;
 	slot = VR_FindCalibrationSlot(model_name);
 	if (slot >= 0)

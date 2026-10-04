@@ -143,12 +143,10 @@ void IN_SendKeyEvents (void)
 		switch (event.type)
 		{
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
-			S_UnblockSound ();
-			VID_FocusGained ();
+			IN_WindowFocusChanged (true);
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_LOST:
-			S_BlockSound ();
-			VID_FocusLost ();
+			IN_WindowFocusChanged (false);
 			break;
 		// data1/data2 are in pixels, matching vid.width/height, and this also
 		// fires when only the display scale changes
