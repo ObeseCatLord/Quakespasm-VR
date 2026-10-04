@@ -62,3 +62,18 @@ the existing R2 owner: enforce native architecture, exact inventory equality,
 source-archive-bound wrapper/notices, and hash-verified immutable revision
 objects before uploading. Manifest publication remains last, after public-byte
 verification. No stable/main-channel object is written by the 2.0 publisher.
+
+## Completed compute check
+
+The FP32 single-sample shared shader was executed on the RTX 4090 against a
+CPU reference for both RG16F channels at all five mip levels. The 32x32,
+33x19, 17x17 and 6x16 cases passed, including missing-depth sentinels, trailing
+full-resolution pixels and partial tiles. Finite results allow one half-float
+ULP for division/contraction; sentinels must match exactly. Scene inputs use
+power-of-two reciprocal depths to avoid ambiguous reference rounding.
+
+`tests/ssao_shared_mip_vulkan_fixture.c` documents the compile/run commands.
+All eight optimized/shared FP32/FP16 and single-sample/MSAA wrappers compile
+and pass SPIR-V validation. Shared variants contain no subgroup instructions.
+This does not establish headset appearance, FP16/MSAA readback equivalence or
+performance, and does not resolve the earlier intermittent gameplay crashes.

@@ -73,11 +73,17 @@ installed list, whose opening refresh discovers installed add-ons.
 
 ## Verification
 
-No build, runtime, network, or deployment work is authorized. Verify by
-source/diff inspection that fallback and enhanced main-menu selections both
+The menu worker performed source/diff checks; final builds, runtime checks and
+deployment are handled by the integrating agent under the user's request.
+Verify that fallback and enhanced main-menu selections both
 reach `M_Menu_Mods_f`; that this function still calls
 `M_Mods_RefreshInstalled`/`Modlist_Rebuild`; that Dynamic Lights toggles only
 `r_dynamic`; that AO availability is determined only by `R_SSAOSupported()`;
 that the three private SSAO cvars are read/written by name at the menu
 boundary; and that foveation transitions write only `vr_foveation` while
 leaving renderer policy untouched.
+
+Graphics pages can be changed through the clickable footer, Tab/Page keys, or
+native controller stick clicks. Slider dragging resolves the current page's
+actual option, including AO Radius and Strength. General settings retain their
+existing defaults; anisotropy now offers explicit levels up to the device limit.
