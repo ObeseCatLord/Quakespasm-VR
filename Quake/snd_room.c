@@ -220,7 +220,29 @@ void SAR_Stats(sa_room_t *r, sa_room_stats_t *stats)
     if (!r) return;
     sa_spin_lock(&r->lock); *stats = r->stats; sa_spin_unlock(&r->lock);
 }
-void SAR_Render(sa_room_t *r, const float *sfx, const float *voice, float *stereo,
+static int finite_buffer(const IPLAudioBuffer *buffer)
+{
+    int channel, i;
+    for (channel = 0; channel < buffer->numChannels; ++channel)
+        for (i = 0; i < buffer->numSamples; ++i)
+            if (!isfinite(buffer->data[channel][i])) return 0;
+    return 1;
+}
+/* Stage a complete branch before changing the candidate. A late overflow must
+ * not leave a partially mixed block, or prevent the other branch from playing. */
+static int add_wet(float *candidate, const float *left, const float *right, const float *gain)
+{
+    float addition[SA_BLOCK * 2];
+    int i;
+    for (i = 0; i < SA_BLOCK; ++i) {
+        addition[2*i] = candidate[2*i] + gain[i] * left[i];
+        addition[2*i+1] = candidate[2*i+1] + gain[i] * right[i];
+        if (!isfinite(addition[2*i]) || !isfinite(addition[2*i+1])) return 0;
+    }
+    memcpy(candidate, addition, sizeof(addition));
+    return 1;
+}
+unsigned SAR_Render(sa_room_t *r, const float *sfx, const float *voice, float *stereo,
     const sa_listener_t *listener, const sa_settings_t *settings)
 {
     float *amb[] = {r->amb[0], r->amb[1], r->amb[2], r->amb[3]};
@@ -229,18 +251,22 @@ void SAR_Render(sa_room_t *r, const float *sfx, const float *voice, float *stere
     IPLAudioBuffer decoded = {2, SA_BLOCK, lr}, voice_out = {1, SA_BLOCK, v};
     IPLReflectionEffectParams params;
     float silence[SA_BLOCK] = {0};
+    float gain[SA_BLOCK];
     float *input_channel;
     IPLAmbisonicsDecodeEffectParams decode = {0};
     int i, sfx_active = 0, voice_active = 0, new_result = 0, mode = settings->room_mode;
+    IPLReflectionEffect effect = mode == 1 ? r->parametric : r->hybrid;
+    int sfx_valid = 1, voice_valid = 1;
+    unsigned faults = 0;
     if (sa_spin_try_lock(&r->lock)) {
         r->current = r->published; r->ready = r->stats.ready;
         new_result = r->consumed_run != r->stats.runs;
         r->consumed_run = r->stats.runs;
         sa_spin_unlock(&r->lock);
     }
-    if (!r->ready) return;
+    if (!r->ready) return 0;
     if (mode != r->mode) { SAR_Reset(r, 0); r->mode = mode; }
-    if (mode == 0 || settings->reverb <= 0) { SAR_Reset(r, 0); return; }
+    if (mode == 0 || settings->reverb <= 0) { SAR_Reset(r, 0); return 0; }
     for (i = 0; i < SA_BLOCK; ++i) {
         if (sfx[i] != 0) sfx_active = 1;
         if (voice[i] != 0) voice_active = 1;
@@ -259,29 +285,60 @@ void SAR_Render(sa_room_t *r, const float *sfx, const float *voice, float *stere
     if (new_result && mode == 1) {
         input_channel = silence;
         iplReflectionEffectApply(r->hybrid, &params, &input, &output, NULL);
+        if (!finite_buffer(&output)) {
+            faults |= SAR_NONFINITE_HANDOFF;
+            iplReflectionEffectReset(r->hybrid);
+        }
         memset(r->amb, 0, sizeof(r->amb));
         input_channel = (float *)sfx;
     }
     if (sfx_active || r->sfx_tail || new_result) {
-        IPLReflectionEffect effect = mode == 1 ? r->parametric : r->hybrid;
         params.type = mode == 1 ? IPL_REFLECTIONEFFECTTYPE_PARAMETRIC : IPL_REFLECTIONEFFECTTYPE_HYBRID;
         r->sfx_tail = ((sfx_active || new_result) ? iplReflectionEffectApply(effect, &params, &input, &output, NULL) :
             iplReflectionEffectGetTail(effect, &output, NULL)) == IPL_AUDIOEFFECTSTATE_TAILREMAINING;
+    }
+    /* Validate all four channels before feeding the decoder. Reset requests
+     * do not guarantee that every SDK IIR history has recovered; repeat these
+     * checks on every block, including tails and the silent IR handoff. */
+    if (!finite_buffer(&output)) {
+        faults |= SAR_NONFINITE_SFX;
+        iplReflectionEffectReset(effect); r->sfx_tail = 0;
+        sfx_valid = 0;
     }
     decode.order = 1; decode.hrtf = r->hrtf; decode.binaural = settings->hrtf ? IPL_TRUE : IPL_FALSE;
     decode.orientation.right = direction(listener->right);
     decode.orientation.up = direction(listener->up);
     decode.orientation.ahead = direction(listener->forward);
-    iplAmbisonicsDecodeEffectApply(r->decode, &decode, &output, &decoded);
+    if (sfx_valid) {
+        iplAmbisonicsDecodeEffectApply(r->decode, &decode, &output, &decoded);
+        if (!finite_buffer(&decoded)) {
+            faults |= SAR_NONFINITE_DECODE;
+            iplAmbisonicsDecodeEffectReset(r->decode);
+            sfx_valid = 0;
+        }
+    }
     input_channel = (float *)voice;
     params.type = IPL_REFLECTIONEFFECTTYPE_PARAMETRIC;
     for (i = 0; i < 3; ++i) params.reverbTimes[i] = fminf(1.2f, r->rt60[i] * .65f);
     if (voice_active || r->voice_tail)
         r->voice_tail = (voice_active ? iplReflectionEffectApply(r->voice_effect, &params, &input, &voice_out, NULL) :
             iplReflectionEffectGetTail(r->voice_effect, &voice_out, NULL)) == IPL_AUDIOEFFECTSTATE_TAILREMAINING;
+    if (!finite_buffer(&voice_out)) {
+        faults |= SAR_NONFINITE_VOICE;
+        iplReflectionEffectReset(r->voice_effect); r->voice_tail = 0;
+        voice_valid = 0;
+    }
     for (i = 0; i < SA_BLOCK; ++i) {
         r->wet_gain += .000417f * (bounded(settings->reverb, 0, 1) - r->wet_gain);
-        stereo[2*i] += r->wet_gain * (r->left[i] + r->voice[i]);
-        stereo[2*i+1] += r->wet_gain * (r->right[i] + r->voice[i]);
+        gain[i] = r->wet_gain;
     }
+    if (sfx_valid && !add_wet(stereo, r->left, r->right, gain)) {
+        faults |= SAR_NONFINITE_SFX;
+        iplReflectionEffectReset(effect); r->sfx_tail = 0;
+    }
+    if (voice_valid && !add_wet(stereo, r->voice, r->voice, gain)) {
+        faults |= SAR_NONFINITE_VOICE;
+        iplReflectionEffectReset(r->voice_effect); r->voice_tail = 0;
+    }
+    return faults;
 }

@@ -522,8 +522,10 @@ static void Spatial_Status_f(void)
 		room.failed ? ", simulation failed" : "", room.triangles,
 		(unsigned long long)room.runs,
 		(unsigned long long)spatial_occlusion_traces, SPATIAL_OCCLUSION_TRACE_BUDGET);
-	Con_Printf("Audio: %d active sources, %llu underrun frames, peak %.3f\n",
-		stats.active, (unsigned long long)stats.underrun_frames, stats.output_peak);
+	Con_Printf("Audio: %d active sources, %llu underrun frames, peak %.3f; room_nonfinite_blocks %llu; binaural_nonfinite_blocks %llu\n",
+		stats.active, (unsigned long long)stats.underrun_frames, stats.output_peak,
+		(unsigned long long)stats.room_nonfinite_blocks,
+		(unsigned long long)stats.binaural_nonfinite_blocks);
 }
 
 void Spatial_Register(void)

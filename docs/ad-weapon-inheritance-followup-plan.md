@@ -98,7 +98,7 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
   tests/vr_ad_calibration_fixture.c Quake/vr_weapon_calibration.c \
   Quake/vr_weapon_schema.c Quake/vr_locomotion.c Quake/mathlib.c \
-  Quake/common.c Quake/sys_sdl.c \
+  Quake/common.c Quake/sys_sdl.c Quake/strlcpy.c \
   -Wl,--gc-sections -Wl,--wrap=COM_LoadFile -Wl,--wrap=Sys_FileRead \
   $(pkg-config --cflags --libs sdl3) -lm -o /tmp/vr-ad-calibration-fixture
 /tmp/vr-ad-calibration-fixture "$AD_FIXTURE_BASEDIR"

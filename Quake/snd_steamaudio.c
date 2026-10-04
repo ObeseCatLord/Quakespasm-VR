@@ -88,6 +88,20 @@ static void IPLCALL sa_free(void *ptr)
 }
 
 static float clamp01(float v) { return !isfinite(v) || v < 0 ? 0 : v > 1 ? 1 : v; }
+/* The SDK requires a unit direction, even for a dry source/HRTF-off block.
+ * A startup/invalidation pose can project onto a zero listener basis. */
+static IPLVector3 unit_direction(IPLVector3 v)
+{
+    double length = sqrt((double)v.x * v.x + (double)v.y * v.y + (double)v.z * v.z);
+    if (!isfinite(length) || length <= 0.000001) {
+        v.x = v.y = 0; v.z = -1;
+    } else {
+        v.x = (float)(v.x / length);
+        v.y = (float)(v.y / length);
+        v.z = (float)(v.z / length);
+    }
+    return v;
+}
 static void reset_filters(sa_playback_t *p)
 {
     p->radio_gain = p->radio_mix = p->obstruction = p->envelope = 0;
@@ -154,6 +168,7 @@ sa_renderer_t *SA_Create(int sources, int streams)
     r->listener.forward[0] = 1;
     r->listener.right[1] = -1;
     r->listener.up[2] = 1;
+    r->render_listener = r->listener;
     return r;
 fail:
     SA_Destroy(r);
@@ -250,6 +265,18 @@ void SA_SetSource(sa_renderer_t *r, int index, const sa_source_t *source)
 }
 void SA_SetListener(sa_renderer_t *r, const sa_listener_t *listener)
 {
+    double forward_length2 = 0, right_length2 = 0, up_length2 = 0;
+    int i;
+    /* Retain the initialized/last valid pose, including its timestamp. This
+     * owner also supplies room simulation and the callback's decode basis. */
+    for (i = 0; i < 3; ++i) {
+        if (!isfinite(listener->origin[i]) || !isfinite(listener->forward[i]) ||
+            !isfinite(listener->right[i]) || !isfinite(listener->up[i])) return;
+        forward_length2 += (double)listener->forward[i] * listener->forward[i];
+        right_length2 += (double)listener->right[i] * listener->right[i];
+        up_length2 += (double)listener->up[i] * listener->up[i];
+    }
+    if (forward_length2 <= 1e-12 || right_length2 <= 1e-12 || up_length2 <= 1e-12) return;
     sa_spin_lock(&r->control_lock); r->listener = *listener; sa_spin_unlock(&r->control_lock);
 }
 void SA_SetSettings(sa_renderer_t *r, const sa_settings_t *settings)
@@ -343,9 +370,28 @@ int SA_WriteMusic(sa_renderer_t *r, const float *stereo, int frames)
     return i;
 }
 
+/* Commit a whole source only if gain, blend and addition stay finite. */
+static int mix_source(sa_renderer_t *r, const sa_playback_t *p, float l, float rr, float spatial)
+{
+    float candidate[SA_BLOCK * 2];
+    int i;
+    for (i = 0; i < SA_BLOCK; ++i) {
+        float t = fminf(1, (i + 1) / 64.0f);
+        float h = p->spatial + (spatial - p->spatial) * t;
+        float gl = p->left + (l - p->left) * t, gr = p->right + (rr - p->right) * t;
+        candidate[2*i] = r->mixed[2*i] +
+            (r->left[i] * h + r->mono[i] * (1 - h)) * gl + r->radio_pcm[i];
+        candidate[2*i+1] = r->mixed[2*i+1] +
+            (r->right[i] * h + r->mono[i] * (1 - h)) * gr + r->radio_pcm[i];
+        if (!isfinite(candidate[2*i]) || !isfinite(candidate[2*i+1])) return 0;
+    }
+    memcpy(r->mixed, candidate, sizeof(candidate));
+    return 1;
+}
+
 static void render_block(sa_renderer_t *r)
 {
-    int s, i, active = 0;
+    int s, i, active = 0, binaural_nonfinite = 0;
     uint64_t start = SDL_GetPerformanceCounter();
     float *in_channels[] = {r->mono}, *out_channels[] = {r->left, r->right};
     IPLAudioBuffer in = {1, SA_BLOCK, in_channels}, out = {2, SA_BLOCK, out_channels};
@@ -418,6 +464,7 @@ static void render_block(sa_renderer_t *r)
             params.direction.y += delta[i] * r->render_listener.up[i] / distance;
             params.direction.z -= delta[i] * r->render_listener.forward[i] / distance;
         } else params.direction.z = -1;
+        params.direction = unit_direction(params.direction);
         pan = params.direction.x;
         gain = c->gain;
         if (c->kind == SA_VOICE) {
@@ -467,18 +514,26 @@ static void render_block(sa_renderer_t *r)
         /* Maintain filter history even in A/B panning mode. */
         if (supplied) p->tail = iplBinauralEffectApply(p->effect, &params, &in, &out) == IPL_AUDIOEFFECTSTATE_TAILREMAINING;
         else p->tail = iplBinauralEffectGetTail(p->effect, &out) == IPL_AUDIOEFFECTSTATE_TAILREMAINING;
+        for (i = 0; i < SA_BLOCK; ++i)
+            if (!isfinite(r->left[i]) || !isfinite(r->right[i])) break;
         l = gain; rr = gain;
         if (spatial && !r->render_settings.hrtf) {
             float separation = c->kind == SA_VOICE ? 0.5f : 1.0f;
             l *= 1 - separation * pan; rr *= 1 + separation * pan;
         }
         spatial *= r->render_settings.hrtf != 0;
-        for (i = 0; i < SA_BLOCK; ++i) {
-            float t = fminf(1, (i + 1) / 64.0f);
-            float h = p->spatial + (spatial - p->spatial) * t;
-            float gl = p->left + (l - p->left) * t, gr = p->right + (rr - p->right) * t;
-            r->mixed[2 * i] += (r->left[i] * h + r->mono[i] * (1 - h)) * gl + r->radio_pcm[i];
-            r->mixed[2 * i + 1] += (r->right[i] * h + r->mono[i] * (1 - h)) * gr + r->radio_pcm[i];
+        if (i < SA_BLOCK || !mix_source(r, p, l, rr, spatial)) {
+            binaural_nonfinite = 1;
+            iplBinauralEffectReset(p->effect); p->tail = 0;
+            /* Replace the whole source block before blending: NaN * 0 is
+             * still NaN when HRTF or spatial blend is disabled. The mono
+             * side of that blend must also be finite on this fallback path. */
+            for (i = 0; i < SA_BLOCK; ++i) {
+                float dry = isfinite(r->mono[i]) ? r->mono[i] : 0;
+                r->mono[i] = r->left[i] = r->right[i] = dry;
+            }
+            /* If upstream mono/controls also overflow, retain healthy mix. */
+            (void)mix_source(r, p, l, rr, spatial);
         }
         p->left = l; p->right = rr; p->spatial = spatial;
         ++active;
@@ -500,9 +555,9 @@ static void render_block(sa_renderer_t *r)
     /* World geometry and simulation are owned by the room worker. The audio
      * callback consumes only its latest bounded effect parameters. Music is
      * added afterward so it remains dry, matching the source mixer. */
-    if (r->room)
-        SAR_Render(r->room, r->room_send, r->voice_send, r->mixed,
-            &r->render_listener, &r->render_settings);
+    if (r->room && SAR_Render(r->room, r->room_send, r->voice_send, r->mixed,
+            &r->render_listener, &r->render_settings))
+        ++r->stats.room_nonfinite_blocks;
     {
         sa_ring_t *q = &r->music;
         int read = sa_atomic_get(&q->read), write = sa_atomic_get(&q->write);
@@ -519,6 +574,7 @@ static void render_block(sa_renderer_t *r)
         if (v > 1 || v < -1) { ++r->stats.clipped; v = fmaxf(-1, fminf(1, v)); }
         r->mixed[i] = v;
     }
+    if (binaural_nonfinite) ++r->stats.binaural_nonfinite_blocks;
     r->stats.active = active; ++r->stats.blocks;
     {
         uint64_t ticks = SDL_GetPerformanceCounter() - start;
