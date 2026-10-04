@@ -4151,3 +4151,33 @@ maximum byte extents and reserved sentinels. Ordinary public compact bytes stay
 unchanged; out-of-range public upper extents saturate, while private packets
 use their already-supported32-bit packed hull format. Neither runner builds or
 modifies the prepared graph or installed game assets/configuration.
+
+## Peril original weapon calibration and native akimbo
+
+`run_peril_weapons_native.py` reads licensed installed Peril assets without
+changing their configuration. It checks all20 calibration rows and override
+precedence, compares both split SMGs with an independent byte-copy oracle under
+ASan/UBSan, and runs the original QC through the production scoped weapon
+thinker. The native firing check covers all eight paired animation frames with
+autoaim on/off, body/basis restoration, ammo/cadence, stale/invalid/nested/
+relocated pose rejection, BSP muzzle clamping, target correction and desktop
+NG/SNG fallback. It requires a Debug binary with symbols and GDB.
+
+```sh
+python3 tests/run_peril_weapons_native.py --base /path/to/licensed/game-root \
+  --binary /path/to/debug/vkquake --output-dir /tmp/peril-weapons-results
+```
+
+This qualifies native alternating controller-separated NG/SMG firing; it does
+not invent independently scheduled triggers or a second single SNG. Ready-pose
+numeric calibration does not establish physical headset comfort or animation
+appearance. No mod payload is committed.
+
+## Numbered-pack filename case
+
+`run_numbered_pack_case_native.py --build-dir /path/to/prepared-debug` runs
+the production pack resolver with the native platform enumerator against
+synthetic filenames. It verifies uppercase/mixed case, exact lowercase priority,
+deterministic duplicates, directories, absent numbering and bounded outputs.
+The resolver policy is ported from the inherited OpenVR implementation;
+case-sensitive loose-file and pack-member lookup remain unchanged.

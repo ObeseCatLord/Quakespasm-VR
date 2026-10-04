@@ -233,8 +233,8 @@ initial ready-pose measurements, assume original Peril assets/default ordinary
 muzzle draw settings, and do not claim those headset checks. Single SNG stays
 single; its eight model frames versus QC weaponframe 1..8 retains the native
 renderer fallback. Main owns full builds; F10 investigation was canceled after the user confirmed
-its quit binding is correct. No deployment,
-commit, installed configuration/asset write, graphics reset or nested agent.
+its quit binding is correct. The worker performed no deployment, commit,
+installed configuration/asset write, graphics reset or nested delegation.
 
 ## Astra final design review disposition
 
@@ -252,6 +252,6 @@ was identified. Main inspected its load-bearing source claims.
 | Invalidate a previously selected cached muzzle through real setorigin | Adopted; existing relocation proof extended |
 
 Per-frame callback checks alone are not evidence of uninterrupted native
-input-to-animation scheduling; the new
-sequence passes with native first-shot and scheduled-shot hand origins, 0.1s
-cadence, release/repress, ammo exhaustion and scoped restoration. Physical-headset appearance remains user qualification.
+input-to-animation scheduling. The new sequence passes with native first-shot
+and scheduled-shot hand origins, 0.1s cadence, release/repress, ammo exhaustion
+and scoped restoration. Physical-headset appearance remains user qualification.

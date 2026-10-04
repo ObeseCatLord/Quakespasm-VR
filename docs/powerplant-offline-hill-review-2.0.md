@@ -6,10 +6,10 @@ Goal: fix sluggish uphill movement both offline desktop and networked without re
 
 | Fact | Evidence / location |
 |---|---|
-| Checkout | /home/obesecatlord/Documents/quakespasmvr/quakespasm-2.0, branch2.0 |
-| Assets | /home/obesecatlord/Windows/Games/quakespasm_straight/peril3.0/maps/powerplant.bsp, actual installed progs |
+| Checkout | the 2.0 engine checkout, branch2.0 |
+| Assets | Straight/peril3.0/maps/powerplant.bsp, actual installed progs |
 | Existing change | Quake/pmove.c PM_CategorizePosition only protects rising QC takeoff after QC clears support; Quake/sv_phys.c private WALK seed retains post-QC support only |
-| Diagnostic root | /home/obesecatlord/FastGames/qsvr-slope-fix-2tig8eqv |
+| Diagnostic root | the external hotfix diagnostic root |
 | Actual geometry comparison | native-slope.c, imported-slope.c, build-native-slope.py, native-comparison.txt (old compiled PMove) and native-comparison-current.txt (current source rebuilt PMove) |
 | Debug live local attempt | offline-peril/game.log, peril-errors.log; renderer initialized normally, no GPU reset |
 | Linux portable + ARM | Two changed movement objects built successfully, deployment held pending this review |
@@ -62,3 +62,38 @@ The required running case reproduced the predicted gap: real Honey QC/BSP, conti
 After implementation, Honey real-QC/BSP matrix passes at4/8/16ms, including both rest and continuously moving uphill landing/rejump: two accepted QC jumps, true same-slope landing, second airborne launch and release. Exact generic QC jump trajectories remain separately reported; these captured transport tests are not physical headset evidence.
 
 The actual isolated local desktop Powerplant run reaches signon, records selection=true/currentnative=true (weapon2 invokes the existing conservative q30 native fallback), reaches~315units/sec grounded uphill and then rises on jump. This proves native preservation, not q30 shared solver dispatch. The identifier q30 is misleading here: its existing exactSHA also matches installed Perilpak2. Asset priority was independently checked; no assets/configs changed.
+
+## Final integrated qualification
+
+The later actual desktop local Powerplant run switches through native impulse1
+to weapon4096, then records selection=true/currentnative=false throughout the
+uphill run, jump and landing. Horizontal speed reaches320; the player climbs
+from Z1389 to1492 and finishes grounded with positive uphill Z velocity88.34.
+This proves the selected shared solver in an initialized offline client/server
+session, separately from the earlier weapon2 native fallback. Evidence:
+`offline-peril/hill-result7.json` and `hill-game7.log` in the diagnostic root.
+No installed game assets/configuration or GPU services were modified.
+
+The combined Debug engine passes Peril native paired firing and the actual
+solid-bound writer/decoder regression, including compact limits and private
+extended dimensions. Movement fixes are engine-wide support-state corrections;
+there are no new mod-specific slope rules.
+
+Additional requested-mod qualification uses the stable combined movement
+graph: q30a1024 and AD pass the existing actual-QC real-floor/jump/landing/
+release/rejump fixture, with maximum selected/native displacement0.659554;
+Alkaline alk_caustic and QBJ3 start pass dry flat/uphill/downhill parity and
+both standing/running uphill landing/rejump, each with two authored launches
+and zero jump-contract errors. QBJ3's scratch fixture retains a living spawned
+client instead of assuming an immediate respawn after kill; production is
+unchanged. The generic AD bootstrap is unsupported, so AD uses its exact
+existing q30 fixture. Evidence is under diagnostic `mod-final/report.txt`.
+
+These are captured-delivery/component tests, not physical input or UDP timing.
+AD/q30 stairs and uphill geometry are not independently covered by those
+fixtures; Powerplant covers the same selected q30 policy on actual slopes.
+Generic-QC airborne trajectory differences remain separately reported; the
+patch corrects support and jump acceptance rather than claiming a new exact
+predictor. Actual final integrated Honey UDP also passes client movement,
+firing, between-send replay and zero settled owner error. Prepared VR command
+uphill landing/rejump and actual-water positive-QC swim impulses pass.
