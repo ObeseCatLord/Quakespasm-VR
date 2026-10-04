@@ -5,6 +5,7 @@ gfx/crosshair-001.png
 gfx/crosshair-021.png
 gfx/crosshair-148.png
 gfx/mainmenu2.lmp
+gfx/menumods.lmp
 gfx/p_mods.png
 gfx/sp_maps.lmp
 gfx/p_skill.lmp
