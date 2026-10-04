@@ -8628,7 +8628,9 @@ static qboolean SV_VRContactProcessCommand (client_t *client, edict_t *ent,
 							selected_axe ?
 							SV_VRStockAxeContactProfile () != VR_WEAPON_CONTACT_PROFILE_NONE :
 							(direct_subtype == SV_VR_DIRECT_MELEE_ENYO_SWORD ?
-								SV_EnyoMeleeProgramLoaded () : SV_QBJ3MeleeProgramLoaded ())) ||
+								SV_EnyoMeleeProgramLoaded () :
+								direct_subtype == SV_VR_DIRECT_MELEE_BONK_HAMMER ?
+								SV_BonkHammerProgramLoaded () : SV_QBJ3MeleeProgramLoaded ())) ||
 						!client->private_vr_contact_cursor_valid)
 						return false;
 					if (client->private_vr_contact_last_sequence !=
