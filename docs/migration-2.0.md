@@ -628,10 +628,11 @@ These are prerequisites, not optional cleanups after porting files.
 
 - Windows, Linux, and Linux ARM64 (Steam Frame standalone) each require both
   OpenXR VR and desktop support. Linux/Monado/Beyond 2e remains the primary
-  headset configuration. Steam Frame PC streaming is also a release target.
+  headset configuration. Steam Frame PC streaming+native is also a release target.
   No eye provider is assumed; desktop operation must not require an installed
   OpenXR runtime or connected headset.
-- Eye tracking is an optional VR-menu toggle, off by default. Missing/invalid
+- Eye tracking is selected through Eye-tracked foveation in VR Options, requested
+  by default and active only if tracking is detected and working. Missing/invalid
   gaze renders full quality. Fixed foveation is explicit opt-in only, never a
   default or automatic fallback. Runtime support must be detected; the presence
   of a headset name or an extension declaration is not proof of working gaze.

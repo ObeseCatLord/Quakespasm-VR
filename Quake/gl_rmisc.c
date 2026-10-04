@@ -2701,6 +2701,10 @@ DECLARE_SHADER_MODULE (ssao_mip_comp);
 DECLARE_SHADER_MODULE (ssao_mip_fp16_comp);
 DECLARE_SHADER_MODULE (ssao_mip_msaa_comp);
 DECLARE_SHADER_MODULE (ssao_mip_msaa_fp16_comp);
+DECLARE_SHADER_MODULE (ssao_mip_shared_comp);
+DECLARE_SHADER_MODULE (ssao_mip_shared_fp16_comp);
+DECLARE_SHADER_MODULE (ssao_mip_shared_msaa_comp);
+DECLARE_SHADER_MODULE (ssao_mip_shared_msaa_fp16_comp);
 DECLARE_SHADER_MODULE (wboit_resolve_frag);
 DECLARE_SHADER_MODULE (wboit_resolve_msaa_frag);
 DECLARE_SHADER_MODULE (mboit_resolve_frag);
@@ -4645,9 +4649,13 @@ static void R_CreatePostprocessPipelines ()
 			0, NULL, "ssao_evaluate");
 		R_CreateComputePipeline (
 			&ssao_mip_pipeline,
-			vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? (vulkan_globals.shader_float16 ? ssao_mip_fp16_comp_module : ssao_mip_comp_module)
-																 : (vulkan_globals.shader_float16 ? ssao_mip_msaa_fp16_comp_module : ssao_mip_msaa_comp_module),
-			VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT_EXT | VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT, NULL,
+			vulkan_globals.screen_effects_sops
+				? (vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? (vulkan_globals.shader_float16 ? ssao_mip_fp16_comp_module : ssao_mip_comp_module)
+					: (vulkan_globals.shader_float16 ? ssao_mip_msaa_fp16_comp_module : ssao_mip_msaa_comp_module))
+				: (vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? (vulkan_globals.shader_float16 ? ssao_mip_shared_fp16_comp_module : ssao_mip_shared_comp_module)
+					: (vulkan_globals.shader_float16 ? ssao_mip_shared_msaa_fp16_comp_module : ssao_mip_shared_msaa_comp_module)),
+			vulkan_globals.screen_effects_sops ?
+				(VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT_EXT | VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT) : 0, NULL,
 			"ssao_mip");
 		R_CreateComputePipeline (
 			&ssao_filter_pipeline, vulkan_globals.shader_float16 ? ssao_filter_fp16_comp_module : ssao_filter_comp_module, 0, NULL, "ssao_filter");
@@ -4917,11 +4925,15 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE_COND (ssao_evaluate_fp16_comp, R_SSAOEnabled () && !vulkan_globals.stereo_active && vulkan_globals.shader_float16);
 	CREATE_SHADER_MODULE_COND (ssao_evaluate_stereo_comp, R_SSAOEnabled () && vulkan_globals.stereo_active && !vulkan_globals.shader_float16);
 	CREATE_SHADER_MODULE_COND (ssao_evaluate_fp16_stereo_comp, R_SSAOEnabled () && vulkan_globals.stereo_active && vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_mip_comp, R_SSAOEnabled () && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_mip_fp16_comp, R_SSAOEnabled () && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
-	CREATE_SHADER_MODULE_COND (ssao_mip_msaa_comp, R_SSAOEnabled () && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_comp, R_SSAOEnabled () && vulkan_globals.screen_effects_sops && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_fp16_comp, R_SSAOEnabled () && vulkan_globals.screen_effects_sops && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_msaa_comp, R_SSAOEnabled () && vulkan_globals.screen_effects_sops && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
 	CREATE_SHADER_MODULE_COND (
-		ssao_mip_msaa_fp16_comp, R_SSAOEnabled () && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
+		ssao_mip_msaa_fp16_comp, R_SSAOEnabled () && vulkan_globals.screen_effects_sops && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_shared_comp, R_SSAOEnabled () && !vulkan_globals.screen_effects_sops && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_shared_fp16_comp, R_SSAOEnabled () && !vulkan_globals.screen_effects_sops && vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_shared_msaa_comp, R_SSAOEnabled () && !vulkan_globals.screen_effects_sops && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && !vulkan_globals.shader_float16);
+	CREATE_SHADER_MODULE_COND (ssao_mip_shared_msaa_fp16_comp, R_SSAOEnabled () && !vulkan_globals.screen_effects_sops && vulkan_globals.sample_count != VK_SAMPLE_COUNT_1_BIT && vulkan_globals.shader_float16);
 	CREATE_SHADER_MODULE_COND (ssao_filter_comp, R_SSAOEnabled () && !vulkan_globals.shader_float16);
 	CREATE_SHADER_MODULE_COND (ssao_filter_fp16_comp, R_SSAOEnabled () && vulkan_globals.shader_float16);
 	CREATE_SHADER_MODULE (wboit_resolve_frag);
@@ -5039,6 +5051,10 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (ssao_mip_fp16_comp);
 	DESTROY_SHADER_MODULE (ssao_mip_msaa_comp);
 	DESTROY_SHADER_MODULE (ssao_mip_msaa_fp16_comp);
+	DESTROY_SHADER_MODULE (ssao_mip_shared_comp);
+	DESTROY_SHADER_MODULE (ssao_mip_shared_fp16_comp);
+	DESTROY_SHADER_MODULE (ssao_mip_shared_msaa_comp);
+	DESTROY_SHADER_MODULE (ssao_mip_shared_msaa_fp16_comp);
 	DESTROY_SHADER_MODULE (ssao_filter_comp);
 	DESTROY_SHADER_MODULE (ssao_filter_fp16_comp);
 	DESTROY_SHADER_MODULE (wboit_resolve_frag);

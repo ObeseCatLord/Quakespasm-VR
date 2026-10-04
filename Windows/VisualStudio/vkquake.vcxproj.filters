@@ -487,13 +487,25 @@
     <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_mip.comp.c">
       <Filter>Shaders\Debug</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_mip_shared.comp.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_mip_fp16.comp.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_mip_shared_fp16.comp.c">
       <Filter>Shaders\Debug</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_mip_msaa.comp.c">
       <Filter>Shaders\Debug</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_mip_shared_msaa.comp.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_mip_msaa_fp16.comp.c">
+      <Filter>Shaders\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_mip_shared_msaa_fp16.comp.c">
       <Filter>Shaders\Debug</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Shaders\Compiled\Debug\ssao_filter.comp.c">
@@ -643,13 +655,25 @@
     <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_mip.comp.c">
       <Filter>Shaders\Release</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_mip_shared.comp.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_mip_fp16.comp.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_mip_shared_fp16.comp.c">
       <Filter>Shaders\Release</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_mip_msaa.comp.c">
       <Filter>Shaders\Release</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_mip_shared_msaa.comp.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_mip_msaa_fp16.comp.c">
+      <Filter>Shaders\Release</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_mip_shared_msaa_fp16.comp.c">
       <Filter>Shaders\Release</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Shaders\Compiled\Release\ssao_filter.comp.c">

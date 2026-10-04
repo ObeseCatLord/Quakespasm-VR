@@ -85,7 +85,6 @@ cvar_t vr_floor_offset = {"vr_floor_offset", "-16", CVAR_ARCHIVE};
 cvar_t vr_hud_scale = {"vr_hud_scale", "0.025", CVAR_ARCHIVE};
 /* Request eye mode on capable runtimes; policy keeps full-rate shading until
  * gaze is valid and stable. Fixed foveation remains an explicit menu choice. */
-cvar_t vr_eye_tracking = {"vr_eye_tracking", "1", CVAR_ARCHIVE};
 cvar_t vr_foveation = {"vr_foveation", "2", CVAR_ARCHIVE};
 cvar_t vr_mirror = {"vr_mirror", "1", CVAR_ARCHIVE}; // 0=off, 1=left eye, 2=right eye
 cvar_t vr_hidden_area = {"vr_hidden_area", "1", CVAR_ARCHIVE};
@@ -2629,7 +2628,6 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_world_scale);
 	Cvar_RegisterVariable (&vr_floor_offset);
 	Cvar_RegisterVariable (&vr_hud_scale);
-	Cvar_RegisterVariable (&vr_eye_tracking);
 	Cvar_RegisterVariable (&vr_foveation);
 	Cvar_RegisterVariable (&vr_mirror);
 	Cvar_RegisterVariable (&vr_hidden_area);

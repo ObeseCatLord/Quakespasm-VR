@@ -76,6 +76,11 @@ qboolean R_SSAOEnabled (void)
 	return r_ssao.value > 0;
 }
 
+qboolean R_SSAOSupported (void)
+{
+	return vulkan_globals.device_features.shaderStorageImageExtendedFormats;
+}
+
 // The spatial noise repeats every 64 pixels; build its index once per resource creation.
 static void R_UploadSSAOHilbert (void)
 {

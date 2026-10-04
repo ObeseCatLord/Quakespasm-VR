@@ -755,13 +755,15 @@ void M_Main_Draw (cb_context_t *cbx)
 	int		f;
 	qpic_t *p;
 	qpic_t *menu2 = Get_Menu2 ();
-	int		main_items = MAIN_ITEMS + (menu2 ? 1 : 0);
+	int		main_items = MAIN_ITEMS + 1;
 
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/ttl_main.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
 
 	M_DrawTransPic (cbx, 72, 32, menu2 ? menu2 : Draw_CachePic ("gfx/mainmenu.lmp"));
+	if (!menu2)
+		M_PrintWhite (cbx, 72, 32 + MAIN_ITEMS * 20, "Mods");
 
 	f = (int)(realtime * 10) % 6;
 
@@ -790,14 +792,14 @@ void M_Main_Key (int key)
 
 	case K_DOWNARROW:
 		S_LocalSound ("misc/menu1.wav");
-		if (++m_main_cursor >= (MAIN_ITEMS + (menu2 ? 1 : 0)))
+		if (++m_main_cursor >= MAIN_ITEMS + 1)
 			m_main_cursor = 0;
 		break;
 
 	case K_UPARROW:
 		S_LocalSound ("misc/menu1.wav");
 		if (--m_main_cursor < 0)
-			m_main_cursor = (MAIN_ITEMS + (menu2 ? 1 : 0)) - 1;
+			m_main_cursor = MAIN_ITEMS;
 		break;
 
 	case K_ENTER:
@@ -829,7 +831,10 @@ void M_Main_Key (int key)
 				M_Menu_Quit_f ();
 			break;
 		case 5:
-			M_Menu_Quit_f ();
+			if (menu2)
+				M_Menu_Quit_f ();
+			else
+				M_Menu_Mods_f ();
 			break;
 		}
 	}
@@ -2024,17 +2029,69 @@ enum
 	GRAPHICS_OPT_MODEL_INTERPOLATION,
 	GRAPHICS_OPT_PARTICLES,
 	GRAPHICS_OPT_SOFT_PARTICLES,
-	GRAPHICS_OPT_SHADOWS,
+	GRAPHICS_OPT_DYNAMIC_LIGHTS,
 	GRAPHICS_OPT_AMBIENT_OCCLUSION,
+	GRAPHICS_OPT_AMBIENT_OCCLUSION_RADIUS,
+	GRAPHICS_OPT_AMBIENT_OCCLUSION_STRENGTH,
+	GRAPHICS_OPT_AMBIENT_OCCLUSION_VR_HALF,
+	GRAPHICS_OPT_SHADOWS,
 	GRAPHICS_OPTIONS_ITEMS,
 };
 
-static int M_GraphicsOptions_NumItems ()
+static int graphics_options_cursor = 0;
+static qboolean graphics_options_effects_page;
+
+static qboolean M_GraphicsOptions_OptionVisible (int option)
 {
-	return GRAPHICS_OPTIONS_ITEMS - (vulkan_globals.ray_query ? 0 : 1) - (vulkan_globals.screen_effects_sops ? 0 : 1);
+	if (option == GRAPHICS_OPT_AMBIENT_OCCLUSION ||
+		option == GRAPHICS_OPT_AMBIENT_OCCLUSION_RADIUS ||
+		option == GRAPHICS_OPT_AMBIENT_OCCLUSION_STRENGTH)
+		return R_SSAOSupported ();
+	if (option == GRAPHICS_OPT_AMBIENT_OCCLUSION_VR_HALF)
+		return R_SSAOSupported () && vulkan_globals.stereo_active;
+	if (option == GRAPHICS_OPT_SHADOWS)
+		return vulkan_globals.ray_query;
+	return true;
 }
 
-static int graphics_options_cursor = 0;
+static qboolean M_GraphicsOptions_OptionOnCurrentPage (int option)
+{
+	return M_GraphicsOptions_OptionVisible (option) &&
+		graphics_options_effects_page == (option >= GRAPHICS_OPT_DYNAMIC_LIGHTS);
+}
+
+static int M_GraphicsOptions_NumItems ()
+{
+	int count = 0;
+
+	for (int option = 0; option < GRAPHICS_OPTIONS_ITEMS; ++option)
+		if (M_GraphicsOptions_OptionOnCurrentPage (option))
+			++count;
+	return count;
+}
+
+static int M_GraphicsOptions_CursorOption (void)
+{
+	int cursor = 0;
+
+	for (int option = 0; option < GRAPHICS_OPTIONS_ITEMS; ++option)
+	{
+		if (!M_GraphicsOptions_OptionOnCurrentPage (option))
+			continue;
+		if (cursor++ == graphics_options_cursor)
+			return option;
+	}
+	return GRAPHICS_OPT_GAMMA;
+}
+
+static void M_GraphicsOptions_SetEffectsPage (qboolean effects)
+{
+	if (graphics_options_effects_page == effects)
+		return;
+	graphics_options_effects_page = effects;
+	graphics_options_cursor = 0;
+	slider_grab = false;
+}
 
 static void M_Menu_GraphicsOptions_f (void)
 {
@@ -2042,6 +2099,8 @@ static void M_Menu_GraphicsOptions_f (void)
 	key_dest = key_menu;
 	m_state = m_graphics;
 	m_entersound = true;
+	graphics_options_effects_page = false;
+	graphics_options_cursor = 0;
 }
 
 static void M_GraphicsOptions_ChooseNextAASamples (int dir)
@@ -2119,9 +2178,7 @@ static void M_GraphicsOptions_AdjustSliders (int dir, qboolean mouse)
 	if (mouse)
 		slider_grab = true;
 
-	int option = graphics_options_cursor;
-	if (!vulkan_globals.ray_query && option >= GRAPHICS_OPT_SHADOWS)
-		++option;
+	int option = M_GraphicsOptions_CursorOption ();
 	switch (option)
 	{
 	case GRAPHICS_OPT_GAMMA:
@@ -2213,19 +2270,40 @@ static void M_GraphicsOptions_AdjustSliders (int dir, qboolean mouse)
 	case GRAPHICS_OPT_SOFT_PARTICLES:
 		Cvar_SetValueQuick (&r_softparticles, !r_softparticles.value);
 		break;
+	case GRAPHICS_OPT_DYNAMIC_LIGHTS:
+		Cvar_SetValueQuick (&r_dynamic, !r_dynamic.value);
+		break;
+	case GRAPHICS_OPT_AMBIENT_OCCLUSION:
+		if (R_SSAOSupported ())
+			Cvar_SetValueQuick (&r_ssao, (float)(((int)CLAMP (0, r_ssao.value, 3) + 4 + dir) % 4));
+		break;
+	case GRAPHICS_OPT_AMBIENT_OCCLUSION_RADIUS:
+		f = M_GetSliderPos (1, 128, Cvar_VariableValue ("r_ssao_radius"), false, mouse, clamped_mouse, dir, 1, 999);
+		Cvar_SetValue ("r_ssao_radius", f);
+		break;
+	case GRAPHICS_OPT_AMBIENT_OCCLUSION_STRENGTH:
+		f = M_GetSliderPos (0, 1, Cvar_VariableValue ("r_ssao_strength"), false, mouse, clamped_mouse, dir, 0.05f, 999);
+		Cvar_SetValue ("r_ssao_strength", f);
+		break;
+	case GRAPHICS_OPT_AMBIENT_OCCLUSION_VR_HALF:
+		Cvar_SetValue ("r_ssao_vr_half", !Cvar_VariableValue ("r_ssao_vr_half"));
+		break;
 	case GRAPHICS_OPT_SHADOWS:
 		if (vulkan_globals.ray_query)
 			Cvar_SetValueQuick (&r_rtshadows, (float)(((int)r_rtshadows.value + 4 + dir) % 4));
-		break;
-	case GRAPHICS_OPT_AMBIENT_OCCLUSION:
-		if (vulkan_globals.screen_effects_sops)
-			Cvar_SetValueQuick (&r_ssao, (float)(((int)CLAMP (0, r_ssao.value, 3) + 4 + dir) % 4));
 		break;
 	}
 }
 
 static void M_GraphicsOptions_Key (int k)
 {
+	if (k == K_MOUSE1 && M_Mouse_InRect (16, 304, 184, 192))
+	{
+		M_GraphicsOptions_SetEffectsPage (!graphics_options_effects_page);
+		S_LocalSound ("misc/menu1.wav");
+		return;
+	}
+
 	switch (k)
 	{
 	case K_MOUSE2:
@@ -2263,6 +2341,15 @@ static void M_GraphicsOptions_Key (int k)
 	case K_RIGHTARROW:
 		M_GraphicsOptions_AdjustSliders (1, false);
 		break;
+
+	case K_TAB:
+	case K_PGUP:
+	case K_PGDN:
+	case K_LTHUMB:
+	case K_RTHUMB:
+		M_GraphicsOptions_SetEffectsPage (!graphics_options_effects_page);
+		S_LocalSound ("misc/menu1.wav");
+		break;
 	}
 }
 static void M_GraphicsOptions_Draw (cb_context_t *cbx)
@@ -2275,7 +2362,9 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 	p = Draw_CachePic ("gfx/p_option.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
 
-	// Draw the items in the order of the enum defined above:
+	if (!graphics_options_effects_page)
+	{
+	// Draw the general items in the order of the enum defined above:
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GAMMA, "Gamma");
 	r = (1.0 - vid_gamma.value) / 0.5;
 	M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * GRAPHICS_OPT_GAMMA, r, va ("%.1f", vid_gamma.value));
@@ -2364,23 +2453,57 @@ static void M_GraphicsOptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SOFT_PARTICLES, "Soft Particles");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SOFT_PARTICLES, r_softparticles.value);
-
-	if (vulkan_globals.screen_effects_sops)
-	{
-		const int row = GRAPHICS_OPT_AMBIENT_OCCLUSION - (vulkan_globals.ray_query ? 0 : 1);
-		M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "Ambient Occlusion");
-		const char *ao_modes[] = {"off", "low", "medium", "high"};
-		M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row, ao_modes[(int)CLAMP (0, r_ssao.value, 3)]);
 	}
 
-	if (vulkan_globals.ray_query)
+	if (graphics_options_effects_page)
 	{
-		M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SHADOWS, "Dynamic Shadows");
-		const char *shadow_modes[] = {"off", "low", "medium", "high"};
-		M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * GRAPHICS_OPT_SHADOWS, shadow_modes[(int)r_rtshadows.value]);
+		int row = 0;
+
+		M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "Dynamic Lights");
+		M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row, r_dynamic.value);
+		++row;
+
+		if (R_SSAOSupported ())
+		{
+			float value;
+			const char *ao_modes[] = {"off", "low", "medium", "high"};
+
+			M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "Ambient Occlusion");
+			M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row, ao_modes[(int)CLAMP (0, r_ssao.value, 3)]);
+			++row;
+
+			value = CLAMP (1, Cvar_VariableValue ("r_ssao_radius"), 128);
+			M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "AO Radius");
+			M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * row, (value - 1.0f) / 127.0f, va ("%.0f", value));
+			++row;
+
+			value = CLAMP (0, Cvar_VariableValue ("r_ssao_strength"), 1);
+			M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "AO Strength");
+			M_DrawSlider (cbx, MENU_SLIDER_X, top + CHARACTER_SIZE * row, value, va ("%.2f", value));
+			++row;
+
+			if (vulkan_globals.stereo_active)
+			{
+				M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "VR AO Evaluation");
+				M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row,
+					Cvar_VariableValue ("r_ssao_vr_half") > 0 ? "half" : "full");
+				++row;
+			}
+		}
+
+		if (vulkan_globals.ray_query)
+		{
+			const char *shadow_modes[] = {"off", "low", "medium", "high"};
+			M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * row, "Dynamic Shadows");
+			M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * row,
+				shadow_modes[(int)CLAMP (0, r_rtshadows.value, 3)]);
+		}
 	}
+
+	M_PrintWhite (cbx, 16, 184, graphics_options_effects_page ? "Click/Tab/Stick: General" : "Click/Tab/Stick: Effects");
 
 	// cursor
+	graphics_options_cursor = CLAMP (0, graphics_options_cursor, M_GraphicsOptions_NumItems () - 1);
 	M_Mouse_UpdateListCursor (&graphics_options_cursor, MENU_CURSOR_X, 320, top, CHARACTER_SIZE, M_GraphicsOptions_NumItems (), 0);
 	Draw_Character (cbx, MENU_CURSOR_X, top + graphics_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
 }
@@ -2782,7 +2905,6 @@ extern cvar_t vr_gorilla;
 
 enum
 {
-	VR_OPT_EYE_TRACKING,
 	VR_OPT_FOVEATION,
 	VR_OPT_MIRROR,
 	VR_OPT_HIDDEN_AREA,
@@ -3754,10 +3876,6 @@ static void M_VROptions_Adjust (int dir)
 
 	switch (vr_options_cursor)
 	{
-	case VR_OPT_EYE_TRACKING:
-		Cvar_SetValueQuick (&vr_eye_tracking,
-			VRF_EyeTrackingEnabled (vr_eye_tracking.value) ? 0 : 1);
-		break;
 	case VR_OPT_FOVEATION:
 	{
 		int mode = VRF_RequestedMode (vr_foveation.value);
@@ -3975,10 +4093,6 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 		M_VROptions_FBTDraw (cbx, top);
 		return;
 	}
-
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_EYE_TRACKING, "Eye Tracking");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_EYE_TRACKING,
-		VRF_EyeTrackingEnabled (vr_eye_tracking.value));
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, "Foveation");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_modes[foveation]);
@@ -7788,8 +7902,10 @@ void M_UpdateMouse (void)
 	}
 	else if (slider_grab)
 	{
-		const bool graphic_option_has_sliders = ((graphics_options_cursor >= GRAPHICS_OPT_GAMMA) && (graphics_options_cursor <= GRAPHICS_OPT_FOV)) ||
-												(graphics_options_cursor == GRAPHICS_OPT_MAX_FPS);
+		const int graphic_option = M_GraphicsOptions_CursorOption ();
+		const bool graphic_option_has_sliders = (graphic_option >= GRAPHICS_OPT_GAMMA && graphic_option <= GRAPHICS_OPT_FOV) ||
+			graphic_option == GRAPHICS_OPT_MAX_FPS || graphic_option == GRAPHICS_OPT_AMBIENT_OCCLUSION_RADIUS ||
+			graphic_option == GRAPHICS_OPT_AMBIENT_OCCLUSION_STRENGTH;
 
 		const bool game_option_has_sliders = ((game_options_cursor >= GAME_OPT_SCALE) && (game_options_cursor <= GAME_OPT_VIEWROLL)) ||
 											 (game_options_cursor == GAME_OPT_CROSSHAIR_SIZE) || (game_options_cursor == GAME_OPT_CROSSHAIR_OPACITY);

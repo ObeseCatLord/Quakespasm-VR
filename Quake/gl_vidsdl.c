@@ -1100,7 +1100,7 @@ static qboolean GL_FoveationRequestedActive (int render_width, int render_height
 {
 	const int mode = VRF_RequestedMode (vr_foveation.value);
 	const qboolean requested = mode == VRF_MODE_FIXED ||
-		(mode == VRF_MODE_EYE_TRACKED && VRF_EyeTrackingEnabled (vr_eye_tracking.value) && VRXR_GazeSupported ());
+		(mode == VRF_MODE_EYE_TRACKED && VRXR_GazeSupported ());
 	if (!vulkan_globals.stereo_active || !vulkan_globals.openxr_fragment_shading_rate_available || vulkan_globals.supersampling || !requested)
 		return false;
 
@@ -4281,8 +4281,7 @@ static qboolean GL_DensityFoveationRequestedActive (int render_width, int render
 	}
 	if (mode == VRF_MODE_FIXED)
 		return VRXR_VulkanFoveationFixedAvailable ();
-	if (mode != VRF_MODE_EYE_TRACKED || !VRF_EyeTrackingEnabled (vr_eye_tracking.value) ||
-		!vulkan_globals.openxr_fragment_density_offset_enabled || !VRXR_VulkanFoveationEyeAvailable ())
+	if (mode != VRF_MODE_EYE_TRACKED || !vulkan_globals.openxr_fragment_density_offset_enabled || !VRXR_VulkanFoveationEyeAvailable ())
 		return false;
 
 	return true;
@@ -5084,8 +5083,7 @@ static qboolean GL_PrepareRuntimeFoveation (void)
 	int mode = openxr_density_backend_failed || !openxr_density_image_views ||
 		!vulkan_globals.openxr_fragment_density_map_active || key_dest == key_menu ?
 		VRF_MODE_OFF : VRF_RequestedMode (vr_foveation.value);
-	const qboolean allow_eye = mode == VRF_MODE_EYE_TRACKED && VRF_EyeTrackingEnabled (vr_eye_tracking.value) &&
-		VRXR_VulkanFoveationEyeAvailable ();
+	const qboolean allow_eye = mode == VRF_MODE_EYE_TRACKED && VRXR_VulkanFoveationEyeAvailable ();
 	if (mode == VRF_MODE_EYE_TRACKED && !allow_eye)
 		mode = VRF_MODE_OFF;
 	float centers[2][2];
@@ -5139,7 +5137,7 @@ static void GL_PrepareFragmentShadingRateMap (void)
 	}
 
 	const double requested_mode = key_dest == key_menu ? VRF_MODE_OFF : vr_foveation.value;
-	int mode = VRF_SelectMode (&openxr_foveation_policy, requested_mode, vr_eye_tracking.value, &openxr_frame);
+	int mode = VRF_SelectMode (&openxr_foveation_policy, requested_mode, 1, &openxr_frame);
 	if (!VRF_BuildRateMap (
 			fragment_shading_rate_map, fragment_shading_rate_map_size, vid.render_width, vid.render_height,
 			vulkan_globals.openxr_fragment_shading_rate_texel_size.width, vulkan_globals.openxr_fragment_shading_rate_texel_size.height,
@@ -5285,7 +5283,7 @@ qboolean GL_BeginRendering (qboolean use_tasks, task_handle_t *begin_rendering_t
 		VRXR_AbortFrame ();
 		const int requested_mode = VRF_RequestedMode (vr_foveation.value);
 		const int gaze_enabled = key_dest != key_menu && vulkan_globals.openxr_fragment_shading_rate_active && requested_mode == VRF_MODE_EYE_TRACKED &&
-			VRF_EyeTrackingEnabled (vr_eye_tracking.value) && VRXR_GazeSupported ();
+			VRXR_GazeSupported ();
 		VRXR_SetGazeEnabled (gaze_enabled);
 		const int begun = VRXR_BeginFrame (&openxr_frame);
 		if (openxr_frame.reference_changed)

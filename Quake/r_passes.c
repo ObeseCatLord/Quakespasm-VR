@@ -282,12 +282,7 @@ static void R_DescribeFrame (frame_desc_t *desc, main_render_pass_variant_t vari
 
 bool R_SetupRenderPasses (void)
 {
-	if (R_SSAOEnabled () && !vulkan_globals.screen_effects_sops)
-	{
-		Con_Printf ("Entity SSAO requires subgroup operations\n");
-		Cvar_SetValueQuick (&r_ssao, 0);
-	}
-	if (R_SSAOEnabled () && !vulkan_globals.device_features.shaderStorageImageExtendedFormats)
+	if (R_SSAOEnabled () && !R_SSAOSupported ())
 	{
 		Con_Printf ("Entity SSAO requires extended storage image formats\n");
 		Cvar_SetValueQuick (&r_ssao, 0);

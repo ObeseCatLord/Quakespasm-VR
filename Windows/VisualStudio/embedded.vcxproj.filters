@@ -58,13 +58,25 @@
     <CustomBuild Include="..\..\Shaders\ssao_mip.comp">
       <Filter>Shaders\SSAO</Filter>
     </CustomBuild>
+    <CustomBuild Include="..\..\Shaders\ssao_mip_shared.comp">
+      <Filter>Shaders\SSAO</Filter>
+    </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_mip_fp16.comp">
+      <Filter>Shaders\SSAO</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\..\Shaders\ssao_mip_shared_fp16.comp">
       <Filter>Shaders\SSAO</Filter>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_mip_msaa.comp">
       <Filter>Shaders\SSAO</Filter>
     </CustomBuild>
+    <CustomBuild Include="..\..\Shaders\ssao_mip_shared_msaa.comp">
+      <Filter>Shaders\SSAO</Filter>
+    </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_mip_msaa_fp16.comp">
+      <Filter>Shaders\SSAO</Filter>
+    </CustomBuild>
+    <CustomBuild Include="..\..\Shaders\ssao_mip_shared_msaa_fp16.comp">
       <Filter>Shaders\SSAO</Filter>
     </CustomBuild>
     <CustomBuild Include="..\..\Shaders\ssao_filter.comp">

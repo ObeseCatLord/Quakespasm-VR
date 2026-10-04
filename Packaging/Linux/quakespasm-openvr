@@ -6,7 +6,15 @@ args=()
 for arg in "$@"; do
     if [[ "$arg" == "-vr" ]]; then args+=("-openxr"); else args+=("$arg"); fi
 done
-ENGINE="$(readlink -f -- "$SCRIPT_DIR/quakespasm-openvr.bin")"
+# The updater writes an ordinary executable here (it cannot create symlinks).
+# Native packages and existing installations retain their own binary layout.
+if [[ -x "$SCRIPT_DIR/bin/quakespasm-openvr.bin" ]]; then
+    ENGINE="$(readlink -f -- "$SCRIPT_DIR/bin/quakespasm-openvr.bin")"
+elif [[ -x "$SCRIPT_DIR/bin/vkquake" ]]; then
+    ENGINE="$(readlink -f -- "$SCRIPT_DIR/bin/vkquake")"
+else
+    ENGINE="$(readlink -f -- "$SCRIPT_DIR/quakespasm-openvr.bin")"
+fi
 ENGINE_DIR="$(dirname -- "$ENGINE")"
 # Legacy launchers put SteamVR and the old engine libraries first. Keep the
 # matching SDL/Vulkan/Steam Audio package ahead of those inherited paths.

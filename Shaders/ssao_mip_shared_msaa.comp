@@ -1,0 +1,5 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#define SHARED_MIPS
+#define MULTISAMPLED
+#include "ssao_mip.inc"
