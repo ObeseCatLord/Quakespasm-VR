@@ -1,12 +1,13 @@
 #version 450
 /* The long Y footprint makes ordinary trilinear filtering select the box mip.
- * One-texel X stripes should survive a 16x anisotropic sampler. */
+ * One-texel X stripes should survive the supported anisotropic request. */
 layout(set = 0, binding = 0) uniform sampler2D source;
 layout(set = 1, binding = 0, std430) buffer Readback { float value[]; } outbuf;
 layout(local_size_x = 1) in;
+layout(push_constant) uniform Footprint { float anisotropy; } footprint;
 void main()
 {
 	uint x = gl_GlobalInvocationID.x;
 	outbuf.value[x] = textureGrad(source, vec2((float(x) + .5) / 128., .5),
-		vec2(1. / 128., 0.), vec2(0., 16. / 128.)).r;
+		vec2(1. / 128., 0.), vec2(0., footprint.anisotropy / 128.)).r;
 }
