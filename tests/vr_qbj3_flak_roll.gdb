@@ -50,8 +50,8 @@ commands
     printf "FLAK_FAIL wrong QuakeC firing function\n"
     quit 1
   end
-  printf "FLAK_BASIS roll=%f qc_roll=%f right_z=%f up_z=%f weapon=%d\n", sv_vr_weapon_pose_scope->qbj3_shotgun_roll, svs.clients[0].edict->v.v_angle[2], pr_global_struct->v_right[2], pr_global_struct->v_up[2], (int)svs.clients[0].edict->v.weapon
-  if sv_vr_weapon_pose_scope->qbj3_shotgun_roll != 45 || svs.clients[0].edict->v.v_angle[2] != 0 || pr_global_struct->v_right[2] > -0.6 || pr_global_struct->v_right[2] < -0.8
+  printf "FLAK_BASIS roll=%f qc_roll=%f right_z=%f up_z=%f weapon=%d\n", sv_vr_weapon_pose_scope->shot_angles[2], svs.clients[0].edict->v.v_angle[2], pr_global_struct->v_right[2], pr_global_struct->v_up[2], (int)svs.clients[0].edict->v.weapon
+  if !sv_vr_weapon_pose_scope->shot_basis_valid || sv_vr_weapon_pose_scope->shot_angles[2] != 45 || svs.clients[0].edict->v.v_angle[2] != 0 || pr_global_struct->v_right[2] > -0.6 || pr_global_struct->v_right[2] < -0.8
     printf "FLAK_FAIL incorrect physical roll basis\n"
     quit 1
   end

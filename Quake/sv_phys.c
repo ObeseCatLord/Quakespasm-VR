@@ -3865,14 +3865,12 @@ typedef struct sv_vr_weapon_pose_scope_s
 	/* Set only by a fully admitted Dwell pair path. */
 	qboolean dwell_berserk_pose_valid;
 	qboolean enyo_clearance_pending;
-	qboolean qbj3_shotgun_spread;
 	qboolean stock_id1_muzzle_valid;
 	qboolean stock_lightning_trace_applied;
 	qboolean stock_lightning_damage_started;
+	qboolean shot_basis_valid;
 	int stock_id1_program; /* 0 unchecked, 1 pinned id1, -1 other */
-	int qbj3_shotgun_weapon;
-	float qbj3_shotgun_roll;
-	vec3_t origin, body_origin, v_angle, forward, right, up;
+	vec3_t origin, body_origin, v_angle, forward, right, up, shot_angles;
 	vec3_t stock_id1_muzzle;
 	vec3_t stock_lightning_end;
 	vec3_t stock_lightning_damage_end;
@@ -4272,6 +4270,22 @@ static qboolean SV_EnyoVectorIsFinite (const vec3_t value)
 	return isfinite (value[0]) && isfinite (value[1]) && isfinite (value[2]);
 }
 
+/* Keep every scoped consumer of the generic weapon pose on one basis.  The
+ * entity angle remains roll-free for QuakeC camera handling. */
+static vec_t *SV_VRWeaponScopeAngles (sv_vr_weapon_pose_scope_t *scope,
+	edict_t *ent)
+{
+	return scope->shot_basis_valid ? scope->shot_angles : ent->v.v_angle;
+}
+
+static void SV_VRWeaponSetScopedBasis (sv_vr_weapon_pose_scope_t *scope,
+	edict_t *ent)
+{
+	AngleVectors (SV_VRWeaponScopeAngles (scope, ent),
+		pr_global_struct->v_forward, pr_global_struct->v_right,
+		pr_global_struct->v_up);
+}
+
 /* Dwell weaponframe is source animation data. Controller indices are
  * anatomical: 0 is left and 1 is right. */
 static qboolean SV_DwellBerserkStrikeHand (float weaponframe, int *hand)
@@ -4374,8 +4388,7 @@ static qboolean SV_VRStockID1Program (sv_vr_weapon_pose_scope_t *scope)
 static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	const usercmd_t *cmd, sv_vr_weapon_pose_scope_t *scope)
 {
-	vec3_t muzzle, source_offset, flak_source_angles;
-	qboolean qbj3_flak_source = false;
+	vec3_t muzzle, source_offset;
 	sv_vr_weapon_pose_scope_t *previous;
 	memset (scope, 0, sizeof (*scope));
 	scope->ent = ent;
@@ -4457,27 +4470,21 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 
 	VectorAdd (scope->origin, cmd->vr_handpos, muzzle);
 	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
-	/* Retain raw roll only for the exact pinned QBJ3 pistol/Flak QC. The
-	 * temporary entity angle below remains camera-safe for ordinary QC. */
-	if (SV_QBJ3TwinNailgunProgramLoaded () &&
-		(ent->v.weapon == IT_SHOTGUN || ent->v.weapon == IT_SUPER_SHOTGUN) &&
-		isfinite (ent->v.v_angle[ROLL]))
+	/* QuakeC sees zero roll as camera tilt, but its matching gun-shot
+	 * makevectors call needs the full tracked basis for lateral spread. */
+	/* Paired weapons own their selected-hand basis and source at their pinned
+	 * adapters. Do not give their setup callbacks this generic pose. */
+	if (!scope->akimbo_pose_valid && SV_EnyoVectorIsFinite (ent->v.v_angle))
 	{
-		scope->qbj3_shotgun_spread = true;
-		scope->qbj3_shotgun_weapon = (int)ent->v.weapon;
-		scope->qbj3_shotgun_roll = ent->v.v_angle[ROLL];
-		if (ent->v.weapon == IT_SUPER_SHOTGUN &&
-			isfinite (ent->v.v_angle[PITCH]) &&
-			isfinite (ent->v.v_angle[YAW]))
-		{
-			qbj3_flak_source = true;
-			VectorCopy (ent->v.v_angle, flak_source_angles);
-		}
+		VectorCopy (ent->v.v_angle, scope->shot_angles);
+		scope->shot_basis_valid = true;
 	}
 	/* QC roll is camera tilt, while wrist roll belongs to the weapon model. */
 	ent->v.v_angle[ROLL] = 0;
-	AngleVectors (ent->v.v_angle, pr_global_struct->v_forward,
-		pr_global_struct->v_right, pr_global_struct->v_up);
+	/* The scoped initial globals are also a weapon basis: some QC firing
+	 * paths consume them without another makevectors call.  Keep QuakeC's
+	 * zero-roll v_angle, but use the captured physical lateral axes. */
+	SV_VRWeaponSetScopedBasis (scope, ent);
 	SV_ClampVRMuzzleToWorld (ent, muzzle);
 	/* A nested same-player scope starts from its parent's temporary source.
 	 * Do not cache that as a new authoritative body-relative muzzle. */
@@ -4488,8 +4495,8 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	}
 	VR_WeaponCalibrationProjectileSourceOffset (
 		PR_GetString (ent->v.weaponmodel), (int)ent->v.weapon,
-		qbj3_flak_source ? flak_source_angles :
-			ent->v.v_angle, ent->v.view_ofs[2], source_offset);
+		SV_VRWeaponScopeAngles (scope, ent),
+		ent->v.view_ofs[2], source_offset);
 	VectorSubtract (muzzle, source_offset, ent->v.origin);
 }
 
@@ -4597,25 +4604,19 @@ qboolean SV_DwellBerserkAkimboMakevectors (void)
 	return true;
 }
 
-/* QBJ3 labels IT_SHOTGUN as its pistol and IT_SUPER_SHOTGUN as Flak.
- * Their audited FireBullets/Flak calls use makevectors for spread/source
- * basis, so restore only the applied private controller's physical wrist roll. */
-qboolean SV_QBJ3ShotgunSpreadBasis (const vec3_t angles)
+/* PF_makevectors retains QuakeC's pitch/yaw forward vector. Every exact
+ * current-player v_angle call in a live private weapon scope receives the
+ * tracked roll for its lateral spread axes; stock and AD both make this call
+ * once in W_Attack and again in their shotgun leaf. */
+qboolean SV_VRWeaponShotBasis (const vec3_t angles)
 {
-	const char *function_name;
 	sv_vr_weapon_pose_scope_t *scope;
 	edict_t *ent;
 	vec3_t spread_angles, forward, right, up;
 	int self;
 
 	if (!angles || !qcvm || qcvm != &sv.qcvm ||
-		!SV_QBJ3TwinNailgunProgramLoaded () || !pr_global_struct ||
-		!qcvm->xfunction || !qcvm->edicts || qcvm->edict_size <= 0)
-		return false;
-
-	function_name = PR_GetString (qcvm->xfunction->s_name);
-	if (strcmp (function_name, "FireBullets") &&
-		strcmp (function_name, "W_FireFlakShotgun"))
+		!pr_global_struct || !qcvm->edicts || qcvm->edict_size <= 0)
 		return false;
 
 	self = pr_global_struct->self;
@@ -4623,22 +4624,22 @@ qboolean SV_QBJ3ShotgunSpreadBasis (const vec3_t angles)
 		self / qcvm->edict_size >= qcvm->num_edicts)
 		return false;
 	ent = PROG_TO_EDICT (self);
-	if (!ent || ent->free ||
-		(ent->v.weapon != IT_SHOTGUN && ent->v.weapon != IT_SUPER_SHOTGUN))
+	if (!ent || ent->free)
 		return false;
 
 	scope = SV_FindPrivateVRWeaponPose (ent);
 	if (!scope || !scope->applied || scope->origin_relocated ||
-		scope->ent != ent ||
-		!scope->qbj3_shotgun_spread ||
-		scope->qbj3_shotgun_weapon != (int)ent->v.weapon ||
-		!isfinite (scope->qbj3_shotgun_roll) ||
-		!isfinite (angles[0]) || !isfinite (angles[1]) ||
-		!isfinite (angles[2]))
+		scope->ent != ent || !scope->client ||
+		scope->client->edict != ent || !scope->shot_basis_valid ||
+		!SV_EnyoVectorIsFinite (scope->shot_angles) ||
+		!SV_EnyoVectorIsFinite (angles) ||
+		!SV_EnyoVectorIsFinite (ent->v.v_angle) ||
+		angles[PITCH] != scope->shot_angles[PITCH] ||
+		angles[YAW] != scope->shot_angles[YAW] ||
+		!VectorCompare (angles, ent->v.v_angle))
 		return false;
 
-	VectorCopy (angles, spread_angles);
-	spread_angles[ROLL] = scope->qbj3_shotgun_roll;
+	VectorCopy (scope->shot_angles, spread_angles);
 	AngleVectors (spread_angles, forward, right, up);
 	/* PF_makevectors has already computed the ordinary forward. */
 	VectorCopy (right, pr_global_struct->v_right);
