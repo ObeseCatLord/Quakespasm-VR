@@ -243,6 +243,12 @@ qboolean SV_VREnyoMeleeEnabled (void)
 		SV_VREnyoMeleeContactProfile () == VR_WEAPON_CONTACT_PROFILE_ENYO;
 }
 
+qboolean SV_VRBonkMeleeEnabled (void)
+{
+	return SV_VRContactPolicyEnabled (&sv_immersive_melee) &&
+		SV_BonkHammerProgramLoaded ();
+}
+
 extern cvar_t nomonsters;
 
 #define VRIK_SVC_V2_MESSAGE_BYTES (1 + 2 + 4 + VRIK_POSE_WIRE_BYTES)
@@ -5194,6 +5200,12 @@ static void SV_AppendWeaponContactProtocol (client_t *client)
 	{
 		mode |= VR_WEAPON_CONTACT_CAP_MELEE;
 		profile = VR_WEAPON_CONTACT_PROFILE_ENYO;
+	}
+	else if (SV_VRBonkMeleeEnabled () &&
+		SV_BonkHammerWeaponSelected (client->edict))
+	{
+		mode |= VR_WEAPON_CONTACT_CAP_MELEE | VR_WEAPON_CONTACT_CAP_BONK_HEAD;
+		profile = VR_WEAPON_CONTACT_PROFILE_BONK;
 	}
 	if ((client->weapon_contact_last_mode == (int)mode &&
 		client->weapon_contact_last_profile == (int)profile) ||

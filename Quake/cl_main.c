@@ -277,6 +277,9 @@ void CL_FreeState (void)
 
 void CL_ResetWeaponContactState (void)
 {
+	/* Retire a Bonk suffix sampled under an earlier offer, preserving movement. */
+	if (cl.pendingcmd.vr_contact.flags & VR_WEAPON_CONTACT_HEAD_PRESENT)
+		memset (&cl.pendingcmd.vr_contact, 0, sizeof (cl.pendingcmd.vr_contact));
 	cl.vr_weapon_contact_mode = 0;
 	cl.vr_weapon_contact_profile = VR_WEAPON_CONTACT_PROFILE_NONE;
 }
@@ -3566,6 +3569,10 @@ void CL_SendCmd (void)
 			cmd.buttons &= ~1u;
 	}
 
+	/* CSQC can reintroduce attack. Bonk owns the final projection too. */
+	if (VR_InputSuppressBonkAttack (&cmd))
+		cmd.buttons &= ~BUTTON_ATTACK;
+
 	if (cls.signon == SIGNONS)
 		CL_SendMove (&cmd); // send the unreliable message
 	else
@@ -4067,6 +4074,14 @@ static void CL_ServerExtension_WeaponContactProtocol_f (void)
 		Con_DPrintf2 ("Ignoring malformed weapon-contact capability offer.\n");
 		return;
 	}
+	/* The additive suffix is exclusively Bonk. Older clients reject bit 4;
+	 * updated clients also reject legacy Bonk offers without its head source. */
+	if ((profile == VR_WEAPON_CONTACT_PROFILE_BONK &&
+		(mode & (VR_WEAPON_CONTACT_CAP_MELEE | VR_WEAPON_CONTACT_CAP_BONK_HEAD)) !=
+			(VR_WEAPON_CONTACT_CAP_MELEE | VR_WEAPON_CONTACT_CAP_BONK_HEAD)) ||
+		((mode & VR_WEAPON_CONTACT_CAP_BONK_HEAD) &&
+		 profile != VR_WEAPON_CONTACT_PROFILE_BONK))
+		return;
 	cl.vr_weapon_contact_mode = mode;
 	cl.vr_weapon_contact_profile = profile;
 }

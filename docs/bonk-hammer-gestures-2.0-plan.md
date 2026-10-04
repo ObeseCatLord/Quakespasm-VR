@@ -6,8 +6,8 @@ This is a Bonk-only extension for the exact installed Bonk program
 `b54e33e50ad06d5628132a26bb6b089534d091bd2b6756799a15b61e7af49811`.
 It reuses the existing weapon-contact protocol, validated contact owner,
 stroke accumulator, world sweep, model splitter, and calibration schema.
-No QC, assets, protocol fields, dispatcher, client damage, or client velocity
-logic is added.
+No QC, assets, dispatcher, client damage, or client velocity logic is added.
+The binding decision below adds only a flagged contact suffix.
 
 The behavioral reference is the original `w_hammer.qc`: charge multipliers
 `.2`, `2`, and `4`, a `.4` hammer cooldown, floor-dependent hop, and airborne
@@ -66,19 +66,53 @@ no Bonk contacts are offered/published. The full adapter is unfinished.
    4), with a deliberate Bonk activation floor of `.06` arc and calibrated
    speed. Commit the tier at the first terminal outcome.
 
-## Pending Astra decision; do not silently choose here
+## Binding full implementation decision, 2026-10-04
 
-The Bonk airborne-whiff direction must use head facing. `cmd.viewangles`
-currently carries selected movement orientation in some locomotion modes, so
-this pass must not reinterpret it as head orientation or alter movement
-conversion. The final adapter will be selected after review from an existing,
-timestamp-compatible, validated source or the feature will remain gated.
+The main dispositions adopt the reviewed contact suffix. Preserve command
+angles and every movement value. Add capability bit 4 and contact head-present
+flag 8; append three finite normalized float32 head angles (12 bytes) after
+existing per-hand data. Decode the flagged shape independently of weapon
+authorization, then fail closed unless the current exact Bonk offer and head
+data authorize gameplay. Other profiles retain their original bytes.
 
-The final QC-call branch also remains pending that decision. It must call the
-native five-argument Bonk leaf and native cooldown path while saving/restoring
-only temporary QC globals and temporary trace basis. Damage and velocity from
-the accepted QC call must remain committed. It must not add fan-range damage,
-intercept the QC floor trace, or add new physical-melee families.
+Capture post-turn `V_TrackedMovementAngles(FOLLOW_HEAD)` beside accepted contact
+geometry, with its pending identity, generation, complete-command queue and
+freshness. The command committing the first outcome supplies its head sample.
+No separate pose stream, movement conversion or state machine is introduced.
+
+Extend the existing direct-melee owner for Bonk: deliberate activation requires
+at least .06 metres arc and .55 metres/second accumulated peak; medium uses
+.12/.85 and high .25/1.5. Commit the tier at the first outcome. Physical hits
+call native five-argument `hithammer`; settled misses call `W_SwingHammer` with
+only its five audited acquisition sites forced to miss. Native `saf(.4)` owns
+cadence. Restore temporary QC state while retaining damage, velocity, flags and
+cooldown. Keep global physical admission false and add only a negotiated exact
+Bonk predicate, including final post-CSQC attack suppression.
+
+Implementation estimate: one narrow codec extension, client recipe admission
+and sampling, and a Bonk branch inside the existing outcome/stroke owner.
+Stop and reopen the design if this needs another queue/dispatcher, duplicated
+stroke state machine, movement changes, or broader physics policy.
+
+The implementation-end proof uses an isolated debug graph and installed
+original QC: encoded/decoded queued contact reaches the production sweep and
+native outcomes; all tiers, floor/wall/air/whiff/cooldown/tier lock, movement
+preservation, malformed/missing/revoked/stale data and 29 recipe geometries.
+No proprietary program or meshes are committed.
+
+## Full source implementation complete, qualification pending
+
+Private integration base is upstream merge `59c4df5c1fc0268c51ed7d56b34bc7f6e67bcbcf`,
+with the mechanical stage reapplied as `e9907675`. The bounded codec, exact
+client admission, post-CSQC suppression, native outcome branch and tier lock
+are implemented. Contact equality conditionally compares the carried head
+angles, including the accepted-command and queued-command trigger paths.
+No new stream, dispatcher, movement conversion or stroke owner was needed.
+
+The isolated assertion-enabled SDL2 debug graph compiles and links with
+`-Werror`; GCC 16's pre-existing mkpak format-truncation warning is disabled
+only in the private graph. Native loaded-VM and codec/geometry/input fixtures
+follow in a separate owned test commit. Compilation is not native qualification.
 
 ## Verification after implementation
 

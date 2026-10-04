@@ -108,6 +108,16 @@ qboolean VR_WeaponCollisionAuthorized (void)
 /* Classification also guards physical attack input when hand tracking is
  * unavailable. Gesture sampling adds its own stricter tracking checks. */
 static qboolean VR_InputControllerAim (void);
+static qboolean VR_InputBonkOffered (void)
+{
+	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_BONK &&
+		(cl.vr_weapon_contact_mode &
+		 (VR_WEAPON_CONTACT_CAP_MELEE | VR_WEAPON_CONTACT_CAP_BONK_HEAD)) ==
+		 (VR_WEAPON_CONTACT_CAP_MELEE | VR_WEAPON_CONTACT_CAP_BONK_HEAD);
+}
+static qboolean VR_InputBonkPhysicalAllowed (void);
+
 static qboolean VR_InputGestureMeleeProfile (vr_melee_gesture_profile_t *profile)
 {
 	const int index = cl.stats[STAT_WEAPON];
@@ -119,6 +129,13 @@ static qboolean VR_InputGestureMeleeProfile (vr_melee_gesture_profile_t *profile
 		index < 1 || index >= MAX_MODELS)
 		return false;
 	model = cl.model_precache[index];
+	if (model)
+	{
+		const mod_held_melee_recipe_t *recipe = Mod_GetHeldMeleeRecipe (model->name);
+		if (recipe && recipe->contact_profile == VR_WEAPON_CONTACT_PROFILE_BONK &&
+			!VR_InputBonkOffered ())
+			return false;
+	}
 	return model && !model->needload && model->type == mod_alias &&
 		VR_WeaponCalibrationLookupMelee (model->name, profile);
 }
@@ -164,7 +181,8 @@ static qboolean VR_InputHeldMeleeAuthorized (void)
 	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
 		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_MELEE) != 0 &&
 		(cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3 ||
-		 cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ENYO) &&
+		 cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ENYO ||
+		 VR_InputBonkOffered ()) &&
 		isfinite (vr_immersive_melee.value) && vr_immersive_melee.value != 0.0f;
 }
 
@@ -1568,6 +1586,7 @@ unavailable:
 
 static qboolean VR_InputContactIsValid (const vr_weapon_contact_t *contact)
 {
+	const unsigned int shape = contact ? contact->flags & ~VR_WEAPON_CONTACT_HEAD_PRESENT : 0;
 	const unsigned int hand_flags = contact ? contact->flags &
 		(VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID) : 0;
 	const qboolean bilateral = hand_flags ==
@@ -1577,15 +1596,25 @@ static qboolean VR_InputContactIsValid (const vr_weapon_contact_t *contact)
 	if (!contact ||
 		(!bilateral && hand_flags != VR_WEAPON_CONTACT_LEFT_VALID &&
 		 hand_flags != VR_WEAPON_CONTACT_RIGHT_VALID) ||
-		(contact->flags != hand_flags && contact->flags !=
+		(shape != hand_flags && shape !=
 		(hand_flags | VR_WEAPON_CONTACT_IMMERSIVE_MELEE)) ||
-		(bilateral && contact->flags != (hand_flags |
+		(bilateral && shape != (hand_flags |
 			VR_WEAPON_CONTACT_IMMERSIVE_MELEE)) ||
 		contact->modelindex < 1 || contact->modelindex > 0xffff ||
 		!isfinite (contact->weapon) || contact->weapon < 0.0f ||
 		contact->weapon > VR_INPUT_WIRE_MAX)
 		return false;
 
+	if (contact->flags & VR_WEAPON_CONTACT_HEAD_PRESENT)
+	{
+		if (!VR_InputBonkOffered () || bilateral ||
+			!(shape & VR_WEAPON_CONTACT_IMMERSIVE_MELEE))
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+			if (!isfinite (contact->head_angles[axis]) ||
+				contact->head_angles[axis] < -180.0f || contact->head_angles[axis] >= 180.0f)
+				return false;
+	}
 	for (hand = 0; hand < 2; ++hand)
 	{
 		const unsigned int hand_flag = hand == 0 ?
@@ -1719,6 +1748,19 @@ static qboolean VR_InputSelectedHeldMelee (int *modelindex_out,
 	*skin_out = cl.viewent.skinnum;
 	*geometry_out = geometry;
 	return true;
+}
+
+
+static qboolean VR_InputBonkPhysicalAllowed (void)
+{
+	int index, skin;
+	qmodel_t *model;
+	aliashdr_t *geometry;
+	vr_melee_gesture_profile_t profile;
+	vec3_t base, tip, delta;
+	return VR_InputBonkOffered () && VR_InputGestureMeleeProfile (&profile) &&
+		VR_InputSelectedHeldMelee (&index, &model, &skin, &geometry) &&
+		V_HeldMeleeEdgeOffsets (base, tip, delta);
 }
 
 static qboolean VR_InputAliasTransformPoint (const float model_matrix[16],
@@ -1932,6 +1974,14 @@ static qboolean VR_InputGenericMeleeIdentity (const vrxr_frame_t *frame,
 	const int modelindex = cl.stats[STAT_WEAPON];
 
 	memset (identity, 0, sizeof (*identity));
+	if (modelindex > 0 && modelindex < MAX_MODELS && cl.model_precache[modelindex])
+	{
+		const mod_held_melee_recipe_t *recipe =
+			Mod_GetHeldMeleeRecipe (cl.model_precache[modelindex]->name);
+		if (recipe && recipe->contact_profile == VR_WEAPON_CONTACT_PROFILE_BONK)
+			return false;
+	}
+
 	if (!VR_InputMotionContextAccepted (frame) || !frame->sample_id ||
 		!frame->should_render || frame->reference_changed ||
 		!isfinite (frame->sample_time_seconds) ||
@@ -2113,6 +2163,9 @@ unsigned int VR_InputMergeMeleeAttack (unsigned int buttons, qboolean isfinal)
 	vr_melee_gesture_profile_t profile;
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	qboolean pulse = false;
+	if (VR_InputBonkOffered ())
+		return VR_InputBonkPhysicalAllowed () ? buttons & ~BUTTON_ATTACK : buttons;
+
 	/* Consume ordinary physical edges normally, but melee in this mode is
 	 * activated only by the validated synthetic pulse below. */
 	if (VR_InputGestureMeleeProfile (&profile))
@@ -2240,7 +2293,7 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 	float units_per_metre, point_speed;
 	int weapon;
 
-	if (!VR_InputPhysicalMeleeAllowed () ||
+	if ((!VR_InputPhysicalMeleeAllowed () && !VR_InputBonkPhysicalAllowed ()) ||
 		!pending || !frame || hand < 0 || hand > 1 || !model || !geometry ||
 		(!held_mesh && (!edge || !edge->valid)) || !body_base || !body_tip ||
 		!VR_InputWireVec (body_base) || !VR_InputWireVec (body_tip) ||
@@ -2298,6 +2351,22 @@ static qboolean VR_InputPrepareMeleeContact (usercmd_t *pending,
 	VectorAdd (grip, body_base, contact.base[hand]);
 	VectorAdd (grip, body_tip, contact.tip[hand]);
 	contact.speed[hand] = point_speed;
+	if (VR_InputBonkOffered ())
+	{
+		if (!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HEAD, hand,
+			contact.head_angles))
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			if (!isfinite (contact.head_angles[axis]))
+				return false;
+			float angle = fmodf (contact.head_angles[axis], 360.0f);
+			if (angle >= 180.0f) angle -= 360.0f;
+			if (angle < -180.0f) angle += 360.0f;
+			contact.head_angles[axis] = angle;
+		}
+		contact.flags |= VR_WEAPON_CONTACT_HEAD_PRESENT;
+	}
 	if (!VR_InputContactIsValid (&contact))
 		return false;
 
@@ -2330,7 +2399,8 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 	const int modelindex = cl.stats[STAT_WEAPON];
 	const unsigned int hand_flag = hand == 0 ?
 		VR_WEAPON_CONTACT_LEFT_VALID : VR_WEAPON_CONTACT_RIGHT_VALID;
-	const unsigned int contact_flags = pending ? pending->vr_contact.flags : 0;
+	const unsigned int contact_flags = pending ? pending->vr_contact.flags &
+		~VR_WEAPON_CONTACT_HEAD_PRESENT : 0;
 	const qboolean bilateral_immersive = contact_flags ==
 		(VR_WEAPON_CONTACT_LEFT_VALID | VR_WEAPON_CONTACT_RIGHT_VALID |
 		 VR_WEAPON_CONTACT_IMMERSIVE_MELEE);
@@ -2343,7 +2413,7 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 	stockaxe_edge_t selected_edge;
 	int selected_axe_index, selected_skin;
 
-	if ((immersive && !VR_InputPhysicalMeleeAllowed ()) ||
+	if ((immersive && !VR_InputPhysicalMeleeAllowed () && !VR_InputBonkPhysicalAllowed ()) ||
 		!pending || !frame || !frame->sample_id ||
 		VR_WeaponMenu_IsOpenVR () || VR_WeaponCalibrationAdjustActive () ||
 		vr_input_pending_contact_identity.sample_id != frame->sample_id ||
@@ -2414,10 +2484,13 @@ static qboolean VR_InputPendingContactAccepted (const usercmd_t *pending,
 	if (immersive)
 	{
 		if (cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_QBJ3 ||
-			cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ENYO)
+			cl.vr_weapon_contact_profile == VR_WEAPON_CONTACT_PROFILE_ENYO ||
+			VR_InputBonkOffered ())
 		{
 			vec3_t base, tip, delta;
-			return VR_InputHeldMeleeAuthorized () &&
+			return (!VR_InputBonkOffered () ||
+				(pending->vr_contact.flags & VR_WEAPON_CONTACT_HEAD_PRESENT)) &&
+				VR_InputHeldMeleeAuthorized () &&
 				VR_InputControllerAim () && cl.stats[STAT_HEALTH] > 0 &&
 				hand == VR_InputDominantPhysicalHand () &&
 				frame->devices[0].kind == VRXR_DEVICE_HEAD &&
@@ -4580,6 +4653,15 @@ static qboolean VR_InputPendingAkimboAccepted (const usercmd_t *pending,
 			return false;
 	}
 	return true;
+}
+
+/* Final post-CSQC filter; independent of command angles/movement and of
+ * CSQC's contact mutation. Current recipe/tracking and the pending owner must
+ * still authorize the immersive gesture. */
+qboolean VR_InputSuppressBonkAttack (const usercmd_t *cmd)
+{
+	return cmd && VR_InputBonkPhysicalAllowed () &&
+		VR_InputPendingContactAccepted (&cl.pendingcmd, GL_OpenXRFrame (), false);
 }
 
 static qboolean VR_InputPrepareBerserkAkimboContact (usercmd_t *pending,

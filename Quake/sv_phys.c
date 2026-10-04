@@ -3923,7 +3923,8 @@ typedef enum
 {
 	SV_VR_AXE_TRACE_SCOPE_NONE,
 	SV_VR_AXE_TRACE_SCOPE_STOCK,
-	SV_VR_AXE_TRACE_SCOPE_DWELL
+	SV_VR_AXE_TRACE_SCOPE_DWELL,
+	SV_VR_AXE_TRACE_SCOPE_BONK_WHIFF
 } sv_vr_axe_trace_scope_mode_t;
 
 /* One native axe call may borrow one already validated physical trace. The
@@ -4164,8 +4165,7 @@ unsigned int SV_VREnyoMeleeContactProfile (void)
 		VR_WEAPON_CONTACT_PROFILE_ENYO : VR_WEAPON_CONTACT_PROFILE_NONE;
 }
 
-/* Recognition only until the complete Bonk outcome adapter is installed.
- * This does not offer a contact profile or admit a direct-melee stroke. */
+/* Only the original installed image and its audited native ABI are admitted. */
 qboolean SV_BonkHammerProgramLoaded (void)
 {
 	static const byte expected_sha256[32] = {
@@ -4232,21 +4232,15 @@ qboolean SV_BonkHammerWeaponSelected (edict_t *ent)
 	return !strcmp (PR_GetString (ent->v.weaponmodel), model);
 }
 
-qboolean SV_BonkHammerAttackReady (edict_t *ent)
+static qboolean SV_BonkHammerIdle (edict_t *ent)
 {
-	eval_t *cooldown;
-	int think;
-
-	if (!SV_BonkHammerWeaponSelected (ent) || !isfinite (qcvm->time) ||
-		!isfinite ((float)qcvm->time))
+	if (!ent || !isfinite (ent->v.nextthink))
 		return false;
-	cooldown = GetEdictFieldValue (ent, 127);
-	if (!cooldown || !isfinite (cooldown->_float) ||
-		cooldown->_float > (float)qcvm->time)
-		return false;
+	if (!ent->v.think)
+		return true;
 	/* Only harmless native idle/recovery thinks, never a pending charged hit.
- * Do not cancel these thinks or reset the QC animation state. */
-	think = ent->v.think;
+	 * Do not cancel these thinks or reset the QC animation state. */
+	const int think = ent->v.think;
 	if (think >= 553 && think <= 568)
 	{
 		char name[32];
@@ -4261,6 +4255,17 @@ qboolean SV_BonkHammerAttackReady (edict_t *ent)
 		19532, 0, 0, 0, NULL)) ||
 		(think == 668 && SV_DwellFunctionPin (668, "player_run",
 			19569, 0, 0, 0, NULL));
+}
+
+qboolean SV_BonkHammerAttackReady (edict_t *ent)
+{
+	eval_t *cooldown;
+	if (!SV_BonkHammerWeaponSelected (ent) || !SV_BonkHammerIdle (ent) ||
+		!isfinite (qcvm->time) || !isfinite ((float)qcvm->time))
+		return false;
+	cooldown = GetEdictFieldValue (ent, 127);
+	return cooldown && isfinite (cooldown->_float) &&
+		cooldown->_float <= (float)qcvm->time;
 }
 
 /* QBJ3's native has_berserk tests the item bit or the float QC expiry. The
@@ -4300,7 +4305,8 @@ enum
 	SV_VR_DIRECT_MELEE_NONE,
 	SV_VR_DIRECT_MELEE_QBJ3_WRENCH,
 	SV_VR_DIRECT_MELEE_QBJ3_BERSERK,
-	SV_VR_DIRECT_MELEE_ENYO_SWORD
+	SV_VR_DIRECT_MELEE_ENYO_SWORD,
+	SV_VR_DIRECT_MELEE_BONK_HAMMER
 };
 
 static qboolean SV_VRDirectMeleeSelected (edict_t *ent, int *subtype)
@@ -4316,6 +4322,8 @@ static qboolean SV_VRDirectMeleeSelected (edict_t *ent, int *subtype)
 		SV_EnyoMeleeProgramLoaded () &&
 		!strcmp (PR_GetString (ent->v.weaponmodel), "progs/ee_v_sword.mdl"))
 		*subtype = SV_VR_DIRECT_MELEE_ENYO_SWORD;
+	else if (SV_BonkHammerWeaponSelected (ent))
+		*subtype = SV_VR_DIRECT_MELEE_BONK_HAMMER;
 	return *subtype != SV_VR_DIRECT_MELEE_NONE;
 }
 
@@ -4956,6 +4964,7 @@ static void SV_ResetPrivateVRDirectMeleeStroke (client_t *client, int hand)
 	client->private_vr_direct_melee_authorized[hand] = false;
 	client->private_vr_direct_melee_subtype[hand] = SV_VR_DIRECT_MELEE_NONE;
 	client->private_vr_direct_melee_deadline[hand] = 0;
+	client->private_vr_direct_melee_tier[hand] = 0;
 	client->private_vr_direct_melee_hit_count[hand] = 0;
 	memset (client->private_vr_direct_melee_hit_entities[hand], 0,
 		sizeof (client->private_vr_direct_melee_hit_entities[hand]));
@@ -5304,6 +5313,36 @@ void SV_VRStockAxeClearTraceScope (void)
 	memset (&sv_vr_axe_trace_scope, 0, sizeof (sv_vr_axe_trace_scope));
 }
 
+qboolean SV_BonkHammerWhiffTrace (edict_t *ignore, int nomonsters,
+	const vec3_t start, const vec3_t end, trace_t *trace)
+{
+	static const int sites[] = {13531, 13547, 13578, 13616, 13649};
+	client_t *client = sv_vr_axe_trace_scope.client;
+	edict_t *player = sv_vr_axe_trace_scope.player;
+	if (!trace || !sv_vr_axe_trace_scope.active ||
+		sv_vr_axe_trace_scope.mode != SV_VR_AXE_TRACE_SCOPE_BONK_WHIFF ||
+		!SV_BonkHammerProgramLoaded () || !client || !client->active ||
+		!client->spawned || client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		client->edict != player || !player || player->free || ignore != player ||
+		nomonsters || qcvm->xfunction != &qcvm->functions[470] ||
+		qcvm->xfunction != sv_vr_axe_trace_scope.function ||
+		pr_global_struct->self != EDICT_TO_PROG (player))
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (start[axis]) || !isfinite (end[axis]))
+			return false;
+	for (size_t i = 0; i < countof (sites); ++i)
+		if (qcvm->xstatement == sites[i])
+		{
+			memset (trace, 0, sizeof (*trace));
+			trace->fraction = 1.0f;
+			trace->ent = qcvm->edicts;
+			VectorCopy (end, trace->endpos);
+			return true;
+		}
+	return false; // Nested floor/gameplay traces and desktop roots stay native.
+}
+
 qboolean SV_VRStockAxeTrace (edict_t *ignore, int nomonsters,
 	const vec3_t start, const vec3_t end, trace_t *trace)
 {
@@ -5434,6 +5473,14 @@ void SV_VRAxeTraceLeaveFunction (void)
 	const trace_t *contact;
 	int axis;
 
+	if (sv_vr_axe_trace_scope.active &&
+		sv_vr_axe_trace_scope.mode == SV_VR_AXE_TRACE_SCOPE_BONK_WHIFF)
+	{
+		if (qcvm != &sv.qcvm || !qcvm->progs ||
+			qcvm->xfunction == sv_vr_axe_trace_scope.function)
+			SV_VRStockAxeClearTraceScope ();
+		return;
+	}
 	if (!sv_vr_axe_trace_scope.active ||
 		sv_vr_axe_trace_scope.mode != SV_VR_AXE_TRACE_SCOPE_DWELL)
 		return;
@@ -6426,10 +6473,27 @@ static qboolean SV_VRDirectMeleeContactSelected (client_t *client, edict_t *ent,
 	if (!cmd ||
 		!SV_VRContactOwnerLive (client, ent) ||
 		!SV_VRDirectMeleeSelected (ent, &selected_subtype) ||
-		!(selected_subtype == SV_VR_DIRECT_MELEE_ENYO_SWORD ?
+		!(selected_subtype == SV_VR_DIRECT_MELEE_BONK_HAMMER ?
+			SV_VRBonkMeleeEnabled () : selected_subtype == SV_VR_DIRECT_MELEE_ENYO_SWORD ?
 			SV_VREnyoMeleeEnabled () : SV_VRQBJ3MeleeEnabled ()) ||
 		!(flags & VR_WEAPON_CONTACT_IMMERSIVE_MELEE) ||
 		!SV_VRContactWeaponIdentity (ent, &cmd->vr_contact))
+		return false;
+	if (selected_subtype == SV_VR_DIRECT_MELEE_BONK_HAMMER)
+	{
+		const unsigned int caps = VR_WEAPON_CONTACT_CAP_MELEE | VR_WEAPON_CONTACT_CAP_BONK_HEAD;
+		if (client->weapon_contact_last_mode < 0 ||
+			(client->weapon_contact_last_mode & caps) != caps ||
+			client->weapon_contact_last_profile != VR_WEAPON_CONTACT_PROFILE_BONK ||
+			!(flags & VR_WEAPON_CONTACT_HEAD_PRESENT))
+			return false;
+		for (int axis = 0; axis < 3; ++axis)
+			if (!isfinite (cmd->vr_contact.head_angles[axis]) ||
+				cmd->vr_contact.head_angles[axis] < -180.0f ||
+				cmd->vr_contact.head_angles[axis] >= 180.0f)
+				return false;
+	}
+	else if (flags & VR_WEAPON_CONTACT_HEAD_PRESENT)
 		return false;
 	if (selected_subtype == SV_VR_DIRECT_MELEE_QBJ3_BERSERK)
 	{
@@ -6489,6 +6553,9 @@ static qboolean SV_VRContactSampleValid (client_t *client, edict_t *ent,
 		(contact->flags & ~VR_WEAPON_CONTACT_KNOWN_FLAGS) || !hands ||
 		!SV_VRContactWeaponIdentity (ent, contact))
 		return false;
+	if ((contact->flags & VR_WEAPON_CONTACT_HEAD_PRESENT) &&
+		(!melee || !SV_VRDirectMeleeContactSelected (client, ent, cmd, NULL)))
+		return false;
 	if (melee &&
 		!((SV_VRStockAxeContactProfile () !=
 			VR_WEAPON_CONTACT_PROFILE_NONE &&
@@ -6545,6 +6612,10 @@ static qboolean SV_VRContactSameSample (const vr_weapon_contact_t *a,
 	if (a->flags != b->flags || a->modelindex != b->modelindex ||
 		a->weapon != b->weapon)
 		return false;
+	if (a->flags & VR_WEAPON_CONTACT_HEAD_PRESENT)
+		for (axis = 0; axis < 3; ++axis)
+			if (a->head_angles[axis] != b->head_angles[axis])
+				return false;
 	for (hand = 0; hand < 2; hand++)
 	{
 		if (a->speed[hand] != b->speed[hand])
@@ -7416,6 +7487,8 @@ static qboolean SV_VRQBJ3MeleeIdle (edict_t *ent)
 static qboolean SV_VRDirectMeleeIdle (edict_t *ent, int subtype)
 {
 	const int think = ent->v.think;
+	if (subtype == SV_VR_DIRECT_MELEE_BONK_HAMMER)
+		return SV_BonkHammerIdle (ent);
 	if (subtype != SV_VR_DIRECT_MELEE_ENYO_SWORD)
 		return SV_VRQBJ3MeleeIdle (ent);
 	if (!isfinite (ent->v.nextthink))
@@ -7478,8 +7551,9 @@ static qboolean SV_VRDirectMeleeOutcomeContextValid (client_t *client, edict_t *
  * second victim before that deadline, using the existing per-hand contact
  * owner and passing back the saved subtype. A first whiff ends the stroke;
  * the caller also owns VM identity, victim deduplication and the two-hit cap.
- * The adapter never enters the attack fan/root or installs a think. Enyo's
- * native leaf may install its harmless hit aftermath, which remains intact.
+ * Bonk settled whiffs enter the native root with only its five acquisition
+ * traces forced to miss. Native hit/whiff aftermath remains intact; the
+ * adapter itself never installs a think.
  * The queued contact caller owns the two-victim stroke state below. */
 static qboolean SV_VRDirectMeleeOutcome
 	(client_t *client, edict_t *ent,
@@ -7497,9 +7571,9 @@ static qboolean SV_VRDirectMeleeOutcome
 	eval_t *cooldown = NULL, *hostile, *berserk_sound = NULL, *switchblock = NULL;
 	trace_t accepted_contact = {0};
 	vec3_t accepted_angles, saved_angles = {0}, body_origin, org, dir;
-	float qctime, new_cooldown, new_hostile;
+	float qctime, new_cooldown, new_hostile, tier = 0;
 	int axis, saved_argc = 0, cursor_sequence, subtype = SV_VR_DIRECT_MELEE_NONE;
-	qboolean berserk, enyo, cursor_valid, context_saved = false;
+	qboolean berserk, enyo, bonk, cursor_valid, context_saved = false;
 	qboolean friendly_fire_scope = false, outcome_ok = false;
 
 	if (!cmd || !stroke_subtype ||
@@ -7516,6 +7590,15 @@ static qboolean SV_VRDirectMeleeOutcome
 		goto cleanup;
 	berserk = subtype == SV_VR_DIRECT_MELEE_QBJ3_BERSERK;
 	enyo = subtype == SV_VR_DIRECT_MELEE_ENYO_SWORD;
+	bonk = subtype == SV_VR_DIRECT_MELEE_BONK_HAMMER;
+	if (bonk)
+	{
+		tier = client->private_vr_direct_melee_tier[anatomical_hand];
+		if (!SV_VRDirectMeleeContactSelected (client, ent, cmd, NULL) ||
+			(tier != .2f && tier != 2.0f && tier != 4.0f) ||
+			(first_outcome && !SV_BonkHammerAttackReady (ent)))
+			goto cleanup;
+	}
 	qctime = (float)qcvm->time;
 	if (!isfinite (qctime))
 		goto cleanup;
@@ -7526,7 +7609,7 @@ static qboolean SV_VRDirectMeleeOutcome
 	{
 		if (!isfinite (body_origin[axis]))
 			goto cleanup;
-		accepted_angles[axis] = berserk ?
+		accepted_angles[axis] = bonk && !contact ? cmd->vr_contact.head_angles[axis] : berserk ?
 			cmd->vr_akimbo_angles[anatomical_hand][axis] :
 			cmd->vr_handrot[axis];
 		if (!isfinite (accepted_angles[axis]) ||
@@ -7534,7 +7617,7 @@ static qboolean SV_VRDirectMeleeOutcome
 			goto cleanup;
 	}
 	cooldown = GetEdictFieldValue (ent,
-		ED_FindFieldOffset ("attack_finished"));
+		ED_FindFieldOffset (bonk ? "attack_finished_hammer" : "attack_finished"));
 	hostile = GetEdictFieldValue (ent,
 		ED_FindFieldOffset ("show_hostile"));
 	if ((first_outcome && (!cooldown || !isfinite (cooldown->_float) ||
@@ -7555,7 +7638,7 @@ static qboolean SV_VRDirectMeleeOutcome
 		if (!switchblock || !isfinite (switchblock->_float))
 			goto cleanup;
 	}
-	new_cooldown = first_outcome ? qctime + (enyo ? .4f : berserk ? .5f : .8f) : 0;
+	new_cooldown = first_outcome ? qctime + (bonk || enyo ? .4f : berserk ? .5f : .8f) : 0;
 	new_hostile = qctime + 1.0f;
 	if (!isfinite (new_cooldown) || !isfinite (new_hostile))
 		goto cleanup;
@@ -7598,7 +7681,7 @@ static qboolean SV_VRDirectMeleeOutcome
 	pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
 	pr_global_struct->time = qcvm->time;
 	qcvm->argc = 0;
-	if (first_outcome)
+	if (first_outcome && !bonk)
 	{
 		cooldown->_float = new_cooldown;
 		if (enyo)
@@ -7624,6 +7707,89 @@ static qboolean SV_VRDirectMeleeOutcome
 			SV_StartSound (ent, ent->v.origin, 0,
 				"items/berserk_fire.wav", 255, 1);
 		}
+	}
+	if (bonk)
+	{
+		if (first_outcome)
+		{
+			hostile->_float = new_hostile;
+			PR_ExecuteProgram (409); // Native SuperDamageSound prelude.
+			if (!SV_VRDirectMeleeOutcomeContextValid (client, ent, saved_vm,
+				saved_progs, saved_edicts, saved_global_struct, saved_vm_globals,
+				body_origin, cursor_valid, cursor_sequence, subtype, false))
+				goto cleanup;
+			pr_global_struct->self = EDICT_TO_PROG (ent);
+			pr_global_struct->time = qcvm->time;
+			PR_ExecuteProgram (460); // Native Hammer_Whiff_Sound before release.
+			if (!SV_VRDirectMeleeOutcomeContextValid (client, ent, saved_vm,
+				saved_progs, saved_edicts, saved_global_struct, saved_vm_globals,
+				body_origin, cursor_valid, cursor_sequence, subtype, false))
+				goto cleanup;
+		}
+		pr_global_struct->self = EDICT_TO_PROG (ent);
+		pr_global_struct->other = EDICT_TO_PROG (qcvm->edicts);
+		pr_global_struct->time = qcvm->time;
+		AngleVectors (accepted_angles, pr_global_struct->v_forward,
+			pr_global_struct->v_right, pr_global_struct->v_up);
+		if (!contact)
+		{
+			SV_VRStockAxeClearTraceScope ();
+			sv_vr_axe_trace_scope.mode = SV_VR_AXE_TRACE_SCOPE_BONK_WHIFF;
+			sv_vr_axe_trace_scope.client = client;
+			sv_vr_axe_trace_scope.player = ent;
+			sv_vr_axe_trace_scope.function = &qcvm->functions[470];
+			sv_vr_axe_trace_scope.active = true;
+			G_FLOAT (OFS_PARM0) = tier;
+			qcvm->argc = 1;
+			PR_ExecuteProgram (470);
+			SV_VRStockAxeClearTraceScope ();
+		}
+		else
+		{
+			VectorMA (accepted_contact.endpos, -4.0f, pr_global_struct->v_forward, org);
+			VectorScale (pr_global_struct->v_right, 20.0f, dir);
+			VectorMA (dir, -5.0f, pr_global_struct->v_up, dir);
+			pr_global_struct->trace_allsolid = accepted_contact.allsolid;
+			pr_global_struct->trace_startsolid = accepted_contact.startsolid;
+			pr_global_struct->trace_fraction = accepted_contact.fraction;
+			pr_global_struct->trace_inwater = accepted_contact.inwater;
+			pr_global_struct->trace_inopen = accepted_contact.inopen;
+			pr_global_struct->trace_plane_dist = accepted_contact.plane.dist;
+			pr_global_struct->trace_ent = EDICT_TO_PROG (accepted_contact.ent);
+			VectorCopy (accepted_contact.endpos, pr_global_struct->trace_endpos);
+			VectorCopy (accepted_contact.plane.normal, pr_global_struct->trace_plane_normal);
+			hostile->_float = new_hostile;
+			G_INT (OFS_PARM0) = EDICT_TO_PROG (accepted_contact.ent);
+			VectorCopy (org, G_VECTOR (OFS_PARM1));
+			VectorCopy (dir, G_VECTOR (OFS_PARM2));
+			G_FLOAT (OFS_PARM3) = tier;
+			G_FLOAT (OFS_PARM4) = NUM_FOR_EDICT (accepted_contact.ent) == 0 &&
+				accepted_contact.plane.normal[2] > .71f;
+			qcvm->argc = 5;
+			friendly_fire_scope = SV_CoopFriendlyFireBegin (ent);
+			PR_ExecuteProgram (471);
+			if (friendly_fire_scope)
+			{
+				SV_CoopFriendlyFireEnd ();
+				friendly_fire_scope = false;
+			}
+		}
+		if (!SV_VRDirectMeleeOutcomeContextValid (client, ent, saved_vm,
+			saved_progs, saved_edicts, saved_global_struct, saved_vm_globals,
+			body_origin, cursor_valid, cursor_sequence, subtype, false))
+			goto cleanup;
+		if (first_outcome)
+		{
+			pr_global_struct->self = EDICT_TO_PROG (ent);
+			pr_global_struct->time = qcvm->time;
+			G_FLOAT (OFS_PARM0) = .4f;
+			qcvm->argc = 1;
+			PR_ExecuteProgram (474); // Native saf, never an engine cooldown copy.
+		}
+		outcome_ok = SV_VRDirectMeleeOutcomeContextValid (client, ent, saved_vm,
+			saved_progs, saved_edicts, saved_global_struct, saved_vm_globals,
+			body_origin, cursor_valid, cursor_sequence, subtype, false);
+		goto cleanup;
 	}
 	if (!contact)
 	{
@@ -7685,6 +7851,8 @@ static qboolean SV_VRDirectMeleeOutcome
 		subtype, first_outcome);
 
 cleanup:
+	if (sv_vr_axe_trace_scope.mode == SV_VR_AXE_TRACE_SCOPE_BONK_WHIFF)
+		SV_VRStockAxeClearTraceScope ();
 	if (outcome_ok && first_outcome)
 	{
 		if (!isfinite (cooldown->_float))
@@ -7801,7 +7969,10 @@ static qboolean SV_VRContactProcessDirectMelee (client_t *client, edict_t *ent,
 			client->private_vr_melee_peak_speed[hand], speed);
 	}
 	if (client->private_vr_melee_consumed[hand] ||
-		client->private_vr_melee_arc[hand] < 0.03f ||
+		client->private_vr_melee_arc[hand] <
+			(subtype == SV_VR_DIRECT_MELEE_BONK_HAMMER ? .06f : .03f) ||
+		(subtype == SV_VR_DIRECT_MELEE_BONK_HAMMER &&
+		 client->private_vr_melee_peak_speed[hand] < .55f) ||
 		!SV_VRContactEyeGripClear (ent, current, hand))
 		goto settle;
 
@@ -7846,6 +8017,14 @@ static qboolean SV_VRContactProcessDirectMelee (client_t *client, edict_t *ent,
 		{
 			client->private_vr_melee_consumed[hand] = true;
 			break;
+		}
+		if (first && subtype == SV_VR_DIRECT_MELEE_BONK_HAMMER)
+		{
+			const float arc = client->private_vr_melee_arc[hand];
+			const float peak = client->private_vr_melee_peak_speed[hand];
+			client->private_vr_direct_melee_tier[hand] =
+				arc >= .25f && peak >= 1.5f ? 4.0f :
+				arc >= .12f && peak >= .85f ? 2.0f : .2f;
 		}
 		callback_entered = true;
 		accepted = SV_VRDirectMeleeOutcome (client, ent, cmd, hand,
