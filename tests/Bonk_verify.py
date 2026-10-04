@@ -81,6 +81,10 @@ for game in ('id1', 'bonkjam'):
                 models[name] = data[pos:pos + length]
     assert (dest / 'pak0.pak').is_file(), 'Missing installed ' + game
 assert program and hashlib.sha256(program).hexdigest() == 'b54e33e50ad06d5628132a26bb6b089534d091bd2b6756799a15b61e7af49811'
+# Installed archive also contains three unused historical aliases. Native selector
+# and donor recipes use only the following 29 canonical models.
+for alias in ('baseball_bat', 'baseball_bat_bloody', 'blocky_brown_brick'):
+    models.pop('progs/v_hammer_' + alias + '.mdl', None)
 assert len(models) == 29
 (out / 'tmp').mkdir(exist_ok=True)
 env = dict(os.environ, TMPDIR=str(out / 'tmp'))
@@ -91,14 +95,14 @@ if not a.native_only:
         text = (root / 'tests' / name).read_text().replace('../Quake/', str(source / 'Quake') + '/')
         (out / name).write_text(text)
     outputs = {}
-    for name in ('cl_input', 'sv_user', 'common', 'mathlib', 'gl_model', 'vr_locomotion'):
+    for name in ('cl_input', 'sv_user', 'common', 'mathlib', 'gl_model', 'vr_locomotion', 'strlcpy'):
         obj = out / (name + '.o')
         execute([compiler, *filtered, '-ffunction-sections', '-fdata-sections', '-c', str(source / 'Quake' / (name + '.c')), '-o', str(obj)], 'compile_' + name)
         outputs[name] = str(obj)
     sdl = 'sdl3' if '-DUSE_SDL3' in filtered else 'sdl2'
     libs = shlex.split(subprocess.check_output(['pkg-config', '--libs', sdl], text=True))
     fixtures = {'codec': ('cl_input', 'sv_user', 'common', 'mathlib'),
-                'geometry': ('gl_model', 'common', 'mathlib'),
+                'geometry': ('gl_model', 'common', 'mathlib', 'strlcpy'),
                 'input': ('vr_locomotion', 'mathlib')}
     for name, objects in fixtures.items():
         execute([compiler, *filtered, '-ffunction-sections', '-fdata-sections', str(out / ('Bonk_' + name + '_fixture.c')),

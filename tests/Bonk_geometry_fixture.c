@@ -28,7 +28,7 @@ int main (int argc, char **argv)
 		assert (source && fread (source, size, 1, file) == 1);
 		fclose (file);
 		size_t generated = 0;
-		assert (QBJ3_MDL_Split (source, size, recipe->split_weapon, QBJ3_MDL_SIDE_RIGHT, &mesh, &generated) == 1);
+		assert (QBJ3_MDL_Split (source, size, recipe->split_weapon, QBJ3_MDL_SIDE_DOMINANT, &mesh, &generated) == 1);
 		assert (generated == recipe->generated_size && QBJ3_MDL_CRC32 (mesh, generated) == recipe->generated_crc);
 		assert (QBJ3_MDL_ReadLE32 (source + 60) == (unsigned)recipe->source_vertices);
 		assert (QBJ3_MDL_ReadLE32 (source + 64) == (unsigned)recipe->source_triangles);
@@ -54,7 +54,7 @@ int main (int argc, char **argv)
 		source[0] ^= 1; // one-byte model mutation must fail identity even with same dimensions
 		byte *bad = NULL;
 		size_t badsize = 0;
-		assert (QBJ3_MDL_Split (source, size, recipe->split_weapon, QBJ3_MDL_SIDE_RIGHT, &bad, &badsize) == 0);
+		assert (QBJ3_MDL_Split (source, size, recipe->split_weapon, QBJ3_MDL_SIDE_DOMINANT, &bad, &badsize) == 0);
 		assert (!bad);
 		free (mesh);
 		free (source);

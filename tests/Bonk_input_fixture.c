@@ -60,6 +60,7 @@ int main (void)
 	for (int i = 0; i < 3; ++i)
 	{
 		frame.devices[i].valid = frame.devices[i].tracked = true;
+		frame.devices[i].velocity_valid = frame.devices[i].angular_velocity_valid = true;
 		frame.devices[i].kind = i ? VRXR_DEVICE_HAND : VRXR_DEVICE_HEAD;
 		frame.devices[i].hand = i - 1;
 	}
