@@ -1106,8 +1106,9 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 	 * Absent or invalid optional QuakeC fields leave their stats zero. */
 	SV_ReadOptionalInventoryField (ent, "weapons", &statsi[STAT_VR_WEAPONS]);
 	statsi[STAT_VR_ITEMS2] = items2;
-	if (!SV_ReadOptionalInventoryField (ent, "moditems", &statsi[STAT_VR_MODITEMS]))
-		SV_ReadOptionalInventoryField (ent, "items_dwell", &statsi[STAT_VR_MODITEMS]);
+	if (!SV_ReadOptionalInventoryField (ent, "moditems", &statsi[STAT_VR_MODITEMS]) &&
+		!SV_ReadOptionalInventoryField (ent, "items_dwell", &statsi[STAT_VR_MODITEMS]))
+		SV_ReadOptionalInventoryField (ent, "items_snack", &statsi[STAT_VR_MODITEMS]);
 	SV_ReadOptionalInventoryField (ent, "weapon2", &statsi[STAT_VR_WEAPON2]);
 	SV_ReadOptionalInventoryField (ent, "weapons2", &statsi[STAT_VR_WEAPONS2]);
 	SV_WriteAmmoCapacityStats (ent, statsi);

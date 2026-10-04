@@ -458,6 +458,20 @@ static const vr_weapon_preset_row_t vr_dwell_weapon_fallbacks[] = {
 	{"progs/v_rifle.mdl", {1.5f, 1.0f, 10.0f}, 0.5f},
 };
 
+static const vr_weapon_preset_muzzle_row_t vr_snack_weapon_fallbacks[] = {
+	{"progs/v_axe2.mdl", {-3.5f, 34.0f, 41.5f}, 0.33f, {0.0f, 0.0f, 41.5f}},
+	{"progs/v_shot.mdl", {1.5f, 1.0f, 10.0f}, 0.5f, {0.0f, 0.0f, 10.0f}},
+	{"progs/v_shot2.mdl", {-3.5f, 1.0f, 8.5f}, 0.8f, {0.0f, 0.0f, 8.5f}},
+	{"progs/v_nail.mdl", {-18.119550f, 29.178477f, 113.478652f}, 0.1666667f,
+		{0.015233f, 7.372823f, 18.445326f}},
+	{"progs/v_nail2.mdl", {-0.301060f, 69.561041f, 136.059723f}, 0.1666667f,
+		{-0.072624f, 5.060089f, 31.53750f}},
+	{"progs/v_rock.mdl", {10.0f, 1.5f, 13.0f}, 0.5f, {0.0f, 0.0f, 13.0f}},
+	{"progs/v_rock2.mdl", {10.0f, 7.0f, 19.0f}, 0.5f, {0.0f, 0.0f, 19.0f}},
+	{"progs/v_light.mdl", {3.0f, 4.0f, 13.0f}, 0.5f, {0.0f, 0.0f, 13.0f}},
+	{"progs/v_shot3.mdl", {-3.5f, 0.4f, 8.5f}, 0.5333333f, {0.0f, 0.0f, 8.5f}},
+};
+
 static const vr_weapon_preset_muzzle_row_t vr_qbj3_weapon_fallbacks[] = {
 	{"progs/v_wrench.mdl", {-5.090864f, 45.71518f, 64.70464f}, 0.2f, {0, 0, 0}},
 	{"progs/v_pistol.mdl", {3.388845f, 37.75988f, 56.43581f}, 0.2f, {-9.11632f, 9.013277f, -45.533f}},
@@ -2730,6 +2744,28 @@ static qboolean VR_WeaponCalibrationPresetAppendQBJ3(
 	return true;
 }
 
+static qboolean VR_WeaponCalibrationPresetAppendMuzzleRows(
+	vr_weapon_schema_entry_t *entries, size_t *count,
+	const vr_weapon_preset_muzzle_row_t *rows, size_t row_count)
+{
+	for (size_t i = 0; i < row_count; ++i)
+	{
+		const vr_weapon_preset_muzzle_row_t *row = &rows[i];
+		vr_weapon_schema_entry_t *entry;
+		if (*count >= VR_WEAPON_SCHEMA_MAX_ENTRIES)
+			return false;
+		entry = &entries[(*count)++];
+		memset(entry, 0, sizeof(*entry));
+		strcpy(entry->viewmodel_path, row->path);
+		VectorCopy(row->held, entry->held_offset);
+		VectorCopy(row->muzzle, entry->muzzle_offset);
+		entry->held_scale = row->scale;
+		entry->has_held_offset = entry->has_held_scale =
+			entry->has_muzzle_offset = true;
+	}
+	return true;
+}
+
 static qboolean VR_WeaponCalibrationPresetAppendGeneric(
 	vr_weapon_schema_entry_t *entries, size_t *count, int preset,
 	qboolean ad_root_only)
@@ -2772,10 +2808,15 @@ static qboolean VR_WeaponCalibrationBuildPreset(
 {
 	const qboolean additional_ad_root = VR_WeaponCalibrationGameIs("q30a1024") ||
 		VR_WeaponCalibrationGameIs("gibtropolis") ||
-		VR_WeaponCalibrationGameIs("hwjam4");
+		VR_WeaponCalibrationGameIs("hwjam4") ||
+		VR_WeaponCalibrationGameIs("hwjam2");
 	*count = 0;
 	if (VR_WeaponCalibrationGameIs("qbj3"))
 		return VR_WeaponCalibrationPresetAppendQBJ3(entries, count);
+	if (VR_WeaponCalibrationGameIs("snack") ||
+		VR_WeaponCalibrationGameIs("snack3"))
+		return VR_WeaponCalibrationPresetAppendMuzzleRows(entries, count,
+			vr_snack_weapon_fallbacks, countof(vr_snack_weapon_fallbacks));
 	if (VR_WeaponCalibrationGameIs("ad"))
 		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
 			vr_ad_weapon_fallbacks, countof(vr_ad_weapon_fallbacks), false) &&
@@ -3217,6 +3258,7 @@ void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 {
 	static const vec3_t default_angles = {0.0f, 0.0f, 0.0f};
 	static const vec3_t default_forward_offset = {0.0f, 0.0f, 8.0f};
+	static const vec3_t snack_stakegun_forward_offset = {0.0f, 0.0f, 11.0f};
 	static const vec3_t up_only_offset = {0.0f, 0.0f, 0.0f};
 	const vr_weapon_calibration_slot_t *calibration = NULL;
 	const float *safe_angles = angles;
@@ -3230,7 +3272,11 @@ void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 	qboolean spawn_at_self_origin = weapon_bit == IT_GRENADE_LAUNCHER ||
 		(weapon_bit == HIT_PROXIMITY_GUN && viewmodel &&
 		 !q_strcasecmp(COM_SkipPath(com_gamedir), "hipnotic") &&
-		 !q_strcasecmp(viewmodel, "progs/v_prox.mdl"));
+		 !q_strcasecmp(viewmodel, "progs/v_prox.mdl")) ||
+		(weapon_bit == IT_SUPER_NAILGUN && viewmodel &&
+		 (VR_WeaponCalibrationGameIs("snack") ||
+		  VR_WeaponCalibrationGameIs("snack3")) &&
+		 !q_strcasecmp(viewmodel, "progs/v_nail2.mdl"));
 
 	if (!out)
 		return;
@@ -3240,6 +3286,11 @@ void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 		safe_angles = default_angles;
 	forward_offset = VR_WeaponCalibrationUpOnlySource(viewmodel) ?
 		up_only_offset : default_forward_offset;
+	if (weapon_bit == IT_NAILGUN && viewmodel &&
+		(VR_WeaponCalibrationGameIs("snack") ||
+		 VR_WeaponCalibrationGameIs("snack3")) &&
+		!q_strcasecmp(viewmodel, "progs/v_nail.mdl"))
+		forward_offset = snack_stakegun_forward_offset;
 
 	if (vr_weapon_calibration_initialized && viewmodel && viewmodel[0])
 	{

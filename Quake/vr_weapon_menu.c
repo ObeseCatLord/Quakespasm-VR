@@ -107,6 +107,18 @@ static const vr_weapon_menu_profile_entry_t vr_weapon_menu_ad_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, 64, 8, "LIGHTNING", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100)
 };
 
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_snack_profile[] = {
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_AXE, 1, "AXE", "progs/g_axe.mdl", "progs/v_axe2.mdl", -1, 0),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SHOTGUN, 2, "SHOTGUN", "progs/g_shotgn.mdl", "progs/v_shot.mdl", STAT_SHELLS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_SHOTGUN, 3, "DOUBLE SHOTGUN", "progs/g_shot.mdl", "progs/v_shot2.mdl", STAT_SHELLS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_NAILGUN, 4, "STAKEGUN", "progs/g_nail.mdl", "progs/v_nail.mdl", STAT_NAILS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_NAILGUN, 5, "IMPALER", "progs/g_nail2.mdl", "progs/v_nail2.mdl", STAT_NAILS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_GRENADE_LAUNCHER, 6, "GRENADE", "progs/g_rock.mdl", "progs/v_rock.mdl", STAT_ROCKETS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_ROCKET_LAUNCHER, 7, "ROCKET", "progs/g_rock2.mdl", "progs/v_rock2.mdl", STAT_ROCKETS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_LIGHTNING, 8, "LIGHTNING", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100),
+	{128, 0, 3, "ROTARY SHOTGUN", "progs/g_shot3.mdl", STAT_VR_MODITEMS, 128, STAT_ACTIVEWEAPON, 128, STAT_SHELLS, 100, "progs/v_shot3.mdl"}
+};
+
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_dwell_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_AXE, 1, "AXE", "progs/g_axe.mdl", "progs/v_axe2.mdl", -1, 0),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SHOTGUN, 2, "SHOTGUN", "progs/g_shotgn.mdl", "progs/v_shot.mdl", STAT_SHELLS, 100),
@@ -690,6 +702,18 @@ static qboolean VR_WeaponMenu_GameDirIs (const char *name)
 	return game && name && !q_strcasecmp (game, name);
 }
 
+static qboolean VR_WeaponMenu_IsSnackGame (void)
+{
+	return VR_WeaponMenu_GameDirIs ("snack") ||
+		VR_WeaponMenu_GameDirIs ("snack3");
+}
+
+static qboolean VR_WeaponMenu_IsADWeaponGame (void)
+{
+	return VR_WeaponMenu_GameDirIs ("ad") ||
+		VR_WeaponMenu_GameDirIs ("hwjam2");
+}
+
 static int VR_WeaponMenu_ProfileAmmoMaxStat (int ammo_stat)
 {
 	switch (ammo_stat)
@@ -849,9 +873,13 @@ static void VR_WeaponMenu_AddProfile (
 
 static void VR_WeaponMenu_LoadBuiltinProfiles (void)
 {
-	if (VR_WeaponMenu_GameDirIs ("ad"))
+	if (VR_WeaponMenu_IsADWeaponGame ())
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_ad_profile,
 			sizeof (vr_weapon_menu_ad_profile) / sizeof (vr_weapon_menu_ad_profile[0]));
+	if (VR_WeaponMenu_IsSnackGame ())
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_snack_profile,
+			sizeof (vr_weapon_menu_snack_profile) /
+			sizeof (vr_weapon_menu_snack_profile[0]));
 	if (VR_WeaponMenu_GameDirIs ("dwell") ||
 		VR_WeaponMenu_GameDirIs ("dwellv2p2"))
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_dwell_profile,
@@ -887,7 +915,8 @@ static void VR_WeaponMenu_LoadBuiltinProfiles (void)
 			sizeof (vr_weapon_menu_rogue_profile) /
 			sizeof (vr_weapon_menu_rogue_profile[0]));
 	/* Only the primary's verified complete families suppress stock guesses. */
-	if (VR_WeaponMenu_GameDirIs ("ad") || VR_WeaponMenu_GameDirIs ("alk") ||
+	if (VR_WeaponMenu_IsADWeaponGame () || VR_WeaponMenu_IsSnackGame () ||
+		VR_WeaponMenu_GameDirIs ("alk") ||
 		VR_WeaponMenu_GameDirIs ("limjam") || VR_WeaponMenu_GameDirIs ("enyo") ||
 		VR_WeaponMenu_GameDirIs ("qbj3") || VR_WeaponMenu_GameDirIs ("dwell") ||
 		VR_WeaponMenu_GameDirIs ("dwellv2p2"))
@@ -1191,7 +1220,7 @@ static const char *VR_WeaponMenu_EntryViewmodel (const vr_weapon_menu_entry_t *e
 		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
 			return (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) & 16384) ?
 				"progs/ee_v_av72.mdl" : "progs/ee_v_smgs.mdl";
-		if (VR_WeaponMenu_GameDirIs ("ad"))
+		if (VR_WeaponMenu_IsADWeaponGame ())
 		{
 			const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
 			switch (entry->selector)
@@ -1214,7 +1243,7 @@ static const char *VR_WeaponMenu_EntryPreviewPath (const vr_weapon_menu_entry_t 
 		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
 			return (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) & 16384) ?
 				"progs/ee_g_av72.mdl" : "progs/ee_g_smgs.mdl";
-		if (VR_WeaponMenu_GameDirIs ("ad"))
+		if (VR_WeaponMenu_IsADWeaponGame ())
 		{
 			const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
 			switch (entry->selector)
@@ -1239,14 +1268,14 @@ static qboolean VR_WeaponMenu_EntryModelMatches (
 			(!q_strcasecmp (model_path, "progs/ee_v_smgs.mdl") ||
 			 !q_strcasecmp (model_path, "progs/ee_v_av72.mdl")))
 			return true;
-		if (VR_WeaponMenu_GameDirIs ("ad") &&
+		if (VR_WeaponMenu_IsADWeaponGame () &&
 			((entry->selector == IT_AXE && !q_strcasecmp (model_path, "progs/v_ghook.mdl")) ||
 			 (entry->selector == IT_SUPER_SHOTGUN &&
 			  (!q_strcasecmp (model_path, "progs/v_shot2.mdl") || !q_strcasecmp (model_path, "progs/v_shot3.mdl"))) ||
 			 (entry->selector == IT_LIGHTNING &&
 			  (!q_strcasecmp (model_path, "progs/v_light.mdl") || !q_strcasecmp (model_path, "progs/v_plasma.mdl")))))
 			return true;
-		if (VR_WeaponMenu_GameDirIs ("ad") && entry->selector == IT_AXE &&
+		if (VR_WeaponMenu_IsADWeaponGame () && entry->selector == IT_AXE &&
 			!q_strncasecmp (model_path, "progs/v_shadaxe", 15) &&
 			model_path[15] >= '0' && model_path[15] <= '5' && !q_strcasecmp (model_path + 16, ".mdl"))
 			return true;
@@ -1335,6 +1364,16 @@ static qboolean VR_WeaponMenu_EntrySelectable (const vr_weapon_menu_entry_t *ent
 	if ((size_t)entry->ammo_stat >= num_stats)
 		return true;
 	ammo = VR_WeaponMenu_Stat (stats, num_stats, entry->ammo_stat);
+	if (entry->game_profile && VR_WeaponMenu_IsSnackGame ())
+	{
+		if (entry->selector == IT_SUPER_SHOTGUN)
+			return ammo >= 2;
+		if (entry->selector == IT_SUPER_NAILGUN)
+			return ammo >= 10;
+		if (entry->selector == 128 &&
+			entry->owned_stat == STAT_VR_MODITEMS)
+			return ammo >= 4;
+	}
 	return ammo > 0;
 }
 

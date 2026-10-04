@@ -509,6 +509,32 @@ int main(void)
 		AssertVector(source, 8.0f, 0.0f, 16.0f);
 	}
 
+	/* Snack Pack has dedicated Stakegun and Impaler geometry and source
+	 * expressions.  Its Rotary reuses Dwell's calibrated mesh values. */
+	strcpy(com_gamedir, "/fixtures/snack");
+	fixture_file_contents = NULL;
+	assert(VR_WeaponCalibrationReloadGame());
+	AssertClassicProfile("progs/v_nail.mdl", -18.119550f, 29.178477f,
+		113.478652f, 0.1666667f, 0.015233f, 7.372823f, 18.445326f);
+	AssertClassicProfile("progs/v_nail2.mdl", -0.301060f, 69.561041f,
+		136.059723f, 0.1666667f, -0.072624f, 5.060089f, 31.53750f);
+	AssertClassicProfile("progs/v_shot3.mdl", -3.5f, 0.4f, 8.5f,
+		0.5333333f, 0.0f, 0.0f, 8.5f);
+	{
+		vec3_t source, angles = {0, 0, 0};
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_nail.mdl",
+			IT_NAILGUN, angles, 22.0f, source);
+		AssertVector(source, 11.0f, 0.0f, 16.0f);
+		VR_WeaponCalibrationProjectileSourceOffset("progs/v_nail2.mdl",
+			IT_SUPER_NAILGUN, angles, 22.0f, source);
+		AssertVector(source, 0.0f, 0.0f, 0.0f);
+	}
+
+	/* HWJAM2 uses the existing AD profile rather than a duplicate preset. */
+	strcpy(com_gamedir, "/fixtures/hwjam2");
+	assert(VR_WeaponCalibrationReloadGame());
+	AssertADRootProfiles();
+
 	puts("VR weapon calibration reload fixture passed");
 	return 0;
 }
