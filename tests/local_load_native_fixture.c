@@ -1123,7 +1123,11 @@ static void LocalReferenceCallbackCancellation (client_t *alpha)
 	fprintf (stderr, "COOP_REFERENCE_CANCEL_PASSED loaded-QC remove(self) cancels dead-spawn pending-payload/anchor preserved reconnect resolves/releases\n");
 }
 
-int main (int argc, char **argv)
+#ifndef LOCAL_LOAD_NATIVE_FIXTURE_ENTRY
+#define LOCAL_LOAD_NATIVE_FIXTURE_ENTRY main
+#endif
+
+int LOCAL_LOAD_NATIVE_FIXTURE_ENTRY (int argc, char **argv)
 {
 	const char *scenario;
 	int arg;

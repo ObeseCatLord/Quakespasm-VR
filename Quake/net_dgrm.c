@@ -27,6 +27,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "arch_def.h"
 #include "net_sys.h"
 #include "net_defs.h"
+#ifdef USE_ICE
+#include "ice/ice_quake.h"
+#include "net_udp.h"
+#endif
 #include "net_dgrm.h"
 
 // these two macros are to make the code more readable
@@ -49,6 +53,7 @@ static int droppedDatagrams;
 // ccreq_server_info requests. we are not visible to DarkPlaces users - dp does not support fitz666 so that's not a viable option, at least by default, feel
 // free to switch the order if you also change sv_protocol back to 15.
 cvar_t sv_reportheartbeats = {"sv_reportheartbeats", "0"};
+cvar_t sv_heartbeat_interval = {"sv_heartbeat_interval", "300"};
 cvar_t sv_public = {"sv_public", "0"};
 cvar_t com_protocolname = {"com_protocolname", "FTE-Quake DarkPlaces-Quake"};
 cvar_t net_masters[] = {
@@ -551,6 +556,70 @@ int Datagram_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 }
 
 static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsockaddr *clientaddr, byte *data, unsigned int length);
+#ifdef USE_ICE
+static qboolean Datagram_ICEBrokerControl (const byte *data, unsigned int length, struct qsockaddr *address);
+/* This entry is called only while the donor's authenticated broker DTLS
+ * context is active. Plain UDP signaling is deliberately not accepted. */
+void _Datagram_BrokerPacket (byte *data, unsigned int length, sys_socket_t socket, struct qsockaddr *address)
+{
+	/* The decrypted adapter has no native receive socket. Route only broker
+	 * control, whose replies use the authenticated ICE peer, never raw UDP. */
+	(void)socket;
+	Datagram_ICEBrokerControl (data, length, address);
+}
+
+static void Datagram_ICEReply (const void *data, int length)
+{
+	if (BrokerDTLS_IsAuthenticated ())
+		BrokerDTLS_Send (data, length);
+}
+
+static qboolean Datagram_ICEBrokerControl (const byte *data, unsigned int length, struct qsockaddr *address)
+{
+	char *copy, *newline, *cursor, *args[5];
+	int argc = 0;
+	qboolean handled = false;
+	if (!BrokerDTLS_IsAuthenticated () || length <= 4 || length > NET_DATAGRAMSIZE ||
+		memchr (data + 4, '\0', length - 4))
+		return false;
+	copy = (char *)Mem_AllocNonZero (length - 4 + 1);
+	if (!copy)
+		return false;
+	memcpy (copy, data + 4, length - 4);
+	copy[length - 4] = '\0';
+	newline = strchr (copy, '\n');
+	if (!newline || newline == copy || newline - copy >= 256)
+		goto done;
+	*newline++ = '\0';
+	cursor = copy;
+	while (*cursor && argc < (int)countof (args))
+	{
+		while (*cursor == ' ')
+			++cursor;
+		if (!*cursor)
+			break;
+		args[argc++] = cursor;
+		while (*cursor && *cursor != ' ')
+			++cursor;
+		if (*cursor)
+			*cursor++ = '\0';
+	}
+	if (argc == 3 && !strcmp (args[0], "ice_offer"))
+	{
+		SVC_ICE_Offer (args[1], args[2], newline, UDP_AddrToString (address, false), Datagram_ICEReply);
+		handled = true;
+	}
+	else if (argc == 4 && !strcmp (args[0], "ice_ccand"))
+	{
+		SVC_ICE_Candidate (args[1], args[2], args[3], newline, Datagram_ICEReply);
+		handled = true;
+	}
+done:
+	Mem_Free (copy);
+	return handled;
+}
+#endif
+
 
 static void Datagram_CommitRebind (qsocket_t *sock, struct qsockaddr *source, qboolean rebind)
 {
@@ -776,8 +845,17 @@ qsocket_t *Datagram_GetAnyMessage (void)
 			// uniquely identifiable source-port change.
 			s = Datagram_FindVirtualSocketForPacket (net_driverlevel, net_landriverlevel, acceptsock,
 				&addr, length, &rebind);
-			if (s && Datagram_ProcessServerPacket (length, s, &addr, rebind) > 0)
-				return s;
+			if (s)
+			{
+				if (Datagram_ProcessServerPacket (length, s, &addr, rebind) > 0)
+					return s;
+				continue; // ACK/stale/duplicate traffic belongs to this Quake peer.
+			}
+#ifdef USE_ICE
+			const byte lead = ((byte *)&packetBuffer)[0];
+			if (lead < 4 || (lead >= 20 && lead < 64))
+				NQICE_ProcessSharedPacket ((byte *)&packetBuffer, length, &addr);
+#endif
 			// stray packet... ignore it and just try the next
 		}
 	}
@@ -1429,6 +1507,10 @@ void Datagram_Listen (qboolean state)
 	qboolean   islistening = false;
 
 	Datagram_ClearQueuedPackets ();
+#ifdef USE_ICE
+	/* Borrowed descriptors must be retired before Listen closes/rebinds them. */
+	NQICE_UnshareGameSockets ();
+#endif
 	heartbeat_time = 0; // reset it
 
 	for (i = 0; i < net_numlandrivers; i++)
@@ -1437,7 +1519,12 @@ void Datagram_Listen (qboolean state)
 		{
 			net_landrivers[i].listeningSock = net_landrivers[i].Listen (state);
 			if (net_landrivers[i].listeningSock != INVALID_SOCKET)
+			{
 				islistening = true;
+#ifdef USE_ICE
+				NQICE_ShareGameSocket (net_landrivers[i].listeningSock);
+#endif
+			}
 
 			for (s = net_activeSockets; s; s = s->next)
 			{
@@ -1563,6 +1650,106 @@ void					Datagram_Rcon_Flush (const char *text)
 	net_landrivers[rcon_response_landriver].Write (rcon_response_socket, msg.data, msg.cursize, &rcon_response_address);
 }
 
+/* Shared by ordinary discovery and the optional ICE broker. Keep the native
+ * fields and protocol advertisement under the Datagram owner's policy. */
+void Datagram_GenerateGetInfoString (char *out, size_t outsize)
+{
+	const char *gamedir = COM_GetGameNames (false);
+	unsigned int numclients = 0, numbots = 0;
+	char key[128], value[1024], previous[128] = "", existing[1024];
+	cvar_t *var = NULL;
+	if (!outsize)
+		return;
+	*out = 0;
+	for (int i = 0; i < svs.maxclients; ++i)
+		if (svs.clients[i].active)
+		{
+			++numclients;
+			if (!svs.clients[i].netconnection)
+				++numbots;
+		}
+	COM_Parse (com_protocolname.string);
+	Info_SetKey (out, outsize, "gamename", com_token);
+	Info_SetKey (out, outsize, "protocol", "3");
+	Info_SetKey (out, outsize, "ver", ENGINE_NAME_AND_VER);
+	Info_SetKey (out, outsize, "nqprotocol", va ("%u", sv.protocol));
+	Info_SetKey (out, outsize, "modname", gamedir);
+	Info_SetKey (out, outsize, "mapname", sv.name);
+	Info_SetKey (out, outsize, "deathmatch", deathmatch.string);
+	Info_SetKey (out, outsize, "teamplay", teamplay.string);
+	Info_SetKey (out, outsize, "hostname", hostname.string);
+	Info_SetKey (out, outsize, "clients", va ("%u", numclients));
+	if (numbots)
+		Info_SetKey (out, outsize, "bots", va ("%u", numbots));
+	Info_SetKey (out, outsize, "sv_maxclients", va ("%i", svs.maxclients));
+#ifdef USE_ICE
+	if (NQICE_IsListening ())
+	{
+		Info_SetKey (out, outsize, "*wsaddr", NQICE_GetWsAddr ());
+		Info_SetKey (out, outsize, "*fp", NQICE_GetFingerprint ());
+	}
+#endif
+	/* Mod/QC metadata supplements native fields, never replaces them. */
+	while (Info_FindNextKey (svs.serverinfo, previous, key, sizeof (key), value, sizeof (value)))
+	{
+		q_strlcpy (previous, key, sizeof (previous));
+		if (!*Info_GetKey (out, key, existing, sizeof (existing)))
+			Info_SetKey (out, outsize, key, value);
+	}
+	while ((var = Cvar_FindVarAfter (var ? var->name : "", CVAR_SERVERINFO)))
+		if (!*Info_GetKey (out, var->name, existing, sizeof (existing)))
+			Info_SetKey (out, outsize, var->name, var->string);
+}
+
+/* QSS-M broker listings enter the existing browser cache, without changing
+ * Datagram's public-UDP discovery or supporting additional wire protocols. */
+void Datagram_AddHostCacheInfo (struct qsockaddr *readaddr, const char *cname, const char *info)
+{
+	char protocol[64], users[32], maximum[32], *end;
+	long version, count, capacity;
+	size_t n;
+	hostcache_t entry = {0};
+	if (!info || (!readaddr && !cname))
+		return;
+	if (!cname)
+		cname = dfunc.AddrToString (readaddr, false);
+	if (!*cname || strlen (cname) >= sizeof (entry.cname))
+		return;
+	for (n = 0; n < hostCacheCount; ++n)
+		if (!q_strcasecmp (hostcache[n].cname, cname))
+			return;
+	if (hostCacheCount >= HOSTCACHESIZE)
+		return;
+	Info_GetKey (info, "protocol", protocol, sizeof (protocol));
+	version = strtol (protocol, &end, 10);
+	// Accept the native legacy "3" and broker "3n" NetQuake summaries only.
+	if (version != NET_PROTOCOL_VERSION || (*end && strcmp (end, "n")))
+		return;
+	Info_GetKey (info, "clients", users, sizeof (users));
+	count = strtol (users, &end, 10);
+	if (!*users || *end || count < 0 || count > MAX_SCOREBOARD)
+		return;
+	Info_GetKey (info, "sv_maxclients", maximum, sizeof (maximum));
+	capacity = strtol (maximum, &end, 10);
+	if (!*maximum || *end || capacity <= 0 || capacity > MAX_SCOREBOARD || count > capacity)
+		return;
+	Info_GetKey (info, "hostname", entry.name, sizeof (entry.name));
+	Info_GetKey (info, "mapname", entry.map, sizeof (entry.map));
+	Info_GetKey (info, "modname", entry.gamedir, sizeof (entry.gamedir));
+	if (!*entry.map)
+		return;
+	if (!*entry.name)
+		q_strlcpy (entry.name, "UNNAMED", sizeof (entry.name));
+	q_strlcpy (entry.cname, cname, sizeof (entry.cname));
+	entry.users = (int)count;
+	entry.maxusers = (int)capacity;
+	entry.driver = net_driverlevel;
+	entry.ldriver = readaddr ? net_landriverlevel : -1;
+	if (readaddr)
+		entry.addr = *readaddr;
+	hostcache[hostCacheCount++] = entry;
+}
+
 static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsockaddr *clientaddr, byte *data, unsigned int length)
 {
 	struct qsockaddr newaddr;
@@ -1580,6 +1767,10 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 	control = BigLong (*((int *)data));
 	if (control == -1)
 	{
+#ifdef USE_ICE
+		if (Datagram_ICEBrokerControl (data, length, clientaddr))
+			return;
+#endif
 		qboolean full;
 		char	 cookie[128];
 
@@ -1590,70 +1781,16 @@ static void _Datagram_ServerControlPacket (sys_socket_t acceptsock, struct qsock
 		{
 			// master, as well as other clients, may send us one of these two packets to get our serverinfo data
 			// masters only really need gamename and player counts. actual clients might want player names too.
-			const char	*gamedir = COM_GetGameNames (false);
-			unsigned int numclients = 0, numbots = 0;
-			int			 i;
-			size_t		 j;
-
-			for (i = 0; i < svs.maxclients; i++)
-			{
-				if (svs.clients[i].active)
-				{
-					numclients++;
-					if (!svs.clients[i].netconnection)
-						numbots++;
-				}
-			}
+			char info[2048];
+			int i;
+			size_t j;
 
 			SZ_Clear (&net_message);
 			MSG_WriteLong (&net_message, -1);
 			MSG_WriteString (&net_message, full ? "statusResponse\n" : "infoResponse\n");
 			net_message.cursize--;
-			COM_Parse (com_protocolname.string);
-			if (*com_token) // the master server needs this. This tells the master which game we should be listed as.
-			{
-				MSG_WriteString (&net_message, va ("\\gamename\\%s", com_token));
-				net_message.cursize--;
-			}
-			MSG_WriteString (&net_message, "\\protocol\\3");
-			net_message.cursize--; // this is stupid
-			MSG_WriteString (&net_message, "\\ver\\" ENGINE_NAME_AND_VER);
-			net_message.cursize--;
-			MSG_WriteString (&net_message, va ("\\nqprotocol\\%u", sv.protocol));
-			net_message.cursize--;
-			if (*gamedir)
-			{
-				MSG_WriteString (&net_message, va ("\\modname\\%s", gamedir));
-				net_message.cursize--;
-			}
-			if (*sv.name)
-			{
-				MSG_WriteString (&net_message, va ("\\mapname\\%s", sv.name));
-				net_message.cursize--;
-			}
-			if (*deathmatch.string)
-			{
-				MSG_WriteString (&net_message, va ("\\deathmatch\\%s", deathmatch.string));
-				net_message.cursize--;
-			}
-			if (*teamplay.string)
-			{
-				MSG_WriteString (&net_message, va ("\\teamplay\\%s", teamplay.string));
-				net_message.cursize--;
-			}
-			if (*hostname.string)
-			{
-				MSG_WriteString (&net_message, va ("\\hostname\\%s", hostname.string));
-				net_message.cursize--;
-			}
-			MSG_WriteString (&net_message, va ("\\clients\\%u", numclients));
-			net_message.cursize--;
-			if (numbots)
-			{
-				MSG_WriteString (&net_message, va ("\\bots\\%u", numbots));
-				net_message.cursize--;
-			}
-			MSG_WriteString (&net_message, va ("\\sv_maxclients\\%i", svs.maxclients));
+			Datagram_GenerateGetInfoString (info, sizeof (info));
+			MSG_WriteString (&net_message, info);
 			net_message.cursize--;
 			if (*cookie)
 			{
@@ -2024,7 +2161,7 @@ qsocket_t *Datagram_CheckNewConnections (void)
 			char			 str[] = "\377\377\377\377heartbeat DarkPlaces\n";
 			size_t			 k;
 			struct qsockaddr addr;
-			heartbeat_time = Sys_DoubleTime () + 300;
+			heartbeat_time = Sys_DoubleTime () + q_max (30, sv_heartbeat_interval.value);
 
 			for (k = 0; net_masters[k].string; k++)
 			{

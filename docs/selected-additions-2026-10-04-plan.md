@@ -34,3 +34,25 @@ QSS-M ships its ICE implementation locally and configurable FTE broker; no
 new signaling protocol/service is justified by the selection. Native UDP
 and ICE coexist at the driver table, not at co-op/gameplay state.
 Official transport references: RFC8445 ICE and RFC8831 WebRTC data channels.
+
+
+## Implementation and native batch result
+
+All seven selected source slices are implemented. Astra xhigh reviewed the
+save, renderer, graphics-menu and transport integration designs; disposition
+tables are in their linked feature plans. Strict native debug compilation,
+background/autosave, ordinary connect and ICE payload/lifecycle, loaded CSQC,
+production cluster GPU compute and rendered menu checks pass. Separate actual
+ordinary/ICE-UDP clients completed full private signon and predictive gameplay.
+Ten live selected-lighting cases pass in desktop and simulated two-eye OpenXR;
+the expanded menu also runs in both. Desktop menu captures were inspected.
+
+Steam discovery and native mouse UI are retained existing Ironwail-derived
+owners, not reimplemented. Explicit private `-basedir` wins in these native
+runs. The mod browser now displays 24 rows instead of 14. New graphics controls
+retain native defaults; optional cluster and dither remain off initially.
+
+Physical gaze/foveation, measured performance and external NAT/browser tests
+remain user qualification. Windows ICE needs an explicitly supplied TLS SDK;
+native UDP networking remains available. Matching platform builds/publication
+are performed after this source/native verification cohort.

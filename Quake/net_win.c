@@ -24,6 +24,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "arch_def.h"
 #include "net_sys.h"
 #include "net_defs.h"
+#ifdef USE_ICE
+#include "ice/ice_quake.h"
+#endif
 
 #include "net_dgrm.h"
 #include "net_loop.h"
@@ -34,7 +37,13 @@ net_driver_t net_drivers[] = {
 
 	{"Datagram", false, Datagram_Init, Datagram_Listen, Datagram_QueryAddresses, Datagram_SearchForHosts, Datagram_Connect, Datagram_CheckNewConnections,
 	 Datagram_GetAnyMessage, Datagram_GetMessage, Datagram_SendMessage, Datagram_SendUnreliableMessage, Datagram_CanSendMessage,
-	 Datagram_CanSendUnreliableMessage, Datagram_Close, Datagram_Shutdown}};
+	 Datagram_CanSendUnreliableMessage, Datagram_Close, Datagram_Shutdown},
+#ifdef USE_ICE
+	{"ICE", false, NQICE_Init, NQICE_Listen, NQICE_QueryAddresses, NQICE_SearchForHosts, NQICE_Connect, NQICE_CheckNewConnections,
+	 NQICE_GetAnyMessage, NQICE_GetMessage, NQICE_SendMessage, NQICE_SendUnreliableMessage, NQICE_CanSendMessage,
+	 NQICE_CanSendUnreliableMessage, NQICE_Close, NQICE_Shutdown},
+#endif
+};
 
 const int net_numdrivers = countof (net_drivers);
 

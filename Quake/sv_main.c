@@ -3066,6 +3066,7 @@ void SV_Init (void)
 	extern cvar_t sv_aim;
 	extern cvar_t sv_altnoclip; // johnfitz
 	extern cvar_t sv_reportheartbeats;
+	extern cvar_t sv_heartbeat_interval;
 	extern cvar_t sv_public;
 	extern cvar_t com_protocolname;
 	extern cvar_t net_masters[];
@@ -3076,6 +3077,7 @@ void SV_Init (void)
 	extern cvar_t sv_fte_createareanode;
 
 	Cvar_RegisterVariable (&sv_reportheartbeats);
+	Cvar_RegisterVariable (&sv_heartbeat_interval);
 	Cvar_RegisterVariable (&sv_public);
 	Cvar_RegisterVariable (&com_protocolname);
 	for (i = 0; net_masters[i].name; i++)

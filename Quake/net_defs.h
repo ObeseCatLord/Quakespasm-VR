@@ -157,6 +157,7 @@ typedef struct qsocket_s
 	int			 landriver;
 	sys_socket_t socket;
 	void		*driverdata;
+	void		*driverdata2; // optional transport peer identity, owned by its driver
 
 	unsigned int ackSequence;
 	unsigned int sendSequence;
@@ -172,7 +173,7 @@ typedef struct qsocket_s
 	struct qsockaddr addr;
 	struct qsockaddr previous_addr; // recent endpoint before a virtual socket's NAT port changed
 	double previous_addr_time;
-	char             connectaddress[NET_NAMELEN]; // numeric control endpoint, including its port
+	char             connectaddress[MAX_OSPATH]; // numeric control endpoint, including its port
 	char			 trueaddress[NET_NAMELEN];	 // lazy address string
 	char			 maskedaddress[NET_NAMELEN]; // addresses for this player that may be displayed publically
 
@@ -261,7 +262,7 @@ typedef struct
 	char			 name[64];
 	char			 map[16];
 	char			 gamedir[16];
-	char			 cname[NET_NAMELEN];
+	char			 cname[MAX_OSPATH]; // canonical UDP or broker reconnect endpoint
 	int				 users;
 	int				 maxusers;
 	int				 driver;

@@ -54,6 +54,37 @@ BINTOC_EXE = ../Shaders/bintoc
 # ---------------------------
 include common.make
 
+# The ICE driver is optional; require real TLS instead of silently providing
+# a plaintext build labelled WebRTC. Prefer the donor's GnuTLS path.
+USE_ICE ?= auto
+ICE_TLS ?= $(shell if pkg-config --exists gnutls; then echo gnutls; elif pkg-config --exists openssl; then echo openssl; fi)
+ifneq ($(USE_ICE),0)
+ifneq ($(ICE_TLS),)
+CFLAGS += -DUSE_ICE $(shell pkg-config --cflags $(ICE_TLS))
+CODECLIBS += $(shell pkg-config --libs $(ICE_TLS))
+ifeq ($(ICE_TLS),gnutls)
+CFLAGS += -DUSE_GNUTLS -DGNUTLS_STATIC
+else ifeq ($(ICE_TLS),openssl)
+CFLAGS += -DUSE_OPENSSL
+else
+$(error ICE_TLS must be gnutls or openssl)
+endif
+OBJS += ice_main.o ice_quake.o ice_socket.o ice_stream.o ice_sctp.o ice_mdns.o ice_gnutls.o ice_openssl.o ice_json.o ice_md5.o ice_sha1.o ice_sha2.o
+ice_%.o: ice/ice_%.c
+	$(CC) $(DFLAGS) $(CPPFLAGS) $(CFLAGS) $(SDL_CFLAGS) -c -o $@ $<
+ice_json.o: ice/json.c
+	$(CC) $(DFLAGS) $(CPPFLAGS) $(CFLAGS) $(SDL_CFLAGS) -c -o $@ $<
+ice_md5.o: ice/md5.c
+	$(CC) $(DFLAGS) $(CPPFLAGS) $(CFLAGS) $(SDL_CFLAGS) -c -o $@ $<
+ice_sha1.o: ice/sha1.c
+	$(CC) $(DFLAGS) $(CPPFLAGS) $(CFLAGS) $(SDL_CFLAGS) -c -o $@ $<
+ice_sha2.o: ice/sha2.c
+	$(CC) $(DFLAGS) $(CPPFLAGS) $(CFLAGS) $(SDL_CFLAGS) -c -o $@ $<
+else ifeq ($(USE_ICE),1)
+$(error USE_ICE=1 requires GnuTLS or OpenSSL development files)
+endif
+endif
+
 # Keep donor sources in C; only the standalone OpenXR backend needs C++.
 OBJS += vr_openxr.o
 OBJS += vrik_codec.o

@@ -102,3 +102,11 @@ trigger. It does not claim renderer or `CSQC_UpdateView` coverage.
 
 No builds or tests run until all seven selected implementation slices are
 complete, per user direction.
+
+
+Final batch: numerical guards and the loaded-QC native runner pass. Builtin345
+verifies tagged history, rejection and pending preview. Builtin347 verifies an
+actual change from the initial player coordinate in a valid loaded-world
+location, byte-for-byte scratch restoration, reentrant trigger callback and
+retained solid impact. This qualifies the API, not a complete third-party
+CSQC renderer or prediction policy.

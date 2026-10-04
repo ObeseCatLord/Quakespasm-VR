@@ -3,9 +3,80 @@
 #ifdef NDEBUG
 #error "CSQC prediction fixture requires assertions"
 #endif
-#define main CsqcEntityTransportFixtureMain
-#include "csqc_entity_native_fixture.c"
-#undef main
+#define MIXED_NATIVE_FIXTURE_ENTRY CsqcPredictionImportedMixedMain
+#include "mixed_native_fixture.c"
+#undef MIXED_NATIVE_FIXTURE_ENTRY
+
+static qcvm_t *FixtureSwitchVM (qcvm_t *vm)
+{
+	qcvm_t *old = qcvm;
+	PR_SwitchQCVM (NULL);
+	if (vm)
+		PR_SwitchQCVM (vm);
+	return old;
+}
+
+static void FixtureLoadClientProgs (void)
+{
+	qcvm_t *old_vm = qcvm;
+	qmodel_t *world = sv.qcvm.worldmodel;
+
+	FixtureSwitchVM (NULL);
+	cl.worldmodel = world;
+	cl.model_precache[1] = sv.models[1];
+	FixtureSwitchVM (&cl.qcvm);
+	assert (PR_LoadProgs ("csprogs.dat", true, PROGHEADER_CRC,
+		pr_csqcbuiltins, pr_csqcnumbuiltins));
+	assert (!memcmp (sv.qcvm.progssha256, qcvm->progssha256,
+		sizeof (sv.qcvm.progssha256)));
+	qcvm->worldmodel = world;
+	qcvm->max_edicts = q_min ((int)max_edicts.value, MAX_EDICTS);
+	assert (qcvm->max_edicts >= MIN_EDICTS);
+	qcvm->edicts = Mem_Alloc ((size_t)qcvm->max_edicts * qcvm->edict_size);
+	assert (qcvm->edicts);
+	qcvm->num_edicts = qcvm->reserved_edicts = 1;
+	SV_ClearWorld ();
+#if defined(DEBUG) || defined(_DEBUG)
+	for (int i = 0; i < qcvm->max_edicts; ++i)
+	{
+		edict_t *ed = EDICT_NUM_NO_CHECK (i);
+		ed->qcvm_owner = qcvm;
+		ed->edict_ptr = ed;
+		ed->edict_num = i;
+	}
+#endif
+	FixtureSwitchVM (old_vm);
+}
+
+static void FixturePrepareClientTransport (client_t *peer)
+{
+	qsocket_t *socket = NET_NewQSocket ();
+
+	assert (socket);
+	cl.protocol_pext1 = peer->protocol_pext1 | PEXT1_CSQC;
+	cl.protocol_pext2 = peer->protocol_pext2;
+	cl.protocol_qsvr = peer->protocol_qsvr;
+	cl.protocolflags = sv.protocolflags;
+	cl.viewentity = NUM_FOR_EDICT (peer->edict);
+	cl.num_entities = 1;
+	cl.max_edicts = MAX_EDICTS;
+	cl.entities = Mem_Alloc ((size_t)cl.max_edicts * sizeof (*cl.entities));
+	assert (cl.entities);
+	cl.ackframes_count = 0;
+	cl.net_snapshot_have = false;
+	cl.time = 0;
+	cl.mtime[0] = cl.mtime[1] = 0;
+	cls.netcon = socket;
+	cls.state = ca_connected;
+	cls.signon = SIGNONS;
+	cls.demoplayback = false;
+	assert (cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		(cl.protocol_pext2 & PEXT2_REPLACEMENTDELTAS) &&
+		(sv_protocol_pext1 & PEXT1_CSQC));
+	assert (SV_CSQCTransportAllowed (peer));
+	peer->limit_unreliable = 128;
+	peer->limit_entities = q_min (peer->limit_entities, (unsigned int)cl.max_edicts);
+}
 
 static ddef_t *PredictionGlobal (const char *name, etype_t type)
 {
@@ -39,6 +110,7 @@ int main (int argc, char **argv)
 	movevars_t saved_movevars;
 	dfunction_t *impact_touch, *reentrant_touch;
 	int impact_before, reentrant_before;
+	float prediction_start_x;
 
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
 	assert (COM_CheckParm ("-csqc-prediction-native"));
@@ -94,12 +166,13 @@ int main (int argc, char **argv)
 	assert (!player->free && !trigger->free && !solid->free && !reentrant->free);
 	VectorSet (player->v.mins, -16, -16, -24);
 	VectorSet (player->v.maxs, 16, 16, 32);
-	VectorSet (player->v.origin, 0, 0, 64);
+	VectorCopy (peer->edict->v.origin, player->v.origin);
 	player->v.solid = SOLID_BBOX;
 	player->v.movetype = MOVETYPE_WALK;
 	VectorSet (trigger->v.mins, -32, -32, -32);
 	VectorSet (trigger->v.maxs, 32, 32, 32);
-	VectorSet (trigger->v.origin, 20, 0, 64);
+	VectorCopy (player->v.origin, trigger->v.origin);
+	trigger->v.origin[0] += 20;
 	trigger->v.solid = SOLID_TRIGGER;
 	reentrant_touch = ED_FindFunction ("fixture_prediction_reentrant_touch");
 	impact_touch = ED_FindFunction ("fixture_prediction_impact_touch");
@@ -107,11 +180,14 @@ int main (int argc, char **argv)
 	trigger->v.touch = (func_t)(reentrant_touch - qcvm->functions);
 	VectorSet (solid->v.mins, -8, -8, -8);
 	VectorSet (solid->v.maxs, 8, 8, 8);
-	VectorSet (solid->v.origin, 45, 0, 64);
+	VectorCopy (player->v.origin, solid->v.origin);
+	solid->v.origin[0] += 26;
 	solid->v.solid = SOLID_BBOX;
 	solid->v.touch = (func_t)(impact_touch - qcvm->functions);
 	reentrant->v.solid = SOLID_NOT;
 	reentrant->v.movetype = MOVETYPE_NONE;
+	ClearLink (&trigger->area);
+	ClearLink (&solid->area);
 	SV_LinkEdict (trigger, false);
 	SV_LinkEdict (solid, false);
 	G_INT (PredictionGlobal ("fixture_prediction_entity", ev_entity)->ofs) = EDICT_TO_PROG (player);
@@ -130,10 +206,12 @@ int main (int argc, char **argv)
 	saved_movevars = movevars;
 	impact_before = (int)PredictionFloat ("fixture_prediction_impact_count");
 	reentrant_before = (int)PredictionFloat ("fixture_prediction_reentrant_touch_count");
+	prediction_start_x = player->v.origin[0];
 	PredictionCall ("fixture_ref_prediction_move");
 	assert (memcmp (&pmove, &saved_pmove, sizeof (pmove)) == 0 &&
 		memcmp (&movevars, &saved_movevars, sizeof (movevars)) == 0);
-	assert (player->v.origin[0] != 0 &&
+	assert (isfinite (player->v.origin[0]) &&
+		fabsf (player->v.origin[0] - prediction_start_x) > .001f &&
 		(int)PredictionFloat ("fixture_prediction_reentrant_touch_count") > reentrant_before &&
 		(int)PredictionFloat ("fixture_prediction_impact_count") > impact_before);
 	puts ("CSQC_PREDICTION_NATIVE_PMOVE_PASSED loaded #347 movement, restored scratch, reentrant trigger and retained solid impact");

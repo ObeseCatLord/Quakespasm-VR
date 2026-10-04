@@ -79,6 +79,7 @@ typedef enum
 {
 	cl_autoreconnect_idle,
 	cl_autoreconnect_wait_config,
+	cl_autoreconnect_discovering,
 	cl_autoreconnect_connecting,
 	cl_autoreconnect_wait_signon
 } cl_autoreconnect_state_t;
@@ -99,6 +100,7 @@ typedef struct
 	double next_attempt;
 	double retry_interval;
 	qboolean switch_pending;
+	qboolean direct; // ordinary connect shares the existing retry/socket lifetime
 } cl_autoreconnect_t;
 
 static cl_autoreconnect_t cl_autoreconnect;
@@ -478,6 +480,9 @@ This is also called on Host_Error, so it shouldn't cause any errors
 */
 void CL_Disconnect (void)
 {
+	/* Automatic game switches retain their scheduling; ordinary attempts do not. */
+	if (cl_autoreconnect.direct)
+		CL_CancelAutoReconnect ();
 	CL_ResetPendingImpulse ();
 	VR_WeaponMenu_ClientReset ();
 	NET_DatagramConnectCancel ();
@@ -603,12 +608,31 @@ void CL_CancelAutoReconnect (void)
 	cl_autoreconnect.next_attempt = 0.0;
 	cl_autoreconnect.retry_interval = 0.0;
 	cl_autoreconnect.switch_pending = false;
+	cl_autoreconnect.direct = false;
+}
+
+qboolean CL_ConnectionPending (void)
+{
+	return cl_autoreconnect.direct && cl_autoreconnect.state != cl_autoreconnect_idle &&
+		(cls.state != ca_connected || cls.signon != SIGNONS);
+}
+
+static void CL_DirectConnectFailure (const char *reason)
+{
+	if (cl_autoreconnect.direct && m_return_onerror)
+	{
+		q_strlcpy (m_return_reason, reason, sizeof (m_return_reason));
+		key_dest = key_menu;
+		m_state = m_return_state;
+		m_return_onerror = false;
+	}
 }
 
 static void CL_AutoReconnectFinish (qboolean failed)
 {
 	if (failed)
 	{
+		CL_DirectConnectFailure ("Connection failed or timed out");
 		SCR_EndStartupLoadingPlaque ();
 		SCR_EndLoadingPlaque ();
 		if (cls.state != ca_connected)
@@ -648,6 +672,29 @@ static void CL_AttachConnection (const char *host, unsigned int legacy_qsvr,
 		q_strlcpy (cl_last_connect_endpoint, endpoint, sizeof (cl_last_connect_endpoint));
 		cl_last_connect_valid = true;
 	}
+}
+
+/* Transport selection shares the existing reconnect/signon owner. */
+static qboolean CL_StartRemoteConnection (void)
+{
+	qboolean special;
+	struct qsocket_s *netcon = NET_ConnectSpecial (cl_autoreconnect.endpoint, &special);
+	if (special)
+	{
+		if (!netcon)
+			return false;
+		CL_AttachConnection (cl_autoreconnect.endpoint, cl_autoreconnect.legacy_qsvr, netcon);
+		cl_autoreconnect.state = cl_autoreconnect_wait_signon;
+		if (cl_autoreconnect.retry_interval <= 0.0)
+			cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_SIGNON_TIMEOUT;
+		return true;
+	}
+	if (!NET_DatagramConnectStart (cl_autoreconnect.endpoint))
+		return false;
+	cl_autoreconnect.state = cl_autoreconnect_connecting;
+	if (cl_autoreconnect.retry_interval <= 0.0)
+		cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONNECT_TIMEOUT;
+	return true;
 }
 
 static qboolean CL_TryEstablishConnection (const char *host, unsigned int legacy_qsvr)
@@ -700,6 +747,17 @@ void CL_AutoReconnectFrame (void)
 
 	if (cl_autoreconnect.state == cl_autoreconnect_idle)
 		return;
+	if (cl_autoreconnect.direct && cls.state == ca_dedicated)
+	{
+		CL_CancelAutoReconnect ();
+		return;
+	}
+	if (cl_autoreconnect.state == cl_autoreconnect_discovering && realtime >= cl_autoreconnect.deadline)
+	{
+		CL_DirectConnectFailure ("Server discovery timed out");
+		CL_AutoReconnectFinish (true);
+		return;
+	}
 	if (cl_autoreconnect.state == cl_autoreconnect_wait_signon &&
 		cls.state == ca_connected && cls.signon == SIGNONS)
 	{
@@ -769,7 +827,7 @@ void CL_AutoReconnectFrame (void)
 		CL_Disconnect ();
 		SCR_EndLoadingPlaque ();
 		cls.legacy_qsvr = cl_autoreconnect.legacy_qsvr;
-		if (!NET_DatagramConnectStart (cl_autoreconnect.endpoint))
+		if (!CL_StartRemoteConnection ())
 		{
 			Con_Warning ("Could not start reconnect to %s.\n",
 				cl_autoreconnect.endpoint);
@@ -779,10 +837,27 @@ void CL_AutoReconnectFrame (void)
 				CL_AutoReconnectFinish (true);
 			return;
 		}
-		cl_autoreconnect.state = cl_autoreconnect_connecting;
-		if (!timed)
-			cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONNECT_TIMEOUT;
 		return;
+	}
+	if (cl_autoreconnect.state == cl_autoreconnect_discovering)
+	{
+		if (slistInProgress)
+			return; // NET_Poll advances the existing discovery on following frames.
+		if (hostCacheCount != 1)
+		{
+			Con_Printf ("Connect: select a server from the browser (%zu found).\n", hostCacheCount);
+			CL_DirectConnectFailure ("Select a server from the browser");
+			CL_AutoReconnectFinish (true);
+			return;
+		}
+		q_strlcpy (cl_autoreconnect.endpoint, NET_CachedConnectHost (NET_SlistPrintServerName (0)),
+			sizeof (cl_autoreconnect.endpoint));
+		if (!CL_StartRemoteConnection ())
+		{
+			CL_DirectConnectFailure ("Could not start connection");
+			CL_AutoReconnectFinish (true);
+			return;
+		}
 	}
 	if (cl_autoreconnect.state == cl_autoreconnect_connecting)
 	{
@@ -801,7 +876,9 @@ void CL_AutoReconnectFrame (void)
 			return;
 		if (result != NET_CONNECT_COMPLETE || !netcon)
 		{
-			Con_Warning ("Reconnect to %s failed: %s.\n",
+			CL_DirectConnectFailure (reason && *reason ? reason : "No response");
+			Con_Warning ("%s to %s failed: %s.\n",
+				cl_autoreconnect.direct ? "Connect" : "Reconnect",
 				cl_autoreconnect.endpoint, reason && *reason ? reason : "no response");
 			if (timed)
 				CL_AutoReconnectRetryTimed ();
@@ -830,10 +907,13 @@ void CL_AutoReconnectFrame (void)
 	if (cls.state == ca_connected && realtime < cl_autoreconnect.deadline)
 		return;
 
+	/* Preserve the originating menu/error before disconnect clears direct state. */
+	CL_DirectConnectFailure ("Server signon timed out");
+	Con_Warning ("%s to %s did not complete signon for %s.\n",
+		cl_autoreconnect.direct ? "Connect" : "Reconnect",
+		cl_autoreconnect.endpoint, cl_autoreconnect.modname);
 	if (cls.state == ca_connected)
 		CL_Disconnect ();
-	Con_Warning ("Reconnect to %s did not complete signon for %s.\n",
-		cl_autoreconnect.endpoint, cl_autoreconnect.modname);
 	CL_AutoReconnectFinish (true);
 }
 
@@ -941,8 +1021,15 @@ static void CL_AutoReconnectGame_f (void)
 		game, server, delay);
 }
 
+static void CL_ReleaseDirectConnectForServerGame (void)
+{
+	if (cl_autoreconnect.direct && cl_autoreconnect.state == cl_autoreconnect_wait_signon && cls.state == ca_connected)
+		CL_AutoReconnectFinish (false);
+}
+
 qboolean CL_MaybeSwitchServerGame (const char *modname)
 {
+	CL_ReleaseDirectConnectForServerGame ();
 	if (cl_autoreconnect.state != cl_autoreconnect_idle)
 	{
 		Con_Warning ("Server gamedir changed again during reconnect; stopping.\n");
@@ -991,6 +1078,8 @@ static void CL_ServerModDownload_Resume (const char *game)
 qboolean CL_ServerModDownload_Begin (const char *gamedir)
 {
 	const char *installed;
+
+	CL_ReleaseDirectConnectForServerGame ();
 
 	if (!gamedir || !*gamedir || strlen (gamedir) >= MAX_QPATH ||
 		COM_ModForbiddenChars (gamedir))
@@ -1247,18 +1336,54 @@ Host should be either "local" or a net address to be passed on
 */
 void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr)
 {
-	if (cls.state == ca_dedicated)
+	char endpoint[MAX_OSPATH];
+	if (cls.state == ca_dedicated || cls.demoplayback)
 		return;
-
-	if (cls.demoplayback)
-		return;
-
-	CL_CancelAutoReconnect ();
 	if (legacy_qsvr && legacy_qsvr != QSVR_PROTOCOL_PINNED)
 		Host_Error ("Unsupported legacy Quakespasm VR layout %u", legacy_qsvr);
+
+	/* Copy aliases before disconnect/cancellation or discovery can change them. */
+	host = NET_CachedConnectHost (host);
+	if (host && strlen (host) >= sizeof (endpoint))
+	{
+		Con_Printf ("Connect: address is too long.\n");
+		return;
+	}
+	q_strlcpy (endpoint, host ? host : "", sizeof (endpoint));
+	CL_CancelAutoReconnect ();
 	cl_last_connect_valid = false;
-	if (!CL_TryEstablishConnection (host, legacy_qsvr))
-		Host_Error ("CL_Connect: connect failed");
+	if (!q_strcasecmp (endpoint, "local"))
+	{
+		if (!CL_TryEstablishConnection (endpoint, legacy_qsvr))
+			Host_Error ("CL_Connect: local connect failed");
+		return;
+	}
+
+	CL_Disconnect ();
+	/* Normal host frames own input/XR and progress. Do not freeze them for retries. */
+	SCR_EndStartupLoadingPlaque ();
+	SCR_EndLoadingPlaque ();
+	memset (&cl_autoreconnect, 0, sizeof (cl_autoreconnect));
+	cl_autoreconnect.direct = true;
+	cl_autoreconnect.legacy_qsvr = legacy_qsvr;
+	q_strlcpy (cl_autoreconnect.endpoint, endpoint, sizeof (cl_autoreconnect.endpoint));
+	q_strlcpy (cl_autoreconnect.modname, COM_SkipPath (com_gamedir), sizeof (cl_autoreconnect.modname));
+	cl_autoreconnect.deadline = realtime + CL_AUTO_RECONNECT_CONNECT_TIMEOUT;
+	cls.legacy_qsvr = legacy_qsvr;
+	if (!endpoint[0])
+	{
+		cl_autoreconnect.state = cl_autoreconnect_discovering;
+		slist_silent = false;
+		NET_Slist_f ();
+		return;
+	}
+	if (!CL_StartRemoteConnection ())
+	{
+		CL_DirectConnectFailure ("Could not start connection");
+		CL_AutoReconnectFinish (true);
+		return;
+	}
+	Con_Printf ("Connecting to %s (Escape or disconnect cancels)...\n", endpoint);
 }
 
 #define CL_REVERSE_TOKEN_MAX 1023

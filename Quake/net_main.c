@@ -24,6 +24,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "arch_def.h"
 #include "net_sys.h"
 #include "net_defs.h"
+#ifdef USE_ICE
+#include "ice/ice_quake.h"
+#endif
 
 qsocket_t *net_activeSockets = NULL;
 qsocket_t *net_freeSockets = NULL;
@@ -115,6 +118,7 @@ qsocket_t *NET_NewQSocket (void)
 	sock->driver = net_driverlevel;
 	sock->socket = 0;
 	sock->driverdata = NULL;
+	sock->driverdata2 = NULL;
 	sock->canSend = true;
 	sock->sendNext = false;
 	sock->lastMessageTime = net_time;
@@ -439,6 +443,42 @@ NET_Connect
 
 size_t		hostCacheCount = 0;
 hostcache_t hostcache[HOSTCACHESIZE];
+
+/* No socket/discovery ownership: only resolve names already in the native cache. */
+const char *NET_CachedConnectHost (const char *host)
+{
+	if (host && *host)
+		for (size_t n = 0; n < hostCacheCount; ++n)
+			if (!q_strcasecmp (host, hostcache[n].name))
+				return hostcache[n].cname;
+	return host;
+}
+
+/* Special drivers return immediately; their qsocket progresses through the
+ * existing GetMessage/CanSendMessage owner during client signon. UDP never
+ * comes through here, so hostname connects cannot re-enter the blocking wrapper. */
+qsocket_t *NET_ConnectSpecial (const char *host, qboolean *handled)
+{
+	*handled = false;
+#ifdef USE_ICE
+	if (NQICE_IsAddress (host))
+	{
+		*handled = true;
+		SetNetTime ();
+		for (net_driverlevel = 0; net_driverlevel < net_numdrivers; ++net_driverlevel)
+			if (net_drivers[net_driverlevel].initialized && net_drivers[net_driverlevel].Init == NQICE_Init)
+				return dfunc.Connect (host);
+		Con_Printf ("ICE transport is not available in this build.\n");
+	}
+#else
+	if (host && (*host == '/' || strstr (host, "://")))
+	{
+		*handled = true;
+		Con_Printf ("ICE transport is not available in this build.\n");
+	}
+#endif
+	return NULL;
+}
 
 qsocket_t *NET_Connect (const char *host)
 {
@@ -906,12 +946,11 @@ NET_Shutdown
 
 void NET_Shutdown (void)
 {
-	qsocket_t *sock;
-
 	SetNetTime ();
 
-	for (sock = net_activeSockets; sock; sock = sock->next)
-		NET_Close (sock);
+	/* NET_Close returns the head to the free list and rewrites its next. */
+	while (net_activeSockets)
+		NET_Close (net_activeSockets);
 
 	//
 	// shutdown the drivers

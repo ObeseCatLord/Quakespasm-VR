@@ -56,6 +56,8 @@ enum m_state_e
 
 extern enum m_state_e m_state;
 extern enum m_state_e m_return_state;
+extern qboolean m_return_onerror;
+extern char m_return_reason[32];
 
 extern qboolean m_entersound;
 

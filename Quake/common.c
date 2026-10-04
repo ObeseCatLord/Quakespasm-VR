@@ -981,6 +981,44 @@ void Info_RemoveKey (char *info, const char *key)
 		}
 	}
 }
+/* QSS-M's rule-info iterator, bounded at the native infostring boundary. */
+qboolean Info_FindNextKey (const char *info, const char *prevkey, char *outkey, size_t outkeysize, char *outval, size_t outvalsize)
+{
+	const char *p = info;
+	qboolean found_prev = !*prevkey;
+	if (!outkeysize || !outvalsize)
+		return false;
+	*outkey = *outval = 0;
+	while (*p == '\\')
+	{
+		const char *keystart = ++p, *keyend, *valstart;
+		size_t kl, vl;
+		while (*p && *p != '\\')
+			++p;
+		keyend = p;
+		if (*p != '\\')
+			return false;
+		valstart = ++p;
+		while (*p && *p != '\\')
+			++p;
+		kl = keyend - keystart;
+		vl = p - valstart;
+		if (!kl || kl >= outkeysize || vl >= outvalsize)
+			continue; // Never return a truncated key that cannot be resumed.
+		if (found_prev)
+		{
+			memcpy (outkey, keystart, kl);
+			outkey[kl] = 0;
+			memcpy (outval, valstart, vl);
+			outval[vl] = 0;
+			return true;
+		}
+		if (strlen (prevkey) == kl && !memcmp (keystart, prevkey, kl))
+			found_prev = true;
+	}
+	return false;
+}
+
 void Info_SetKey (char *info, size_t infosize, const char *key, const char *val)
 {
 	size_t keylen = strlen (key);

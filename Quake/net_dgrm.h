@@ -26,6 +26,8 @@ int		   Datagram_Init (void);
 void	   Datagram_Listen (qboolean state);
 int		   Datagram_QueryAddresses (qhostaddr_t *addresses, int maxaddresses);
 qboolean   Datagram_SearchForHosts (qboolean xmit);
+void       Datagram_GenerateGetInfoString (char *out, size_t outsize);
+void       Datagram_AddHostCacheInfo (struct qsockaddr *readaddr, const char *cname, const char *info);
 qsocket_t *Datagram_Connect (const char *host);
 qsocket_t *Datagram_CheckNewConnections (void);
 qsocket_t *Datagram_GetAnyMessage (void);

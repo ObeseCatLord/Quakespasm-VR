@@ -210,6 +210,7 @@ shader_variants = [
     ['Shaders/screen_effects.comp', 'screen_effects_stereo_8bit.comp', ['-DSTEREO=1', '--target-env', 'vulkan1.1']],
     ['Shaders/screen_effects.comp', 'screen_effects_stereo_10bit.comp', ['-DSTEREO=1', '-DUSE_10BIT=1', '--target-env', 'vulkan1.1']],
     ['Shaders/update_lightmap.comp', 'update_lightmap_8bit.comp', []],
+    ['Shaders/cluster_lights.comp', 'cluster_lights.comp', ['--target-env', 'vulkan1.1']],
     ['Shaders/update_lightmap.comp', 'update_lightmap_8bit_rt.comp', ['-DRAY_QUERIES=1']],
     ['Shaders/update_lightmap.comp', 'update_lightmap_10bit.comp', ['-DUSE_10BIT=1']],
     ['Shaders/update_lightmap.comp', 'update_lightmap_10bit_rt.comp', ['-DUSE_10BIT=1', '-DRAY_QUERIES=1']],
@@ -404,6 +405,39 @@ if not get_option('auto_features').disabled()
     endif
 endif
 
+# Keep the imported transport at the existing driver boundary. A real TLS
+# provider is required for release builds claiming WebRTC support.
+ice_opt = get_option('use_ice')
+ice_srcs = []
+if not ice_opt.disabled()
+    ice_tls = dependency('gnutls', required : false)
+    ice_tls_flags = ['-DUSE_GNUTLS', '-DGNUTLS_STATIC']
+    if not ice_tls.found()
+        ice_tls = dependency('openssl', required : ice_opt.enabled())
+        ice_tls_flags = ['-DUSE_OPENSSL']
+    endif
+    if ice_tls.found()
+        cflags += ['-DUSE_ICE'] + ice_tls_flags
+        deps += ice_tls
+        ice_srcs = [
+            'Quake/ice/ice_main.c',
+            'Quake/ice/ice_quake.c',
+            'Quake/ice/ice_socket.c',
+            'Quake/ice/ice_stream.c',
+            'Quake/ice/ice_sctp.c',
+            'Quake/ice/ice_mdns.c',
+            'Quake/ice/ice_gnutls.c',
+            'Quake/ice/ice_openssl.c',
+            'Quake/ice/json.c',
+            'Quake/ice/md5.c',
+            'Quake/ice/sha1.c',
+            'Quake/ice/sha2.c',
+        ]
+    else
+        message('Info: ICE/WebRTC disabled: no TLS provider found.')
+    endif
+endif
+
 # Valve's SDK has no pkg-config file. Explicit paths also allow a native
 # Linux ARM64 build of libphonon instead of assuming the Linux x64 binary.
 steam_audio_opt = get_option('use_steam_audio')
@@ -563,9 +597,22 @@ incdirs = [
     'Quake/mimalloc',
 ]
 
+# Donor-only files use their private ABI/header boundary. In particular, do
+# not inject the engine PCH into files whose private qboolean is an int.
+ice_objects = []
+if ice_srcs.length() > 0
+    ice_library = static_library('qsvr_ice', ice_srcs,
+        dependencies : deps,
+        include_directories : incdirs,
+        c_args : cflags,
+        install : false)
+    ice_objects = ice_library.extract_all_objects(recursive : false)
+endif
+
 executable(
     'vkquake',
     [srcs, shaders_c],
+    objects : ice_objects,
     dependencies : deps,
     include_directories : incdirs,
     c_args : cflags,
@@ -579,6 +626,9 @@ executable(
 license_dir = get_option('datadir') / 'licenses' / 'vkquake-vr'
 install_data('LICENSE.txt', 'LICENSE-GPL-3.0.txt', 'LICENSE-COMPONENTS.txt',
     install_dir : license_dir)
+install_data('LICENSES/ice/NOTICE.txt', rename : 'ICE-NOTICE.txt', install_dir : license_dir)
+install_data('LICENSES/ice/LGPL-2.1.txt', install_dir : license_dir)
+install_data('Quake/ice/LICENSE-QSS-M.txt', install_dir : license_dir)
 install_data('Quake/thirdparty/openxr/LICENSE',
     rename : 'OpenXR-LICENSE.txt', install_dir : license_dir)
 install_data('Quake/thirdparty/openxr/MONADO-BSL-1.0.txt',

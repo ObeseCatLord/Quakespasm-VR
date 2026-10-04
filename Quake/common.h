@@ -238,6 +238,7 @@ void COM_Effectinfo_Enumerate (int (*cb) (const char *pname)); // spike -- for d
 int			wildcmp (const char *wild, const char *string);
 void		Info_RemoveKey (char *info, const char *key);
 void		Info_SetKey (char *info, size_t infosize, const char *key, const char *val);
+qboolean	Info_FindNextKey (const char *info, const char *prevkey, char *outkey, size_t outkeysize, char *outval, size_t outvalsize);
 const char *Info_GetKey (const char *info, const char *key, char *out, size_t outsize);
 void		Info_Print (const char *info);
 void		Info_Enumerate (const char *info, void (*cb) (void *ctx, const char *key, const char *value), void *cbctx);
