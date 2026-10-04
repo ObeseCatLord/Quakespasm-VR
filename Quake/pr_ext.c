@@ -26,6 +26,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "quakedef.h"
 #include "pmove.h"
 #include "q_ctype.h"
+#include "csqc_prediction.h"
+#include "csqc_prediction_pmove.h"
 
 extern void PF_bprint (void);
 extern void PF_sprint (void);
@@ -4688,6 +4690,33 @@ static void PF_sv_pmove (void)
 	if (failure)
 		PR_RunError ("runstandardplayerphysics: %s", failure);
 }
+
+/* QSS-M #345. The command owner supplies both tagged history and its
+ * side-effect-free pending preview, so this builtin owns only QC publication. */
+static void PF_cs_getinputstate (void)
+{
+	unsigned int sequence;
+	usercmd_t command;
+
+	G_FLOAT (OFS_RETURN) = 0;
+	if (qcvm != &cl.qcvm || !CSQCPrediction_FloatToUInt (G_FLOAT (OFS_PARM0), &sequence) ||
+		!CL_GetCSQCInputState (sequence, &command))
+		return;
+	PR_GetSetInputs (&command, true);
+	G_FLOAT (OFS_RETURN) = 1;
+}
+
+/* QSS-M #347 client half. Invalid callers fail closed rather than raising a
+ * VM error while PMove scratch may be borrowed by an outer CSQC callback. */
+static void PF_cs_pmove (void)
+{
+	int reference = G_INT (OFS_PARM0);
+
+	if (qcvm != &cl.qcvm || !qcvm->edicts || qcvm->edict_size <= 0 || reference <= 0 ||
+		reference % qcvm->edict_size || reference / qcvm->edict_size >= qcvm->num_edicts ||
+		!CSQCPrediction_RunPMove (PROG_TO_EDICT (reference)))
+		return;
+}
 static void PF_checkbuiltin (void);
 static void PF_builtinsupported (void);
 
@@ -6235,8 +6264,10 @@ static struct
 	{"cos",							PF_Cos,							PF_Cos,							61,		"float(float angle)"},	//61
 	{"sqrt",						PF_Sqrt,						PF_Sqrt,						62,		"float(float value)"},	//62
 	{"tracetoss",					PF_TraceToss,					PF_TraceToss,					64,		"void(entity ent, entity ignore)"},
-	{"runstandardplayerphysics", PF_sv_pmove, PF_NoCSQC, 347,
-	 D("void(entity ent)", "Run standard server player movement using input_* globals. The caller owns gameplay callbacks; each call uses at most the current engine interval.")},
+	{"getinputstate", PF_NoSSQC, PF_cs_getinputstate, 345,
+	 D("float(float inputsequencenum)", "Publishes a tagged CSQC input journal entry or pending preview through input_* globals.")},
+	{"runstandardplayerphysics", PF_sv_pmove, PF_cs_pmove, 347,
+	 D("void(entity ent)", "Run standard player movement using input_* globals. CSQC updates only its passed entity.")},
 	{"etos",						PF_etos,						PF_etos,						65,		"string(entity ent)"},
 	{"etof",						PF_num_for_edict,				PF_num_for_edict,				0, 		"float(entity ent)"},
 	{"ftoe",						PF_edict_for_num,				PF_edict_for_num,				0, 		"entity(float ent)"},

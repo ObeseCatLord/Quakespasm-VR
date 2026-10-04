@@ -535,6 +535,8 @@ extern cvar_t timelimit;
 
 qboolean SV_CoopFeatureEnabled (const cvar_t *feature, qboolean modern_default);
 qboolean SV_ShouldSuppressCoopTelefrag (edict_t *trigger, edict_t *other);
+void SV_DispatchCSQCPMoveImpacts (edict_t *mover, int mover_number,
+	edict_t *const *contacts, const int *contact_numbers, int contact_count);
 qboolean SV_CoopPickupTouch (edict_t *pickup, edict_t *player);
 qboolean SV_CoopPickupUseTargets (edict_t *pickup, edict_t *player, qboolean *called);
 qboolean SV_CoopSelectSpawnPoint (edict_t *player, int *spawnprog);

@@ -280,7 +280,9 @@ def remove_depfile_args(arguments):
     return result
 
 
-def build_fixture(graph, output, source):
+def build_fixture(graph, output, source, *,
+                  wrappers=("Loop_Init", "NET_CanSendMessage", "NET_SendUnreliableMessage",
+                            "R_TranslateNewPlayerSkin"), extra_link_args=()):
     commands = json.loads((graph / "compile_commands.json").read_text())
     entry = next((item for item in commands if item["file"].endswith("/Quake/sv_user.c")), None)
     if not entry:
@@ -303,16 +305,17 @@ def build_fixture(graph, output, source):
     }
     if any(link_args.count(item) != 1 for item in replacements):
         raise RuntimeError("unexpected native owner graph; refusing broad replacement")
-    engine_object_count = sum(item.endswith(".o") for item in link_args)
-    if engine_object_count != 225:
-        raise RuntimeError(f"expected the assertion-enabled native225 object graph, found {engine_object_count}")
+    engine_objects = [item for item in link_args if item.endswith(".o")]
+    if len(set(engine_objects)) != len(engine_objects):
+        raise RuntimeError("duplicate native engine objects in the link recipe")
+    if any(not (graph / item).is_file() for item in engine_objects):
+        raise RuntimeError("native engine graph has unbuilt objects")
     if "-o" not in link_args:
         raise RuntimeError("link recipe has no output")
     link_args = [item for item in link_args if item not in replacements]
     link_args.insert(link_args.index("-Wl,--start-group"), str(fixture_object))
-    link_args.extend(("-Wl,--wrap=Loop_Init", "-Wl,--wrap=NET_CanSendMessage",
-                      "-Wl,--wrap=NET_SendUnreliableMessage",
-                      "-Wl,--wrap=R_TranslateNewPlayerSkin"))
+    link_args.extend("-Wl,--wrap=" + symbol for symbol in wrappers)
+    link_args.extend(extra_link_args)
     subprocess.run(link_args, cwd=graph, check=True)
     return fixture_object
 

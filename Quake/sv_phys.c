@@ -1964,6 +1964,42 @@ static void SV_Impact (edict_t *e1, edict_t *e2)
 	pr_global_struct->other = old_other;
 }
 
+/* CSQC #347 captures and retains its positive PMove contacts before trigger
+ * QC runs. This is the one narrow path back to the mature impact behavior:
+ * engine-network contacts are negative IDs and intentionally never enter it. */
+static qboolean SV_CSQCImpactEdictLive (edict_t *entity, int number)
+{
+	if (qcvm != &cl.qcvm || !qcvm->edicts || qcvm->edict_size <= 0 ||
+		number <= 0 || number >= qcvm->num_edicts ||
+		EDICT_NUM (number) != entity || entity->free)
+		return false;
+	return entity->v.solid == SOLID_BBOX || entity->v.solid == SOLID_SLIDEBOX ||
+		entity->v.solid == SOLID_BSP;
+}
+
+void SV_DispatchCSQCPMoveImpacts (edict_t *mover, int mover_number,
+	edict_t *const *contacts, const int *contact_numbers, int contact_count)
+{
+	int i;
+
+	if (!contacts || !contact_numbers || contact_count < 0 ||
+		contact_count > MAX_PHYSENTS ||
+		!SV_CSQCImpactEdictLive (mover, mover_number))
+		return;
+	for (i = 0; i < contact_count; ++i)
+	{
+		edict_t *other = contacts[i];
+
+		/* The retained pointer and captured number must still identify this CSQC
+		 * entity after trigger callbacks; freed or altered solids do not impact. */
+		if (!SV_CSQCImpactEdictLive (mover, mover_number))
+			break;
+		if (!SV_CSQCImpactEdictLive (other, contact_numbers[i]) || other == mover)
+			continue;
+		SV_Impact (mover, other);
+	}
+}
+
 /*
 ==================
 ClipVelocity

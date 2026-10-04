@@ -420,14 +420,17 @@ static qboolean SV_IsActiveClientEdict (edict_t *ent)
 {
 	int entnum;
 
-	if (!ent || ent->free)
+	/* This bookkeeping belongs to server players, never a similarly numbered
+	 * CSQC edict passed through the shared world/trigger helpers. */
+	if (qcvm != &sv.qcvm || !ent || ent->free)
 		return false;
 
 	entnum = NUM_FOR_EDICT (ent);
 	if (entnum < 1 || entnum > svs.maxclients)
 		return false;
 
-	if (!svs.clients[entnum - 1].active || !svs.clients[entnum - 1].spawned)
+	if (!svs.clients[entnum - 1].active || !svs.clients[entnum - 1].spawned ||
+		svs.clients[entnum - 1].edict != ent)
 		return false;
 
 	return ((int)ent->v.flags & FL_CLIENT) != 0;

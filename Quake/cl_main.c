@@ -2101,6 +2101,29 @@ static void CL_PrepareReplayPreview (usercmd_t *cmd, qboolean private_replay)
 	cmd->seconds = (float)elapsed;
 }
 
+/* Side-effect-free view of the canonical committed/pending command journal.
+ * Reading pending input never invokes a stateful QC filter or consumes input. */
+qboolean CL_GetCSQCInputState (unsigned int sequence, usercmd_t *out)
+{
+	unsigned int upper;
+	if (!out || cls.state != ca_connected || cls.demoplayback ||
+		cl.movemessages <= 0 || !sequence)
+		return false;
+	upper = (unsigned int)cl.movemessages;
+	if (sequence == upper)
+	{
+		CL_PrepareReplayPreview (out, cl.protocol_qsvr == QSVR_PROTOCOL_PINNED);
+		out->sequence = sequence;
+		out->servertime = cl.time;
+		return true;
+	}
+	if (sequence > upper || upper - sequence > MOVECMDS_MASK + 1u ||
+		cl.movecmds[sequence & MOVECMDS_MASK].sequence != sequence)
+		return false;
+	*out = cl.movecmds[sequence & MOVECMDS_MASK];
+	return true;
+}
+
 static qboolean CL_PredictionVectorFinite (const vec3_t vector)
 {
 	return isfinite (vector[0]) && isfinite (vector[1]) && isfinite (vector[2]);

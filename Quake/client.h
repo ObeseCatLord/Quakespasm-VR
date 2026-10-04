@@ -486,6 +486,8 @@ void CL_EstablishConnection (const char *host, unsigned int legacy_qsvr);
 qboolean CL_MaybeSwitchServerGame (const char *modname);
 const char *CL_FindInstalledServerGame (const char *gamedir);
 void CL_AutoReconnectFrame (void);
+qboolean CL_ConnectionPending (void);
+qboolean CL_GetCSQCInputState (unsigned int sequence, usercmd_t *out);
 void CL_CancelAutoReconnect (void);
 
 typedef enum cl_servermod_phase_e
