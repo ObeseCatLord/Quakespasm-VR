@@ -257,6 +257,7 @@ int main (int argc, char **argv)
 	client_t *peer;
 	char path[MAX_OSPATH];
 
+	setvbuf (stdout, NULL, _IOLBF, 0); // Preserve passed witnesses if a later assert aborts.
 	Fixture_InitNativeEngine (argc, argv, "e1m1", true);
 	Cvar_SetQuick (&sv_autosave, "0");
 	network_buffer = net_message;
@@ -294,7 +295,15 @@ int main (int argc, char **argv)
 	BackgroundSaveWriteAndCompare ("background-v5-reference", "background-v5-captured", 5);
 	peer = BackgroundSaveRoundtrip ("background-v5-captured", 5);
 	BackgroundSavePurposeAndRetry (peer);
+	/* The v5 load reserved one client edict and retains stock loadgame state.
+	 * Rebuild through native lifecycle owners before admitting a second player. */
+	PR_SwitchQCVM (NULL);
+	CL_Disconnect ();
 	svs.maxclients = 2;
+	PR_SwitchQCVM (&sv.qcvm);
+	SV_SpawnServer ("e1m1");
+	assert (sv.active && !sv.loadgame && qcvm->reserved_edicts == 3);
+	peer = LocalSignon (false, false);
 	Cvar_SetQuick (&sv_save_multiplayer, "1");
 	net_driverlevel = 0;
 	peer = SpawnPeer (1, modern_offer, QSVR_PROTOCOL_PINNED);
