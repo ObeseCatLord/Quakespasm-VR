@@ -6,12 +6,12 @@
 #undef main
 
 static SDL_Semaphore *background_save_gate;
-static qboolean background_save_block_writes;
+static atomic_uint32_t background_save_block_writes;
 
 FILE *__real_Sys_fopen (const char *path, const char *mode);
 FILE *__wrap_Sys_fopen (const char *path, const char *mode)
 {
-	if (background_save_block_writes && strstr (path, ".sav.tmp"))
+	if (Atomic_LoadUInt32 (&background_save_block_writes) && strstr (path, ".sav.tmp"))
 		SDL_WaitSemaphore (background_save_gate);
 	return __real_Sys_fopen (path, mode);
 }
@@ -81,7 +81,7 @@ int main (int argc, char **argv)
 
 	/* Both accepted slots remain blocked in worker-only I/O. Polling and a
 	 * real server frame continue, while alias and full-slot saves return. */
-	background_save_block_writes = true;
+	Atomic_StoreUInt32 (&background_save_block_writes, true);
 	Cmd_ExecuteString ("save background-a", src_command);
 	Cmd_ExecuteString ("save background-b", src_command);
 	Cmd_ExecuteString ("save BACKGROUND-A.SAV", src_command);
@@ -92,7 +92,7 @@ int main (int argc, char **argv)
 	assert (!COM_FileExists (path, NULL));
 	SDL_SignalSemaphore (background_save_gate);
 	SDL_SignalSemaphore (background_save_gate);
-	background_save_block_writes = false;
+	Atomic_StoreUInt32 (&background_save_block_writes, false);
 	BackgroundSaveWait ("background-a");
 	BackgroundSaveWait ("background-b");
 	assert (q_snprintf (path, sizeof (path), "%s/background-full.sav", com_gamedir) > 0);

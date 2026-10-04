@@ -245,6 +245,7 @@ static void LocalSuspend (client_t *peer, qboolean menu)
 static void SaveFixture (const char *name, int version)
 {
 	Cmd_ExecuteString (va ("save %s", name), src_command);
+	Host_SavegameDrain (); // assertions below observe completed background I/O
 	FILE *file = fopen (va ("%s/%s.sav", com_gamedir, name), "r");
 	int actual = 0;
 	assert (file && fscanf (file, "%d", &actual) == 1 && actual == version);
@@ -278,6 +279,7 @@ static void LocalAutosaveFrameAt (double wall_time, double game_time)
 	realtime = wall_time;
 	qcvm->time = game_time;
 	Host_CoopAutosaveFrame ();
+	Host_SavegameDrain (); // resolve asynchronous success/backoff at this clock
 }
 
 static char *LocalReadAutosave (const char *name)
