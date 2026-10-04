@@ -489,6 +489,62 @@ Writes archived cvars to the global config and game-local state to the
 current game config.
 ===============
 */
+static void Host_WritePostConfiguration (void)
+{
+	const char *path = Cmd_PostConfigWritePath ();
+	char temp_path[MAX_OSPATH];
+	FILE *f;
+	qboolean failed;
+	FILE *profile, *native;
+
+	if (!path)
+		return;
+	// Native vkQuake.cfg saves keep their split global/game ownership.
+	profile = Sys_fopen (path, "rb");
+	if (!profile)
+		return;
+	for (int game = 0; game < 2; ++game)
+	{
+		q_snprintf (temp_path, sizeof (temp_path), "%s/" CONFIG_NAME,
+			game ? com_gamedir : COM_GetWriteRoot ());
+		native = Sys_fopen (temp_path, "rb");
+		failed = native && Sys_SameFile (profile, native);
+		if (native)
+			fclose (native);
+		if (failed)
+		{
+			fclose (profile);
+			Con_Warning ("Postcfg write-back conflicts with native " CONFIG_NAME "; keeping native save policy\n");
+			return;
+		}
+	}
+	fclose (profile);
+	if ((size_t)q_snprintf (temp_path, sizeof (temp_path), "%s.tmp", path) >= sizeof (temp_path))
+	{
+		Con_Warning ("Postcfg write path is too long\n");
+		return;
+	}
+	// Exclusive creation leaves an existing file/symlink/hardlink untouched.
+	f = Sys_fopen (temp_path, "wx");
+	if (!f)
+	{
+		Con_Warning ("Couldn't write postcfg %s\n", path);
+		return;
+	}
+	// Reuse the legacy launcher profile format, retaining native config saves.
+	Key_WriteBindings (f);
+	Cvar_WriteVariables (f, CVAR_ARCHIVE | CVAR_ARCHIVE_GAME);
+	fprintf (f, "vid_restart\n+mlook\n");
+	failed = ferror (f) != 0;
+	if (fclose (f) != 0)
+		failed = true;
+	if (failed || Sys_rename (temp_path, path) != 0)
+	{
+		Sys_remove (temp_path);
+		Con_Warning ("Couldn't replace postcfg %s; previous profile retained\n", path);
+	}
+}
+
 void Host_WriteConfiguration (void)
 {
 	FILE *f;
@@ -496,6 +552,7 @@ void Host_WriteConfiguration (void)
 	// dedicated servers initialize the host but don't parse and set the config cvars
 	if (host_initialized && !isDedicated && !host_parms->errstate)
 	{
+		Host_WritePostConfiguration ();
 		f = COM_FOpenConfigFile (true, "w");
 		if (!f)
 		{
