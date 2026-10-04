@@ -605,6 +605,23 @@ static void SCR_SizeDown_f (void)
 	Cvar_SetValueQuick (&scr_viewsize, new_value);
 }
 
+/* Called by default.cfg before saved config/autoexec/command-line overrides.
+ * Keep this at the explicit defaults boundary: an archived 110 or Always Run
+ * 0 must remain authoritative on subsequent VR frames and sessions. */
+static void SCR_VRScreenDefaults_f (void)
+{
+	if (Cmd_Argc () != 1)
+	{
+		Con_Printf ("usage: vr_screen_defaults\n");
+		return;
+	}
+	if (!vulkan_globals.stereo_active &&
+		(!COM_CheckParm ("-openxr") || COM_CheckParm ("-novr")))
+		return;
+	Cvar_SetQuick (&scr_viewsize, "100");
+	Cvar_SetQuick (&cl_alwaysrun, "1");
+}
+
 /* All HUD styles use one tracked pose and one set of live-game restrictions. */
 static qboolean SCR_VRHUDFrameEligible (const vrxr_frame_t *frame)
 {
@@ -855,6 +872,7 @@ void SCR_Init (void)
 	Cvar_RegisterVariable (&vr_crosshair_size);
 	Cvar_RegisterVariable (&vr_crosshair_alpha);
 	Cvar_RegisterVariable (&vr_crosshairy);
+	Cmd_AddCommand ("vr_screen_defaults", SCR_VRScreenDefaults_f);
 	Cvar_RegisterVariable (&cl_gun_fovscale);
 	Cvar_RegisterVariable (&cl_gun_x);
 	Cvar_RegisterVariable (&cl_gun_y);

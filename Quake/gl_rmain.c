@@ -1381,8 +1381,6 @@ void R_DrawEntitiesOnList (cb_context_t *cbx, int alphapass, int chain, qboolean
 R_DrawViewModel -- johnfitz -- gutted
 =============
 */
-static void R_DrawVRCrosshair (cb_context_t *cbx);
-
 void R_PrepareVRCrosshair (void)
 {
 	vr_crosshair_frame_t prepared;
@@ -1526,8 +1524,6 @@ void R_DrawViewModel (cb_context_t *cbx)
 		V_TrackedViewmodelShouldHide ())
 		return;
 
-	R_DrawVRCrosshair (cbx);
-
 	entity_t *currententity = &cl.viewent;
 	if (!currententity->model)
 		return;
@@ -1596,17 +1592,20 @@ static void R_EmitVRCrosshairQuad (cb_context_t *cbx, const vec3_t corners[4], f
 
 	R_BindGraphicsPipeline (cbx, PIPELINE_BASIC_NOTEX_BLEND);
 	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), vulkan_globals.view_projection_matrix);
+	/* The final scene context may inherit fog from wheel/weapon draws. */
+	Fog_DisableGFog (cbx);
 	vkCmdBindVertexBuffers (cbx->cb, 0, 1, &vertex_buffer, &vertex_buffer_offset);
 	vkCmdDraw (cbx->cb, countof (order), 1, 0, 0);
 }
 
-static float R_VRCrosshairHalfExtent (float depth, float pixels, float fov, float viewport)
+static float R_VRCrosshairHalfExtent (float depth, float pixels, float viewport)
 {
 	if (!isfinite (depth) || depth <= 0 || !isfinite (pixels) || pixels <= 0 ||
-		!isfinite (fov) || fov <= 0 || fov >= 179 || !isfinite (viewport) || viewport <= 0)
+		!isfinite (viewport) || viewport <= 0)
 		return 0;
-	/* Center-FOV sizing is approximate after XR applies asymmetric per-eye clip correction. */
-	return depth * tanf (DEG2RAD (fov) * 0.5f) * pixels / viewport;
+	/* R_SetupMatrices uses 90 degrees on both stereo center axes, so
+	 * tan(fov/2) is 1. Per-eye correction can still change apparent size. */
+	return depth * pixels / viewport;
 }
 
 static qboolean R_VRCrosshairWorldPathReady (int ray)
@@ -1627,8 +1626,8 @@ static qboolean R_VRCrosshairWorldPathReady (int ray)
 	{
 		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, delta);
 		const float depth = DotProduct (delta, vpn);
-		return R_VRCrosshairHalfExtent (depth, vr_crosshair_frame.size_pixels, r_fovx, width) > 0 &&
-			R_VRCrosshairHalfExtent (depth, vr_crosshair_frame.size_pixels, r_fovy, height) > 0;
+		return R_VRCrosshairHalfExtent (depth, vr_crosshair_frame.size_pixels, width) > 0 &&
+			R_VRCrosshairHalfExtent (depth, vr_crosshair_frame.size_pixels, height) > 0;
 	}
 	if (vr_crosshair_frame.mode == 2)
 	{
@@ -1637,7 +1636,7 @@ static qboolean R_VRCrosshairWorldPathReady (int ray)
 			return false;
 		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, delta);
 		return R_VRCrosshairHalfExtent (DotProduct (delta, vpn),
-			vr_crosshair_frame.size_pixels * 2.0f, r_fovy, height) > 0;
+			vr_crosshair_frame.size_pixels * 2.0f, height) > 0;
 	}
 	return false;
 }
@@ -1656,9 +1655,9 @@ static void R_DrawVRCrosshairRay (cb_context_t *cbx, int ray)
 	{
 		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, from_camera);
 		half_width = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
-			vr_crosshair_frame.size_pixels, r_fovx, width);
+			vr_crosshair_frame.size_pixels, width);
 		half_height = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
-			vr_crosshair_frame.size_pixels, r_fovy, height);
+			vr_crosshair_frame.size_pixels, height);
 		if (half_width <= 0 || half_height <= 0)
 			return;
 		for (int i = 0; i < 3; ++i)
@@ -1679,10 +1678,10 @@ static void R_DrawVRCrosshairRay (cb_context_t *cbx, int ray)
 			VectorCopy (vright, side);
 		VectorSubtract (vr_crosshair_frame.start[ray], r_origin, from_camera);
 		half_width = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
-			vr_crosshair_frame.size_pixels * 2.0f, r_fovy, height);
+			vr_crosshair_frame.size_pixels * 2.0f, height);
 		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, from_camera);
 		half_height = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
-			vr_crosshair_frame.size_pixels * 2.0f, r_fovy, height);
+			vr_crosshair_frame.size_pixels * 2.0f, height);
 		for (int i = 0; i < 3; ++i)
 		{
 			corners[0][i] = vr_crosshair_frame.start[ray][i] + side[i] * half_width;
@@ -2923,6 +2922,9 @@ static void R_DrawViewModelTask (void *unused)
 			R_ShowViewModelTris (cbx);
 			R_EndDebugUtilsLabel (cbx);
 		}
+		/* A depth-free pointer must follow the weapon and all transparency
+		 * passes; otherwise later scene geometry can paint over it. */
+		R_DrawVRCrosshair (cbx);
 	}
 }
 

@@ -820,7 +820,16 @@ void M_Mouse_UpdateCursor (int *cursor, int left, int right, int top, int item_h
 //=============================================================================
 /* MAIN MENU */
 
-#define MAIN_ITEMS 5
+enum
+{
+	MAIN_SINGLEPLAYER,
+	MAIN_MULTIPLAYER,
+	MAIN_OPTIONS,
+	MAIN_MODS,
+	MAIN_HELP,
+	MAIN_QUIT,
+	MAIN_ITEMS
+};
 
 void M_Menu_Main_f (void)
 {
@@ -845,31 +854,59 @@ static qpic_t *Get_Menu2 ()
 	return (base_game && registered.value) ? Draw_TryCachePic ("gfx/mainmenu2.lmp", TEXPREF_ALPHA | TEXPREF_PAD | TEXPREF_NOPICMIP, PICFLAG_AUTO) : NULL;
 }
 
+/* Like Ironwail's main-menu split, keep the loaded art instead of replacing
+ * custom mod menus. Draw_SubPic takes normalized offsets and extents. */
+static void M_Main_DrawSlice (cb_context_t *cbx, qpic_t *pic, int y, int top, int height)
+{
+	if (height > 0)
+		Draw_SubPic (cbx, 72, y, pic->width, height, pic, 0, top / (float)pic->height,
+			1, height / (float)pic->height, NULL, 1.0f);
+}
+
 void M_Main_Draw (cb_context_t *cbx)
 {
 	int		f;
 	qpic_t *p;
 	qpic_t *menu2 = Get_Menu2 ();
-	int		main_items = MAIN_ITEMS + 1;
 
 	M_DrawTransPic (cbx, 16, 4, Draw_CachePic ("gfx/qplaque.lmp"));
 	p = Draw_CachePic ("gfx/ttl_main.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
 
-	M_DrawTransPic (cbx, 72, 32, menu2 ? menu2 : Draw_CachePic ("gfx/mainmenu.lmp"));
-	if (!menu2)
-		M_PrintWhite (cbx, 72, 32 + MAIN_ITEMS * 20, "Mods");
+	if (menu2 && menu2->height >= 100)
+	{
+		/* Bundled menu2 has Help before Mods. Exchange those rows without
+		 * changing its styled lettering (including Help / Ordering). */
+		M_Main_DrawSlice (cbx, menu2, 32, 0, 60);
+		M_Main_DrawSlice (cbx, menu2, 92, 80, 20);
+		M_Main_DrawSlice (cbx, menu2, 112, 60, 20);
+		M_Main_DrawSlice (cbx, menu2, 132, 100, menu2->height - 100);
+	}
+	else
+	{
+		qpic_t *mods = Draw_TryCachePic ("gfx/menumods.lmp", TEXPREF_ALPHA | TEXPREF_PAD | TEXPREF_NOPICMIP, PICFLAG_AUTO);
+		p = Draw_CachePic ("gfx/mainmenu.lmp");
+		const int split = q_min (60, p->height);
+		M_Main_DrawSlice (cbx, p, 32, 0, split);
+		if (mods)
+			M_DrawTransPic (cbx, 72, 92, mods);
+		else
+		{
+			/* Ironwail's 16-pixel colored text fallback uses the active font. */
+			const char label[] = {'M' + 128, 'O' + 128, 'D' + 128, 'S' + 128, 0};
+			Draw_String_Scaled (cbx, 74, 93, label, 2.0f);
+		}
+		M_Main_DrawSlice (cbx, p, 112, split, p->height - split);
+	}
 
 	f = (int)(realtime * 10) % 6;
 
-	M_Mouse_UpdateListCursor (&m_main_cursor, 70, 320, 32, 20, main_items, 0);
+	M_Mouse_UpdateListCursor (&m_main_cursor, 70, 320, 32, 20, MAIN_ITEMS, 0);
 	M_DrawTransPic (cbx, 54, 32 + m_main_cursor * 20, Draw_CachePic (va ("gfx/menudot%i.lmp", f + 1)));
 }
 
 void M_Main_Key (int key)
 {
-	qpic_t *menu2 = Get_Menu2 ();
-
 	switch (key)
 	{
 	case K_MOUSE2:
@@ -887,14 +924,14 @@ void M_Main_Key (int key)
 
 	case K_DOWNARROW:
 		S_LocalSound ("misc/menu1.wav");
-		if (++m_main_cursor >= MAIN_ITEMS + 1)
+		if (++m_main_cursor >= MAIN_ITEMS)
 			m_main_cursor = 0;
 		break;
 
 	case K_UPARROW:
 		S_LocalSound ("misc/menu1.wav");
 		if (--m_main_cursor < 0)
-			m_main_cursor = MAIN_ITEMS;
+			m_main_cursor = MAIN_ITEMS - 1;
 		break;
 
 	case K_ENTER:
@@ -903,33 +940,28 @@ void M_Main_Key (int key)
 	case K_MOUSE1:
 		switch (m_main_cursor)
 		{
-		case 0:
+		case MAIN_SINGLEPLAYER:
 			M_Menu_SinglePlayer_f ();
 			break;
 
-		case 1:
+		case MAIN_MULTIPLAYER:
 			M_Menu_MultiPlayer_f ();
 			break;
 
-		case 2:
+		case MAIN_OPTIONS:
 			M_Menu_Options_f ();
 			break;
 
-		case 3:
+		case MAIN_MODS:
+			M_Menu_Mods_f ();
+			break;
+
+		case MAIN_HELP:
 			M_Menu_Help_f ();
 			break;
 
-		case 4:
-			if (menu2)
-				M_Menu_Mods_f ();
-			else
-				M_Menu_Quit_f ();
-			break;
-		case 5:
-			if (menu2)
-				M_Menu_Quit_f ();
-			else
-				M_Menu_Mods_f ();
+		case MAIN_QUIT:
+			M_Menu_Quit_f ();
 			break;
 		}
 	}
@@ -5529,6 +5561,9 @@ static qboolean M_Mods_SetCatalogue (qboolean catalogue)
 	mods_keyboard = false;
 	mods_catalogue_last_state = AddonCatalog_State ();
 	M_Mods_UpdateFilter ();
+	scrollbar_grab = slider_grab = false;
+	scrollbar_size = 0;
+	M_MenuChanged ();
 	return true;
 }
 
@@ -5711,6 +5746,31 @@ static void M_Mods_RefreshCatalogue (void)
 	AddonCatalog_Refresh ();
 }
 
+/* All shortcuts and pointer controls reuse the same native actions. */
+static void M_Mods_ActivateControl (int control)
+{
+	const addon_catalog_state_t state = AddonCatalog_State ();
+	if (control == 0)
+	{
+		if (mods_catalogue_view && (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING))
+			AddonCatalog_Cancel ();
+		M_Mods_SetCatalogue (!mods_catalogue_view);
+		if (mods_catalogue_view && state == ADDON_CATALOG_IDLE)
+			M_Mods_RefreshCatalogue ();
+		S_LocalSound ("misc/menu1.wav");
+	}
+	else if (control == 1)
+	{
+		if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING)
+			return;
+		if (mods_catalogue_view)
+			M_Mods_RefreshCatalogue ();
+		else
+			M_Mods_RefreshInstalled ();
+		S_LocalSound ("misc/menu2.wav");
+	}
+}
+
 static void M_Menu_Mods_f (void)
 {
 	M_MenuChanged ();
@@ -5834,13 +5894,22 @@ static void M_Mods_KeyboardDraw (cb_context_t *cbx)
 		Draw_Fill (cbx, r.x, r.y, r.w, r.h, key == mods_keyboard_cursor ? 14 : 4, 0.9f);
 		M_PrintWhite (cbx, r.x + (r.w - (int)strlen (label) * CHARACTER_SIZE) / 2, r.y + 7, label);
 	}
-	M_PrintWhite (cbx, 8, 180, "Stick/arrows: choose  Trigger/A: enter");
-	M_PrintWhite (cbx, 8, 190, "Y/B/Esc: done   X/Del: clear");
+	if (V_TrackedSessionActive ())
+	{
+		M_PrintWhite (cbx, 8, 180, "Aim + trigger: type / Backspace / Clear");
+		M_PrintWhite (cbx, 8, 190, "Menu/secondary: done");
+	}
+	else
+	{
+		M_PrintWhite (cbx, 8, 180, "Arrows: choose  Enter/A: type");
+		M_PrintWhite (cbx, 8, 190, "Y/B/Esc: done   X/Del: clear");
+	}
 }
 
 static void M_Mods_Draw (cb_context_t *cbx)
 {
 	const mod_browser_layout_t layout = ModBrowser_Layout ();
+	const qboolean vr = V_TrackedSessionActive ();
 	M_Mods_FinishCatalogueInstall ();
 	if (mods_catalogue_view)
 	{
@@ -5880,7 +5949,9 @@ static void M_Mods_Draw (cb_context_t *cbx)
 		M_PrintWhite (cbx, 16, 144, line);
 		M_PrintWhite (cbx, 16, 152, mods_catalogue_approved.verified ?
 			"Package verified by catalogue." : "UNVERIFIED: unsigned; no digest.");
-		M_PrintWhite (cbx, 16, 160, "Enter: confirm and start install.");
+		M_PrintWhite (cbx, 16, 160, installing ?
+			(vr ? "Menu/secondary: cancel and return" : "Esc/B: cancel and return") :
+			(vr ? "Trigger: install  Menu/secondary: back" : "Enter/A: install  Esc/B: back"));
 		if (installing)
 		{
 			const float raw = AddonCatalog_Progress ();
@@ -5890,7 +5961,7 @@ static void M_Mods_Draw (cb_context_t *cbx)
 				bytes, mods_catalogue_approved.size);
 			M_PrintWhite (cbx, 16, 168, line);
 			M_PrintScroll (cbx, 16, 176, 288, AddonCatalog_Message (), realtime * 0.25, false);
-			M_PrintWhite (cbx, 16, 184, "Esc/Back/Click: cancel and return");
+			M_PrintWhite (cbx, 16, 184, "Cancel and return");
 			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 312, 182, 10, 3);
 		}
 		else
@@ -5899,9 +5970,9 @@ static void M_Mods_Draw (cb_context_t *cbx)
 				(state == ADDON_CATALOG_ERROR ? AddonCatalog_Message () : "");
 			if (*status)
 				M_PrintScroll (cbx, 16, 176, 288, status, realtime * 0.25, false);
-			M_PrintWhite (cbx, 16, 184, "Enter: confirm install");
-			M_PrintWhite (cbx, 208, 184, "Esc/Back: back");
-			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 200, 182, 10, 2);
+			M_PrintWhite (cbx, 16, 184, "Confirm install");
+			M_PrintWhite (cbx, 208, 184, "Back");
+			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 199, 182, 10, 2);
 			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, 182, 10, 3);
 		}
 		return;
@@ -5920,15 +5991,17 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	// to trigger scroll faster
 	M_Ticker_Update (&m_mods_ticker);
 
+	Draw_Fill (cbx, 12, layout.controls_y, 164, CHARACTER_SIZE, 4, 0.85f);
+	Draw_Fill (cbx, 176, layout.controls_y, 136, CHARACTER_SIZE, 4, 0.85f);
 	if (mods_catalogue_view)
 	{
-		M_PrintWhite (cbx, 16, layout.controls_y, "Installed: Tab/L3");
-		M_PrintWhite (cbx, 216, layout.controls_y, "Refresh: X/F1");
+		M_PrintWhite (cbx, 16, layout.controls_y, vr ? "Offhand <: installed" : "Installed: Tab/L3");
+		M_PrintWhite (cbx, 184, layout.controls_y, vr ? "Trigger: refresh" : "Refresh: X/F1");
 	}
 	else
 	{
-		M_PrintWhite (cbx, 16, layout.controls_y, "Catalogue: Tab/L3");
-		M_PrintWhite (cbx, 216, layout.controls_y, "Scan: X/F1");
+		M_PrintWhite (cbx, 16, layout.controls_y, vr ? "Offhand >: downloads" : "Downloads: Tab/L3");
+		M_PrintWhite (cbx, 184, layout.controls_y, vr ? "Trigger: scan" : "Scan: X/F1");
 	}
 
 	for (int i = 0; i < mods_height; ++i)
@@ -5968,12 +6041,12 @@ static void M_Mods_Draw (cb_context_t *cbx)
 				M_PrintScroll (cbx, MENU_LABEL_X, layout.list_top, 32 * CHARACTER_SIZE,
 					AddonCatalog_Message (), 0.0, true);
 			else
-				M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, "F1 to refresh the catalogue.");
+				M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, vr ? "Aim + trigger: refresh downloads" : "F1/X or click Refresh to download.");
 		}
 		else
 			M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, mods_search[0] ? "No installed mods match." : "No installed mods found.");
 	}
-	M_PrintWhite (cbx, 16, layout.search_text_y, "Filter (Y):");
+	M_PrintWhite (cbx, 16, layout.search_text_y, vr ? "Filter:" : "Filter (Y):");
 	M_DrawTextBox (cbx, 96, layout.search_box_y, MODS_SEARCH_FIELD_WIDTH, 1);
 	{
 		const int length = (int)strlen (mods_search);
@@ -5987,12 +6060,10 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	M_Mouse_UpdateListCursor (&mods_cursor, 12, layout.list_right, layout.list_top, layout.row_height, mods_height, first_mod);
 	/* Register the labelled controls with the common hover gate so the VR
 	 * pointer can activate them as well as an ordinary mouse click. */
-	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, mods_catalogue_view ? 200 : 208, layout.controls_y, CHARACTER_SIZE, 0);
-	if (mods_catalogue_view)
-		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, layout.controls_y, CHARACTER_SIZE, 1);
-	else
-		M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 208, 312, layout.controls_y, CHARACTER_SIZE, 1);
-	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 96, 312, layout.search_box_y, 24, 2);
+	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 175, layout.controls_y, CHARACTER_SIZE - 1, 0);
+	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 176, 312, layout.controls_y, CHARACTER_SIZE - 1, 1);
+	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 312, layout.search_box_y, 23, 2);
+	M_PrintWhite (cbx, 16, layout.search_box_y + 24, vr ? "Trigger: select  Menu/secondary: back" : "Enter/A: select  Esc/B: back");
 	if (num_mods > 0)
 		Draw_Character (cbx, MENU_CURSOR_X, layout.list_top + (mods_cursor - first_mod) * layout.row_height, 12 + ((int)(realtime * 4) & 1));
 	if (num_mods > MAX_MODS_ON_SCREEN)
@@ -6025,7 +6096,7 @@ static void M_Mods_Key (int key)
 		}
 		if (key == K_MOUSE1)
 		{
-			if (mods_catalogue_control_hover == 2 && M_Mouse_InRect (12, 200, 182, 192) &&
+			if (mods_catalogue_control_hover == 2 && M_Mouse_InRect (12, 199, 182, 192) &&
 				AddonCatalog_State () != ADDON_CATALOG_INSTALLING)
 				M_Mods_ConfirmCatalogueInstall ();
 			return;
@@ -6040,7 +6111,7 @@ static void M_Mods_Key (int key)
 	}
 
 	if (key == K_YBUTTON || (key == K_MOUSE1 && !scrollbar_grab &&
-		M_Mouse_InRect (96, 312, layout.search_box_y, layout.search_box_y + 24)))
+		M_Mouse_InRect (12, 312, layout.search_box_y, layout.search_box_y + 23)))
 	{
 		M_Mods_KeyboardSet (true);
 		return;
@@ -6048,58 +6119,28 @@ static void M_Mods_Key (int key)
 
 	if (key == K_MOUSE1 && m_mouse_y >= layout.controls_y && m_mouse_y < layout.controls_y + CHARACTER_SIZE)
 	{
-		if (!mods_catalogue_view && m_mouse_x >= 12 && m_mouse_x < 208)
-		{
-			M_Mods_SetCatalogue (true);
-			S_LocalSound ("misc/menu1.wav");
-			return;
-		}
-		if (!mods_catalogue_view && m_mouse_x >= 208 && m_mouse_x <= 312)
-		{
-			const addon_catalog_state_t state = AddonCatalog_State ();
-			if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING)
-				return;
-			M_Mods_RefreshInstalled ();
-			S_LocalSound ("misc/menu2.wav");
-			return;
-		}
-		if (mods_catalogue_view && m_mouse_x >= 12 && m_mouse_x < 200)
-		{
-			if (AddonCatalog_State () == ADDON_CATALOG_REFRESHING ||
-				AddonCatalog_State () == ADDON_CATALOG_INSTALLING)
-				AddonCatalog_Cancel ();
-			M_Mods_SetCatalogue (false);
-			S_LocalSound ("misc/menu1.wav");
-			return;
-		}
-		if (mods_catalogue_view && m_mouse_x >= 200 && m_mouse_x <= 312)
-		{
-			M_Mods_RefreshCatalogue ();
-			S_LocalSound ("misc/menu2.wav");
-			return;
-		}
+		if (m_mouse_x >= 12 && m_mouse_x <= 312)
+			M_Mods_ActivateControl (m_mouse_x >= 176 ? 1 : 0);
+		return;
 	}
 
 	if (key == K_TAB || key == K_LTHUMB || key == K_RTHUMB)
 	{
-		M_Mods_SetCatalogue (!mods_catalogue_view);
-		S_LocalSound ("misc/menu1.wav");
+		M_Mods_ActivateControl (0);
 		return;
 	}
 
-	if (mods_catalogue_view && (key == K_F1 || key == K_XBUTTON))
+	if (key == K_F1 || key == K_XBUTTON)
 	{
-		M_Mods_RefreshCatalogue ();
-		S_LocalSound ("misc/menu2.wav");
+		M_Mods_ActivateControl (1);
 		return;
 	}
-	if (!mods_catalogue_view && (key == K_F1 || key == K_XBUTTON))
+	/* Shared VR input maps the offhand stick/pad axes to arrows. Give tabs
+	 * direct access without requiring a profile-specific click or keyboard. */
+	if (V_TrackedSessionActive () && (key == K_LEFTARROW || key == K_RIGHTARROW))
 	{
-		const addon_catalog_state_t state = AddonCatalog_State ();
-		if (state == ADDON_CATALOG_REFRESHING || state == ADDON_CATALOG_INSTALLING)
-			return;
-		M_Mods_RefreshInstalled ();
-		S_LocalSound ("misc/menu2.wav");
+		if (mods_catalogue_view != (key == K_RIGHTARROW))
+			M_Mods_ActivateControl (0);
 		return;
 	}
 
