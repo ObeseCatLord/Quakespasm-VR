@@ -2156,12 +2156,14 @@ static void M_GraphicsSetCategory (graphics_category_t category)
 	if (category == GRAPHICS_CATEGORY_PARTICLES)
 		M_GraphicsRefreshParticlePresets ();
 	M_MenuChanged ();
+	graphics_category_hover = -1;
 	slider_grab = false;
 	scrollbar_grab = false;
 }
 
 static void M_Menu_GraphicsOptions_f (void)
 {
+	M_MenuChanged ();
 	IN_Deactivate (true);
 	key_dest = key_menu;
 	m_state = m_graphics;
@@ -2354,8 +2356,11 @@ static qboolean M_GraphicsSetSlider (const char *name, float low, float high,
 	float step, qboolean backward, qboolean mouse, float clamped_mouse, int dir)
 {
 	const float old = Cvar_VariableValue (name);
-	const float value = M_GetSliderPos (low, high, old, backward, mouse,
-		M_GraphicsSliderMousePos (clamped_mouse), dir, step, 999);
+	/* The native slider rounds nonnegative coordinates. Offset signed ranges
+	 * so texture LOD can reach negative steps without changing other menus. */
+	const float offset = q_min (0.0f, low);
+	const float value = M_GetSliderPos (low - offset, high - offset, old - offset,
+		backward, mouse, M_GraphicsSliderMousePos (clamped_mouse), dir, step, 999) + offset;
 	if (value == old) return false;
 	Cvar_SetValue (name, value);
 	return true;
