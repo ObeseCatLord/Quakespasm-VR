@@ -2,10 +2,12 @@
 
 ## Scope and reference
 
-Test-only acceptance extends `tests/ssao_shared_mip_vulkan_fixture.c` and
-adds `tests/run_ssao_mip_vulkan.py`. The shader and renderer reference is the
-stable merge in `/tmp/qsvr-upstream-integration-20261004`; no renderer, shader,
-previous mip implementation, or shared build graph is edited here.
+The original test-only acceptance extends `tests/ssao_shared_mip_vulkan_fixture.c`
+and adds `tests/run_ssao_mip_vulkan.py`, directly atop upstream merge
+`59c4df5c1fc0268c51ed7d56b34bc7f6e67bcbcf`. Subsequent qualification of the
+final production shader root demonstrated a subgroup partial-tile defect.
+The authorized shader fix changes only `Shaders/ssao_mip.inc`; it leaves the
+renderer, previous rectangular mip implementation, and shared build graph alone.
 
 The integration worker's existing seven-binding fixture correction was reviewed
 before further edits. Its binding layout, `r32ui` tag format, dimensions, clear
@@ -49,7 +51,7 @@ previous round's mismatches without altering the other eye.
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 tests/run_ssao_mip_vulkan.py \
-  --shader-root /tmp/qsvr-upstream-integration-20261004/Shaders \
+  --shader-root /path/to/final/production/Shaders \
   --output-dir /tmp/qsvr-anisotropy-integration-20261004/build/ssao-qualification
 ```
 
@@ -61,47 +63,89 @@ for all eight production wrappers and `spirv-val` when available, then GPU
 readbacks for the four ordinary wrappers. Compiler, validation, and GPU logs
 plus `qualification.json` remain in the private output directory.
 
-MSAA wrappers receive compilation/validation only. Actual multisampled depth
-production requires the existing renderer smoke in final integration; this
-bounded fixture intentionally adds no graphics pipeline to manufacture it.
-MSAA runtime remains a separate, explicitly unverified check. No physical
-Frame/mobile or performance claim is made by local GPU acceptance.
+MSAA wrappers receive compilation/validation in this compute fixture. Actual
+multisampled depth production is qualified separately through the native
+renderer smoke; its results and the necessary post-fix repeat are recorded
+below. No graphics pipeline was added to manufacture MSAA inputs. Local GPU
+acceptance supplies no physical Frame/mobile or performance claim.
 
-## Reviewable result and pending final qualification
+## Confirmed discrepancy and narrow shader fix
 
-The additional test changes are based directly on merge
-`59c4df5c1fc0268c51ed7d56b34bc7f6e67bcbcf`, including its existing fixture
-compatibility fix. They live on the private `ssao-mip-qualification-20261004`
-branch. The anisotropy commit `046f0048276533828f5adb7213176c51f192360b`
-remains separately preserved on `2.0`; it is not folded into this acceptance
-commit or its parent history.
+The complete four-variant production qualification used shaders identical to
+`78819be538b0e8b7728718d0a4d178d62d6a5455`. The actual runner reference was
+`cd83b749402fea2b0418594f1e458a81a3c689ca`, which imported the acceptance
+fixture without changing shaders. All eight wrappers compiled and passed
+SPIR-V validation. Both shared variants passed 16/16 cases. Both subgroup
+variants completed the full matrix and failed only `6x16`, at scales 1 and 2.
+Logs and exact source hashes are in `build/ssao-mip-final-788/`.
 
-An initial qualification against the stable `59c4df5c` shader root compiled
-the fixture with Clang `-Wall -Werror`, compiled all eight wrappers with
-`glslc`, and passed `spirv-val` for all eight. On the local NVIDIA GeForce
-RTX 4090, both shared FP32 and shared FP16 passed all 16 cases / 64 dispatches,
-including exact packed tags and both-eye isolation.
+The scale-2 world-channel discrepancy is exact, not a tolerance issue. For
+`6x16`, mip 1 is `3x8` and mip 2 is `1x4`. At the first mip-3 output, the valid
+mip-2 column contains `8.25, 8`, while the next register column (outside the
+mip-2 image) contains `8, 8`. `read2` clamps that neighbor to the valid column:
+`(8.25 + 8.25 + 8 + 8) / 4 = 8.125`, or half bits `0x4810`. The subgroup
+shuffle instead reads Morton lanes 0, 4, 8, 12 without that image-size clamp:
+`(8.25 + 8 + 8 + 8) / 4 = 8.0625`, or `0x4808`. Both GPU precisions returned
+exactly `0x4808`. The CPU-only derivation in `boundary-proof.log` confirms the
+coordinate difference with the original scalar filter. Scale 1 produced GPU
+`0x480a` versus oracle `0x4815` (FP32) / `0x4816` (FP16).
 
-The subgroup FP32 run passed the first six extent/scale cases, then failed
-`6x16`, scale 1, eye 0, round 1, mip 3, pixel 0, world channel:
-GPU `0x480a` versus oracle `0x4815` (11 half ULPs). This exceeds the existing
-one-ULP FP32 allowance. The observed run stopped there, so subgroup FP16 and
-the rest of that subgroup matrix were not yet qualified. The shader's
-optimized `gl_SubgroupSize >= 16` mip-3 reduction consumes shuffled mip-2
-values without `read2`'s image-size clamp; the shared path uses that clamp.
-That is a candidate explanation for this narrow partial-tile discrepancy,
-not a production fix made by this patch. The oracle and tolerance are retained.
+Shader fix `cf4cbbf299cd355d7da9ba13c66e25752891ed61` names the existing
+mip-1 partial-tile predicate and reuses the existing shared reduction for
+those workgroups, including its `read2` and `read3` bounds. Every invocation
+in a workgroup takes the same branch, so all edge lanes reach its barriers.
+Complete tiles retain the original optimized subgroup reduction. The shared
+shader wrappers retain their original reduction unconditionally. Most lines
+in the textual diff are indentation around the two existing blocks; no second
+reduction implementation or renderer policy was introduced.
 
-The finished runner/fixture now collect numerical failures while completing
-the bounded matrix, emit a nonzero qualification status, and preserve the
-first discrepancy per case in private logs. This failure-reporting adjustment
-has not received another GPU run. At the user's direction, further GPU
-acceptance is deferred to the main consolidated checks against the final
-production shader root after Bonk integration. Supply that root explicitly;
-the runner records its actual final SHA and rejects changing or dirty inputs.
+The fixture/oracle, cases, and one-/four-ULP allowances were not changed by
+this fix. Its source was confirmed identical to production immediately before
+the fix, including production at unrelated Bonk guard commit `1f2c44ec`.
 
-Initial logs and source hashes are in the private ignored directory
-`build/ssao-mip-qualification-59c4df5c/`. The remaining checks are the final
-four-variant GPU matrix and the existing renderer's MSAA smoke. The subgroup
-discrepancy needs disposition by the production shader owner; these test-only
-changes deliberately neither suppress that case nor alter shader code.
+## Post-fix qualification
+
+Ran once after the shader implementation was complete and committed:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/run_ssao_mip_vulkan.py \
+  --shader-root /tmp/qsvr-anisotropy-integration-20261004/Shaders \
+  --output-dir /tmp/qsvr-anisotropy-integration-20261004/build/ssao-mip-partial-fix
+```
+
+Reference: `cf4cbbf299cd355d7da9ba13c66e25752891ed61`. On the local NVIDIA
+GeForce RTX 4090 (subgroup size 32), shared FP32, shared FP16, subgroup FP32,
+and subgroup FP16 each passed all 16 cases / 64 dispatches: 256 dispatches
+total. This includes both eyes, independent clears, exact tag bits, odd/partial
+extents, both sampling scales, and the previously failing `6x16` outputs.
+Clang fixture compilation and all eight `glslc` compilations / `spirv-val`
+checks passed. The runner returned 0 and confirmed unchanged source hashes.
+Logs and `qualification.json` are in `build/ssao-mip-partial-fix/`.
+
+## Separate renderer/MSAA evidence and remaining integration check
+
+Main reported native desktop renderer smoke passing all 12 combinations of
+AO quality 1/2/3, half resolution 0/1, and MSAA sample count 1/4 in
+`/tmp/qsvr-final-render-742mtlr6/desktop`. Main also reported real-GPU Monado
+stereo renderer smoke passing those same 12 combinations in
+`/tmp/qsvr-final-render-4_ydmka1/stereo/native.log`. These are renderer runtime
+results, distinct from the compute fixture's MSAA compile/validation coverage.
+
+Both renderer runs preceded the shader edge fix. After importing the fix,
+main confirmed importing `cf4cbbf2`, rebuilding the affected shader modules,
+and planning the desktop and stereo MSAA repeats. Those post-fix runtime
+results remain pending and are not included in the four-variant pass. Stereo
+image capture review also remains main-owned. No XR engine issue or global
+runtime/GPU changes were attributed to the initial launch problems: main
+reported resolving a private Monado stdin EOF and then an overlong fixture
+argument truncating `+map`, using relative profile paths.
+
+Main separately reported the final production anisotropy acceptance passing:
+actual texture-manager uploads and 2/4/8/16 GPU readbacks, with evidence under
+`tests/.aniso-upstream-bonk-final-20261004`. That result is independent of the
+SSAO shader fix and introduces no additional change or test run here.
+
+The original acceptance commit is `093fe609db645308a19f5442b1c0b451a5c8c47d`;
+the shader fix is a separate one-file commit identified above. The anisotropy
+commit `046f0048276533828f5adb7213176c51f192360b` remains independently
+preserved on `2.0`. No production-main checkout was changed by this work.
