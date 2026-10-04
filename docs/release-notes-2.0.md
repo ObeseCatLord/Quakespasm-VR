@@ -31,6 +31,24 @@ co-op shares functional AD jump boots; classic co-op retains collector-only boot
 by default. Graphics help explains active dynamic lights and entity contact AO.
 AO retains all quality options and uses the appropriate desktop/VR path.
 
+## Native uphill and Peril update
+
+Linux and Linux ARM64 receive shared-solver uphill support fixes: climbing
+no longer drops ground contact merely because slope movement has positive
+vertical velocity, QC-authored jump takeoff remains airborne, and running
+uphill landings regain support for subsequent jumps. Oversized collision bounds
+use the existing private32-bit representation instead of overflowing compact
+entity updates. Native desktop walking and ordinary compact bytes are retained.
+
+Peril3.0 gains built-in calibration for all20 shipped weapon viewmodels and
+controller-separated paired SMGs with native alternating fire, ammo and cadence.
+The single rotary super nailgun remains single. Changed authored offsets retain
+precedence; only unchanged copied stock triples yield to the Peril defaults.
+Physical grip placement and animation appearance still need user testing.
+Numbered PAK files with uppercase/mixed-case filenames are recognized on
+Linux, restoring Zerstorer and other Windows-authored mod packages without
+renaming assets. Windows is unchanged in this native update.
+
 ## Install or update
 
 Use the launcher's **2.0** updater channel, or download the matching Windows
