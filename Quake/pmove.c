@@ -1398,8 +1398,10 @@ void PM_CategorizePosition (void)
 	VectorAdd(pmove.origin, pmove.gravitydir, point);
 	trace.startsolid = trace.allsolid = true;
 	VectorClear(trace.endpos);
+	/* Supported uphill motion can rise; protect real QC takeoff only once
+	 * QC has cleared support, so the ground probe cannot snap it back. */
 	if (-DotProduct(pmove.gravitydir, pmove.velocity) > 180 ||
-		(pmove.qc_jump_owner && -DotProduct(pmove.gravitydir, pmove.velocity) > 0) ||
+		(pmove.qc_jump_owner && !pmove.onground && -DotProduct(pmove.gravitydir, pmove.velocity) > 0) ||
 		(PM_GorillaGroundContact() && -DotProduct(pmove.gravitydir, pmove.velocity) > .01f))
 	{
 		pmove.onground = false;

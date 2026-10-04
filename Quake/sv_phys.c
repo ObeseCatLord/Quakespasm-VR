@@ -10760,10 +10760,12 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	 * waterjump timer. */
 	premove_teleport_time = ent->v.teleport_time;
 	premove_waterjump_secs = client->private_pmove_waterjump_secs;
-	if (was_grounded || ((int)ent->v.flags & FL_ONGROUND))
+	/* QC owners retain current uphill support, but real takeoff must not
+	 * regain the ground flag or entity saved before QC ran. */
+	if (((int)ent->v.flags & FL_ONGROUND) || (!pmove.qc_jump_owner && was_grounded))
 	{
 		int groundprog = (int)ent->v.groundentity;
-		if (!groundprog && was_grounded)
+		if (!groundprog && !pmove.qc_jump_owner && was_grounded)
 			groundprog = prethink_groundentity;
 		if (!groundprog)
 			pmove.onground = true; /* world */

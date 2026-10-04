@@ -475,6 +475,10 @@ int main (void)
 		floor_model.hulls[i].clipnodes = &floor_nodes[i];
 		floor_model.hulls[i].firstclipnode = floor_model.hulls[i].lastclipnode = 0;
 	}
+	/* Hull1 is the compiled player hull. Match its native placement so the
+	 * hull adapter does not add a second player-mins offset to this floor. */
+	VectorSet (floor_model.hulls[1].clip_mins, -16, -16, -24);
+	VectorSet (floor_model.hulls[1].clip_maxs, 16, 16, 32);
 	// Exercise both donor trace implementations, including the enabled default.
 	for (int fast = 0; fast < 2; ++fast)
 	{
