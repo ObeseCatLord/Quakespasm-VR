@@ -4102,3 +4102,22 @@ uses a native two-player co-op save profile. `--keep-profiles /path/to/output`
 retains native v7 saves/logs. Rotation, interval deferral, temporary-file-open
 failure/backoff/retry and actual restored-player movement run. It does not
 exercise final rename failure or all supported save dialects.
+
+## Steam Audio invalid-output containment
+
+The two `spatial_*_containment_fixture.c` files exercise the production owners
+and the real Steam Audio SDK using only synthetic owned PCM/geometry. Compile
+with assertions, the project's pinned `phonon.h`/library and SDL3. For the
+binaural fixture, also compile `Quake/snd_room.c`; linker-wrap
+`iplBinauralEffectApply` and `iplBinauralEffectGetTail`. For the room fixture,
+wrap `iplReflectionEffectApply`, `iplReflectionEffectGetTail`,
+`iplReflectionEffectReset`, `iplAmbisonicsDecodeEffectApply` and
+`iplAmbisonicsDecodeEffectReset`. Link phonon, SDL3 and libm with the matching
+SDK dependency directory available to both linker and runtime.
+
+Require `BINAURAL_CONTAINMENT_PASSED` (81 fault blocks, no callback allocations)
+and `ROOM_CONTAINMENT_PASSED` (36 cases, 288 fault blocks). The probes inject
+SDK returned-buffer NaN/infinities/finite overflow; they do not establish
+recovery from corrupted internal SDK histories or the original late gameplay
+mute. See the follow-up qualification document for native renderer/audio proof
+and limits.

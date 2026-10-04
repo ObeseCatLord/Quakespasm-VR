@@ -136,3 +136,7 @@ Vive/Touch/Index/simple profiles (simple uses pointer controls without axes);
 custom five-row menu art and high-resolution replacements; cancelled catalogue
 refresh then retry; install approval/cancel/completion and search on a real
 catalogue. No demonstrated backend edit is required.
+
+Main integration: native desktop and simulated OpenXR menu navigation and live
+catalogue refresh pass. Desktop main-menu and catalogue captures were inspected;
+see `vr-mods-audio-followup-qualification-2026-10-04.md` for precise limits.
