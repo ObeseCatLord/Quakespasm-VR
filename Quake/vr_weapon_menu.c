@@ -22,6 +22,8 @@ cvar_t vr_weaponmenu_player_teleport = {"vr_weaponmenu_player_teleport", "1", CV
 
 typedef struct {
 	const vr_weapon_menu_entry_t *entry;
+	const char *label;
+	qpic_t *icon;
 	qboolean active;
 	qboolean selectable;
 	int ammo;
@@ -105,6 +107,19 @@ static const vr_weapon_menu_profile_entry_t vr_weapon_menu_ad_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, 16, 6, "GRENADE", "progs/g_rock.mdl", "progs/v_rock.mdl", STAT_ROCKETS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, 32, 7, "ROCKET", "progs/g_rock2.mdl", "progs/v_rock2.mdl", STAT_ROCKETS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, 64, 8, "LIGHTNING", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100)
+};
+
+/* pak2 my_progs/weapons.qc: eight native selectors, twelve held identities.
+ * AD upgrades replace their parent slot; they are not additional commands. */
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_peril_profile[] = {
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_AXE, 1, "QUAKE AXE", "progs/g_axe.mdl", "progs/v_shadaxe0.mdl", -1, 0),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SHOTGUN, 2, "SAWN-OFF SHOTGUN", "progs/g_shot1.mdl", "progs/v_shot.mdl", STAT_SHELLS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_SHOTGUN, 3, "DOUBLE-BARRELLED SHOTGUN", "progs/g_shot2.mdl", "progs/v_shot2.mdl", STAT_SHELLS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_NAILGUN, 4, "NAILGUN", "progs/g_nail.mdl", "progs/v_nail.mdl", STAT_NAILS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_NAILGUN, 5, "SUPER NAILGUN", "progs/g_nail2.mdl", "progs/v_nail2.mdl", STAT_NAILS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_GRENADE_LAUNCHER, 6, "GRENADE LAUNCHER", "progs/g_rock.mdl", "progs/v_rock.mdl", STAT_ROCKETS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_ROCKET_LAUNCHER, 7, "ROCKET LAUNCHER", "progs/g_rock2.mdl", "progs/v_rock2.mdl", STAT_ROCKETS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_LIGHTNING, 8, "THUNDERBOLT", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100)
 };
 
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_snack_profile[] = {
@@ -552,7 +567,9 @@ static void VR_WeaponMenu_ApplySchemaMetadata (
 		q_strlcpy (vr_weapon_menu_schema_models[index], schema->model_path,
 			sizeof (vr_weapon_menu_schema_models[index]));
 		entry->model_path = vr_weapon_menu_schema_models[index];
-		if (entry->label == vr_weapon_menu_wwheel_labels[index])
+		if (entry->label == vr_weapon_menu_wwheel_labels[index] &&
+			!(entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0") &&
+			  ((entry->schema_fields | fields) & VR_SCHEMA_WHEEL_VIEWMODEL)))
 			VR_WeaponMenu_SchemaLabel (vr_weapon_menu_wwheel_labels[index],
 				sizeof (vr_weapon_menu_wwheel_labels[index]), schema->model_path, entry->id);
 	}
@@ -561,6 +578,13 @@ static void VR_WeaponMenu_ApplySchemaMetadata (
 		q_strlcpy (vr_weapon_menu_held_models[index], schema->viewmodel_path,
 			sizeof (vr_weapon_menu_held_models[index]));
 		entry->viewmodel_path = vr_weapon_menu_held_models[index];
+		if (entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0"))
+		{
+			/* An authored held identity may replace a native upgrade entirely. */
+			VR_WeaponMenu_SchemaLabel (vr_weapon_menu_wwheel_labels[index],
+				sizeof (vr_weapon_menu_wwheel_labels[index]), entry->viewmodel_path, entry->id);
+			entry->label = vr_weapon_menu_wwheel_labels[index];
+		}
 		if (!entry->game_profile && !((entry->schema_fields | fields) & VR_SCHEMA_WHEEL_MODEL))
 		{
 			entry->model_path = entry->viewmodel_path;
@@ -692,8 +716,15 @@ static void VR_WeaponMenu_ApplySchema (
 	const vr_weapon_schema_entry_t *schemas, size_t schema_count)
 {
 	for (size_t s = 0; s < schema_count; ++s)
+	{
+		/* Peril's copied offset-only profile is calibration input, not a
+		 * held-identity override for the native upgradeable wheel slots. */
+		if (VR_WeaponMenu_GameDirIs ("peril3.0") &&
+			!(schemas[s].wheel.fields & ~VR_SCHEMA_WHEEL_VIEWMODEL))
+			continue;
 		if (VR_WeaponMenu_AddSchemaEntry (&schemas[s].wheel))
 			vr_weapon_menu_has_schema = true;
+	}
 }
 
 static qboolean VR_WeaponMenu_GameDirIs (const char *name)
@@ -712,6 +743,12 @@ static qboolean VR_WeaponMenu_IsADWeaponGame (void)
 {
 	return VR_WeaponMenu_GameDirIs ("ad") ||
 		VR_WeaponMenu_GameDirIs ("hwjam2");
+}
+
+static qboolean VR_WeaponMenu_UsesADWeaponUpgrades (void)
+{
+	return VR_WeaponMenu_IsADWeaponGame () ||
+		VR_WeaponMenu_GameDirIs ("peril3.0");
 }
 
 static int VR_WeaponMenu_ProfileAmmoMaxStat (int ammo_stat)
@@ -873,6 +910,10 @@ static void VR_WeaponMenu_AddProfile (
 
 static void VR_WeaponMenu_LoadBuiltinProfiles (void)
 {
+	const qboolean peril = VR_WeaponMenu_GameDirIs ("peril3.0");
+	if (peril)
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_peril_profile,
+			sizeof (vr_weapon_menu_peril_profile) / sizeof (vr_weapon_menu_peril_profile[0]));
 	if (VR_WeaponMenu_IsADWeaponGame ())
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_ad_profile,
 			sizeof (vr_weapon_menu_ad_profile) / sizeof (vr_weapon_menu_ad_profile[0]));
@@ -906,16 +947,16 @@ static void VR_WeaponMenu_LoadBuiltinProfiles (void)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_mg3_profile,
 			sizeof (vr_weapon_menu_mg3_profile) /
 			sizeof (vr_weapon_menu_mg3_profile[0]));
-	if (hipnotic)
+	if (hipnotic && !peril)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_hipnotic_profile,
 			sizeof (vr_weapon_menu_hipnotic_profile) /
 			sizeof (vr_weapon_menu_hipnotic_profile[0]));
-	if (rogue)
+	if (rogue && !peril)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_rogue_profile,
 			sizeof (vr_weapon_menu_rogue_profile) /
 			sizeof (vr_weapon_menu_rogue_profile[0]));
 	/* Only the primary's verified complete families suppress stock guesses. */
-	if (VR_WeaponMenu_IsADWeaponGame () || VR_WeaponMenu_IsSnackGame () ||
+	if (peril || VR_WeaponMenu_IsADWeaponGame () || VR_WeaponMenu_IsSnackGame () ||
 		VR_WeaponMenu_GameDirIs ("alk") ||
 		VR_WeaponMenu_GameDirIs ("limjam") || VR_WeaponMenu_GameDirIs ("enyo") ||
 		VR_WeaponMenu_GameDirIs ("qbj3") || VR_WeaponMenu_GameDirIs ("dwell") ||
@@ -1220,7 +1261,7 @@ static const char *VR_WeaponMenu_EntryViewmodel (const vr_weapon_menu_entry_t *e
 		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
 			return (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) & 16384) ?
 				"progs/ee_v_av72.mdl" : "progs/ee_v_smgs.mdl";
-		if (VR_WeaponMenu_IsADWeaponGame ())
+		if (VR_WeaponMenu_UsesADWeaponUpgrades ())
 		{
 			const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
 			switch (entry->selector)
@@ -1243,7 +1284,7 @@ static const char *VR_WeaponMenu_EntryPreviewPath (const vr_weapon_menu_entry_t 
 		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
 			return (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) & 16384) ?
 				"progs/ee_g_av72.mdl" : "progs/ee_g_smgs.mdl";
-		if (VR_WeaponMenu_IsADWeaponGame ())
+		if (VR_WeaponMenu_UsesADWeaponUpgrades ())
 		{
 			const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
 			switch (entry->selector)
@@ -1258,6 +1299,54 @@ static const char *VR_WeaponMenu_EntryPreviewPath (const vr_weapon_menu_entry_t 
 	return entry->model_path;
 }
 
+static const char *VR_WeaponMenu_EntryLabel (const vr_weapon_menu_entry_t *entry,
+	const int *stats, size_t num_stats)
+{
+	if (entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0"))
+	{
+		static const struct { const char *model; const char *label; } identities[] = {
+			{"progs/v_shadaxe0.mdl", "QUAKE AXE"},
+			{"progs/v_shadaxe3.mdl", "SHADOW AXE"},
+			{"progs/v_ghook.mdl", "GRAPPLE HOOK"},
+			{"progs/v_shot.mdl", "SAWN-OFF SHOTGUN"},
+			{"progs/v_shot2.mdl", "DOUBLE-BARRELLED SHOTGUN"},
+			{"progs/v_shot3.mdl", "WIDOWMAKER SHOTGUN"},
+			{"progs/v_nail.mdl", "NAILGUN"},
+			{"progs/v_nail2.mdl", "SUPER NAILGUN"},
+			{"progs/v_rock.mdl", "GRENADE LAUNCHER"},
+			{"progs/v_rock2.mdl", "ROCKET LAUNCHER"},
+			{"progs/v_light.mdl", "THUNDERBOLT"},
+			{"progs/v_plasma.mdl", "PLASMA GUN"}
+		};
+		const char *held = VR_WeaponMenu_EntryViewmodel (entry, stats, num_stats);
+		for (size_t i = 0; held && i < countof (identities); ++i)
+		{
+			if (!q_strcasecmp (held, identities[i].model))
+				return identities[i].label;
+		}
+	}
+	return entry->label;
+}
+
+static qpic_t *VR_WeaponMenu_EntryIcon (const vr_weapon_menu_entry_t *entry,
+	const int *stats, size_t num_stats)
+{
+	if (VR_WeaponMenu_GameDirIs ("peril3.0"))
+	{
+		/* gfx.wad is inherited stock art. Peril's SMGs and replacement
+		 * weapons have no correct icon in Sbar_WeaponMenuIcon's bank. */
+		if (!entry->game_profile ||
+			(entry->schema_fields & (VR_SCHEMA_WHEEL_MODEL | VR_SCHEMA_WHEEL_VIEWMODEL)))
+			return NULL;
+		const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
+		if (entry->selector == IT_AXE || entry->selector == IT_NAILGUN ||
+			(entry->selector == IT_SUPER_SHOTGUN && (modifiers & 2)) ||
+			(entry->selector == IT_LIGHTNING && (modifiers & 64)))
+			return NULL;
+	}
+	return Sbar_WeaponMenuIcon (entry->selector);
+}
+
 static qboolean VR_WeaponMenu_EntryModelMatches (
 	const vr_weapon_menu_entry_t *entry, const char *model_path,
 	const int *stats, size_t num_stats)
@@ -1268,12 +1357,16 @@ static qboolean VR_WeaponMenu_EntryModelMatches (
 			(!q_strcasecmp (model_path, "progs/ee_v_smgs.mdl") ||
 			 !q_strcasecmp (model_path, "progs/ee_v_av72.mdl")))
 			return true;
-		if (VR_WeaponMenu_IsADWeaponGame () &&
+		if (VR_WeaponMenu_UsesADWeaponUpgrades () &&
 			((entry->selector == IT_AXE && !q_strcasecmp (model_path, "progs/v_ghook.mdl")) ||
 			 (entry->selector == IT_SUPER_SHOTGUN &&
 			  (!q_strcasecmp (model_path, "progs/v_shot2.mdl") || !q_strcasecmp (model_path, "progs/v_shot3.mdl"))) ||
 			 (entry->selector == IT_LIGHTNING &&
 			  (!q_strcasecmp (model_path, "progs/v_light.mdl") || !q_strcasecmp (model_path, "progs/v_plasma.mdl")))))
+			return true;
+		if (VR_WeaponMenu_GameDirIs ("peril3.0") && entry->selector == IT_AXE &&
+			(!q_strcasecmp (model_path, "progs/v_shadaxe0.mdl") ||
+			 !q_strcasecmp (model_path, "progs/v_shadaxe3.mdl")))
 			return true;
 		if (VR_WeaponMenu_IsADWeaponGame () && entry->selector == IT_AXE &&
 			!q_strncasecmp (model_path, "progs/v_shadaxe", 15) &&
@@ -1364,6 +1457,10 @@ static qboolean VR_WeaponMenu_EntrySelectable (const vr_weapon_menu_entry_t *ent
 	if ((size_t)entry->ammo_stat >= num_stats)
 		return true;
 	ammo = VR_WeaponMenu_Stat (stats, num_stats, entry->ammo_stat);
+	if (entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0") &&
+		((entry->selector == IT_SUPER_SHOTGUN && entry->ammo_stat == STAT_SHELLS) ||
+		 (entry->selector == IT_SUPER_NAILGUN && entry->ammo_stat == STAT_NAILS)))
+		return ammo >= 2; /* W_ChangeWeapon, including two-shell Widowmaker. */
 	if (entry->game_profile && VR_WeaponMenu_IsSnackGame ())
 	{
 		if (entry->selector == IT_SUPER_SHOTGUN)
@@ -1454,15 +1551,16 @@ void VR_WeaponMenu_List_f (void)
 			entry->source == VR_WEAPON_CATALOG_SOURCE_DISCOVERED ? "observed" : "stock";
 		const char *preview = VR_WeaponMenu_EntryPreviewPath (entry, cl.stats, MAX_CL_STATS);
 		const char *held = VR_WeaponMenu_EntryViewmodel (entry, cl.stats, MAX_CL_STATS);
+		const char *label = VR_WeaponMenu_EntryLabel (entry, cl.stats, MAX_CL_STATS);
 		visible += reason == NULL;
 		Con_Printf ("[%03d] %s source=%s profile=%d selector=%d impulse=%d owned=%d active=%d "
-			"owned_stat=%d value=%d mask=%d active_stat=%d value=%d mask=%d preview=%s held=%s\n",
+			"owned_stat=%d value=%d mask=%d active_stat=%d value=%d mask=%d preview=%s held=%s label=%s\n",
 			(int)i, reason ? reason : "visible", source, entry->game_profile, entry->selector, entry->impulse,
 			owned, active, entry->owned_stat,
 			entry->owned_stat == STAT_ITEMS ? cl.items | cl.stats[STAT_ITEMS] :
 				VR_WeaponMenu_Stat (cl.stats, MAX_CL_STATS, entry->owned_stat), entry->owned_mask,
 			entry->active_stat, VR_WeaponMenu_Stat (cl.stats, MAX_CL_STATS, entry->active_stat), entry->active_mask,
-			preview ? preview : "none", held ? held : "none");
+			preview ? preview : "none", held ? held : "none", label ? label : "none");
 	}
 	Con_Printf ("VR weapon list: %d visible, %d hidden\n", visible, (int)catalog->count - visible);
 }
@@ -1484,6 +1582,8 @@ static int VR_WeaponMenu_BuildVisible (const vr_weapon_menu_catalog_t *catalog,
 			continue;
 
 		visible[count].entry = entry;
+		visible[count].label = VR_WeaponMenu_EntryLabel (entry, stats, num_stats);
+		visible[count].icon = VR_WeaponMenu_EntryIcon (entry, stats, num_stats);
 		visible[count].active = active;
 		visible[count].selectable = VR_WeaponMenu_EntrySelectable (entry, active, stats, num_stats);
 		/* QuakeC currentammo belongs only to the equipped weapon. */
@@ -2246,8 +2346,8 @@ static qboolean VR_WeaponMenu_ActionStillValid (
 static void VR_WeaponMenu_SetSlotGeometry (vr_weapon_menu_visible_t *visible,
 	int index, float center_x, float center_y, float scale)
 {
-	const float text_width = visible[index].entry->label ?
-		strlen (visible[index].entry->label) * CHARACTER_SIZE * scale : 0.0f;
+	const char *label = visible[index].label;
+	const float text_width = label ? strlen (label) * CHARACTER_SIZE * scale : 0.0f;
 	const float box_width = q_max (text_width + 12.0f * scale, 40.0f * scale);
 	visible[index].center_x = center_x;
 	visible[index].center_y = center_y;
@@ -2389,6 +2489,7 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 		vr_weapon_menu_frame.geometry[i] = index < catalog->count &&
 			index < VR_WEAPON_MENU_MAX_ENTRIES ? vr_weapon_menu_assets.geometry[index] : NULL;
 		*copy = *source;
+		copy->label = vr_weapon_menu_frame.visible[i].label;
 		copy->model_path = VR_WeaponMenu_EntryPreviewPath (source, cl.stats, MAX_CL_STATS);
 		if (copy->label)
 		{
@@ -2396,6 +2497,7 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 				sizeof (vr_weapon_menu_frame.labels[i]));
 			copy->label = vr_weapon_menu_frame.labels[i];
 		}
+		vr_weapon_menu_frame.visible[i].label = copy->label;
 		if (copy->model_path)
 		{
 			q_strlcpy (vr_weapon_menu_frame.models[i], copy->model_path,
@@ -3176,13 +3278,13 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 
 	for (int i = 0; i < count; ++i)
 	{
-		const vr_weapon_menu_entry_t *entry = visible[i].entry;
 		const qboolean is_selected = i == selected;
 		const float icon_scale = scale * 1.25f;
 		const float icon_width = 30.0f * icon_scale;
 		const float icon_height = 18.0f * icon_scale;
-		qpic_t *icon = Sbar_WeaponMenuIcon (entry->selector);
-		float label_width = entry->label ? strlen (entry->label) * CHARACTER_SIZE * scale : 0.0f;
+		qpic_t *icon = visible[i].icon;
+		const char *label = visible[i].label;
+		float label_width = label ? strlen (label) * CHARACTER_SIZE * scale : 0.0f;
 		const qboolean has_vr_model = vr_weapon_menu_open_vr &&
 			vr_weapon_menu_frame_valid && visible == vr_weapon_menu_frame.visible &&
 			vr_weapon_menu_frame.model[i] && vr_weapon_menu_frame.geometry[i];
@@ -3201,10 +3303,10 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 			(visible[i].selectable ? 1.0f : 0.55f),
 			is_selected ? (has_vr_model ? 0.55f : 0.10f) :
 			(visible[i].selectable ? 1.0f : 0.55f), 1.0f);
-		if (entry->label && (!vr_weapon_menu_open_vr || !has_vr_model))
+		if (label && (!vr_weapon_menu_open_vr || !has_vr_model))
 			Draw_String_Scaled (cbx, visible[i].center_x - label_width * 0.5f,
 				has_vr_model ? visible[i].center_y + 24.0f * scale :
-				visible[i].top + 22.0f * scale, entry->label, scale);
+				visible[i].top + 22.0f * scale, label, scale);
 		GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 	}
 	selected_action = VR_WeaponMenu_Actions (
@@ -3224,8 +3326,8 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 			vr_weapon_menu_frame_valid && vr_weapon_menu_frame.playspace;
 		char playspace_info[MAX_QPATH];
 		const char *info = selected_action >= 0 ? actions[selected_action].label :
-			(selected >= 0 && visible[selected].entry->label ?
-			 visible[selected].entry->label : "WEAPON");
+			(selected >= 0 && visible[selected].label ?
+			 visible[selected].label : "WEAPON");
 		float info_y;
 		float info_width;
 		float info_x;
