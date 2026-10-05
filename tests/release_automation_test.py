@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'Packaging/Release'))
 import release
@@ -366,8 +367,28 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'conflicting old'):
             release.release_notes('', {**settings, 'notes_file': str(notes_path)}, self.rev, 'https://fixture.invalid/2.0')
 
-    def test_github_uses_verified_public_bytes_only_four_assets_and_original_tag(self):
-        self.staged_fixture(self.root / 'r2-stage')
+    def test_github_uses_verified_staged_copies_only_four_assets_and_original_tag(self):
+        stage = self.root / 'r2-stage'
+        staged = self.staged_fixture(stage)
+        for name in release.RUNTIME_NAMES:
+            path = stage / 'builds' / self.rev / name
+            files = {'package/README.md': b'private instructions',
+                     'package/bin/engine': b'qualified executable bytes',
+                     'package/LICENSE.txt': b'component notice'}
+            if name.endswith('.zip'):
+                with zipfile.ZipFile(path, 'w') as archive:
+                    for member, payload in files.items():
+                        archive.writestr(member, payload)
+            else:
+                with tarfile.open(path, 'w:gz') as archive:
+                    for member, payload in files.items():
+                        info = tarfile.TarInfo(member)
+                        info.size = len(payload)
+                        archive.addfile(info, io.BytesIO(payload))
+        inventory = unix.inventory(stage)
+        inventory.pop('release.json')
+        staged['files'] = {name: row['file'] for name, row in inventory.items()}
+        unix.save(stage / 'release.json', staged)
         state = unix.read(self.root / 'coordinator.json')
         state['stage_manifest_sha256'] = unix.sha(self.root / 'r2-stage/release.json')
         unix.save(self.root / 'coordinator.json', state)
@@ -379,11 +400,6 @@ class ReleaseTests(unittest.TestCase):
         def view(argv, text=True):
             self.assertEqual(argv[:4], ['gh', 'release', 'view', 'original-tag'])
             return json.dumps({'tagName': 'original-tag', 'id': 'original-id', 'body': body['value']})
-        def download(url, destination, expected):
-            self.assertTrue(url.startswith('https://fixture.invalid/2.0/builds/' + self.rev))
-            payload = self.root / 'r2-stage/builds' / self.rev / destination.name
-            destination.write_bytes(payload.read_bytes())
-            self.assertEqual(unix.sha(destination), expected)
         def gh_command(argv, check=True):
             self.assertEqual(argv[3], 'original-tag')
             mutations.append(argv[2])
@@ -400,17 +416,18 @@ class ReleaseTests(unittest.TestCase):
             else:
                 self.fail('Unexpected GH action')
         with mock.patch.object(release, 'verify'), mock.patch.object(release, 'git', return_value=self.rev), \
-             mock.patch.object(release, 'download', side_effect=download), \
+             mock.patch.object(release, 'download', side_effect=AssertionError('Unexpected private download')), \
              mock.patch.object(release.subprocess, 'check_output', side_effect=view), \
              mock.patch.object(release.subprocess, 'run', side_effect=gh_command):
             release.publish_github(self.root, config, self.repo)
         self.assertEqual(mutations, ['upload', 'edit', 'download'])
         self.assertEqual(unix.read(self.root / 'github-publication.json')['original_tag'], 'original-tag')
+        archive = stage / 'builds' / self.rev / release.RUNTIME_NAMES[0]
+        archive.write_bytes(archive.read_bytes() + b'changed after qualification')
         with mock.patch.object(release, 'verify'), mock.patch.object(release, 'git', return_value=self.rev), \
-             mock.patch.object(release, 'download', side_effect=RuntimeError('Downloaded public artifact hash mismatch')), \
              mock.patch.object(release.subprocess, 'check_output', side_effect=view), \
              mock.patch.object(release.subprocess, 'run') as mutation:
-            with self.assertRaisesRegex(RuntimeError, 'hash mismatch'):
+            with self.assertRaisesRegex(RuntimeError, 'Staged full inventory mismatch'):
                 release.publish_github(self.root, config, self.repo)
             mutation.assert_not_called()
 

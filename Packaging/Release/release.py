@@ -17,19 +17,23 @@ Import copies only immutable source/package inputs, never changes the original
 cohort or its publication. An imported engine revision remains its own revision.
 """
 import argparse
+import copy
 from contextlib import contextmanager
 import fcntl
+import gzip
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.parse
 import urllib.request
+import zipfile
 
 try:
     from . import unix
@@ -352,6 +356,33 @@ def download(url, destination, expected):
     require(sha(destination) == expected, 'Downloaded public artifact hash mismatch: ' + Path(destination).name)
 
 
+def public_archive(source, destination):
+    """Deterministic GitHub copy; retain metadata/payloads except root README* files."""
+    def omit(name, directory):
+        parts = PurePosixPath(name).parts
+        return not directory and len(parts) == 2 and parts[1].upper().startswith('README')
+
+    if source.name.endswith('.zip'):
+        with zipfile.ZipFile(source) as original, zipfile.ZipFile(destination, 'w') as cleaned:
+            cleaned.comment = original.comment
+            for member in original.infolist():
+                if not omit(member.filename, member.is_dir()):
+                    with original.open(member) as incoming, cleaned.open(copy.copy(member), 'w') as outgoing:
+                        shutil.copyfileobj(incoming, outgoing)
+    else:
+        with tarfile.open(source, 'r:gz') as original, destination.open('xb') as output:
+            with gzip.GzipFile(filename='', fileobj=output, mode='wb', mtime=0) as compressed:
+                with tarfile.open(fileobj=compressed, mode='w', format=tarfile.PAX_FORMAT,
+                                  pax_headers=original.pax_headers) as cleaned:
+                    for member in original:
+                        if not omit(member.name, member.isdir()):
+                            if member.isfile():
+                                with original.extractfile(member) as incoming:
+                                    cleaned.addfile(member, incoming)
+                            else:
+                                cleaned.addfile(member)
+
+
 def release_notes(body, settings, rev, public):
     repository = settings['repository']
     zip_url = 'https://github.com/' + repository + '/archive/' + rev + '.zip'
@@ -365,18 +396,25 @@ def release_notes(body, settings, rev, public):
         notes = notes.rstrip() + '\n\n<!-- qsvr-source-revision:start -->\n'
         notes += '## Current fixed builds\n\nRuntime engine revision: `' + rev + '`. The original release tag is retained.\n'
         notes += 'Exact engine source: [ZIP](' + zip_url + ') and [tar.gz](' + tar_url + ').\n'
-        for platform_name in ('linux-x64', 'linux-arm64'):
-            notes += '[' + platform_name + ' source access](' + public + '/builds/' + rev
-            notes += '/source-access-' + platform_name + '.tar.gz).\n'
         notes += '<!-- qsvr-source-revision:end -->\n'
+    require(not re.search(r'launcher', notes, re.IGNORECASE),
+            'Release notes contain a private app mention')
+    forbidden = {urllib.parse.urlsplit(public).hostname.lower().rstrip('.'),
+                 '.'.join(('shrubdragon', 'studio'))}
+    for url in re.findall(r'(?:[a-z][a-z0-9+.-]*:)?//[^\s<>"\')\]]+', notes, re.IGNORECASE):
+        try:
+            host = (urllib.parse.urlsplit(url).hostname or '').lower().rstrip('.')
+        except ValueError:
+            raise RuntimeError('Release notes contain an invalid URL') from None
+        require(not any(host == domain or host.endswith('.' + domain) for domain in forbidden),
+                'Release notes contain a forbidden distribution URL')
     require(zip_url in notes and tar_url in notes, 'Release notes require exact engine source ZIP and TAR links')
     links = re.findall(r'https://github\.com/' + re.escape(repository) + r'/archive/([0-9a-f]{40})\.', notes)
-    links += re.findall(re.escape(public) + r'/builds/([0-9a-f]{40})/', notes)
     require(all(value == rev for value in links), 'Release notes contain conflicting old source revision links')
     return notes
 
 
-def publish_github(root, config, repo=REPO, config_path=None):
+def publish_github(root, config, repo=REPO, config_path=None, refresh_existing=False):
     verify(root, PLATFORMS, repo, require_record=True, config_path=config_path)
     release = verify_stage(root)
     settings = config['github']
@@ -384,28 +422,50 @@ def publish_github(root, config, repo=REPO, config_path=None):
     require(re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository), 'Invalid GitHub repository')
     require(tag and not tag.startswith('-') and not any(char.isspace() for char in tag), 'Invalid original tag')
     public = config['r2']['public'].rstrip('/')
-    require(urllib.parse.urlsplit(public).scheme == 'https', 'R2 public URL must use HTTPS')
+    require(urllib.parse.urlsplit(public).scheme == 'https' and urllib.parse.urlsplit(public).hostname,
+            'R2 public URL must use HTTPS')
     # Mirror the existing publisher's exact origin requirement; never create or move a tag.
-    remote = git(repo, 'ls-remote', 'origin', 'refs/heads/2.0').split()
-    require(remote and remote[0] == release['revision'], 'GitHub publication requires engine revision on origin/2.0')
+    if not refresh_existing:
+        remote = git(repo, 'ls-remote', 'origin', 'refs/heads/2.0').split()
+        require(remote and remote[0] == release['revision'], 'GitHub publication requires engine revision on origin/2.0')
     gh = ['gh', 'release']
     view = lambda: json.loads(subprocess.check_output(
-        gh + ['view', tag, '--repo', repository, '--json', 'tagName,id,body'], text=True))
+        gh + ['view', tag, '--repo', repository, '--json', 'tagName,id,body,assets'], text=True))
     before = view()
     require(before['tagName'] == tag, 'Existing GitHub release tag mismatch')
+    identity = {'revision': release['revision'], 'repository': repository,
+                'original_tag': tag, 'release_id': before['id']}
+    if refresh_existing:
+        receipt = read(unix.regular(root / 'github-publication.json'))
+        require(all(receipt.get(key) == value for key, value in identity.items()),
+                'Existing GitHub publication receipt identity mismatch')
     notes = release_notes(before['body'], settings, release['revision'], public)
     with tempfile.TemporaryDirectory(prefix='qsvr-release-gh-') as temporary:
         directory = Path(temporary)
-        rows = []
+        rows, original_rows = [], []
         for name in RUNTIME_NAMES:
             relative = 'builds/' + release['revision'] + '/' + name
             require(relative in release['archives'], 'Runtime archive missing from staged release')
             expected = release['files'][relative]
-            download(public + '/' + relative + '?sha256=' + expected, directory / name, expected)
-            rows.append(expected + '  ' + name + '\n')
+            source = unix.regular(unix.contained(root / 'r2-stage', relative))
+            require(sha(source) == expected, 'Staged runtime archive hash mismatch')
+            public_archive(source, directory / name)
+            rows.append(sha(directory / name) + '  ' + name + '\n')
+            original_rows.append(expected + '  ' + name + '\n')
         checksums = directory / 'SHA256SUMS'
         checksums.write_text(''.join(rows))
         assets = [directory / name for name in (*RUNTIME_NAMES, 'SHA256SUMS')]
+        public_hashes = {path.name: sha(path) for path in assets}
+        if refresh_existing:
+            existing = before['assets']
+            require(len(existing) == len(assets) and {asset['name'] for asset in existing} == set(public_hashes),
+                    'Existing GitHub release has missing or unknown assets')
+            original_hashes = {name: release['files']['builds/' + release['revision'] + '/' + name]
+                               for name in RUNTIME_NAMES}
+            original_hashes['SHA256SUMS'] = hashlib.sha256(''.join(original_rows).encode()).hexdigest()
+            require(all(asset.get('digest') in {'sha256:' + original_hashes[asset['name']],
+                                               'sha256:' + public_hashes[asset['name']]} for asset in existing),
+                    'Existing GitHub asset digest differs from qualified originals/public copies')
         notes_path = directory / 'release-notes.md'
         notes_path.write_text(notes)
         subprocess.run(gh + ['upload', tag, '--repo', repository, '--clobber', *map(str, assets)], check=True)
@@ -419,9 +479,9 @@ def publish_github(root, config, repo=REPO, config_path=None):
         subprocess.run(gh + ['download', tag, '--repo', repository, '--dir', str(downloaded), *patterns], check=True)
         actual = unix.inventory(downloaded)
         require(actual == {path.name: {'file': sha(path)} for path in assets}, 'GitHub attachment inventory/hash mismatch')
-    save(root / 'github-publication.json', {'revision': release['revision'], 'repository': repository,
-                                          'original_tag': tag, 'release_id': before['id'],
-                                          'attachments': [*RUNTIME_NAMES, 'SHA256SUMS']})
+    save(root / 'github-publication.json', {**identity, 'attachments': [*RUNTIME_NAMES, 'SHA256SUMS'],
+                                          'public_sha256': public_hashes,
+                                          'removed_readme_policy': 'package-root/README* files only'})
 
 
 def platform_list(value):
@@ -457,6 +517,7 @@ def parser():
         if name == 'publish':
             sub.add_argument('--r2', action='store_true')
             sub.add_argument('--github', action='store_true')
+            sub.add_argument('--refresh-existing', action='store_true')
     return result
 
 
@@ -477,11 +538,13 @@ def execute(args, config, config_path, root):
         result = unix.deploy(root, config)
         save(root / 'straight-deployment.json', result)
     elif command == 'publish':
+        require(not args.refresh_existing or (args.github and not args.r2),
+                '--refresh-existing requires --github and forbids --r2')
         require(args.r2 or args.github, 'Select --r2 and/or --github')
         if args.r2:
             publish_r2(root, config, config_path=config_path)
         if args.github:
-            publish_github(root, config, config_path=config_path)
+            publish_github(root, config, config_path=config_path, refresh_existing=args.refresh_existing)
         result = {'published': True}
     else:
         require(any((args.build, args.stage, args.deploy, args.publish_r2, args.publish_gh)), 'run requires action flags')

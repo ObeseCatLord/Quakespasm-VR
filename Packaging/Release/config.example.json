@@ -13,7 +13,7 @@
   },
   "r2": {
     "remote": "r2:quack/2.0",
-    "public": "https://quack.shrubdragon.studio/2.0"
+    "public": "https://private-distribution.example.invalid/2.0"
   },
   "github": {
     "repository": "ObeseCatLord/Quakespasm-VR",

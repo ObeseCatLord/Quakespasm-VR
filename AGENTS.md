@@ -68,6 +68,8 @@ GitHub Actions remain disabled.
   updater channel is `2.0`; do not modify another channel.
 - GitHub attachments are the three runtime packages and `SHA256SUMS`. Keep
   dependency source-access archives on R2, not as GitHub release attachments.
+  Omit top-level READMEs from public runtime archives, retain required license
+  notices, and generate checksums for the actual public archive bytes.
   Preserve the existing release tag when replacing assets and link the exact
   engine commit in notes. Verify published hashes and sizes.
 - Straight deployment changes only the engine entry points and installs their
@@ -75,8 +77,11 @@ GitHub Actions remain disabled.
   deployment should verify and skip, without another backup.
 - Automation/docs-only commits do not justify rebuilding already qualified
   engine packages. Clearly record the published engine revision separately from
-  a newer automation commit. The publisher requires that revision to be the tip
-  of `origin/2.0`, so finish publication before pushing later automation changes.
+  a newer automation commit. Normal publication requires that revision to be the
+  tip of `origin/2.0`, so finish publication before pushing later automation
+  changes. An explicit public-only refresh of an already-published cohort may
+  reuse its qualified packages after verifying release identity and asset
+  digests; do not rebuild engines for documentation removal.
 
 Actual headset presentation, eye tracking and hardware performance remain user
 validation. Do not claim those from successful builds or simulated rendering.
