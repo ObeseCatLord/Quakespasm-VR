@@ -107,7 +107,7 @@ cohort remains intact. Preserve its already-created stage when present.
 
 Straight deployment verifies and copies the entire matching Linux runtime to an
 immutable per-revision directory, then replaces only its two engine entry
-points. Executable-only backups are retained. Launcher/wrapper hashes are
+points. Executable-only backups are retained. Existing wrapper hashes are
 checked; mods, saves and configs remain external. A second identical deployment
 verifies and skips without a new backup.
 
@@ -121,6 +121,10 @@ metadata. Keep an existing stage intact for retry: regenerating compressed
 archives can produce different bytes within the same immutable revision.
 
 GitHub publication replaces only the three runtime archives and `SHA256SUMS`.
+Public copies omit top-level README files while preserving every other archive
+member, executable, library and required component notice. The private staged
+archives stay immutable. Public archive hashes therefore differ from private
+archive hashes; `SHA256SUMS` must describe the actual GitHub downloads.
 Keep the original `v2.0.0` tag when replacing its attachments, and include links
 to the exact engine commit in the notes. Automatic tag source downloads describe
 the tag, not necessarily the replaced runtime assets. Do not attach product or
@@ -129,7 +133,25 @@ dependency source-access archives to GitHub.
 By default, GitHub publication preserves the release description and updates its
 current engine/source links. Set the optional `github.notes_file` to an absolute
 path when supplying a revised description; it must contain source ZIP/TAR links
-for the exact engine commit and no conflicting older source links.
+for the exact engine commit and no conflicting older source links. Public notes
+must not expose private distribution endpoints or private application details;
+both generated and supplied notes are checked before publication.
+
+To remove public documentation from an already-published qualified build after
+an automation/docs-only commit, use the explicit refresh operation:
+
+```sh
+python3 Packaging/Release/release.py \
+  --config Packaging/Release/local.json \
+  --root /path/to/release-work/existing-cohort \
+  publish --github --refresh-existing
+```
+
+This preserves the engine revision and release tag. It requires the existing
+publication receipt and matching GitHub release identity and asset digests;
+it cannot publish an unrelated build. Normal new-build publication still
+requires the exact engine revision at the tip of `origin/2.0`. No new engine
+build or private distribution update is needed for public documentation cleanup.
 
 ## Results
 
@@ -142,7 +164,7 @@ build is needed solely for these scripts and instructions.
 
 The mod-browser fix at `c02ef0bf9fb78f989a6612909371a07addd5bfee` also
 qualified fresh Linux, native ARM64 and Windows builds through the coordinator.
-Straight deployment preserved the launcher and backed up only engine entry
+Straight deployment preserved existing wrappers and backed up only engine entry
 points. The first Windows attempt stopped before compilation because first-use
 PowerShell module progress contaminated its JSON workspace response. Suppressing
 progress for that response keeps native errors fatal; an injected-progress check

@@ -18,12 +18,12 @@ the updater channel/branch, and `legacy1.0` preserves the previous engine.
   tracking automatically; fixed foveation is explicit and never a fallback.
   Headsets without accessible eye tracking remain supported.
 - A larger installed-mod browser, downloads, desktop mouse interaction and
-  VR navigation prompts. Existing launcher/mod selection remains supported.
+  VR navigation prompts.
 - Voice chat with microphone/open mic defaults in VR and optional push-to-talk.
 - Automatic AD weapon calibration by verified effective model identity,
   including compatible reskins and AD-based jams; authored offsets are retained.
 
-Recent fixes include restored launcher global-profile write-back, visible desktop
+Recent fixes include visible desktop
 and VR crosshairs when enabled, corrected alternating brush-instance addressing
 for Rooftop interactables, more robust spatial audio, rolled weapon/projectile
 handling, and AD calibration inheritance across compatible jam weapons. Regular
@@ -69,26 +69,26 @@ precedence. VR wheel placement and controller bindings are unchanged.
 
 ## Install or update
 
-Use the launcher's **2.0** updater channel, or download the matching Windows
-x64, Linux x86-64 or Linux ARM64 engine archive. Keep your launcher, licensed
-Quake data, mods, saves and settings. No Quake or mod game data is included.
+Download the matching Windows x64, Linux x86-64 or Linux ARM64 engine archive.
+Keep your licensed Quake data, mods, saves and settings. No Quake or mod game
+data is included.
 Extract the complete runtime together, including its libraries and notices;
 do not mix executables and dependencies from different releases.
 
-Start VR with `-openxr` (the existing launcher/wrapper `-vr` route is supported),
+Start VR with `-openxr` (the existing wrapper's `-vr` route is supported),
 or desktop with `-novr`. VR requires a working Vulkan driver and installed
 OpenXR runtime. The runtime controls headset render resolution. Steam Frame
 native play uses Linux ARM64; PC streaming uses the appropriate PC build.
 Eye-tracked foveation additionally requires accessible, configured gaze support
 and the relevant runtime capabilities.
 
-The launcher global profile uses `-postcfg <profile> -writepostcfg` for shared
-settings. Plain `-postcfg` executes an override without writing it back.
+Use `-postcfg <profile> -writepostcfg` for shared settings. Plain `-postcfg`
+executes an override without writing it back.
 
 ## Source and acknowledgments
 
-Matching engine and dependency sources are hosted separately and linked from
-the GitHub release notes and the 2.0 updater release record.
+Matching engine source links identify the exact build in the GitHub release
+notes. Component notices identify the upstream dependencies and their sources.
 Existing GPL/component notices and credits are retained. This engine builds on
 vkQuake, Quakespasm, Quakespasm VR/OpenVR, QSS-M and Ironwail, plus the credited
 runtime libraries. Development and review were assisted by OpenAI Codex agents;
@@ -96,7 +96,7 @@ changes are integrated and verified in this project.
 
 Validation includes native Linux desktop and simulated OpenXR stereo rendering,
 actual menu-driven AO/lighting pixel checks, native installed AD-family QC and
-real two-client UDP jump-boot behavior, plus launcher profile shutdown/relaunch
+real two-client UDP jump-boot behavior, plus shared-profile shutdown/relaunch
 and mod switching. Linux ARM64 receives native dedicated-server startup checks;
 Windows x64 receives a native Release build and package inspection.
 
@@ -108,10 +108,10 @@ record narrower test limits and historical diagnostic failures. VR demo playback
 is outside this project's supported scope; desktop retains vkQuake demo support.
 
 
-The runtime archives include these instructions and component notices.
+Public runtime archives include component notices and omit these instructions.
 `SHA256SUMS` identifies the three engine downloads attached to the GitHub
-release. Matching source-access archives and the exact engine source snapshot
-are hosted separately; they are developer downloads and are not needed to play.
+release. The exact engine source snapshot is linked in the release notes;
+source downloads are not needed to play.
 GitHub's automatic source ZIP/TAR contains only the repository at its release
 tag, not the external dependency sources. Follow the matching-source links in
 the release notes for updated native builds.

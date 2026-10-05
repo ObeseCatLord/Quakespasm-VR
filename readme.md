@@ -36,15 +36,14 @@ Desktop and VR players can play together.
 
 ## Installation
 
-Download the matching engine archive from [Releases](https://github.com/ObeseCatLord/Quakespasm-VR/releases),
-or use the launcher's **2.0** updater channel. Extract the complete runtime,
-including its libraries and notices. Keep your existing launcher, mods, saves,
-and settings. Release archives do not contain Quake game data; provide your own
-legally obtained `id1` directory.
+Download the matching engine archive from [Releases](https://github.com/ObeseCatLord/Quakespasm-VR/releases).
+Extract the complete runtime, including its libraries and notices. Keep your
+existing mods, saves and settings. Release archives do not contain Quake game
+data; provide your own legally obtained `id1` directory.
 
 VR requires a Vulkan-capable GPU and a working OpenXR runtime. Launch with
-`-openxr`; the packaged `quakespasm-openvr` wrapper also accepts the launcher's
-`-vr` argument. Use `-novr` for desktop play. The OpenXR runtime controls headset
+`-openxr`; the packaged `quakespasm-openvr` wrapper also accepts the `-vr`
+argument. Use `-novr` for desktop play. The OpenXR runtime controls headset
 render resolution. Eye tracking is optional; ordinary VR works without it.
 
 `main` contains the maintained vkQuake-based engine, `2.0` remains the development
