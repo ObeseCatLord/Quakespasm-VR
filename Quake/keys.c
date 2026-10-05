@@ -25,6 +25,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "arch_def.h"
 #include "vr_input.h"
 #include "voice.h"
+#include "vr_weapon_menu.h"
+
 
 /* key up events are sent even if in console mode */
 
@@ -47,6 +49,10 @@ qboolean   consolekeys[MAX_KEYS]; // if true, can't be rebound while in console
 qboolean   menubound[MAX_KEYS];	  // if true, can't be rebound while in menu
 qboolean   keydown[MAX_KEYS];
 static int gamepad_active_key[MAX_KEYS];
+/* Lifetime of queued desktop wheel commands, independent of physical holds. */
+static unsigned int desktop_weaponmenu_token[MAX_KEYS];
+static qboolean desktop_weaponmenu_pending[MAX_KEYS];
+static unsigned int desktop_weaponmenu_next_token;
 
 typedef struct
 {
@@ -696,7 +702,14 @@ void Key_SetBinding (int keynum, const char *binding)
 	// Release the action named by the old binding before replacing it.
 	// Key-up otherwise consults the new binding and can strand +attack, etc.
 	// A logical ALT key is already resolved: do not route it a second time.
-	if (keydown[keynum] && keybindings[keynum] && keybindings[keynum][0] == '+')
+	if (keybindings[keynum] && !strcmp (keybindings[keynum], "+vr_weaponmenu") &&
+		(!vulkan_globals.stereo_active || desktop_weaponmenu_token[keynum]) &&
+		(keydown[keynum] || desktop_weaponmenu_token[keynum]))
+	{
+		/* Rebinding cancels selection, including an opening command still queued. */
+		IN_CancelDesktopWeaponMenu ();
+	}
+	else if (keydown[keynum] && keybindings[keynum] && keybindings[keynum][0] == '+')
 	{
 		char cmd[1024];
 		q_snprintf (cmd, sizeof (cmd), "-%s %i\n", keybindings[keynum] + 1, keynum);
@@ -1057,6 +1070,92 @@ void Key_Event (int key, qboolean down)
 	Key_EventWithKeycode (key, down, 0);
 }
 
+static qboolean Key_IsWeaponMenuBinding (int key)
+{
+	return keybindings[key] && !strcmp (keybindings[key], "+vr_weaponmenu");
+}
+
+void Key_ClearDesktopWeaponMenuCommands (void)
+{
+	memset (desktop_weaponmenu_token, 0, sizeof (desktop_weaponmenu_token));
+	memset (desktop_weaponmenu_pending, 0, sizeof (desktop_weaponmenu_pending));
+}
+
+static qboolean Key_DesktopWeaponMenuCommandSource (int *key, unsigned int *token)
+{
+	char *key_end, *token_end;
+	const long parsed_key = strtol (Cmd_Argv (1), &key_end, 10);
+	const unsigned long parsed_token = strtoul (Cmd_Argv (2), &token_end, 10);
+	if (!Cmd_Argv (1)[0] || *key_end || parsed_key < 0 || parsed_key >= MAX_KEYS ||
+		!Cmd_Argv (2)[0] || *token_end || !parsed_token || parsed_token != (unsigned int)parsed_token)
+		return false;
+	*key = (int)parsed_key;
+	*token = (unsigned int)parsed_token;
+	return desktop_weaponmenu_token[*key] == *token;
+}
+
+void Key_InvalidateDesktopWeaponMenuCommand (void)
+{
+	int key;
+	unsigned int token;
+	if (Cmd_Argc () == 3 && Key_DesktopWeaponMenuCommandSource (&key, &token))
+	{
+		desktop_weaponmenu_token[key] = 0;
+		desktop_weaponmenu_pending[key] = false;
+	}
+}
+
+qboolean Key_ValidateDesktopWeaponMenuCommand (qboolean down, qboolean *key_released)
+{
+	int key = -1;
+	unsigned int token;
+	const qboolean matches = Key_DesktopWeaponMenuCommandSource (&key, &token);
+	/* Source parsing sets key only after validating the complete tagged args.
+	 * A rejected tap can still need to retire an older accepted physical source. */
+	if (key_released)
+		*key_released = key >= 0 && key < MAX_KEYS && !keydown[key];
+	if (!matches)
+		return false;
+	if (down)
+	{
+		if (!desktop_weaponmenu_pending[key] || !keydown[key] || vulkan_globals.stereo_active)
+		{
+			Key_InvalidateDesktopWeaponMenuCommand ();
+			return false;
+		}
+		desktop_weaponmenu_pending[key] = false;
+	}
+	else
+	{
+		/* A valid release outlives physical keydown; retire only its own token. */
+		desktop_weaponmenu_token[key] = 0;
+		desktop_weaponmenu_pending[key] = false;
+	}
+	return true;
+}
+
+static qboolean Key_DesktopWeaponMenuOwnsMouse (void)
+{
+	if (vulkan_globals.stereo_active)
+		return false;
+	if (VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR ())
+		return true;
+	/* SDL pumps all key events before Cbuf executes the opening command. */
+	if (key_dest == key_game && !con_forcedup && VR_WeaponMenu_CanOpen ())
+		for (int key = 0; key < MAX_KEYS; ++key)
+			if (desktop_weaponmenu_pending[key])
+				return true;
+	return false;
+}
+
+void Key_ReleaseWeaponMenuMouseButtons (void)
+{
+	/* Preserve keyboard/controller holds and mouse-bound wheel sources. */
+	for (int key = K_MOUSE1; key <= K_MWHEELDOWN; ++key)
+		if (keydown[key] && !Key_IsWeaponMenuBinding (key))
+			Key_Event (key, false);
+}
+
 /*
 ===================
 Key_EventWithKeycode
@@ -1074,6 +1173,12 @@ void Key_EventWithKeycode (int key, qboolean down, int keycode)
 	qboolean voice_confirmed;
 
 	if (key < 0 || key >= MAX_KEYS)
+		return;
+
+	/* Consume only new mouse presses. Previously dispatched gameplay holds
+	 * still receive their matching releases, including after cancellation. */
+	if (down && key >= K_MOUSE1 && key <= K_MWHEELDOWN &&
+		!Key_IsWeaponMenuBinding (key) && Key_DesktopWeaponMenuOwnsMouse ())
 		return;
 
 	if (key >= K_LTHUMB && key <= K_TOUCHPAD)
@@ -1172,7 +1277,17 @@ void Key_EventWithKeycode (int key, qboolean down, int keycode)
 	if (!down)
 	{
 		kb = keybindings[key];
-		if (kb && kb[0] == '+')
+		if (Key_IsWeaponMenuBinding (key) &&
+			(!vulkan_globals.stereo_active || desktop_weaponmenu_token[key]))
+		{
+			desktop_weaponmenu_pending[key] = false;
+			if (desktop_weaponmenu_token[key])
+			{
+				q_snprintf (cmd, sizeof (cmd), "-vr_weaponmenu %i %u\n", key, desktop_weaponmenu_token[key]);
+				Cbuf_AddText (cmd);
+			}
+		}
+		else if (kb && kb[0] == '+')
 		{
 			q_snprintf (cmd, sizeof (cmd), "-%s %i\n", kb + 1, key);
 			Cbuf_AddText (cmd);
@@ -1225,7 +1340,16 @@ void Key_EventWithKeycode (int key, qboolean down, int keycode)
 		{
 			if (kb[0] == '+')
 			{ // button commands add keynum as a parm
-				q_snprintf (cmd, sizeof (cmd), "%s %i\n", kb, key);
+				if (!vulkan_globals.stereo_active && Key_IsWeaponMenuBinding (key))
+				{
+					if (++desktop_weaponmenu_next_token == 0)
+						++desktop_weaponmenu_next_token;
+					desktop_weaponmenu_token[key] = desktop_weaponmenu_next_token;
+					desktop_weaponmenu_pending[key] = true;
+					q_snprintf (cmd, sizeof (cmd), "%s %i %u\n", kb, key, desktop_weaponmenu_token[key]);
+				}
+				else
+					q_snprintf (cmd, sizeof (cmd), "%s %i\n", kb, key);
 				Cbuf_AddText (cmd);
 			}
 			else
@@ -1348,6 +1472,8 @@ Key_ClearStates
 void Key_ClearStates (void)
 {
 	int i;
+	/* Synthetic releases from modal/focus/video changes must never select. */
+	IN_CancelDesktopWeaponMenu ();
 
 	for (i = 0; i < MAX_KEYS; i++)
 	{

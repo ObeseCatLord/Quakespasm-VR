@@ -62,25 +62,25 @@ assert int(ev('vr_weapon_menu_has_schema')) == 0, 'loose calibration copy became
 put('$delta','(struct deltaframe_s *)calloc(1,sizeof(struct deltaframe_s))')
 put('$wire','(byte *)calloc(1,65536)')
 put('$msg','(sizebuf_t *)calloc(1,sizeof(sizebuf_t))')
-put('$si','(int *)calloc(MAX_CL_STATS,sizeof(int))')
-put('$sf','(float *)calloc(MAX_CL_STATS,sizeof(float))')
-put('$ss','(const char **)calloc(MAX_CL_STATS,sizeof(char *))')
+put('$wheel_stat_ints','(int *)calloc(MAX_CL_STATS,sizeof(int))')
+put('$wheel_stat_floats','(float *)calloc(MAX_CL_STATS,sizeof(float))')
+put('$wheel_stat_strings','(const char **)calloc(MAX_CL_STATS,sizeof(char *))')
 put('$msg->data','$wire'); put('$msg->maxsize',65536)
 def transport():
-    cmd('call SV_CalcStats($client,$si,$sf,$ss)')
-    assert int(ev('$si[STAT_VR_MODITEMS]')) == int(ev(field('moditems')))
-    assert [int(ev('$si[%s]'%n)) for n in ['STAT_VR_MAX_SHELLS','STAT_VR_MAX_NAILS','STAT_VR_MAX_ROCKETS','STAT_VR_MAX_CELLS']] == [200,200,100,100]
-    assert int(ev('$si[STAT_VR_WEAPONS]')) == 0, 'invented weapons field'
+    cmd('call SV_CalcStats($client,$wheel_stat_ints,$wheel_stat_floats,$wheel_stat_strings)')
+    assert int(ev('$wheel_stat_ints[STAT_VR_MODITEMS]')) == int(ev(field('moditems')))
+    assert [int(ev('$wheel_stat_ints[%s]'%n)) for n in ['STAT_VR_MAX_SHELLS','STAT_VR_MAX_NAILS','STAT_VR_MAX_ROCKETS','STAT_VR_MAX_CELLS']] == [200,200,100,100]
+    assert int(ev('$wheel_stat_ints[STAT_VR_WEAPONS]')) == 0, 'invented weapons field'
     put('$msg->cursize',0)
     cmd('call SVFTE_WriteStats($client,$msg,$delta)')
     put('net_message','*$msg')
     cmd('call CL_ParseServerMessage()')
     for n in ['STAT_ITEMS','STAT_VR_MODITEMS','STAT_VR_MAX_SHELLS','STAT_VR_MAX_NAILS','STAT_VR_MAX_ROCKETS','STAT_VR_MAX_CELLS']:
-        assert int(ev('cl.stats[%s]'%n)) == int(ev('$si[%s]'%n)), 'transport mismatch '+n
+        assert int(ev('cl.stats[%s]'%n)) == int(ev('$wheel_stat_ints[%s]'%n)), 'transport mismatch '+n
     for n, f in [('STAT_ACTIVEWEAPON','weapon'),('STAT_SHELLS','ammo_shells'),('STAT_NAILS','ammo_nails'),('STAT_ROCKETS','ammo_rockets'),('STAT_CELLS','ammo_cells')]:
         assert int(ev('cl.stats[%s]'%n)) == int(ev('$p->v.'+f)), 'client stat mismatch '+n
     assert int(ev('cl.items')) == int(ev('cl.stats[STAT_ITEMS]'))
-    assert int(ev('cl.stats[STAT_WEAPON]')) == int(ev('$si[STAT_WEAPON]')) > 0
+    assert int(ev('cl.stats[STAT_WEAPON]')) == int(ev('$wheel_stat_ints[STAT_WEAPON]')) > 0
 
 ALL = 4096 | 127
 def state(selector=4096, modifiers=0, items=ALL, shells=20, nails=20):
@@ -180,7 +180,7 @@ assert int(ev('$p->v.weapon'))==64, 'declared impulse must reach native QC uncha
 assert ev('PR_GetString($p->v.weaponmodel)').string()=='progs/v_light.mdl', 'wheel preview must not replace native held-model policy'
 transport()
 print('PERIL_WHEEL_NATIVE_OVERRIDES_PASS explicit impulse/model/viewmodel/ammo override precedence and native command result')
-for pointer in ['$rows','$count','$delta','$wire','$msg','$si','$sf','$ss']: cmd('call (void)free('+pointer+')')
+for pointer in ['$rows','$count','$delta','$wire','$msg','$wheel_stat_ints','$wheel_stat_floats','$wheel_stat_strings']: cmd('call (void)free('+pointer+')')
 print('PERIL_WHEEL_NATIVE_PASS actual effective QC selection and producer/writer/client-parser stat transport')
 end
 quit

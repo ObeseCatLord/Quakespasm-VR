@@ -69,25 +69,99 @@ static qboolean in_vr_weaponmenu_desktop_capture;
 void KeyDown (kbutton_t *b);
 void KeyUp (kbutton_t *b);
 
+static void IN_VRWeaponMenuRestoreCapture (void)
+{
+	const qboolean restore = in_vr_weaponmenu_desktop_capture;
+	in_vr_weaponmenu_desktop_capture = false;
+	IN_ClearStates ();
+	if (restore && IN_DesktopWeaponMenuCaptureAllowed ())
+		IN_Activate ();
+}
+
+static qboolean IN_CloseDesktopWeaponMenu (void)
+{
+	if (!in_vr_weaponmenu_desktop_capture)
+		return false;
+	VR_WeaponMenu_Cancel ();
+	memset (&in_vr_weaponmenu, 0, sizeof (in_vr_weaponmenu));
+	IN_VRWeaponMenuRestoreCapture ();
+	return true;
+}
+
+qboolean IN_CancelDesktopWeaponMenu (void)
+{
+	/* Modal/focus changes invalidate even an opening not yet executed. */
+	Key_ClearDesktopWeaponMenuCommands ();
+	return IN_CloseDesktopWeaponMenu ();
+}
+
+void IN_UpdateDesktopWeaponMenu (void)
+{
+	if (in_vr_weaponmenu_desktop_capture &&
+		(!VR_WeaponMenu_IsOpen () || !IN_DesktopWeaponMenuCaptureAllowed () ||
+		 vulkan_globals.stereo_active || cls.signon != SIGNONS || cl.intermission))
+		IN_CancelDesktopWeaponMenu ();
+}
+
 static void IN_VRWeaponMenuDown (void)
 {
-	const qboolean already_down = (in_vr_weaponmenu.state & 1) != 0;
-	if (!already_down && !VR_WeaponMenu_CanOpen ())
+	qboolean key_released = false;
+	IN_UpdateDesktopWeaponMenu ();
+	if (Cmd_Argc () == 3 && !Key_ValidateDesktopWeaponMenuCommand (true, &key_released))
+	{
+		if (key_released && in_vr_weaponmenu_desktop_capture)
+		{
+			/* An accepted hold may precede a fully queued up/down/up tap.
+			 * Retire only this released source, without selecting on the tap. */
+			KeyUp (&in_vr_weaponmenu);
+			if (!(in_vr_weaponmenu.state & 1))
+				IN_CloseDesktopWeaponMenu (); /* Preserve independently queued sources. */
+		}
 		return;
+	}
+	const qboolean already_down = (in_vr_weaponmenu.state & 1) != 0;
+	if (!vulkan_globals.stereo_active &&
+		(!IN_DesktopWeaponMenuCaptureAllowed () || cls.signon != SIGNONS))
+	{
+		Key_InvalidateDesktopWeaponMenuCommand ();
+		return;
+	}
+	if (!already_down && !VR_WeaponMenu_CanOpen ())
+	{
+		Key_InvalidateDesktopWeaponMenuCommand ();
+		return;
+	}
 
 	KeyDown (&in_vr_weaponmenu);
+	if (Cmd_Argc () == 3 && in_vr_weaponmenu.down[0] != atoi (Cmd_Argv (1)) &&
+		in_vr_weaponmenu.down[1] != atoi (Cmd_Argv (1)))
+		Key_InvalidateDesktopWeaponMenuCommand ();
 	if (!already_down && (in_vr_weaponmenu.state & 1))
 	{
 		/* Desktop uses the absolute cursor; VR keeps mouse capture untouched. */
 		in_vr_weaponmenu_desktop_capture = !vulkan_globals.stereo_active;
 		if (in_vr_weaponmenu_desktop_capture)
+		{
+			qboolean mouse_attack = false;
+			for (int source = 0; source < countof (in_attack.down); ++source)
+				if (in_attack.down[source] >= K_MOUSE1 && in_attack.down[source] <= K_MWHEELDOWN)
+				{
+					in_attack.down[source] = 0;
+					mouse_attack = true;
+				}
+			/* A normal KeyUp retains the impulse-down bit. Drop that pending
+			 * shot too, but preserve any keyboard/controller attack contributor. */
+			if (mouse_attack && !in_attack.down[0] && !in_attack.down[1])
+				in_attack.state = 0;
+			Key_ReleaseWeaponMenuMouseButtons ();
 			IN_Deactivate (true);
+		}
 		VR_WeaponMenu_Open ();
 		if (!VR_WeaponMenu_IsOpen ())
 		{
-			if (in_vr_weaponmenu_desktop_capture)
-				IN_Activate ();
-			in_vr_weaponmenu_desktop_capture = false;
+			Key_InvalidateDesktopWeaponMenuCommand ();
+			memset (&in_vr_weaponmenu, 0, sizeof (in_vr_weaponmenu));
+			IN_VRWeaponMenuRestoreCapture ();
 		}
 	}
 }
@@ -96,6 +170,9 @@ static void IN_VRWeaponMenuUp (void)
 {
 	int impulse;
 	char command[32];
+	IN_UpdateDesktopWeaponMenu ();
+	if (Cmd_Argc () == 3 && !Key_ValidateDesktopWeaponMenuCommand (false, NULL))
+		return;
 	const qboolean was_open = VR_WeaponMenu_IsOpen ();
 
 	KeyUp (&in_vr_weaponmenu);
@@ -105,9 +182,8 @@ static void IN_VRWeaponMenuUp (void)
 	impulse = was_open ? VR_WeaponMenu_Release () : 0;
 	in_vr_weaponmenu.state = 0;
 	/* Restore capture after desktop release or cancellation. */
-	if (in_vr_weaponmenu_desktop_capture && key_dest == key_game && !con_forcedup)
-		IN_Activate ();
-	in_vr_weaponmenu_desktop_capture = false;
+	if (in_vr_weaponmenu_desktop_capture)
+		IN_VRWeaponMenuRestoreCapture ();
 	if (impulse > 0)
 	{
 		q_snprintf (command, sizeof (command), "impulse %d\n", impulse);

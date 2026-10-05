@@ -38,6 +38,9 @@ void IN_SendKeyEvents (void);
 // used as a callback for Sys_SendKeyEvents() by some drivers
 
 void IN_UpdateInputMode (void);
+qboolean IN_DesktopWeaponMenuCaptureAllowed (void);
+qboolean IN_CancelDesktopWeaponMenu (void);
+void IN_UpdateDesktopWeaponMenu (void);
 // do stuff if input mode (text/non-text) changes matter to the keyboard driver
 
 void IN_Move (usercmd_t *cmd);
