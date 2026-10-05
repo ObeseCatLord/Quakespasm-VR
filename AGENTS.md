@@ -28,6 +28,18 @@ the main agent. Spark is limited to fully specified mechanical tasks; never use
 it for analysis, debugging or behavioral implementation. Do not use ChatGPT web
 models unless the user changes that instruction. Close completed agents.
 
+## Privacy in public content
+
+Never include links to `shrubdragon.studio` or any of its subdomains in GitHub
+or any other public location. The launcher is for private use only: do not
+mention, advertise, document or link to it in public-facing content.
+
+Apply these rules to release notes, READMEs, issues, pull requests, comments,
+websites and generated publication text. Keep private distribution endpoints
+and launcher details in local configuration or private operational notes.
+Review generated content before publishing; release automation must not expose
+these private details.
+
 ## Build and release workflow
 
 Use the repository's local release CLI and the commands in
