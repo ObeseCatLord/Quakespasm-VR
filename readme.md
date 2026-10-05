@@ -119,6 +119,13 @@ Bindings can be changed under **Options > Customize Controls** or with the
 console `bind` command. Mods may replace or extend actions through
 `bindlist.lst`.
 
+### Desktop
+
+Hold **Q** to open the screen-space weapon wheel, move the mouse to highlight a
+weapon, then release Q to select it. The wheel captures the mouse so selection
+does not turn the camera or fire a weapon. **Weapon Wheel** can be rebound in
+**Options > Customize Controls**. Saved custom bindings remain authoritative.
+
 ### VR controllers
 
 | Input | Action |

@@ -33,7 +33,7 @@ assert int(ev('SV_PerilAkimboProgramLoaded()'))==1
 setv('qcvm->progssha256[0]',0); assert int(ev('SV_PerilAkimboProgramLoaded()'))==0; setv('qcvm->progssha256[0]',0x5e)
 assert int(ev('SV_QBJ3TwinNailgunProgramLoaded()'))==0, 'Peril must not enable QBJ3 melee identity'
 print('PERIL_GATE_PASS exact native QC, hash rejection, QBJ3 identity isolation')
-setv('pr_global_struct->self','EDICT_TO_PROG($p)')
+setv('pr_global_struct->self','((int)((byte *)$p - (byte *)qcvm->edicts))')
 cmd('call PR_ExecuteProgram(ED_FindFunction("PutClientInServer") - qcvm->functions)')
 setv('$p->v.weaponmodel','PR_SetEngineString("progs/v_nail.mdl")');setv('$p->v.weapon',4);setv('$p->v.ammo_nails',100)
 setv('$p->v.items','(int)$p->v.items | 4');setv('$p->v.button0',1)
@@ -48,7 +48,7 @@ body=vec('$p->v.origin');print('PERIL_BODY',body)
 def fire(frame,auto,mode='vr',refresh=True,weapon='nail'):
     setv(glob('autoaim_cvar'),auto)
     setv('$p->v.think','ED_FindFunction("player_%s%d") - qcvm->functions'%(weapon,frame))
-    setv('$p->v.nextthink','qcvm->time');setv('pr_global_struct->self','EDICT_TO_PROG($p)');setv('pr_global_struct->time','qcvm->time')
+    setv('$p->v.nextthink','qcvm->time');setv('pr_global_struct->self','((int)((byte *)$p - (byte *)qcvm->edicts))');setv('pr_global_struct->time','qcvm->time')
     if refresh:setv('$client->lastmovetime','realtime');setv('$client->cmd.vr_contact_received','realtime')
     ammo=float(ev('$p->v.ammo_nails')); prior=vec('$p->v.origin'); angles=vec('$p->v.v_angle');basis=[vec('pr_global_struct->v_'+n) for n in ['forward','right','up']]
     cmd('call SV_RunPrivateVRWeaponThink($p,$client,&$client->cmd)')
@@ -101,7 +101,7 @@ base=float(ev('qcvm->time'))+1
 setv('qcvm->time',base);setv('pr_global_struct->time',base);setv('host_frametime',.025)
 setv('$p->v.ammo_nails',7);setv('$p->v.ammo_shells',0);setv('$p->v.ammo_rockets',0);setv('$p->v.ammo_cells',0)
 setv('$p->v.items',4096|4);setv('$p->v.impulse',0);setv('$p->v.button0',0);setvec('$p->v.velocity',[0,0,0])
-setv('*(int *)&qcvm->globals[4]','EDICT_TO_PROG($p)')
+setv('*(int *)&qcvm->globals[4]','((int)((byte *)$p - (byte *)qcvm->edicts))')
 cmd('call PR_ExecuteProgram(ED_FindFunction("W_SetCurrentAmmo") - qcvm->functions)')
 setv(field('$p','attack_finished'),base-.1);setv(glob('autoaim_cvar'),1)
 assert int(ev('$p->v.weaponframe'))==0 and float(ev('$p->v.currentammo'))==7
@@ -114,7 +114,7 @@ for tick in range(49):
     setv('$client->lastmovetime','realtime');setv('$client->cmd.vr_contact_received','realtime')
     origin_before=vec('$p->v.origin');angles_before=vec('$p->v.v_angle')
     basis_before=[vec('pr_global_struct->v_'+n) for n in ['forward','right','up']]
-    setv('pr_global_struct->self','EDICT_TO_PROG($p)')
+    setv('pr_global_struct->self','((int)((byte *)$p - (byte *)qcvm->edicts))')
     cmd('call SV_RunPrivateVRWeaponThink($p,$client,&$client->cmd)')
     # This is the production pose boundary used around QC PlayerPostThink.
     # Its native weapon/input entrypoint owns attack_finished and W_Attack.
@@ -190,14 +190,14 @@ cmd('call PF_makevectors()')
 assert int(ev('$outer->peril_muzzle_valid'))==1, 'makevectors never cached a physical muzzle'
 assert near(vec('$outer->peril_muzzle'),[body[0],body[1]-8,body[2]+22])
 relocated=body[:];relocated[0]+=4
-setv('*(int *)&qcvm->globals[4]','EDICT_TO_PROG($p)')
+setv('*(int *)&qcvm->globals[4]','((int)((byte *)$p - (byte *)qcvm->edicts))')
 for i,x in enumerate(relocated):setv('qcvm->globals[%d]'%(7+i),x)
 cmd('call PF_setorigin()')
 assert int(ev('$outer->akimbo_invalidated'))==1 and int(ev('$outer->peril_muzzle_valid'))==0
 setv('qcvm->xstatement',69582);setvec('$outer->stock_id1_muzzle',[111,222,333])
 assert int(ev('SV_PerilAkimboAim($p,$outer->stock_id1_muzzle)'))==0, 'relocated aim reused cached physical muzzle'
 assert vec('$outer->stock_id1_muzzle')==[111,222,333], 'rejected aim wrote cached output'
-setv('*(int *)&qcvm->globals[4]','EDICT_TO_PROG($p)');setv('qcvm->globals[7]',1000)
+setv('*(int *)&qcvm->globals[4]','((int)((byte *)$p - (byte *)qcvm->edicts))');setv('qcvm->globals[7]',1000)
 cmd('call PF_aim()')
 assert near([float(ev('qcvm->globals[%d]'%(1+i))) for i in range(3)],vec('pr_global_struct->v_forward')), 'ordinary aim fallback changed'
 setv('qcvm->xfunction','$saved_xfunction');setv('qcvm->xstatement','$saved_xstatement');setv('qcvm->globals[20409]','$saved_ox')

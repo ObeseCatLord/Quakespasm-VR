@@ -186,6 +186,10 @@ extern qboolean chat_team;
 
 void Key_Init (void);
 void Key_ClearStates (void);
+void Key_ReleaseWeaponMenuMouseButtons (void);
+void Key_ClearDesktopWeaponMenuCommands (void);
+qboolean Key_ValidateDesktopWeaponMenuCommand (qboolean down, qboolean *key_released);
+void Key_InvalidateDesktopWeaponMenuCommand (void);
 void Key_UpdateForDest (void);
 
 void Key_BeginInputGrab (void);

@@ -196,3 +196,10 @@ must show the eight owned slots, change correctly after release and react to
 upgrades/inverse. Actual graphics and physical VR calibration comfort remain
 user-visible qualification. All twelve active held/pickup paths exist; no native
 selector or packaged calibration row remains unidentified by this audit.
+
+## Integrated qualification
+
+The worker checkpoint above is historical. Main's final integrated ASan/UBSan,
+actual QC/stat transport, paired firing and graphical desktop checks passed.
+[Results and limits](peril-desktop-wheel-2.0-results.md) include the private
+mouse-to-QC proof and inspected eight-slot Peril screen-space wheel.

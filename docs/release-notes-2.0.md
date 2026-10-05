@@ -49,6 +49,24 @@ Numbered PAK files with uppercase/mixed-case filenames are recognized on
 Linux, restoring Zerstorer and other Windows-authored mod packages without
 renaming assets. Windows is unchanged in this native update.
 
+## Peril roster and desktop wheel update
+
+Peril's weapon wheel follows its eight native selectable slots and twelve active
+held-model identities. Shadow Axe, grapple, Widowmaker and Plasma Gun replace
+their parent slot using the game's actual inventory modifiers, labels, models
+and selection impulses. Offset-only calibration files do not invent extra
+weapons or disable those replacements. All twenty packaged Peril viewmodels
+retain their geometry-derived held and muzzle calibration and authored overrides.
+Where the inherited desktop icon bank cannot depict the weapon correctly, the
+wheel uses its native name rather than a misleading stock picture.
+
+Desktop players can hold Q to open the screen-space wheel, select with the mouse
+and release Q to equip. The wheel consumes mouse input without changing aim or
+firing, and restores normal mouse capture after release or cancellation. The
+Weapon Wheel entry remains available in Customize Controls with mod bindlists.
+Q is a default binding; existing custom bindings and explicit unbinds retain
+precedence. VR wheel placement and controller bindings are unchanged.
+
 ## Install or update
 
 Use the launcher's **2.0** updater channel, or download the matching Windows
@@ -69,7 +87,8 @@ settings. Plain `-postcfg` executes an override without writing it back.
 
 ## Source and acknowledgments
 
-Source and matching dependency-source archives accompany the runtime downloads.
+Matching engine and dependency sources are hosted separately and linked from
+the GitHub release notes and the 2.0 updater release record.
 Existing GPL/component notices and credits are retained. This engine builds on
 vkQuake, Quakespasm, Quakespasm VR/OpenVR, QSS-M and Ironwail, plus the credited
 runtime libraries. Development and review were assisted by OpenAI Codex agents;
@@ -89,6 +108,10 @@ record narrower test limits and historical diagnostic failures. VR demo playback
 is outside this project's supported scope; desktop retains vkQuake demo support.
 
 
-The runtime archives include these instructions and component notices. Matching
-source-access archives provide dependency sources/receipts; `product.tar` is the
-exact engine source snapshot. `SHA256SUMS` identifies all six release downloads.
+The runtime archives include these instructions and component notices.
+`SHA256SUMS` identifies the three engine downloads attached to the GitHub
+release. Matching source-access archives and the exact engine source snapshot
+are hosted separately; they are developer downloads and are not needed to play.
+GitHub's automatic source ZIP/TAR contains only the repository at its release
+tag, not the external dependency sources. Follow the matching-source links in
+the release notes for updated native builds.

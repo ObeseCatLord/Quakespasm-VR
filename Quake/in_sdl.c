@@ -23,6 +23,8 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "in_sdl.h"
+#include "vr_weapon_menu.h"
+
 
 static qboolean textmode;
 static qboolean window_has_focus = true;
@@ -251,6 +253,9 @@ static void IN_JoyAltModifierUp (void)
 
 void IN_Activate (void)
 {
+	/* Other UI transitions must not recapture a desktop wheel's cursor. */
+	if (VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR ())
+		return;
 	if (no_mouse)
 		return;
 
@@ -283,6 +288,7 @@ void IN_Activate (void)
 
 void IN_Deactivate (qboolean free_cursor)
 {
+	IN_ClearStates ();
 	if (no_mouse)
 		return;
 
@@ -301,12 +307,14 @@ void IN_Deactivate (qboolean free_cursor)
 
 void IN_DeactivateForConsole (void)
 {
+	IN_CancelDesktopWeaponMenu ();
 	IN_Deactivate (true);
 }
 
 void IN_DeactivateForMenu (void)
 {
-	IN_Deactivate (modestate == MS_WINDOWED || ui_mouse.value);
+	const qboolean desktop_wheel = IN_CancelDesktopWeaponMenu ();
+	IN_Deactivate (desktop_wheel || modestate == MS_WINDOWED || ui_mouse.value);
 }
 
 void IN_ScaleMouseCoords (float x, float y, int *outx, int *outy)
@@ -337,6 +345,8 @@ void IN_GetMousePos (int *outx, int *outy)
 
 void IN_HideCursor ()
 {
+	if (VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR ())
+		return;
 	if (no_mouse)
 		return;
 
@@ -422,7 +432,8 @@ extern cvar_t scr_fov;
 
 void IN_MouseMotion (float dx, float dy)
 {
-	if (cls.state != ca_connected || cls.signon != SIGNONS || key_dest != key_game || CL_AngleLocked ())
+	if ((VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR ()) ||
+		cls.state != ca_connected || cls.signon != SIGNONS || key_dest != key_game || CL_AngleLocked ())
 	{
 		total_dx = 0;
 		total_dy = 0;
@@ -882,6 +893,12 @@ void IN_MouseMove (usercmd_t *cmd)
 {
 	float dmx, dmy;
 	float sens;
+	IN_UpdateDesktopWeaponMenu ();
+	if (VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR ())
+	{
+		IN_ClearStates ();
+		return;
+	}
 
 	sens = tan (DEG2RAD (r_refdef.basefov) * 0.5f) / tan (DEG2RAD (scr_fov.value) * 0.5f);
 	sens *= sensitivity.value;
@@ -937,7 +954,16 @@ void IN_Move (usercmd_t *cmd)
 	IN_MouseMove (cmd);
 }
 
-void IN_ClearStates (void) {}
+void IN_ClearStates (void)
+{
+	total_dx = total_dy = 0;
+}
+
+qboolean IN_DesktopWeaponMenuCaptureAllowed (void)
+{
+	return window_has_focus && key_dest == key_game && !con_forcedup &&
+		cls.state == ca_connected;
+}
 
 static void IN_UpdateSoundFocus (void)
 {
@@ -960,11 +986,24 @@ void IN_WindowFocusChanged (qboolean focused)
 		VID_FocusGained ();
 	else
 		VID_FocusLost ();
+	if (!vulkan_globals.stereo_active)
+	{
+		if (!focused)
+		{
+			/* Cancel before generating synthetic key-ups: focus loss never selects. */
+			IN_CancelDesktopWeaponMenu ();
+			Key_ClearStates ();
+			IN_Deactivate (true);
+		}
+		else if (IN_DesktopWeaponMenuCaptureAllowed ())
+			IN_Activate ();
+	}
 	IN_UpdateSoundFocus ();
 }
 
 void IN_UpdateInputMode (void)
 {
+	IN_UpdateDesktopWeaponMenu ();
 	qboolean want_textmode = Key_TextEntry ();
 	IN_UpdateSoundFocus ();
 	if (textmode != want_textmode)
