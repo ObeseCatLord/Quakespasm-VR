@@ -381,6 +381,10 @@ typedef struct
 {
 	int			 s;
 	dfunction_t *f;
+	int bonk_skin_owner; // QC entity offset; parm11 remains the only persisted owner
+	unsigned int bonk_skin_generation;
+	float bonk_skin_saved;
+	int bonk_skin_touch; // selecting pedestal, independent of return-time self
 } prstack_t;
 
 typedef struct areanode_s
@@ -434,6 +438,9 @@ struct qcvm_s
 	unsigned int   progshash; // folded file md4
 	byte           progssha256[32]; // original on-disk bytes, before byte swapping
 	unsigned int   progssize; // file size (bytes)
+	qboolean bonk_hammer_program; // exact image/ABI admission, once per load
+	int bonk_skin_scope_depth; // first existing function frame, zero when inactive
+	float bonk_skin_unscoped;
 
 	struct pr_extglobals_s extglobals;
 	struct pr_extfuncs_s   extfuncs;
@@ -487,6 +494,8 @@ extern globalvars_t *pr_global_struct;
 
 extern qcvm_t *qcvm;
 void		   PR_SwitchQCVM (qcvm_t *nvm);
+void PR_BonkSkinAbort (qcvm_t *vm);
+float PR_BonkSkinValue (edict_t *ent);
 
 extern const builtin_t pr_ssqcbuiltins[];
 extern const int	   pr_ssqcnumbuiltins;
