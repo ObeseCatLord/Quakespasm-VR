@@ -4204,7 +4204,7 @@ unsigned int SV_VREnyoMeleeContactProfile (void)
 }
 
 /* Only the original installed image and its audited native ABI are admitted. */
-qboolean SV_BonkHammerProgramLoaded (void)
+void SV_BonkHammerCacheProgram (void)
 {
 	static const byte expected_sha256[32] = {
 		0xb5, 0x4e, 0x33, 0xe5, 0x0a, 0xd0, 0x6d, 0x56,
@@ -4213,13 +4213,24 @@ qboolean SV_BonkHammerProgramLoaded (void)
 		0x9a, 0x15, 0xb6, 0x1e, 0x7a, 0xf4, 0x98, 0x11
 	};
 	static const byte scalar[] = {1}, hammer_parms[] = {1, 3, 3, 1, 1};
+	ddef_t *skin = ED_FindGlobal ("hammer_skin"), *parm = ED_FindGlobal ("parm11");
 
-	return qcvm == &sv.qcvm && qcvm->progs && qcvm->globals &&
+	qcvm->bonk_hammer_program = qcvm == &sv.qcvm && qcvm->progs && qcvm->globals &&
 		!q_strcasecmp (COM_SkipPath (com_gamedir), "bonkjam") &&
 		qcvm->progssize == 684974 &&
 		!memcmp (qcvm->progssha256, expected_sha256, sizeof (expected_sha256)) &&
 		qcvm->progs->numstatements == 49492 &&
 		qcvm->progs->numfunctions == 3306 && qcvm->progs->numglobals == 7652 &&
+		skin && skin->ofs == 873 && skin->type == (ev_float | DEF_SAVEGLOBAL) &&
+		parm && parm->ofs == 53 && parm->type == (ev_float | DEF_SAVEGLOBAL) &&
+		SV_DwellFunctionPin (162, "SUB_Null", 1668, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (376, "hammerskin_touch", 8697, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (377, "hammerskin_think", 8899, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (598, "dev_skinswap", 15409, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (626, "SetChangeParms", 16844, 6600, 1, 0, NULL) &&
+		SV_DwellFunctionPin (627, "SetNewParms", 16928, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (628, "SetCoopParms", 16941, 0, 0, 0, NULL) &&
+		SV_DwellFunctionPin (629, "DecodeLevelParms", 16963, 0, 0, 0, NULL) &&
 		SV_DwellFunctionPin (412, "W_ResetWeaponState", 10722, 0, 0, 0, NULL) &&
 		SV_DwellFunctionPin (409, "SuperDamageSound", 10635, 0, 0, 0, NULL) &&
 		SV_DwellFunctionPin (420, "W_Attack", 11111, 6345, 1, 0, NULL) &&
@@ -4229,7 +4240,13 @@ qboolean SV_BonkHammerProgramLoaded (void)
 		SV_DwellFunctionPin (471, "hithammer", 13746, 6532, 13, 5, hammer_parms) &&
 		SV_DwellFunctionPin (474, "saf", 13998, 6547, 1, 1, scalar) &&
 		ED_FindFieldOffset ("attack_finished_hammer") == 127 &&
+		ED_FindFieldOffset ("style") == 114 &&
 		ED_FindFieldOffset ("customflags") == 217;
+}
+
+qboolean SV_BonkHammerProgramLoaded (void)
+{
+	return qcvm == &sv.qcvm && qcvm->bonk_hammer_program;
 }
 
 qboolean SV_BonkHammerWeaponSelected (edict_t *ent)
@@ -4261,7 +4278,7 @@ qboolean SV_BonkHammerWeaponSelected (edict_t *ent)
 		(double)customflags->_float >= 2147483648.0 ||
 		((int)customflags->_float & 2112)) /* CFL_PLUNGE | CFL_LIMBO */
 		return false;
-	choice = qcvm->globals[873]; /* hammer_skin, pinned by the complete image */
+	choice = PR_BonkSkinValue (ent);
 	if (!isfinite (choice))
 		return false;
 	if (choice >= 1 && choice <= countof (skins) && choice == floorf (choice))

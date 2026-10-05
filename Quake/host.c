@@ -264,6 +264,9 @@ void Host_Error (const char *error, ...)
 	if (Tasks_IsWorker () && !recover_client_qc)
 		Sys_Error ("Host_Error outside CSQC draw on worker: %s", string);
 	inerror = true;
+	PR_BonkSkinAbort (qcvm);
+	if (!recover_client_qc && qcvm != &sv.qcvm)
+		PR_BonkSkinAbort (&sv.qcvm);
 	SV_CoopFriendlyFireReset ();
 	SV_ClearVRWeaponPoseScope ();
 	SV_CoopRespawnCancelBorrowedPolicy (NULL, NULL);

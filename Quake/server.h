@@ -732,6 +732,7 @@ unsigned int SV_VRQBJ3MeleeContactProfile (void);
 unsigned int SV_VREnyoMeleeContactProfile (void);
 /* Exact native Bonk identity and first-outcome readiness. */
 qboolean SV_BonkHammerProgramLoaded (void);
+void SV_BonkHammerCacheProgram (void);
 qboolean SV_BonkHammerWeaponSelected (edict_t *ent);
 qboolean SV_BonkHammerAttackReady (edict_t *ent);
 int SV_VRStockAxeTraceStatement (void);
