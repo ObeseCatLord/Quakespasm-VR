@@ -437,7 +437,9 @@ def fresh_build(root, entry, manifest, archive, inputs, tools):
     powershell = tools / 'winboat-powershell'
     scp = tools / 'winboat-scp'
     namespace = 'qsvr-release-' + entry['production_revision'][:12] + '-' + entry['archive_sha256'][:12] + '-' + uuid.uuid4().hex
-    expression = ("$ErrorActionPreference='Stop'; $p=Join-Path $env:USERPROFILE " +
+    # First-use module progress is CLIXML on the merged SSH stream, not JSON.
+    expression = ("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "
+                  "$p=Join-Path $env:USERPROFILE " +
                   ps_string('Documents\\Codex\\' + namespace) +
                   "; if(Test-Path -LiteralPath $p){throw 'Guest namespace exists'}; "
                   "New-Item -ItemType Directory -Path $p | Out-Null; "
