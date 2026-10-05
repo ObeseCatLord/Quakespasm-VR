@@ -43,3 +43,7 @@ helgrind.log
 
 # Visual Studio per-user settings
 *.user
+
+# Local release settings and Python caches (never distribution inputs).
+Packaging/Release/local*.json
+Packaging/Release/**/__pycache__/

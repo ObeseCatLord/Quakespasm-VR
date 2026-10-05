@@ -1,5 +1,31 @@
 # Peril calibration/roster and desktop wheel qualification
 
+## Published packages
+
+The engine update is committed and pushed at
+`ad198cf7b27d04bfa10f87478e9dd1745e8bb28f`. All three packages use the
+same source archive (`ed5d452caf360c95f5d8a8d62b9abd15d21a88524f01bc6a5e6b6fef29863505`).
+Native Linux, native ARM64 and native Windows Release builds passed their
+production package checks. Linux/ARM packaged dedicated startup passed without
+changing the live Foundry server. Windows runtime presentation remains untested.
+
+The complete Linux runtime is deployed to Straight; its existing launcher and
+wrapper hashes were preserved, and only the two old engine executables were
+backed up. R2's public 2.0 updater metadata and objects were verified before
+activation. The existing GitHub `v2.0.0` release now carries these runtimes plus
+`SHA256SUMS`; asset sizes and server SHA-256 digests match. Its original tag was
+retained, and release notes link the exact current engine source commit.
+
+| Download | SHA-256 |
+| --- | --- |
+| Linux x86-64 | `3682f714748e67f99cf680f7557f8cd65d372b3c91d811a38a9ccf09a79d04d9` |
+| Linux ARM64 | `fe66b44a7e9d879a5c4a9895b27af2cbb907192436b563946156ebf752760453` |
+| Windows x64 | `b2881eb966891ecdf0ad0498f968d2636c26f3e552363f67003009a0eda21b07` |
+
+Source-access materials remain separately hosted on R2, not GitHub attachments.
+Later automation/documentation commits do not change the engine revision in
+these already-qualified packages.
+
 2026-10-04. Implementation reuses the existing calibration, shared wheel
 catalog, render snapshot, SDL mouse and kbutton/command owners. Astra xhigh
 review found no remaining material source findings after the corrections in
