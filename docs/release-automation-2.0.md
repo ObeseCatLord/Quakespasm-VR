@@ -139,3 +139,15 @@ review dispositions are recorded in
 [the implementation plan](release-automation-2.0-plan.md). End checks for the
 coordinator use that exact cohort and isolated failure fixtures; no new engine
 build is needed solely for these scripts and instructions.
+
+The mod-browser fix at `c02ef0bf9fb78f989a6612909371a07addd5bfee` also
+qualified fresh Linux, native ARM64 and Windows builds through the coordinator.
+Straight deployment preserved the launcher and backed up only engine entry
+points. The first Windows attempt stopped before compilation because first-use
+PowerShell module progress contaminated its JSON workspace response. Suppressing
+progress for that response keeps native errors fatal; an injected-progress check
+returned clean JSON. The failed namespace was retained, and a fresh Windows
+attempt built and passed independent source, compiler and artifact verification.
+The matching packages were published to the R2 `2.0` channel and the existing
+GitHub `v2.0.0` release; public objects, updater metadata and release attachment
+hashes passed the coordinator's verification.
