@@ -796,7 +796,7 @@ static void R_SetupAliasLighting (entity_t *e, vec3_t *shadevector, vec3_t *ligh
 	// add dlights
 	for (i = 0; i < MAX_DLIGHTS; i++)
 	{
-		if (cl_dlights[i].die >= cl.time)
+		if (r_dynamic.value && cl_dlights[i].die >= cl.time)
 		{
 			VectorSubtract (e->origin, cl_dlights[i].origin, dist);
 			add = cl_dlights[i].radius - VectorLength (dist);
@@ -939,7 +939,8 @@ static int R_AliasModelMatrixInternal (
 			header_origin[axis] = paliashdr->scale_origin[axis];
 		}
 
-		const double c_value = ((double)vr_world_scale.value / 0.75) * (double)vr_gunmodelscale.value;
+		const double c_value = ((double)vr_world_scale.value / 0.75) * (double)vr_gunmodelscale.value *
+			(held_recipe ? 1.0 : (double)VR_WeaponCalibrationModelOffsetScale (e->model, paliashdr));
 		if (!isfinite (c_value) || c_value == 0.0 || fabs (c_value) > FLT_MAX ||
 			!isfinite (vr_gunmodely.value))
 			return -1;

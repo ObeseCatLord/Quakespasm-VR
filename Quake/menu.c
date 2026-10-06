@@ -208,6 +208,7 @@ extern cvar_t scr_style;
 extern cvar_t autoload;
 extern cvar_t autofastload;
 extern cvar_t r_rtshadows;
+extern cvar_t r_gpulightmapupdate;
 extern cvar_t r_clustered_lights;
 extern cvar_t r_particles;
 extern cvar_t r_surface_dither;
@@ -2265,7 +2266,9 @@ static qboolean M_GraphicsOptionIsSlider (graphics_option_t option)
 {
 	switch (option)
 	{
-	case GFX_GAMMA: case GFX_CONTRAST: case GFX_FOV: case GFX_MAX_FPS:
+	case GFX_FOV:
+		return !vulkan_globals.stereo_active;
+	case GFX_GAMMA: case GFX_CONTRAST: case GFX_MAX_FPS:
 	case GFX_AO_RADIUS: case GFX_AO_STRENGTH: case GFX_DITHER: case GFX_SOFT_DISTANCE:
 	case GFX_PARTICLE_DENSITY: case GFX_RAIN_QUANTITY: case GFX_SKY_ALPHA: case GFX_SKY_FOG:
 	case GFX_SKY_WIND: case GFX_WATER_ALPHA: case GFX_LAVA_ALPHA: case GFX_SLIME_ALPHA:
@@ -2530,7 +2533,9 @@ static qboolean M_GraphicsAdjust (int dir, qboolean mouse)
 	case GFX_GAMMA: changed = M_GraphicsSetSlider ("gamma", .5f, 1, .05f, true, mouse, clamped_mouse, dir); break;
 	case GFX_CONTRAST: changed = M_GraphicsSetSlider ("contrast", 1, 2, .1f, false, mouse, clamped_mouse, dir); break;
 	case GFX_FOV:
-		changed = M_GraphicsSetSlider ("fov", 80, 130, 5, false, mouse, clamped_mouse, dir); break;
+		if (!vulkan_globals.stereo_active)
+			changed = M_GraphicsSetSlider ("fov", 80, 130, 5, false, mouse, clamped_mouse, dir);
+		break;
 	case GFX_PALETTE: Cvar_SetValueQuick (&vid_palettize, !vid_palettize.value); changed = true; break;
 	case GFX_FILTER: Cvar_SetValueQuick (&vid_filter, !vid_filter.value); changed = true; break;
 	case GFX_UI_FILTER: Cvar_SetValueQuick (&scr_guifilter, ((int)scr_guifilter.value + 3 + dir) % 3); changed = true; break;
@@ -2639,7 +2644,7 @@ static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_si
 	{
 	case GFX_FOV:
 		q_strlcpy (text, vulkan_globals.stereo_active ?
-			"Desktop FOV; headset view is unchanged" : "Desktop field of view", text_size);
+			"Desktop-only preference; OpenXR owns headset FOV" : "Desktop field of view", text_size);
 		break;
 	case GFX_VIDEO:
 		q_strlcpy (text, vulkan_globals.stereo_active ?
@@ -2688,8 +2693,18 @@ static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_si
 		}
 		break;
 	case GFX_SHADOWS:
-		q_strlcpy (text, vulkan_globals.ray_query ? "Off is always available" :
-			(r_rtshadows.value ? "Unavailable; activate to clear request" : "Ray-traced shadows unavailable"), text_size);
+		if (!vulkan_globals.ray_query)
+			q_strlcpy (text, r_rtshadows.value ? "Unavailable; activate to clear request" : "Ray-traced shadows unavailable", text_size);
+		else if (!r_rtshadows.value)
+			q_strlcpy (text, "Ray-traced shadows requested off", text_size);
+		else if (!r_gpulightmapupdate.value)
+			q_strlcpy (text, "Requested shadows inactive: CPU lightmaps; Off is editable", text_size);
+		else if (!r_dynamic.value)
+			q_strlcpy (text, "Requested shadows inactive: Dynamic Lights off; Off is editable", text_size);
+		else if (r_rtshadows.value < 2)
+			q_strlcpy (text, "Low: transient light shadows; persistent lights need Medium/High", text_size);
+		else
+			q_strlcpy (text, "Medium/High: transient and persistent light shadows", text_size);
 		break;
 	case GFX_AO:
 		q_strlcpy (text, R_SSAOSupported () ? "Contact occlusion near entity models; baked wall lighting stays visible" : "Ambient occlusion unsupported", text_size);
@@ -2698,7 +2713,7 @@ static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_si
 		q_strlcpy (text, R_SSAOSupported () ? "Ambient occlusion quality" : "Ambient occlusion unsupported", text_size);
 		break;
 	case GFX_AO_VR:
-		q_strlcpy (text, vulkan_globals.stereo_active ? "Shared desktop and VR quality setting" : "Only applies in VR", text_size);
+		q_strlcpy (text, vulkan_globals.stereo_active ? "VR-only full/half AO evaluation; shared AO quality unchanged" : "Only applies in VR", text_size);
 		break;
 	case GFX_MODEL_MOVE:
 		q_strlcpy (text, "Applies to eligible moving entities", text_size);
@@ -2713,6 +2728,12 @@ static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_si
 		q_snprintf (text, text_size, "Choose classic or %d mounted presets",
 			q_max (0, graphics_particle_preset_count - 1));
 		break;
+	case GFX_SPARKS:
+		q_strlcpy (text, "Scripted line sparks; reloads current particle definitions", text_size);
+		break;
+	case GFX_BEAMS:
+		q_strlcpy (text, "Scripted beams; reloads current particle definitions", text_size);
+		break;
 	case GFX_WATER_ALPHA:
 		q_snprintf (text, text_size, "Req %.2f, now %.2f. Saved per-game; map may override.",
 			r_wateralpha.value, GL_WaterAlphaForTextureType (TEXTYPE_WATER));
@@ -2725,15 +2746,21 @@ static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_si
 			(option == GFX_SLIME_ALPHA ? TEXTYPE_SLIME : TEXTYPE_TELE);
 		const float value = Cvar_VariableValue (name);
 		if (value == 0.0f)
-			q_snprintf (text, text_size, "Req inherit, now %.2f. Session; zero inherits water/map.",
+			q_snprintf (text, text_size, "Req inherit, now %.2f. Saved per-game; zero inherits water/map.",
 				GL_WaterAlphaForTextureType (type));
 		else
-			q_snprintf (text, text_size, "Req %.2f, now %.2f. Session; map may override.", value,
+			q_snprintf (text, text_size, "Req %.2f, now %.2f. Saved per-game; map may override.", value,
 				GL_WaterAlphaForTextureType (type));
 		break;
 	}
-	case GFX_FAST_SKY: case GFX_SKY_ALPHA: case GFX_SKY_FOG:
-		q_strlcpy (text, "Session setting; map sky affects result", text_size);
+	case GFX_FAST_SKY:
+		q_strlcpy (text, "Saved globally; uses map sky's flat color", text_size);
+		break;
+	case GFX_SKY_ALPHA:
+		q_strlcpy (text, "Saved per-game; classic sky cloud opacity", text_size);
+		break;
+	case GFX_SKY_FOG:
+		q_strlcpy (text, "Saved per-game; sky reset/map may override", text_size);
 		break;
 	case GFX_SKY_WIND:
 		q_strlcpy (text, "Archived; requires wind-enabled sky", text_size);
@@ -2742,7 +2769,7 @@ static void M_GraphicsHelp (graphics_option_t option, char *text, size_t text_si
 		q_strlcpy (text, "Sampler change applies immediately", text_size);
 		break;
 	case GFX_FAR_CLIP:
-		q_strlcpy (text, "Archived draw-distance preference", text_size);
+		q_strlcpy (text, "Skybox distance and clustered depth range; no world far plane", text_size);
 		break;
 	default:
 		q_strlcpy (text, "Left/right, click, or drag sliders", text_size);
@@ -2858,7 +2885,17 @@ static void M_GraphicsDrawRow (cb_context_t *cbx, graphics_option_t option, int 
 	{
 	case GFX_GAMMA: name="Gamma"; slider=(1-vid_gamma.value)/.5f; value=va("%.2f",vid_gamma.value); is_slider=true; break;
 	case GFX_CONTRAST: name="Contrast"; slider=vid_contrast.value-1; value=va("%.1f",vid_contrast.value); is_slider=true; break;
-	case GFX_FOV: name="Field of View"; slider=(scr_fov.value-80)/50; value=va("%.0f",scr_fov.value); is_slider=true; break;
+	case GFX_FOV:
+		name="Field of View";
+		if (vulkan_globals.stereo_active)
+			value="Runtime";
+		else
+		{
+			slider=(scr_fov.value-80)/50;
+			value=va("%.0f",scr_fov.value);
+			is_slider=true;
+		}
+		break;
 	case GFX_PALETTE: name="8-bit Color"; value=vid_palettize.value?"on":"off"; break;
 	case GFX_FILTER: name="World Textures"; value=vid_filter.value?"classic":"smooth"; break;
 	case GFX_UI_FILTER: name="UI Textures"; value=((int)scr_guifilter.value==0)?"classic":((int)scr_guifilter.value==1)?"smooth":"xBR"; break;
@@ -2875,7 +2912,12 @@ static void M_GraphicsDrawRow (cb_context_t *cbx, graphics_option_t option, int 
 	case GFX_LIVE_PREVIEW: name="Live Preview"; value=ui_live_preview.value?"on":"off"; break;
 	case GFX_DYNAMIC_LIGHTS: name="Dynamic Lights"; value=r_dynamic.value?"on":"off"; break;
 	case GFX_LIGHT_MODE: name="Lighting Mode"; value=r_clustered_lights.value?"Clustered":"Native"; break;
-	case GFX_SHADOWS: name="Dynamic Shadows"; value=((const char *[]){"off","low","medium","high"})[(int)CLAMP(0,r_rtshadows.value,3)]; break;
+	case GFX_SHADOWS:
+		name="Dynamic Shadows";
+		value=((const char *[]){"off","low","medium","high"})[(int)CLAMP(0,r_rtshadows.value,3)];
+		if (r_rtshadows.value && (!vulkan_globals.ray_query || !r_gpulightmapupdate.value || !r_dynamic.value))
+			value=va("%s -> off", value);
+		break;
 	case GFX_AO: name="Ambient Occlusion"; value=R_SSAOSupported()?((const char *[]){"off","low","medium","high"})[(int)CLAMP(0,r_ssao.value,3)]:"N/A"; break;
 	case GFX_AO_RADIUS: name="AO Radius"; slider=(Cvar_VariableValue("r_ssao_radius")-1)/127; value=va("%.0f",Cvar_VariableValue("r_ssao_radius")); is_slider=true; break;
 	case GFX_AO_STRENGTH: name="AO Strength"; slider=Cvar_VariableValue("r_ssao_strength"); value=va("%.2f",slider); is_slider=true; break;
@@ -2910,7 +2952,7 @@ static void M_GraphicsDrawRow (cb_context_t *cbx, graphics_option_t option, int 
 	case GFX_TELE_ALPHA: name="Tele Opacity"; slider=Cvar_VariableValue("r_telealpha"); value=slider?va("%.2f",slider):"auto"; is_slider=true; break;
 	case GFX_AUTO_LOD: name="Auto Texture LOD"; value=r_lodbias.value?"on":"off"; break;
 	case GFX_LOD_BIAS: name="Texture LOD Bias"; slider=(gl_lodbias.value+2)/4; value=va("%.2f",gl_lodbias.value); is_slider=true; break;
-	case GFX_FAR_CLIP: name="Far Clip"; slider=(gl_farclip.value-1024)/31744; value=va("%.0f",gl_farclip.value); is_slider=true; break;
+	case GFX_FAR_CLIP: name="Sky Distance"; slider=(gl_farclip.value-1024)/31744; value=va("%.0f",gl_farclip.value); is_slider=true; break;
 	case GFX_ZFIX: name="Depth Fix"; value=gl_zfix.value?"on":"off"; break;
 	}
 	M_GraphicsPrintValue (cbx, MENU_LABEL_X, y, name,
@@ -4540,15 +4582,28 @@ static void M_VROptions_Key (int key)
 	}
 }
 
+static void M_VROptions_FoveationValue (char *text, size_t text_size)
+{
+	static const char *const requests[] = {"off", "fixed", "eye"};
+	const int requested = VRF_RequestedMode (vr_foveation.value);
+	// These renderer flags describe configured paths, not successful gaze acquisition.
+	const qboolean configured = vulkan_globals.stereo_active &&
+		(vulkan_globals.openxr_fragment_shading_rate_active || vulkan_globals.openxr_fragment_density_map_active);
+	// Both backends deliberately use full rate in menus; paused means currently off.
+	const char *now = requested != VRF_MODE_OFF && configured ? "paused" : "off";
+	if (requested == VRF_MODE_OFF)
+		q_strlcpy (text, "off", text_size);
+	else
+		q_snprintf (text, text_size, "%s (%s)", requests[requested], now);
+}
+
 static void M_VROptions_Draw (cb_context_t *cbx)
 {
-	static const char *const foveation_modes[] = {"off", "fixed", "eye tracked"};
 	static const char *const mirror_modes[] = {"off", "left eye", "right eye"};
 	static const char *const follow_modes[] = {"fixed", "follow", "head locked"};
 	static const char *const crosshair_modes[] = {"off", "point", "line"};
 	qpic_t *p;
 	const int top = MENU_TOP;
-	const int foveation = VRF_RequestedMode (vr_foveation.value);
 	const int mirror = isfinite (vr_mirror.value) && vr_mirror.value >= 0.0f &&
 		vr_mirror.value <= 2.0f ? (int)vr_mirror.value : 1;
 	const int follow = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
@@ -4590,8 +4645,10 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 		return;
 	}
 
+	char foveation_value[16];
+	M_VROptions_FoveationValue (foveation_value, sizeof (foveation_value));
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, "Foveation");
-	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_modes[foveation]);
+	M_Print (cbx, MENU_VALUE_X - 2 * CHARACTER_SIZE, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_value);
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MIRROR, "Desktop Mirror");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MIRROR, mirror_modes[mirror]);
 
@@ -4631,9 +4688,12 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_MODE, "Crosshair Mode");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_MODE, crosshair_modes[M_VROptions_CrosshairMode ()]);
 
-	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_DEPTH, "Crosshair Depth");
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_DEPTH, "Dot Range");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_DEPTH,
-		crosshair_depth == 0.0f ? "wall trace" : va ("%.1f m", crosshair_depth));
+		crosshair_depth == 0.0f ? "auto" : va ("max %.1f m", crosshair_depth));
+	if (vr_options_cursor == VR_OPT_CROSSHAIR_DEPTH)
+		M_PrintWhite (cbx, 16, top + CHARACTER_SIZE * VR_OPTIONS_ITEMS,
+			"0 auto; >0 max metres; misses hide");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_SIZE, "Crosshair Size");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_CROSSHAIR_SIZE, va ("%.1f px", crosshair_pixel_size));

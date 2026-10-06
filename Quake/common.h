@@ -420,6 +420,7 @@ typedef struct pack_s
 	int			handle;
 	int			numfiles;
 	packfile_t *files;
+	qboolean rerelease_model_source; // immutable mount-time verified pack provenance
 } pack_t;
 
 typedef struct searchpath_s
@@ -458,6 +459,8 @@ void		COM_WriteFile (const char *filename, const void *data, int len);
 qfilesize_t COM_OpenFile (const char *filename, int *handle, unsigned int *path_id);
 qfilesize_t COM_FOpenFile (const char *filename, FILE **file, unsigned int *path_id);
 qboolean	COM_FileExists (const char *filename, unsigned int *path_id);
+qboolean COM_FileExistsEx (const char *filename, unsigned int *path_id,
+	qboolean *rerelease_model_source);
 void		COM_CloseFile (int h);
 
 byte *COM_LoadFile (const char *path, unsigned int *path_id);

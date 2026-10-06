@@ -36,10 +36,10 @@ static float		   skymins[2][6], skymaxs[2][6];
 static gltexture_t *solidskytexture, *alphaskytexture;
 
 extern cvar_t gl_farclip;
-cvar_t		  r_fastsky = {"r_fastsky", "0", CVAR_NONE};
+cvar_t		  r_fastsky = {"r_fastsky", "0", CVAR_ARCHIVE};
 cvar_t		  r_sky_quality = {"r_sky_quality", "12", CVAR_NONE};
-cvar_t		  r_skyalpha = {"r_skyalpha", "1", CVAR_NONE};
-cvar_t		  r_skyfog = {"r_skyfog", "0.5", CVAR_NONE};
+cvar_t		  r_skyalpha = {"r_skyalpha", "1", CVAR_ARCHIVE_GAME};
+cvar_t		  r_skyfog = {"r_skyfog", "0.5", CVAR_ARCHIVE_GAME};
 cvar_t		  r_skywind = {"r_skywind", "1", CVAR_ARCHIVE};
 cvar_t		  r_skyroom = {"r_skyroom", "0", CVAR_ARCHIVE};
 qboolean skyroom_enabled;
@@ -622,7 +622,8 @@ void Sky_ClearAll (void)
 	solidskytexture = NULL;
 	alphaskytexture = NULL;
 	max_skytexture_index = -1;
-	Cvar_SetQuick (&r_skyfog, r_skyfog.default_string);
+	// Clear map-authored runtime fog without discarding the saved preference.
+	skyfog = r_skyfog.value;
 }
 
 static void Sky_SetSkyRoom (const char *value)

@@ -94,10 +94,12 @@ typedef struct
 	int poseverttype;
 	int slot;
 	qmodel_t *model;
+	const aliashdr_t *geometry;
 	char model_name[MAX_QPATH];
 	float world_scale;
 	float gunmodelscale;
 	float gunmodelpitch;
+	float model_offset_scale;
 	vec3_t frozen_origin;
 	vec3_t frozen_hand_angles;
 	vec3_t frozen_model_angles;
@@ -1939,7 +1941,7 @@ static qboolean VR_CalibrationAdjustGameplayContext(int *hand_out)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame();
 	const vrxr_device_t *head;
-	const vrxr_device_t *hand;
+	vrxr_device_t hand;
 	int dominant;
 
 	if (hand_out)
@@ -1966,9 +1968,8 @@ static qboolean VR_CalibrationAdjustGameplayContext(int *hand_out)
 	dominant = VR_InputDominantPhysicalHand();
 	if (dominant < 0 || dominant > 1)
 		return false;
-	hand = &frame->devices[dominant + 1];
-	if (!hand->valid || !hand->tracked || !hand->connected ||
-		hand->kind != VRXR_DEVICE_HAND || hand->hand != dominant)
+	if (!VR_LocomotionControllerDevice(frame, dominant, &hand) ||
+		!hand.tracked || !hand.connected)
 		return false;
 
 	if (hand_out)
@@ -2046,6 +2047,9 @@ static qboolean VR_CalibrationAdjustStateValid(
 			adjustment->model_name) ||
 		VR_FindCalibrationSlot(adjustment->model_name) != adjustment->slot ||
 		alias_header->poseverttype != adjustment->poseverttype ||
+		alias_header != adjustment->geometry ||
+		(!adjustment->muzzle_mode &&
+		 VR_WeaponCalibrationModelOffsetScale(model, alias_header) != adjustment->model_offset_scale) ||
 		!VR_CalibrationPoseTypeIsSupported(alias_header->poseverttype))
 	{
 		if (reason_out)
@@ -2247,6 +2251,8 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 	adjustment->slot = slot;
 	adjustment->created_slot = created_slot;
 	adjustment->model = model;
+	adjustment->geometry = alias_header;
+	adjustment->model_offset_scale = VR_WeaponCalibrationModelOffsetScale(model, alias_header);
 	q_strlcpy(adjustment->model_name, model->name,
 		sizeof(adjustment->model_name));
 	adjustment->world_scale = vr_world_scale.value;
@@ -2411,7 +2417,7 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 
 	VectorSubtract(adjustment->frozen_origin, live_origin, world_delta);
 	inverse_scale = (adjustment->world_scale / 0.75f) *
-		adjustment->gunmodelscale;
+		adjustment->gunmodelscale * adjustment->model_offset_scale;
 	if (!isfinite(inverse_scale) || inverse_scale <= 0.0f ||
 		!VR_LocomotionWorldToModelOffsetChecked(world_delta,
 			adjustment->frozen_model_angles, inverse_scale,
@@ -3228,7 +3234,7 @@ qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 	const mod_held_melee_recipe_t *recipe = Mod_GetHeldMeleeRecipe (model_name);
 	if (recipe && recipe->contact_profile == VR_WEAPON_CONTACT_PROFILE_BONK)
 		out->enabled = true; // Input additionally requires the exact Bonk/head offer.
-	out->speed = 1.25f;
+	out->speed = 1.5f;
 	out->ready_frame = 0;
 	slot = VR_FindCalibrationSlot(model_name);
 	if (slot >= 0)
@@ -3246,6 +3252,16 @@ qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 		out->has_ready_frame = profile->has_ready_frame;
 	}
 	return out->enabled;
+}
+
+float VR_WeaponCalibrationModelOffsetScale(const qmodel_t *model,
+	const aliashdr_t *geometry)
+{
+	if (!model || !geometry || !Mod_IsRereleaseReplacementGeometry(model, geometry))
+		return 1.0f;
+	if (!q_strcasecmp(model->name, "progs/v_axe.mdl"))
+		return 1.0f / 3.0f;
+	return !q_strcasecmp(model->name, "progs/v_shot2.mdl") ? 1.0f : 0.5f;
 }
 
 qboolean VR_WeaponCalibrationLookupHeld(const char *model_name,

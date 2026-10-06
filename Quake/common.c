@@ -2664,7 +2664,8 @@ qboolean COM_IsRereleaseModelAsset (const char *filename)
 		!q_strcasecmp (extension, "lmp");
 }
 
-static qfilesize_t COM_FindFile (const char *filename, int *handle, FILE **file, unsigned int *path_id)
+static qfilesize_t COM_FindFile (const char *filename, int *handle, FILE **file,
+	unsigned int *path_id, qboolean *rerelease_model_source)
 {
 	searchpath_t *search;
 	char		  netpath[MAX_OSPATH];
@@ -2675,6 +2676,8 @@ static qfilesize_t COM_FindFile (const char *filename, int *handle, FILE **file,
 		Sys_Error ("COM_FindFile: both handle and file set");
 
 	file_from_pak = 0;
+	if (rerelease_model_source)
+		*rerelease_model_source = false;
 
 	//
 	// search through the path, one element at a time
@@ -2693,6 +2696,8 @@ static qfilesize_t COM_FindFile (const char *filename, int *handle, FILE **file,
 				// found it!
 				com_filesize = pak->files[i].filelen;
 				file_from_pak = 1;
+				if (rerelease_model_source)
+					*rerelease_model_source = pak->rerelease_model_source;
 				if (path_id)
 					*path_id = search->path_id;
 				if (handle)
@@ -2774,7 +2779,13 @@ Returns whether the file is found in the quake filesystem.
 */
 qboolean COM_FileExists (const char *filename, unsigned int *path_id)
 {
-	qfilesize_t ret = COM_FindFile (filename, NULL, NULL, path_id);
+	return COM_FileExistsEx (filename, path_id, NULL);
+}
+
+qboolean COM_FileExistsEx (const char *filename, unsigned int *path_id,
+	qboolean *rerelease_model_source)
+{
+	qfilesize_t ret = COM_FindFile (filename, NULL, NULL, path_id, rerelease_model_source);
 	return (ret == -1) ? false : true;
 }
 
@@ -2789,7 +2800,7 @@ it may actually be inside a pak file
 */
 qfilesize_t COM_OpenFile (const char *filename, int *handle, unsigned int *path_id)
 {
-	return COM_FindFile (filename, handle, NULL, path_id);
+	return COM_FindFile (filename, handle, NULL, path_id, NULL);
 }
 
 /*
@@ -2802,7 +2813,7 @@ into the file.
 */
 qfilesize_t COM_FOpenFile (const char *filename, FILE **file, unsigned int *path_id)
 {
-	return COM_FindFile (filename, NULL, file, path_id);
+	return COM_FindFile (filename, NULL, file, path_id, NULL);
 }
 
 /*
@@ -2972,7 +2983,12 @@ Loads the header and directory, adding the files at the beginning
 of the list so they override previous pack files.
 =================
 */
-static pack_t *COM_LoadPackFile (const char *packfile, int packhandle, qfilesize_t filesize)
+static qboolean COM_VerifyRereleaseModelPack (int handle, qfilesize_t filesize);
+
+/* The fallback admission has already verified this same open handle before
+ * entering the fatal pack parser. Ordinary mounts verify candidates here. */
+static pack_t *COM_LoadPackFile (const char *packfile, int packhandle,
+	qfilesize_t filesize, qboolean rerelease_verified)
 {
 	dpackheader_t  header;
 	int			   i;
@@ -3043,6 +3059,8 @@ static pack_t *COM_LoadPackFile (const char *packfile, int packhandle, qfilesize
 	pack->handle = packhandle;
 	pack->numfiles = numpackfiles;
 	pack->files = newfiles;
+	pack->rerelease_model_source = rerelease_verified ||
+		(filesize == PAK0_SIZE_RERELEASE && COM_VerifyRereleaseModelPack (packhandle, filesize));
 
 	// Sys_Printf ("Added packfile %s (%i files)\n", packfile, numpackfiles);
 	return pack;
@@ -3238,7 +3256,7 @@ static void COM_AddRereleaseModelPack (const char *root)
 		return;
 	}
 	old_modified = com_modified;
-	pak = COM_LoadPackFile (filename, handle, filesize);
+	pak = COM_LoadPackFile (filename, handle, filesize, true);
 	com_modified = old_modified;
 	if (!pak)
 		return;
@@ -3373,7 +3391,7 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 		packfilesize = Sys_FileOpenRead (pakfile, &packhandle);
 		if (packfilesize < 0)
 			break;
-		pak = COM_LoadPackFile (pakfile, packhandle, packfilesize);
+		pak = COM_LoadPackFile (pakfile, packhandle, packfilesize, false);
 		if (pak)
 		{
 			search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
@@ -3403,7 +3421,7 @@ static void COM_AddGameDirectoryRoot (const char *base, const char *dir, unsigne
 			qboolean pak0_modified = com_modified;
 			Sys_MemFileOpenRead (vkquake_pak_extracted, vkquake_pak_size_extracted, &packhandle);
 			pak = COM_LoadPackFile ("vkquake.pak", packhandle,
-				(qfilesize_t)vkquake_pak_size_extracted);
+				(qfilesize_t)vkquake_pak_size_extracted, false);
 			search = (searchpath_t *)Mem_Alloc (sizeof (searchpath_t));
 			search->path_id = path_id;
 			search->pack = pak;
