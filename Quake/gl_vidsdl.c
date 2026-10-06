@@ -4771,8 +4771,8 @@ static void GL_OpenXRRetireImages (void *unused)
 		vid.recalc_refdef = true;
 	}
 	vulkan_globals.stereo_active = false;
-	/* TexMgr owns combined image-sampler descriptors. Restore the desktop
-	 * sampler choice only after the OpenXR resources are idle and retired. */
+	/* Refresh TexMgr descriptors only after borrowed XR resources retire.
+	 * Desktop and stereo share the selected texture filter and anisotropy. */
 	if (vulkan_globals.device != VK_NULL_HANDLE)
 		TexMgr_UpdateTextureDescriptorSets ();
 	memset (&openxr_frame, 0, sizeof (openxr_frame));
@@ -4846,8 +4846,8 @@ static void GL_OpenXRAttach (void)
 		return;
 	}
 	vulkan_globals.stereo_active = true;
-	/* The descriptor sets were populated for desktop filtering. Rebind the
-	 * OpenXR-only anisotropic sampler choice before recording stereo work. */
+	/* Refresh texture descriptors before recording stereo work; filter and
+	 * anisotropy preferences are shared with desktop. */
 	TexMgr_UpdateTextureDescriptorSets ();
 	vulkan_globals.stereo_color_format = VRXR_VulkanColorFormat ();
 	vid.width = width;
