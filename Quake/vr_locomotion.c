@@ -44,6 +44,81 @@ static qboolean VR_LocomotionFiniteVec3 (const float value[3])
 	return value && isfinite (value[0]) && isfinite (value[1]) && isfinite (value[2]);
 }
 
+qboolean VR_LocomotionControllerDevice (const vrxr_frame_t *frame,
+	int physical_hand, vrxr_device_t *out)
+{
+	vrxr_device_t device;
+	float controller[3][3], lever[3];
+	/* Monado Index grip Euler degrees (15.392, -2.071, .303), Rz*Ry*Rx;
+	 * right hand mirrors Y/Z. Constants avoid repeated trig per consumer. */
+	static const float grip_rotation[2][3][3] = {
+		{{0.9993328387f, -0.0146902851f, -0.0334375996f},
+		 {0.0052848687f, 0.9640682673f, -0.2656020446f},
+		 {0.0361378985f, 0.2652481319f, 0.9635027145f}},
+		{{0.9993328387f, 0.0146902851f, 0.0334375996f},
+		 {-0.0052848687f, 0.9640682673f, -0.2656020446f},
+		 {-0.0361378985f, 0.2652481319f, 0.9635027145f}}
+	};
+	const float translation[3] = {0.0f, -0.015f, 0.13f};
+
+	if (!out)
+		return false;
+	memset (out, 0, sizeof (*out));
+	if (!frame || physical_hand < 0 || physical_hand > 1)
+		return false;
+	device = frame->devices[physical_hand + 1];
+	if (!device.valid || device.kind != VRXR_DEVICE_HAND || device.hand != physical_hand)
+		return false;
+	for (int row = 0; row < 3; ++row)
+		for (int column = 0; column < 4; ++column)
+			if (!isfinite (device.matrix[row][column]))
+				return false;
+	if (frame->hands[physical_hand].profile != VRXR_PROFILE_INDEX)
+	{
+		*out = device;
+		return true;
+	}
+
+	/* Tcontroller = Tgrip * inverse(C). The lever is expressed in the XR
+	 * reference space, as are xrLocateSpace's linear/angular velocities. */
+	for (int row = 0; row < 3; ++row)
+	{
+		for (int column = 0; column < 3; ++column)
+		{
+			controller[row][column] = 0.0f;
+			for (int k = 0; k < 3; ++k)
+				controller[row][column] += device.matrix[row][k] * grip_rotation[physical_hand][column][k];
+			if (!isfinite (controller[row][column]))
+				return false;
+		}
+		lever[row] = 0.0f;
+		for (int k = 0; k < 3; ++k)
+			lever[row] -= controller[row][k] * translation[k];
+	}
+	for (int row = 0; row < 3; ++row)
+	{
+		memcpy (device.matrix[row], controller[row], sizeof (controller[row]));
+		device.matrix[row][3] += lever[row];
+		if (!isfinite (device.matrix[row][3]))
+			return false;
+	}
+	if (device.velocity_valid && device.angular_velocity_valid &&
+		VR_LocomotionFiniteVec3 (device.velocity) &&
+		VR_LocomotionFiniteVec3 (device.angular_velocity))
+	{
+		vec3_t spin;
+		CrossProduct (device.angular_velocity, lever, spin);
+		VectorAdd (device.velocity, spin, device.velocity);
+		device.velocity_valid = VR_LocomotionFiniteVec3 (device.velocity);
+	}
+	else
+		device.velocity_valid = false;
+	if (!device.velocity_valid)
+		VR_LocomotionZero (device.velocity);
+	*out = device;
+	return true;
+}
+
 static void VR_LocomotionRotMatFromAngles (const vec3_t angles, float mat[3][3])
 {
 	vec3_t mutable_angles;

@@ -32,6 +32,10 @@ qboolean VR_WeaponCalibrationLookupHeld(const char *model_name,
 										qboolean enhanced_format,
 										vec3_t out_offset,
 										float *out_scale);
+/* Pure selected-geometry provenance factor for held model offsets/scaling.
+ * Official rerelease companions only; muzzle offsets stay independent. */
+float VR_WeaponCalibrationModelOffsetScale(const qmodel_t *model,
+	const aliashdr_t *geometry);
 qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 										  qboolean enhanced_format,
 										  vec3_t out);

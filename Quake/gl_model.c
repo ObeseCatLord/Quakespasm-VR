@@ -136,6 +136,67 @@ static qboolean Mod_IsVerifiedRereleaseRangerAsset (const char *asset_name,
 		(const unsigned char *)buffer, expected_size) == expected_crc;
 }
 
+typedef struct md5_weapon_payload_pin_s
+{
+	const char *model_name, *mesh_name, *anim_name;
+	size_t mesh_size, anim_size;
+	unsigned int mesh_crc, anim_crc;
+} md5_weapon_payload_pin_t;
+
+/* Mesh pins: donor bd923e92 common.c; axe animation: donor vr.c:7063.
+ * Remaining animation pins: inspected installed official id1/pak0.pak on
+ * 2026-10-05, NOT donor records. Provenance: size 180815252, 1121 directory
+ * entries, directory CRC16 20578, directory SHA256
+ * a749064d016bc2e06838e020b9975b703c544c363dd4c43a30c39b5796351ade.
+ * Ranger mesh 178658/7911b9b0 and animation 331510/0561e50a both matched;
+ * all eight weapon meshes also matched the donor. These pins qualify the
+ * loaded bytes, independently of the existing winning-pack provenance. */
+static const md5_weapon_payload_pin_t md5_weapon_payload_pins[] = {
+	{"progs/v_axe.mdl", "progs/v_axe.md5mesh", "progs/v_axe.md5anim",
+		91226, 3814, 0x82833cbfu, 0x6d4e64b2u},
+	{"progs/v_light.mdl", "progs/v_light.md5mesh", "progs/v_light.md5anim",
+		80581, 4075, 0xd476b687u, 0xcb33ef1bu},
+	{"progs/v_nail.mdl", "progs/v_nail.md5mesh", "progs/v_nail.md5anim",
+		109665, 8211, 0x1a0eeacau, 0xb6693654u},
+	{"progs/v_nail2.mdl", "progs/v_nail2.md5mesh", "progs/v_nail2.md5anim",
+		76297, 7292, 0x368ad370u, 0x5e0b21f2u},
+	{"progs/v_rock.mdl", "progs/v_rock.md5mesh", "progs/v_rock.md5anim",
+		50580, 3126, 0x419a2f23u, 0xc55b2de9u},
+	{"progs/v_rock2.mdl", "progs/v_rock2.md5mesh", "progs/v_rock2.md5anim",
+		74453, 3846, 0x83715486u, 0x56c5bb5fu},
+	{"progs/v_shot.mdl", "progs/v_shot.md5mesh", "progs/v_shot.md5anim",
+		57743, 3125, 0x22e45f22u, 0x647afb40u},
+	{"progs/v_shot2.mdl", "progs/v_shot2.md5mesh", "progs/v_shot2.md5anim",
+		53629, 3101, 0xb583405fu, 0xc9ac015eu}
+};
+
+static const md5_weapon_payload_pin_t *Mod_VerifiedMD5WeaponMesh (const qmodel_t *mod,
+	const char *asset_name, const void *buffer, qfilesize_t size)
+{
+	for (size_t i = 0; i < countof (md5_weapon_payload_pins); ++i)
+	{
+		const md5_weapon_payload_pin_t *pin = &md5_weapon_payload_pins[i];
+		if (!q_strcasecmp (mod->name, pin->model_name) &&
+			Mod_IsVerifiedRereleaseRangerAsset (asset_name, pin->mesh_name,
+				buffer, size, pin->mesh_size, pin->mesh_crc))
+			return pin;
+	}
+	return NULL;
+}
+
+static void Mod_ResetMD5WeaponGeometry (qmodel_t *mod)
+{
+	mod->rerelease_md5_weapon_payload = false;
+	memset (&mod->md5_stockaxe_edge, 0, sizeof (mod->md5_stockaxe_edge));
+}
+
+static qboolean Mod_IsVerifiedMD5WeaponAnimation (const md5_weapon_payload_pin_t *pin,
+	const char *asset_name, const void *buffer, qfilesize_t size)
+{
+	return pin && Mod_IsVerifiedRereleaseRangerAsset (asset_name,
+		pin->anim_name, buffer, size, pin->anim_size, pin->anim_crc);
+}
+
 qboolean Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out)
 {
 	const md5_skeleton_data_t *data;
@@ -399,6 +460,17 @@ void *Mod_Extradata (qmodel_t *mod)
 	return Mod_Extradata_CheckSkin (mod, 0);
 }
 
+qboolean Mod_IsRereleaseReplacementGeometry (const qmodel_t *mod, const aliashdr_t *geometry)
+{
+	if (!mod || !geometry || mod->needload || mod->type != mod_alias ||
+		!mod->rerelease_md5_companion || !mod->extradata[PV_QUAKE1] ||
+		!mod->rerelease_md5_weapon_payload ||
+		(const byte *)geometry != mod->extradata[PV_MD5])
+		return false;
+
+	return geometry->poseverttype == PV_MD5 || geometry->poseverttype == PV_MD5_8;
+}
+
 static qboolean Mod_GetPinnedAxeEdge (qmodel_t *mod, int skinnum,
 	const char *name, uint32_t source_crc32, stockaxe_edge_t *out)
 {
@@ -427,6 +499,25 @@ static qboolean Mod_GetPinnedAxeEdge (qmodel_t *mod, int skinnum,
 qboolean Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
 {
 	return Mod_GetPinnedAxeEdge (mod, skinnum, "progs/v_axe.mdl", 0x2aa03605u, out);
+}
+
+qboolean Mod_GetMD5StockAxeEdge (const qmodel_t *mod, const aliashdr_t *selected,
+	int pose0, int pose1, stockaxe_edge_t *out)
+{
+	if (!out)
+		return false;
+	memset (out, 0, sizeof (*out));
+	if (!Mod_IsRereleaseReplacementGeometry (mod, selected) ||
+		strcmp (mod->name, "progs/v_axe.mdl") || pose0 != 0 || pose1 != 0 ||
+		selected->nextsurface || selected->numverts != 540 || selected->numtris != 756 ||
+		selected->numframes != 9 || selected->frames[0].firstpose != 0 ||
+		selected->frames[0].numposes != 1 ||
+		!mod->md5_stockaxe_edge.edge.valid ||
+		mod->md5_stockaxe_edge.edge.source_crc32 != 0x82833cbfu ||
+		mod->md5_stockaxe_edge.poseverttype != selected->poseverttype)
+		return false;
+	*out = mod->md5_stockaxe_edge.edge;
+	return true;
 }
 
 qboolean Mod_GetAlkalineAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out)
@@ -641,6 +732,8 @@ Mod_FreeModelMemory
 */
 static void Mod_FreeModelMemory (qmodel_t *mod)
 {
+	mod->rerelease_md5_companion = false;
+	Mod_ResetMD5WeaponGeometry (mod);
 	Mod_FreeAvatarBindSurfaces (mod->avatar_bind_surfaces);
 	mod->avatar_bind_surfaces = NULL;
 	Mod_FreeAvatarPropGPU (mod->avatar_prop_gpu);
@@ -1170,6 +1263,8 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 
 	if (!mod->needload)
 		return mod;
+	mod->rerelease_md5_companion = false;
+	Mod_ResetMD5WeaponGeometry (mod);
 	mod->is_generated_akimbo_half = false;
 	SAFE_FREE (mod->qbj3_palm_centroids);
 	mod->qbj3_palm_pose_count = 0;
@@ -1191,6 +1286,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	// 0 is an invalid path_id, starts at 1 for existing files:
 	unsigned int md5_enhanced_path_id = 0;
 	unsigned int md3_enhanced_path_id = 0;
+	qboolean md5_from_rerelease = false;
 
 	byte *buf = NULL;
 	qfilesize_t buf_filesize = -1;
@@ -1251,7 +1347,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 
 		// Search for the file but do not load it:
 		//   look for it in the filesystem or pack files
-		if (!COM_FileExists (md5_name, &md5_enhanced_path_id))
+		if (!COM_FileExistsEx (md5_name, &md5_enhanced_path_id, &md5_from_rerelease))
 			md5_enhanced_path_id = 0; // file not found
 
 		// this is a replacement only if its priority is >= MDL one, else discard it
@@ -1292,7 +1388,10 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 		// are properly filtered/loaded, we need to set mod->path_id = md5_enhanced_path_id temporarilly
 		unsigned int original_path_id = mod->path_id;
 		mod->path_id = md5_enhanced_path_id;
-		Mod_LoadMD5MeshModel (mod, md5_buf, md5_name, md5_size, NULL, -1);
+		/* Capture the selected mesh's source before animation/skin lookups.
+		 * A failed companion load never retains official provenance. */
+		mod->rerelease_md5_companion =
+			Mod_LoadMD5MeshModel (mod, md5_buf, md5_name, md5_size, NULL, -1) && md5_from_rerelease;
 		mod->path_id = original_path_id;
 		Mem_Free (md5_buf);
 	}
@@ -7153,8 +7252,87 @@ static qboolean Mod_LoadCustomAvatarSkin (qmodel_t *mod, aliashdr_t *surf)
 	return surf->gltextures[0][0] != NULL;
 }
 
+/* Match Shaders/skinning.inc: XYZ is already weighted by the loader; only
+ * translation uses the normalized packed byte weight. Never weight XYZ again. */
+static qboolean MD5_ReadyPoint (const byte *vertex, poseverttype_t format,
+	const jointpose_t *joints, size_t numjoints, vec3_t out)
+{
+	const byte *weights, *indices;
+	const float *x, *y, *z;
+	int count;
+	float sum = 0;
+	float weight_scale;
+	if (format == PV_MD5)
+	{
+		const md5vert_t *v = (const md5vert_t *)vertex;
+		count = NUM_JOINT_INFLUENCES_4_WEIGHT;
+		weights = v->joint_weights;
+		indices = v->joint_indices;
+		x = v->joint_position_x; y = v->joint_position_y; z = v->joint_position_z;
+	}
+	else if (format == PV_MD5_8)
+	{
+		const md5vert8_t *v = (const md5vert8_t *)vertex;
+		count = NUM_JOINT_INFLUENCES_8_WEIGHT;
+		weights = v->joint_weights;
+		indices = v->joint_indices;
+		x = v->joint_position_x; y = v->joint_position_y; z = v->joint_position_z;
+	}
+	else
+		return false;
+	for (int i = 0; i < count; ++i)
+		sum += weights[i] / 255.0f;
+	if (!joints || !numjoints || sum <= 0 || !isfinite (sum))
+		return false;
+	weight_scale = 1.0f / sum;
+	VectorCopy (vec3_origin, out);
+	for (int i = 0; i < count; ++i)
+	{
+		const float w = (weights[i] / 255.0f) * weight_scale;
+		if (indices[i] >= numjoints)
+			return false;
+		const float *mat = joints[indices[i]].mat;
+		for (int axis = 0; axis < 3; ++axis)
+			out[axis] += mat[axis * 4] * x[i] + mat[axis * 4 + 1] * y[i] +
+				mat[axis * 4 + 2] * z[i] + mat[axis * 4 + 3] * w;
+	}
+	return isfinite (out[0]) && isfinite (out[1]) && isfinite (out[2]);
+}
+
+static void MD5_CacheStockAxeEdge (const aliashdr_t *surf, const byte *vertices,
+	const jointpose_t *ready_joints, size_t pose_count, md5stockaxe_edge_t *out)
+{
+	md5stockaxe_edge_t cache = {0};
+	size_t stride;
+	memset (out, 0, sizeof (*out));
+	if (!surf || !vertices || surf->nextsurface || surf->numverts != 540 ||
+		surf->numverts_vbo != 540 || surf->numtris != 756 || surf->numframes != 9 ||
+		surf->numposes != 1 || pose_count != 9 || surf->numjoints <= 0 ||
+		surf->frames[0].firstpose != 0 || surf->frames[0].numposes != 1 ||
+		(surf->poseverttype != PV_MD5 && surf->poseverttype != PV_MD5_8))
+		return;
+	stride = surf->poseverttype == PV_MD5 ? sizeof (md5vert_t) : sizeof (md5vert8_t);
+	if (!MD5_ReadyPoint (vertices + 55 * stride, surf->poseverttype,
+		ready_joints, surf->numjoints, cache.edge.base) ||
+		!MD5_ReadyPoint (vertices + 54 * stride, surf->poseverttype,
+		ready_joints, surf->numjoints, cache.edge.tip))
+		return;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		cache.edge.base[axis] = cache.edge.base[axis] * surf->scale[axis] + surf->scale_origin[axis];
+		cache.edge.tip[axis] = cache.edge.tip[axis] * surf->scale[axis] + surf->scale_origin[axis];
+		if (!isfinite (cache.edge.base[axis]) || !isfinite (cache.edge.tip[axis]))
+			return;
+	}
+	cache.edge.source_crc32 = 0x82833cbfu;
+	cache.poseverttype = surf->poseverttype;
+	cache.edge.valid = true;
+	*out = cache;
+}
+
 static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	size_t numjoints, size_t nummeshes, qboolean verified_rerelease_mesh,
+	const md5_weapon_payload_pin_t *weapon_pin,
 	const void *anim_override, qfilesize_t anim_override_size,
 	qfilesize_t mesh_size)
 {
@@ -7194,6 +7372,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	size_t		retained_pose_bytes, retained_allocation_size;
 
 	md5animctx_t anim = {NULL};
+	qboolean verified_weapon_payload = false;
+	md5stockaxe_edge_t weapon_edge = {0};
 	float		 dist, radius = 0, yawradius = 0;
 	TEMP_ALLOC_DECL (md5vertinfo_t, vinfo);
 	TEMP_ALLOC_DECL (byte, poutvertexes);
@@ -7218,6 +7398,9 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	}
 	else if (!MD5Anim_Begin (&anim, fname, anim_override, anim_override_size))
 		return false;
+	/* Inspect the actual selected animation before MD5Anim_Load frees it. */
+	verified_weapon_payload = Mod_IsVerifiedMD5WeaponAnimation (weapon_pin,
+		anim.fname, anim.animfile, anim.filesize);
 	if (anim_override && (numjoints > R_AVATAR_MAX_JOINTS ||
 		nummeshes > MAX_SURFACES || anim.numjoints > R_AVATAR_MAX_JOINTS ||
 		anim.numposes > MAXALIASFRAMES))
@@ -7775,6 +7958,9 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		GLMesh_UploadBuffers (
 			mod, surf, poutindexes, (byte *)poutvertexes, NULL, skinning_joints, m == 0 ? skeleton_indexes : NULL, m == 0 ? num_skeleton_indexes : 0);
 
+		if (verified_weapon_payload && nummeshes == 1 && !strcmp (mod->name, "progs/v_axe.mdl"))
+			MD5_CacheStockAxeEdge (surf, poutvertexes, skinning_joints,
+				anim.numposes, &weapon_edge);
 		TEMP_FREE (poutvertexes);
 		TEMP_FREE (poutindexes);
 
@@ -7823,6 +8009,9 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	mod->synctype = ST_FRAMETIME; // keep MD5 animations synced to when .frame is changed. framegroups are otherwise not very useful.
 	mod->type = mod_alias;
 	mod->extradata[PV_MD5] = (byte *)outhdr;
+	/* Publish only after every recoverable parser/GPU preparation failure. */
+	mod->rerelease_md5_weapon_payload = verified_weapon_payload;
+	mod->md5_stockaxe_edge = weapon_edge;
 	mod->md5_skeleton = retained_skeleton;
 	mod->avatar_bind_surfaces = bind_surfaces;
 	memcpy (mod->avatar_props, avatar_props, sizeof (avatar_props));
@@ -7894,7 +8083,10 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
 	size_t		numjoints;
 	size_t		nummeshes;
 	qboolean	verified_rerelease_mesh;
+	const md5_weapon_payload_pin_t *weapon_pin;
 
+	Mod_ResetMD5WeaponGeometry (mod);
+	weapon_pin = Mod_VerifiedMD5WeaponMesh (mod, asset_name, buffer, asset_size);
 	verified_rerelease_mesh = Mod_IsVerifiedRereleaseRangerAsset (asset_name,
 		"progs/player.md5mesh", buffer, asset_size, 178658, 0x7911b9b0U);
 
@@ -7921,7 +8113,7 @@ static qboolean Mod_LoadMD5MeshModel (qmodel_t *mod, const void *buffer,
 		MD5ERROR ("Mod_LoadMD5MeshModel(%s): expected \"%s\", found \"%s\"\n", fname, "joints", com_token);
 
 	return Mod_LoadMD5MeshModelData (mod, buffer, numjoints, nummeshes,
-		verified_rerelease_mesh, anim_override, anim_override_size, asset_size);
+		verified_rerelease_mesh, weapon_pin, anim_override, anim_override_size, asset_size);
 
 error:
 	return false;

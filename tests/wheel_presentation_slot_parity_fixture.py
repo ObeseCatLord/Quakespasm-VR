@@ -96,7 +96,8 @@ static void centering(void) {
     const float schemas[]={0.03125f,1.0f,1.7f};
     const float yaws[]={0,90,123};
     for(int a=0;a<3;++a) for(int b=0;b<3;++b) for(int selected=0;selected<2;++selected) {
-        float draw=ENTSCALE_DECODE(ENTSCALE_ENCODE((selected?0.40f:0.25f)*schemas[a]))*0.28f;
+        float requested=(selected?0.40f:0.25f)*schemas[a];
+        float draw=ENTSCALE_DECODE(ENTSCALE_ENCODE(requested))*0.28f;
         assert(VR_WeaponMenu_CenteredModelOrigin(&model,yaws[b],draw,slot,center,origin));
         float c=cosf(DEG2RAD(yaws[b])), s=sinf(DEG2RAD(yaws[b]));
         near(origin[0]+(center[0]*c-center[1]*s)*draw,slot[0]);

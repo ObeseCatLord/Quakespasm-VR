@@ -1318,6 +1318,10 @@ void R_RenderDynamicLightmaps (msurface_t *fa)
 	if (fa->flags & SURF_DRAWTILED) // johnfitz -- not a lightmapped surface
 		return;
 
+	// Off freezes CPU styles, but an old dynamic contribution still needs removal.
+	if (!r_dynamic.value && !fa->cached_dlight)
+		return;
+
 	// check for lightmap modification
 	for (maps = 0; maps < MAXLIGHTMAPS && fa->styles[maps] != 255; maps++)
 		if (d_lightstylevalue[fa->styles[maps]] != fa->cached_light[maps])
@@ -1327,7 +1331,7 @@ void R_RenderDynamicLightmaps (msurface_t *fa)
 		|| fa->cached_dlight)			// dynamic previously
 	{
 	dynamic:
-		if (r_dynamic.value)
+		if (r_dynamic.value || fa->cached_dlight)
 		{
 			struct lightmap_s *lm = &lightmaps[fa->lightmaptexturenum];
 			lm->modified[Tasks_GetWorkerIndex ()] = true;
@@ -3707,7 +3711,9 @@ void R_BuildLightMap (msurface_t *surf, byte *dest, int stride)
 	unsigned scale;
 	int		 maps;
 
-	surf->cached_dlight = (surf->dlightframe == r_framecount);
+	// Capture cleanup before clearing the flag; its baked styles must stay frozen.
+	const qboolean cleanup_dlight = !r_dynamic.value && surf->cached_dlight;
+	surf->cached_dlight = r_dynamic.value && (surf->dlightframe == r_framecount);
 
 	smax = (surf->extents[0] >> 4) + 1;
 	tmax = (surf->extents[1] >> 4) + 1;
@@ -3724,7 +3730,7 @@ void R_BuildLightMap (msurface_t *surf, byte *dest, int stride)
 		{
 			for (maps = 0; maps < MAXLIGHTMAPS && surf->styles[maps] != 255; maps++)
 			{
-				scale = d_lightstylevalue[surf->styles[maps]];
+				scale = cleanup_dlight ? surf->cached_light[maps] : d_lightstylevalue[surf->styles[maps]];
 				surf->cached_light[maps] = scale; // 8.8 fraction
 				// johnfitz -- lit support via lordhavoc
 				R_AccumulateLightmap (lightmap, scale, size);
@@ -3734,7 +3740,7 @@ void R_BuildLightMap (msurface_t *surf, byte *dest, int stride)
 		}
 
 		// add all the dynamic lights
-		if (surf->dlightframe == r_framecount)
+		if (surf->cached_dlight)
 			R_AddDynamicLights (surf);
 	}
 	else

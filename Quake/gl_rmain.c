@@ -90,12 +90,14 @@ extern cvar_t vr_crosshairy;
 typedef struct
 {
 	qboolean valid;
+	qboolean overlay; /* The explicit calibration cue keeps its overlay policy. */
 	int mode;
 	int ray_count;
 	float size_pixels;
 	float alpha;
 	vec3_t start[2];
-	vec3_t impact[2];
+	vec3_t impact[2]; /* Authoritative collision point, without render bias. */
+	vec3_t render_impact[2];
 } vr_crosshair_frame_t;
 
 /* Prepared by SCR_UpdateScreen on the main owner, then read-only in the scene task. */
@@ -164,9 +166,9 @@ extern cvar_t r_vfog;
 
 cvar_t gl_zfix = {"gl_zfix", "1", CVAR_ARCHIVE}; // QuakeSpasm z-fighting fix
 
-cvar_t r_lavaalpha = {"r_lavaalpha", "0", CVAR_NONE};
-cvar_t r_telealpha = {"r_telealpha", "0", CVAR_NONE};
-cvar_t r_slimealpha = {"r_slimealpha", "0", CVAR_NONE};
+cvar_t r_lavaalpha = {"r_lavaalpha", "0", CVAR_ARCHIVE_GAME};
+cvar_t r_telealpha = {"r_telealpha", "0", CVAR_ARCHIVE_GAME};
+cvar_t r_slimealpha = {"r_slimealpha", "0", CVAR_ARCHIVE_GAME};
 
 float map_wateralpha, map_lavaalpha, map_telealpha, map_slimealpha;
 float map_fallbackalpha;
@@ -734,7 +736,7 @@ qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t righ
 	vec3_t up, vec3_t forward)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
-	const vrxr_device_t *hand;
+	vrxr_device_t hand;
 
 	if (origin)
 		VectorCopy (vec3_origin, origin);
@@ -748,10 +750,9 @@ qboolean R_TrackedControllerBasis (int physical_hand, vec3_t origin, vec3_t righ
 		!stereo_tracking_basis_valid || !stereo_view_adjusted || !frame || !frame->should_render)
 		return false;
 
-	hand = &frame->devices[physical_hand + 1];
-	if (!hand->valid || !hand->tracked || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
+	if (!VR_LocomotionControllerDevice (frame, physical_hand, &hand) || !hand.tracked)
 		return false;
-	return R_TrackedPoseBasis (hand->matrix, NULL, origin, right, up, forward);
+	return R_TrackedPoseBasis (hand.matrix, NULL, origin, right, up, forward);
 }
 
 qboolean R_TrackedControllerRay (int physical_hand, vec3_t origin, vec3_t direction)
@@ -1384,17 +1385,22 @@ R_DrawViewModel -- johnfitz -- gutted
 void R_PrepareVRCrosshair (void)
 {
 	vr_crosshair_frame_t prepared;
-	vec3_t forwards[2], right, up, end, muzzle_cue;
-	float size, alpha, depth, vertical_offset;
+	vec3_t starts[2], forwards[2], right, up, end, muzzle_cue;
+	float size, alpha, depth, vertical_offset, range = 4096.0f;
+	int ray_count;
 
 	memset (&vr_crosshair_frame, 0, sizeof (vr_crosshair_frame));
+	memset (&prepared, 0, sizeof (prepared));
 	/* Show the fixed point the controller must be moved onto while recentering
 	 * the muzzle. Reuse the existing stereo crosshair snapshot/draw path. */
 	if (vulkan_globals.stereo_active && glwidth > 0 && vid.width > 0 &&
 		VR_WeaponCalibrationAdjustMuzzleCue (muzzle_cue))
 	{
-		memset (&prepared, 0, sizeof (prepared));
+		for (int i = 0; i < 3; ++i)
+			if (!isfinite (muzzle_cue[i]) || !isfinite (cl.viewent.origin[i]))
+				return;
 		prepared.mode = 1;
+		prepared.overlay = true;
 		prepared.valid = true;
 		prepared.ray_count = 1;
 		prepared.size_pixels = q_max (12.0f * (float)glwidth /
@@ -1402,6 +1408,7 @@ void R_PrepareVRCrosshair (void)
 		prepared.alpha = 1.0f;
 		VectorCopy (cl.viewent.origin, prepared.start[0]);
 		VectorCopy (muzzle_cue, prepared.impact[0]);
+		VectorCopy (muzzle_cue, prepared.render_impact[0]);
 		vr_crosshair_frame = prepared;
 		return;
 	}
@@ -1424,64 +1431,115 @@ void R_PrepareVRCrosshair (void)
 
 	if (vr_aimmode.value == (float)VR_AIMMODE_CONTROLLER)
 	{
-		prepared.ray_count = VR_InputCrosshairAimRays (prepared.start, forwards);
-		if (prepared.ray_count < 1 || prepared.ray_count > 2)
+		ray_count = VR_InputCrosshairAimRays (starts, forwards);
+		if (ray_count < 1 || ray_count > 2)
 			return;
 	}
 	else
 	{
 		/* The target branch publishes gameplay aim through cl.viewangles. */
-		prepared.ray_count = 1;
-		VectorCopy (cl.viewent.origin, prepared.start[0]);
-		prepared.start[0][2] -= cl.stats[STAT_VIEWHEIGHT] - 10.0f;
+		ray_count = 1;
+		VectorCopy (cl.viewent.origin, starts[0]);
+		starts[0][2] -= cl.stats[STAT_VIEWHEIGHT] - 10.0f;
 		AngleVectors (cl.viewangles, forwards[0], right, up);
 	}
 
 	vertical_offset = isfinite (vr_crosshairy.value) ? vr_crosshairy.value : 0.0f;
 	depth = isfinite (vr_crosshair_depth.value) ? vr_crosshair_depth.value : 0.0f;
-	for (int ray = 0; ray < prepared.ray_count; ++ray)
+	if (prepared.mode == 1 && depth > 0)
 	{
+		const float units_per_metre = V_VRUnitsPerMetre ();
+		if (!isfinite (units_per_metre) || units_per_metre <= 0)
+			return;
+		range = depth * units_per_metre;
+		if (!isfinite (range) || range <= 0)
+			return;
+	}
+	for (int ray = 0; ray < ray_count; ++ray)
+	{
+		vec3_t impact, normal = {0, 0, 0}, render_impact, render_start, direction;
+		qboolean finite = true;
 		for (int i = 0; i < 3; ++i)
-			if (!isfinite (prepared.start[ray][i]) || !isfinite (forwards[ray][i]))
-				return;
+			if (!isfinite (starts[ray][i]) || !isfinite (forwards[ray][i]))
+				finite = false;
+		if (!finite)
+			continue;
+		const float forward_length = VectorNormalize (forwards[ray]);
+		if (!isfinite (forward_length) || forward_length <= 0)
+			continue;
+		VectorMA (starts[ray], range, forwards[ray], end);
+		/* Preserve each mode's adjustment scale, but aim the trace itself. */
+		end[2] += vertical_offset * (prepared.mode == 2 ? 10.0f : 1.0f);
+		for (int i = 0; i < 3; ++i)
+			if (!isfinite (end[i]))
+				finite = false;
+		if (!finite)
+			continue;
 		if (prepared.mode == 1 && depth > 0)
 		{
-			const float units_per_metre = V_VRUnitsPerMetre ();
-			if (!isfinite (units_per_metre) || units_per_metre <= 0)
-				return;
-			VectorMA (prepared.start[ray], depth * units_per_metre,
-				forwards[ray], prepared.impact[ray]);
+			/* The adjustment changes aim, never the configured maximum range. */
+			VectorSubtract (end, starts[ray], direction);
+			const float length = VectorNormalize (direction);
+			if (!isfinite (length) || length <= 0)
+				continue;
+			VectorMA (starts[ray], range, direction, end);
+			for (int i = 0; i < 3; ++i)
+				if (!isfinite (end[i]))
+					finite = false;
+			if (!finite)
+				continue;
 		}
-		else
+
+		/* This runs only during main-thread preparation, before scene tasks. */
+		const float fraction = CL_TraceLine (starts[ray], end, impact, normal, NULL);
+		if (!isfinite (fraction) || fraction <= 0 || fraction > 1 ||
+			(prepared.mode == 1 && fraction == 1))
+			continue;
+		for (int i = 0; i < 3; ++i)
+			if (!isfinite (impact[i]))
+				finite = false;
+		if (!finite)
+			continue;
+		VectorCopy (impact, render_impact);
+		if (fraction < 1)
 		{
-			VectorMA (prepared.start[ray], 4096.0f, forwards[ray], end);
-			if (prepared.mode == 1)
-				end[2] += vertical_offset;
-			TraceLine (prepared.start[ray], end, prepared.impact[ray]);
-			if (prepared.mode == 2)
-				prepared.impact[ray][2] += vertical_offset * 10.0f;
+			for (int i = 0; i < 3; ++i)
+				if (!isfinite (normal[i]))
+					finite = false;
+			if (!finite)
+				continue;
+			const float normal_length = VectorNormalize (normal);
+			if (!isfinite (normal_length) || normal_length <= 0)
+				continue; /* Also reject solid/degenerate results without a surface. */
+			VectorSubtract (end, starts[ray], direction);
+			const float facing = DotProduct (normal, direction);
+			if (!isfinite (facing))
+				continue;
+			VectorMA (impact, facing > 0 ? -1.0f / 32.0f : 1.0f / 32.0f,
+				normal, render_impact);
 		}
+		VectorCopy (starts[ray], render_start);
 		/* Preserve the authoritative trace and hit; only the rendered near start follows the camera. */
 		if (prepared.mode == 2)
 		{
 			const float *offset = V_GetPredictionViewOffset ();
 			if (!offset)
-				return;
+				continue;
 			for (int i = 0; i < 3; ++i)
-			{
-				if (!isfinite (offset[i]))
-					return;
-				prepared.start[ray][i] += offset[i];
-				if (!isfinite (prepared.start[ray][i]))
-					return;
-			}
+				render_start[i] += offset[i];
 		}
 		for (int i = 0; i < 3; ++i)
-			if (!isfinite (prepared.impact[ray][i]))
-				return;
+			if (!isfinite (render_start[i]) || !isfinite (render_impact[i]))
+				finite = false;
+		if (!finite)
+			continue;
+		const int slot = prepared.ray_count++;
+		VectorCopy (render_start, prepared.start[slot]);
+		VectorCopy (impact, prepared.impact[slot]);
+		VectorCopy (render_impact, prepared.render_impact[slot]);
 	}
 
-	prepared.valid = true;
+	prepared.valid = prepared.ray_count > 0;
 	vr_crosshair_frame = prepared;
 }
 
@@ -1580,6 +1638,8 @@ static void R_FillDebugVertex (basicvertex_t *vertex, const vec3_t position, uin
 
 static void R_EmitVRCrosshairQuad (cb_context_t *cbx, const vec3_t corners[4], float alpha)
 {
+	if (!vr_crosshair_frame.overlay && !whitetexture)
+		return;
 	static const int order[12] = {0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0};
 	VkBuffer vertex_buffer;
 	VkDeviceSize vertex_buffer_offset;
@@ -1590,7 +1650,11 @@ static void R_EmitVRCrosshairQuad (cb_context_t *cbx, const vec3_t corners[4], f
 	for (int i = 0; i < countof (order); ++i)
 		R_FillDebugVertex (&vertices[i], corners[order[i]], color);
 
-	R_BindGraphicsPipeline (cbx, PIPELINE_BASIC_NOTEX_BLEND);
+	R_BindGraphicsPipeline (cbx, vr_crosshair_frame.overlay ?
+		PIPELINE_BASIC_NOTEX_BLEND : PIPELINE_COOP_NAMETAG);
+	if (!vr_crosshair_frame.overlay)
+		vkCmdBindDescriptorSets (cbx->cb, VK_PIPELINE_BIND_POINT_GRAPHICS,
+			cbx->current_pipeline.layout.handle, 0, 1, &whitetexture->descriptor_set, 0, NULL);
 	R_PushConstants (cbx, VK_SHADER_STAGE_ALL_GRAPHICS, 0, 16 * sizeof (float), vulkan_globals.view_projection_matrix);
 	/* The final scene context may inherit fog from wheel/weapon draws. */
 	Fog_DisableGFog (cbx);
@@ -1605,7 +1669,8 @@ static float R_VRCrosshairHalfExtent (float depth, float pixels, float viewport)
 		return 0;
 	/* R_SetupMatrices uses 90 degrees on both stereo center axes, so
 	 * tan(fov/2) is 1. Per-eye correction can still change apparent size. */
-	return depth * pixels / viewport;
+	const float extent = depth * pixels / viewport;
+	return isfinite (extent) ? extent : 0;
 }
 
 static qboolean R_VRCrosshairWorldPathReady (int ray)
@@ -1624,17 +1689,17 @@ static qboolean R_VRCrosshairWorldPathReady (int ray)
 
 	if (vr_crosshair_frame.mode == 1)
 	{
-		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, delta);
+		VectorSubtract (vr_crosshair_frame.render_impact[ray], r_origin, delta);
 		const float depth = DotProduct (delta, vpn);
 		return R_VRCrosshairHalfExtent (depth, vr_crosshair_frame.size_pixels, width) > 0 &&
 			R_VRCrosshairHalfExtent (depth, vr_crosshair_frame.size_pixels, height) > 0;
 	}
 	if (vr_crosshair_frame.mode == 2)
 	{
-		VectorSubtract (vr_crosshair_frame.impact[ray], vr_crosshair_frame.start[ray], delta);
+		VectorSubtract (vr_crosshair_frame.render_impact[ray], vr_crosshair_frame.start[ray], delta);
 		if (VectorLength (delta) <= 0)
 			return false;
-		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, delta);
+		VectorSubtract (vr_crosshair_frame.render_impact[ray], r_origin, delta);
 		return R_VRCrosshairHalfExtent (DotProduct (delta, vpn),
 			vr_crosshair_frame.size_pixels * 2.0f, height) > 0;
 	}
@@ -1653,7 +1718,7 @@ static void R_DrawVRCrosshairRay (cb_context_t *cbx, int ray)
 
 	if (vr_crosshair_frame.mode == 1)
 	{
-		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, from_camera);
+		VectorSubtract (vr_crosshair_frame.render_impact[ray], r_origin, from_camera);
 		half_width = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
 			vr_crosshair_frame.size_pixels, width);
 		half_height = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
@@ -1662,15 +1727,15 @@ static void R_DrawVRCrosshairRay (cb_context_t *cbx, int ray)
 			return;
 		for (int i = 0; i < 3; ++i)
 		{
-			corners[0][i] = vr_crosshair_frame.impact[ray][i] - vright[i] * half_width + vup[i] * half_height;
-			corners[1][i] = vr_crosshair_frame.impact[ray][i] + vright[i] * half_width + vup[i] * half_height;
-			corners[2][i] = vr_crosshair_frame.impact[ray][i] + vright[i] * half_width - vup[i] * half_height;
-			corners[3][i] = vr_crosshair_frame.impact[ray][i] - vright[i] * half_width - vup[i] * half_height;
+			corners[0][i] = vr_crosshair_frame.render_impact[ray][i] - vright[i] * half_width + vup[i] * half_height;
+			corners[1][i] = vr_crosshair_frame.render_impact[ray][i] + vright[i] * half_width + vup[i] * half_height;
+			corners[2][i] = vr_crosshair_frame.render_impact[ray][i] + vright[i] * half_width - vup[i] * half_height;
+			corners[3][i] = vr_crosshair_frame.render_impact[ray][i] - vright[i] * half_width - vup[i] * half_height;
 		}
 	}
 	else if (vr_crosshair_frame.mode == 2)
 	{
-		VectorSubtract (vr_crosshair_frame.impact[ray], vr_crosshair_frame.start[ray], direction);
+		VectorSubtract (vr_crosshair_frame.render_impact[ray], vr_crosshair_frame.start[ray], direction);
 		if (VectorNormalize (direction) <= 0)
 			return;
 		CrossProduct (direction, vpn, side);
@@ -1679,14 +1744,14 @@ static void R_DrawVRCrosshairRay (cb_context_t *cbx, int ray)
 		VectorSubtract (vr_crosshair_frame.start[ray], r_origin, from_camera);
 		half_width = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
 			vr_crosshair_frame.size_pixels * 2.0f, height);
-		VectorSubtract (vr_crosshair_frame.impact[ray], r_origin, from_camera);
+		VectorSubtract (vr_crosshair_frame.render_impact[ray], r_origin, from_camera);
 		half_height = R_VRCrosshairHalfExtent (DotProduct (from_camera, vpn),
 			vr_crosshair_frame.size_pixels * 2.0f, height);
 		for (int i = 0; i < 3; ++i)
 		{
 			corners[0][i] = vr_crosshair_frame.start[ray][i] + side[i] * half_width;
-			corners[1][i] = vr_crosshair_frame.impact[ray][i] + side[i] * half_height;
-			corners[2][i] = vr_crosshair_frame.impact[ray][i] - side[i] * half_height;
+			corners[1][i] = vr_crosshair_frame.render_impact[ray][i] + side[i] * half_height;
+			corners[2][i] = vr_crosshair_frame.render_impact[ray][i] - side[i] * half_height;
 			corners[3][i] = vr_crosshair_frame.start[ray][i] - side[i] * half_width;
 		}
 	}

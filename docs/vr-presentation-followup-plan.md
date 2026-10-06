@@ -68,3 +68,105 @@ CPU lightstyle behavior before adopting these recommendations.
 The review caught two integration risks beyond the initial plan: shifting a
 controller origin also shifts its linear velocity, and CPU-lightmap cleanup
 would otherwise use newly averaged lightstyles only on formerly lit surfaces.
+
+## Additional verified settings and enhanced-model scope
+
+The completed settings trace found definition-time spark/beam options without
+reload callbacks. Reuse the particle script's existing reload owner when those
+preferences change. Describe `gl_farclip` as sky distance rather than creating
+a new geometry culling plane. Foveation status should distinguish the selected
+request from an inactive backend using the existing status/capability owner;
+no foveation fallback or rendering policy is added.
+
+Menu-exposed particle, sky and liquid preferences that lacked archive flags
+will use the existing configuration persistence mechanism. Preserve defaults,
+map-authored precedence and zero-valued liquid inheritance; no second settings
+store or migration is needed.
+
+The original neutral MD5 viewmodel transform applies a separate scale only to
+official rerelease replacements: axe one third, double shotgun one, other
+weapons one half. The current enhanced lookup correctly ignores classic authored
+scale, but loses this source distinction. Applying one half to every MD5 would
+change custom native models and is rejected.
+
+Reuse `COM_VerifyRereleaseModelPack` once when mounting a candidate official
+pack. Retain that immutable provenance on the pack and the selected model
+companion; extend the existing VFS lookup with an optional source output rather
+than duplicate its search policy. Reset model provenance with model memory.
+A pure selected-geometry scale helper supplies the original scale factor to the
+held alias matrix and the calibration inverse. Muzzle offsets remain independently
+authored as in 1.0; preview meshes and desktop models retain native scale.
+Pack provenance identifies the source; each selected weapon's actual mesh and
+animation also require their length/CRC fingerprints before official scaling.
+Check ordinary and fallback official packs, loose overrides, custom MD5 models,
+classic/enhanced switches and calibration round trips after implementation.
+
+## Final Astra review and bounded corrections
+
+The affected hardware is Beyond with Index controllers. Local Astra reviewed
+the integrated implementation at explicit `xhigh`; main verified the fallback
+muzzle lever and the pack verifier's Ranger-only payload checks.
+
+| Finding | Disposition and implementation plan |
+| --- | --- |
+| Grip/muzzle fallback exaggerates known axe angular travel | Adopt. Fill missing authored endpoints from the existing selected verified blade cache or prepared held-tool owner. Preserve authored endpoint precedence and unknown-model fallback. Rebaseline history when the endpoint source changes. |
+| Official pack admission does not prove each weapon payload | Adopt. Qualify the actual selected mesh and animation bytes at load time using donor fingerprints before assigning official scaling. Retain the existing winning-VFS provenance and pure rendering query. |
+| Official MD5 axe lacks ready-blade cache | Adopt. Cache only ready vertices 55/54 with exact mesh/animation and topology checks, using existing packed skinning math once during loading. Keep a separate selected-format record, clear it on reload/free, and require the effective ready pose. No per-frame CPU skinning or new combat implementation. |
+| Sky fog archive preference is reset on map cleanup | Adopt a narrow correction. Reset only the existing runtime `skyfog` from the preference; preserve the cvar. `Sky_NewMap` already applies worldspawn overrides to the separate runtime value. |
+| Increase VR shader light/shadow strength | Reject without evidence of attenuation. Keep native vkQuake gains and repair settings, prerequisite reporting and dynamic-light cleanup. |
+
+End checks must now include real blade angular gestures, source transitions,
+partially authored endpoints, altered equal-length weapon data and overridden
+animations. Simulated rendering is software qualification; headset appearance,
+comfort and performance remain user evaluation.
+
+Both blocking final-review findings were implemented and re-reviewed by local
+Astra at explicit `xhigh`. Classic caches require effective pose zero and are
+selected independently of server contact classification. The source/format/
+pose keys preserve ordinary prepare-to-merge identity and invalidate source
+changes. Actual mesh and animation qualification precedes decoding/freeing;
+success-only publication and a separate MD5 cache preserve reload/failure and
+classic-companion behavior. No remaining source-review blocker was identified.
+
+## Surface-bound VR pointer follow-up
+
+The dot's positive depth bypasses collision, and the existing crosshair trace
+checks only the world hull. The untextured blended draw also ignores scene
+depth. Reuse `CL_TraceLine`, which already traces the world and moving/rotated
+brush entities, inside the existing immutable crosshair preparation. Interpret
+positive dot depth as a maximum trace range; zero retains the normal long ray.
+Hide a dot with no surface hit instead of placing it on an arbitrary plane.
+Apply vertical ray adjustments before tracing, never after the hit.
+
+Reuse the existing depth-tested blended world-glyph pipeline with the persistent
+white texture for the actual pointer. Keep the explicit calibration cue's
+overlay policy and the two-hand aim owner. This avoids another trace solver,
+pipeline family or eye-specific target calculation. End checks cover fixed-range
+near obstacles, doors/rotated brushes, misses, two rays, depth-tested drawing and
+calibration separation; desktop crosshairs remain native.
+
+## Completed end verification
+
+- Strict assertion-enabled Linux build passed after all implementation changes.
+- Focused presentation checks passed: Index origin/velocity, coherent gestures,
+  held calibration, wheel geometry/picking, dynamic-light cleanup, particle reload,
+  menus, selected VFS provenance and actual official mesh/animation pairs.
+  Geometry/provenance fixtures additionally passed ASan/UBSan.
+- RTX 4090 Vulkan sampler readback confirmed nearest/linear magnification and
+  desktop/stereo parity with anisotropy 2/4/8/16.
+- Isolated native desktop and both simulated stereo-eye checks confirmed AO
+  quality changes, dynamic-light toggling/restoration and map preference behavior
+  with task rendering and GPU lightmaps enabled.
+- Native Honey gameplay rejected small wrist wiggles and a held trigger, then
+  issued one deliberate gesture attack through normal usercmd, loopback and QC;
+  the disposable target took the normal 20 damage. Three native animation-frame
+  callbacks were observed, not three attack intents. The actual decoded MD5 blade
+  cache matched the packed shader calculation within 0.000002 model units.
+- Surface-pointer fixtures passed world and moving/rotated brush hits, range,
+  miss hiding, two-ray compaction and calibration separation. The final native
+  Honey stereo run observed 62 normal pointer draws using the existing
+  depth-tested world-glyph pipeline family and white texture.
+
+These are software integration checks with isolated simulated controller input.
+Physical headset appearance, comfort, eye tracking and performance remain user
+validation. No physical headset or live co-op server was used for these checks.

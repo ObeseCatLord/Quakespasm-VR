@@ -4181,3 +4181,61 @@ synthetic filenames. It verifies uppercase/mixed case, exact lowercase priority,
 deterministic duplicates, directories, absent numbering and bounded outputs.
 The resolver policy is ported from the inherited OpenVR implementation;
 case-sensitive loose-file and pack-member lookup remain unchanged.
+
+## VR presentation, Index pose and deliberate melee
+
+Run the focused checks after implementation and a strict assertion-enabled native
+build. The coordinator reuses that graph's diagnostics and libraries, compiling
+this checkout's sources and headers without modifying shared build outputs:
+
+```sh
+python3 -B tests/run_vr_presentation_native.py \
+  --build-dir /path/to/strict-debug-graph \
+  --pak /path/to/licensed/official/id1/pak0.pak
+python3 -B tests/run_anisotropy_native.py \
+  --build-dir /path/to/strict-debug-graph
+```
+
+Coverage includes the immutable Index grip inverse and origin velocity; real
+recognizer/merge behavior with angular blade motion, coherent translation,
+wiggle rejection, source changes and partial authored endpoints; wheel centering,
+slot picking and action dimensions; CPU dynamic-light cleanup and alias lighting;
+particle reload and menu state; winning-VFS provenance; all eight actual official
+weapon payload pairs, altered equal-length payloads, animation overrides and the
+two-point packed MD5 skinning cache. Provenance/cache and wheel fixtures use
+ASan/UBSan. The existing frame-recorder fixture covers desktop/stereo
+MSAA/OIT/SSAO routing and view masks with Vulkan command spies.
+
+The anisotropy check additionally runs actual Vulkan sampler/descriptor readback
+for nearest/linear and desktop/stereo parity. Exit 77 is unavailable GPU evidence,
+not a pass. Geometry/policy seams in the other fixtures are explicitly documented;
+they do not qualify complete decoding, native QC outcomes, rendered blade
+alignment, settings-file round trips or headset comfort. Use isolated native
+gameplay/render checks for those software integration boundaries; physical
+headset and performance checks remain separate.
+
+`vr_honey_gesture_native.gdb` adds initialized gameplay proof using a disposable
+Honey profile and the isolated simulated Monado setup described above. Set
+`QSVR_HONEY_RESULT` to a private output JSON path, supply matching runtime
+libraries, use `-openxr -nomouse -nosound -nosteamapi -window +r_tasks 0`,
+and select `-game honey +map start`. Disable window activation
+through the SDL hints used by the other probes. The basedir must contain the
+external official rerelease `id1/pak0.pak` and all required Honey assets;
+configuration, saves and logs must remain in a disposable userdir/XDG profile.
+
+The probe injects head/controller samples at the completed OpenXR frame boundary,
+checks actual loader vertices against the shader's packed skinning calculation,
+and observes normal final usercmds, loopback server think and Honey's native
+QuakeC. Small wrist wiggles with trigger held must produce no attack. A deliberate
+translation must produce one final intent and normal damage to a disposable
+target placed on the actual native axe trace. No game code or packets are
+replaced. Require `HONEY_NATIVE_GESTURE_ATTACK_PASSED` and the result assertions.
+The probe intentionally kills its owned inferior instead of saving a test config;
+GDB's child-result status can therefore be 255. That status alone is never a pass.
+
+The same native probe observes ordinary surface-pointer draws and resolves the
+existing depth-tested world-glyph pipeline, including render-pass alternatives.
+`vr_crosshair_surface_fixture.py` covers world and moving/rotated brush traces,
+finite-range dots, miss hiding, two-ray compaction and the separate calibration
+cue. The presentation coordinator includes this fixture; it does not claim
+physical headset alignment from synthetic input or command spies.

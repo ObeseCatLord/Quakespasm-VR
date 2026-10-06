@@ -4,6 +4,7 @@
 
 vulkanglobals_t vulkan_globals;
 cvar_t			r_ssao;
+VkAccelerationStructureKHR bmodel_tlas = VK_NULL_HANDLE;
 
 static unsigned pass_begins, pass_ends, scene_commands, ui_commands, readbacks, ssao_steps;
 static qboolean in_pass;

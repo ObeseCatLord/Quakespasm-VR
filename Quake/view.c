@@ -475,13 +475,12 @@ float V_VRGunAngle (void)
 static qboolean V_TrackedHandAnglesForYaw (const vrxr_frame_t *frame,
 	int physical_hand, float yaw, vec3_t angles)
 {
-	const vrxr_device_t *hand;
+	vrxr_device_t hand;
 	if (!frame || !angles || physical_hand < 0 || physical_hand > 1 || !isfinite (yaw))
 		return false;
-	hand = &frame->devices[physical_hand + 1];
-	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
+	if (!VR_LocomotionControllerDevice (frame, physical_hand, &hand))
 		return false;
-	return VR_LocomotionHandAngles (hand->matrix, yaw, V_VRGunAngle (), angles);
+	return VR_LocomotionHandAngles (hand.matrix, yaw, V_VRGunAngle (), angles);
 }
 
 qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
@@ -506,10 +505,24 @@ qboolean V_TrackedPresentationHandAngles (int physical_hand, vec3_t angles)
 		V_TrackedHandAnglesForYaw (frame, physical_hand, presentation_yaw, angles);
 }
 
-static qboolean V_TrackedHandBodyOffsetForYaw (int physical_hand, float yaw, vec3_t out)
+qboolean V_TrackedPresentationRawGripAngles (int physical_hand, vec3_t angles)
+{
+	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	float yaw;
+	if (!angles || !frame || !frame->focused || physical_hand < 0 || physical_hand > 1 ||
+		!V_TrackedPresentationYaw (&yaw))
+		return false;
+	const vrxr_device_t *hand = &frame->devices[physical_hand + 1];
+	return hand->valid && hand->kind == VRXR_DEVICE_HAND && hand->hand == physical_hand &&
+		VR_AimPoseAngles (hand->matrix, yaw, angles);
+}
+
+static qboolean V_TrackedHandBodyOffsetForYaw (int physical_hand, float yaw,
+	qboolean raw_grip, vec3_t out)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
 	const vrxr_device_t *hand;
+	vrxr_device_t controller;
 	float player_base_viewheight, head_eye_height;
 	vec3_t head_position, hand_position;
 
@@ -520,6 +533,12 @@ static qboolean V_TrackedHandBodyOffsetForYaw (int physical_hand, float yaw, vec
 		!isfinite (yaw) || !V_TrackedPlayerBase (&player_base_viewheight))
 		return false;
 	hand = &frame->devices[physical_hand + 1];
+	if (!raw_grip)
+	{
+		if (!VR_LocomotionControllerDevice (frame, physical_hand, &controller))
+			return false;
+		hand = &controller;
+	}
 	if (!hand->valid || hand->kind != VRXR_DEVICE_HAND || hand->hand != physical_hand)
 		return false;
 	for (int i = 0; i < 3; ++i)
@@ -541,10 +560,20 @@ qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out)
 	if (out)
 		VectorCopy (vec3_origin, out);
 	return out && V_TrackedMappingYaw (&tracking_yaw) &&
-		V_TrackedHandBodyOffsetForYaw (physical_hand, tracking_yaw, out);
+			V_TrackedHandBodyOffsetForYaw (physical_hand, tracking_yaw, false, out);
 }
 
-qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out)
+qboolean V_TrackedRawGripBodyOffset (int physical_hand, vec3_t out)
+{
+	float yaw;
+	if (out)
+		VectorCopy (vec3_origin, out);
+	return out && V_TrackedMappingYaw (&yaw) &&
+		V_TrackedHandBodyOffsetForYaw (physical_hand, yaw, true, out);
+}
+
+static qboolean V_TrackedPresentationHandBodyOffsetImpl (int physical_hand,
+	qboolean raw_grip, vec3_t out)
 {
 	float presentation_yaw;
 	vec3_t head_offset;
@@ -552,7 +581,7 @@ qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out)
 		VectorCopy (vec3_origin, out);
 	if (!out || !V_TrackedPresentationYaw (&presentation_yaw) ||
 		!R_TrackedHeadBodyOffset (head_offset) ||
-		!V_TrackedHandBodyOffsetForYaw (physical_hand, presentation_yaw, out))
+		!V_TrackedHandBodyOffsetForYaw (physical_hand, presentation_yaw, raw_grip, out))
 	{
 		if (out)
 			VectorCopy (vec3_origin, out);
@@ -566,6 +595,16 @@ qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out)
 		return false;
 	}
 	return true;
+}
+
+qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out)
+{
+	return V_TrackedPresentationHandBodyOffsetImpl (physical_hand, false, out);
+}
+
+qboolean V_TrackedPresentationRawGripBodyOffset (int physical_hand, vec3_t out)
+{
+	return V_TrackedPresentationHandBodyOffsetImpl (physical_hand, true, out);
 }
 
 qboolean V_TrackedPresentationHandWorldPose (int physical_hand,
