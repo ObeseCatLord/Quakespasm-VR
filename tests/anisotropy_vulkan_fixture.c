@@ -49,7 +49,7 @@ static void begin(VkCommandBuffer cb)
 static void barrier(VkCommandBuffer cb,VkImage image,VkImageLayout old,VkImageLayout next,VkAccessFlags src,VkAccessFlags dst,VkPipelineStageFlags a,VkPipelineStageFlags b,uint32_t levels)
 { VkImageMemoryBarrier x={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,.oldLayout=old,.newLayout=next,.srcAccessMask=src,.dstAccessMask=dst,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.image=image,.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,levels,0,1}};vkCmdPipelineBarrier(cb,a,b,0,0,NULL,0,NULL,1,&x); }
 static void sampler_case(float level,qboolean stereo,float expected)
-{ vid_anisotropic.value=level;vulkan_globals.stereo_active=stereo;selected_sampler=VK_NULL_HANDLE;R_InitSamplers();qboolean af=R_AnisotropyLevel()>1;VkSampler want=stereo&&af?vulkan_globals.linear_aniso_sampler_lod_bias:(vid_filter.value==1?(af?vulkan_globals.point_aniso_sampler_lod_bias:vulkan_globals.point_sampler_lod_bias):(af?vulkan_globals.linear_aniso_sampler_lod_bias:vulkan_globals.linear_sampler_lod_bias));CHECK(selected_sampler==want);if(!record(want,expected)){fprintf(stderr,"ANISO sampler record level=%g expected=%g handle=%p count=%d\n",level,expected,(void*)want,nsamplers);CHECK(0);} }
+{ vid_anisotropic.value=level;vulkan_globals.stereo_active=stereo;selected_sampler=VK_NULL_HANDLE;R_InitSamplers();qboolean af=R_AnisotropyLevel()>1;VkSampler want=(vid_filter.value==1?(af?vulkan_globals.point_aniso_sampler_lod_bias:vulkan_globals.point_sampler_lod_bias):(af?vulkan_globals.linear_aniso_sampler_lod_bias:vulkan_globals.linear_sampler_lod_bias));CHECK(selected_sampler==want);if(!record(want,expected)){fprintf(stderr,"ANISO sampler record level=%g expected=%g handle=%p count=%d\n",level,expected,(void*)want,nsamplers);CHECK(0);} }
 int main(int argc,char **argv)
 {
 	if(argc!=2) { fprintf(stderr,"usage: %s anisotropy_fixture.comp.spv\n",argv[0]); return 2; }
@@ -60,6 +60,37 @@ int main(int argc,char **argv)
 	VkImage image;VkImageCreateInfo ici={.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,.imageType=VK_IMAGE_TYPE_2D,.format=VK_FORMAT_R8G8B8A8_UNORM,.extent={128,128,1},.mipLevels=8,.arrayLayers=1,.samples=VK_SAMPLE_COUNT_1_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL,.usage=VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT};VK(vkCreateImage(vulkan_globals.device,&ici,NULL,&image));VkMemoryRequirements ir;vkGetImageMemoryRequirements(vulkan_globals.device,image,&ir);VkDeviceMemory imem=alloc(ir,0);VK(vkBindImageMemory(vulkan_globals.device,image,imem,0));VkImageViewCreateInfo vi={.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,.image=image,.viewType=VK_IMAGE_VIEW_TYPE_2D,.format=VK_FORMAT_R8G8B8A8_UNORM,.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,8,0,1}};VkImageView view;VK(vkCreateImageView(vulkan_globals.device,&vi,NULL,&view));
 	VkDeviceSize bytes=0;for(int m=0;m<8;m++)bytes+=(VkDeviceSize)(128>>m)*(128>>m)*4;VkDeviceMemory upload_mem;void *upload;VkBuffer upload_buffer=buffer(bytes,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,&upload_mem,&upload);unsigned char *p=upload;int w=128;for(int m=0;m<8;m++,w>>=1)for(int y=0;y<w;y++)for(int x=0;x<w;x++){unsigned char v=m?128:((x&1)?255:0);*p++=v;*p++=v;*p++=v;*p++=255;}begin(cb);barrier(cb,image,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,0,VK_ACCESS_TRANSFER_WRITE_BIT,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,8);VkBufferImageCopy copies[8]={0};VkDeviceSize offset=0;for(int m=0;m<8;m++){int d=128>>m;copies[m]=(VkBufferImageCopy){.bufferOffset=offset,.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,(uint32_t)m,0,1},.imageExtent={(uint32_t)d,(uint32_t)d,1}};offset+=(VkDeviceSize)d*d*4;}vkCmdCopyBufferToImage(cb,upload_buffer,image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,8,copies);barrier(cb,image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,8);submit(cb);
 	texmgr_mutex=SDL_CreateMutex();CHECK(texmgr_mutex);gltexture_t tex={.image_view=view,.descriptor_set=sets[0],.flags=TEXPREF_MIPMAP};active_gltextures=&tex;vulkan_globals.gui_sampler_descriptor_sets[0]=(VkDescriptorSet)1;sampler_case(0,true,1);TexMgr_UpdateTextureDescriptorSets();CHECK(selected_sampler==vulkan_globals.point_sampler_lod_bias);sampler_case(4,true,fminf(4,props.limits.maxSamplerAnisotropy));vulkan_globals.stereo_active=false;TexMgr_UpdateTextureDescriptorSets();CHECK(selected_sampler==vulkan_globals.point_aniso_sampler_lod_bias);sampler_case(1,true,props.limits.maxSamplerAnisotropy);
+	/* Filtering must be mode-independent, including per-texture flags.
+	 * Descriptor refresh simulates attachment/retirement without recreating
+	 * samplers and verifies changes take effect immediately. */
+	for (int filter = 0; filter < 2; ++filter)
+	{
+		vid_filter.value = (float)filter;
+		for (int stereo = 0; stereo < 2; ++stereo)
+		{
+			vulkan_globals.stereo_active = stereo;
+			tex.flags = TEXPREF_MIPMAP;
+			TexMgr_UpdateTextureDescriptorSets();
+			CHECK(selected_sampler == (filter ? vulkan_globals.point_aniso_sampler_lod_bias : vulkan_globals.linear_aniso_sampler_lod_bias));
+			tex.flags |= TEXPREF_NEAREST;
+			TexMgr_UpdateTextureDescriptorSets();
+			CHECK(selected_sampler == vulkan_globals.point_aniso_sampler_lod_bias);
+			tex.flags = TEXPREF_MIPMAP | TEXPREF_LINEAR;
+			TexMgr_UpdateTextureDescriptorSets();
+			CHECK(selected_sampler == vulkan_globals.linear_aniso_sampler_lod_bias);
+			tex.flags = TEXPREF_NOPICMIP | TEXPREF_NEAREST;
+			TexMgr_UpdateTextureDescriptorSets();
+			CHECK(selected_sampler == vulkan_globals.point_sampler_lod_bias);
+			tex.flags = TEXPREF_NOPICMIP | TEXPREF_LINEAR;
+			TexMgr_UpdateTextureDescriptorSets();
+			CHECK(selected_sampler == vulkan_globals.linear_sampler_lod_bias);
+		}
+	}
+	tex.flags = TEXPREF_MIPMAP;
+	/* The GPU contrast witness exercises linear anisotropy deliberately.
+	 * Nearest anisotropy is implementation-dependent; descriptor selection
+	 * above proves it is no longer silently replaced in stereo. */
+	vid_filter.value = 0;
 	VkDeviceMemory out_mem;void *out;VkBuffer out_buffer=buffer(128*sizeof(float),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,&out_mem,&out);VkDescriptorBufferInfo bi={out_buffer,0,128*sizeof(float)};VkWriteDescriptorSet write={.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=sets[1],.dstBinding=0,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&bi};vkUpdateDescriptorSets(vulkan_globals.device,1,&write,0,NULL);VkPushConstantRange footprint={.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT,.size=sizeof(float)};VkPipelineLayoutCreateInfo pli={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,.setLayoutCount=2,.pSetLayouts=layouts,.pushConstantRangeCount=1,.pPushConstantRanges=&footprint};VkPipelineLayout pipeline_layout;VK(vkCreatePipelineLayout(vulkan_globals.device,&pli,NULL,&pipeline_layout));VkShaderModule module=shader(argv[1]);VkComputePipelineCreateInfo cp={.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,.stage={.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_COMPUTE_BIT,.module=module,.pName="main"},.layout=pipeline_layout};VkPipeline pipeline;VK(vkCreateComputePipelines(vulkan_globals.device,VK_NULL_HANDLE,1,&cp,NULL,&pipeline));
 	/* Exercise every supported power-of-two request, including mobile caps.
 	 * The long gradient follows the request instead of assuming a 16x device. */
@@ -113,6 +144,37 @@ int main(int argc,char **argv)
 		++readbacks;
 	}
 	CHECK(readbacks > 0);
+	/* Confirm the selected descriptor affects actual pixels in both modes.
+	 * No anisotropy is requested for this magnification witness. */
+	float magnified[2][2][128];
+	for (int stereo = 0; stereo < 2; ++stereo)
+		for (int filter = 0; filter < 2; ++filter)
+		{
+			vid_filter.value = (float)filter;
+			sampler_case(0, stereo, 1);
+			const float magnification = -.25f;
+			begin(cb);
+			vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+			vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 2, sets, 0, NULL);
+			vkCmdPushConstants(cb, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(magnification), &magnification);
+			vkCmdDispatch(cb, 128, 1, 1);
+			VkBufferMemoryBarrier b = {.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+				.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask=VK_ACCESS_HOST_READ_BIT,
+				.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+				.buffer=out_buffer, .size=VK_WHOLE_SIZE};
+			vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+				0, 0, NULL, 1, &b, 0, NULL);
+			submit(cb);
+			memcpy(magnified[stereo][filter], out, sizeof(magnified[stereo][filter]));
+			for (int x = 0; x < 128; ++x)
+			{
+				const float expected = filter ? (float)(x & 1) : ((x & 1) ? .75f : .25f);
+				CHECK(fabsf(magnified[stereo][filter][x] - expected) < .01f);
+			}
+		}
+	for (int filter = 0; filter < 2; ++filter)
+		CHECK(!memcmp(magnified[0][filter], magnified[1][filter], sizeof(magnified[0][filter])));
+	printf("FILTER_VULKAN_PASSED nearest_and_linear_actual_pixels_desktop_stereo_parity\n");
 	/* Saved value 1 still selects the real maximum; oversized requests clamp. */
 	sampler_case(1, true, props.limits.maxSamplerAnisotropy);
 	sampler_case(props.limits.maxSamplerAnisotropy * 2, true, props.limits.maxSamplerAnisotropy);
