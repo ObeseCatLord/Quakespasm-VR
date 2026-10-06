@@ -173,3 +173,28 @@ attempt built and passed independent source, compiler and artifact verification.
 The matching packages were published to the R2 `2.0` channel and the existing
 GitHub `v2.0.0` release; public objects, updater metadata and release attachment
 hashes passed the coordinator's verification.
+
+## Public download connection recovery
+
+The VR presentation cohort exposed two interrupted public reads: a TLS EOF at
+connection setup and a reset while reading. Keep the existing publication owner,
+immutable objects and hash gating. Retry only a failed public download, up to
+four attempts with 1/2/4-second delays, reopening from byte zero and computing a
+fresh digest. Certificate verification and HTTP failures remain fatal; a
+completed wrong hash is not retried. Both build-object and updater-metadata
+readbacks use the same small helper. Do not regenerate staged archives or
+rebuild engines for this automation correction.
+
+The eight focused transport checks and the existing 19 coordinator and nine
+public-archive/publication checks passed after this correction.
+
+The presentation engine at `d939ec2f4695c55b5f86cc4c07e0e668c7374e9f`
+qualified fresh Linux x64, native Linux ARM64 and Windows Release builds. The
+matching Linux runtime was deployed with the existing wrapper hashes preserved.
+The same staged bytes were published to the isolated 2.0 channel and the existing
+GitHub `v2.0.0` release. Public byte hashes and metadata passed verification;
+GitHub contains exactly the three runtime packages and `SHA256SUMS`, with root
+READMEs omitted and license notices retained. Two interrupted public reads
+recovered within the bounded helper during the successful publication attempt.
+This later automation/documentation commit does not change that released engine
+revision and requires no engine rebuild.
