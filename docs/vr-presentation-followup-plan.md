@@ -170,3 +170,13 @@ calibration separation; desktop crosshairs remain native.
 These are software integration checks with isolated simulated controller input.
 Physical headset appearance, comfort, eye tracking and performance remain user
 validation. No physical headset or live co-op server was used for these checks.
+
+## Release completion
+
+Engine revision `d939ec2f4695c55b5f86cc4c07e0e668c7374e9f` passed native
+Linux x64, Linux ARM64 and Windows Release builds and complete runtime inventory
+checks. The automated workflow deployed its matching Linux runtime and published
+all three packages to the 2.0 update channel and GitHub v2.0.0. Public artifact,
+metadata and GitHub attachment hashes were verified. Physical headset evaluation
+remains user validation. A separate publisher-only connection recovery correction
+was tested and used without changing or rebuilding the qualified engine inputs.

@@ -2,12 +2,16 @@
 """Stage verified 2.0 runtimes and publish an isolated updater channel."""
 import argparse
 import hashlib
+import http.client
 import json
 from pathlib import Path
 import re
 import shutil
+import ssl
 import subprocess
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from package import scan
@@ -21,6 +25,24 @@ def sha(path):
 def require(condition, message):
     if not condition:
         raise RuntimeError(message)
+
+
+def public_sha256(url, timeout, attempts=4):
+    # Retry only downloads, from byte zero with a fresh digest. Publication and
+    # hash comparison stay outside this helper; certificate failures are fatal.
+    for attempt in range(attempts):
+        try:
+            request = urllib.request.Request(url, headers={'User-Agent': 'QuakeSpasmVR-Updater/2.0'})
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return hashlib.file_digest(response, 'sha256').hexdigest()
+        except (urllib.error.URLError, ConnectionError, TimeoutError, ssl.SSLError,
+                http.client.IncompleteRead, http.client.RemoteDisconnected) as error:
+            reason = error.reason if isinstance(error, urllib.error.URLError) else error
+            if (isinstance(error, urllib.error.HTTPError) or
+                    isinstance(reason, ssl.SSLCertVerificationError) or attempt + 1 == attempts):
+                raise
+            print('Public download interrupted; retry %d/%d' % (attempt + 2, attempts), flush=True)
+            time.sleep(2 ** attempt)
 
 
 def copy(source, destination):
@@ -145,14 +167,13 @@ def publish(args):
         if name == 'manifest.tsv':
             continue
         url = args.public.rstrip('/') + '/' + name + '?sha256=' + digest
-        with urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': 'QuakeSpasmVR-Updater/2.0'}), timeout=120) as response:
-            actual = hashlib.file_digest(response, 'sha256').hexdigest()
+        actual = public_sha256(url, timeout=120)
         require(actual == digest, 'Public object mismatch: ' + name)
     for name in ['release.json', 'manifest.tsv']:
         subprocess.run(['rclone', 'copyto', str(out / name), args.remote.rstrip('/') + '/' + name,
                         '--s3-no-check-bucket'], check=True)
-        with urllib.request.urlopen(urllib.request.Request(args.public.rstrip('/') + '/' + name + '?revision=' + revision, headers={'User-Agent': 'QuakeSpasmVR-Updater/2.0'}), timeout=30) as response:
-            require(hashlib.file_digest(response, 'sha256').hexdigest() == sha(out / name), 'Public metadata mismatch')
+        actual = public_sha256(args.public.rstrip('/') + '/' + name + '?revision=' + revision, timeout=30)
+        require(actual == sha(out / name), 'Public metadata mismatch')
     print(json.dumps({'status': 'published', 'revision': revision, 'channel': args.public}))
 
 

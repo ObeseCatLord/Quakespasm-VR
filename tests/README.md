@@ -4239,3 +4239,11 @@ existing depth-tested world-glyph pipeline, including render-pass alternatives.
 finite-range dots, miss hiding, two-ray compaction and the separate calibration
 cue. The presentation coordinator includes this fixture; it does not claim
 physical headset alignment from synthetic input or command spies.
+
+## Publisher connection recovery
+
+`python3 -B -W error::ResourceWarning tests/publisher_transport_retry_fixture.py`
+checks public-download retries without network access. It covers fresh hashing
+following partial reads, bounded exhaustion, request settings, and fatal
+certificate/HTTP/hash failures. The existing release coordinator and public
+archive checks remain in `release_automation_test.py` and `release_public_test.py`.
