@@ -2537,7 +2537,7 @@ have `should_render == false`: focused actions remain usable independently of
 visibility. The key sink does not qualify native binding
 execution or a physical controller.
 
-Initialization checks all 17 current input cvars and all 14 registered input
+Initialization checks all 17 current input cvars and all 13 registered input
 commands, including the `vr_turn180` handler. Unavailable FBT storage/profile,
 calibration adjustment, native weapon menu, tracked presentation and paired
 weapon/model owners use fail-closed typed fixture seams. Those seams provide no
@@ -4247,3 +4247,36 @@ checks public-download retries without network access. It covers fresh hashing
 following partial reads, bounded exhaustion, request settings, and fatal
 certificate/HTTP/hash failures. The existing release coordinator and public
 archive checks remain in `release_automation_test.py` and `release_public_test.py`.
+
+
+## Reusable custom mod controls
+
+`custom_mod_bindings_fixture.py` extracts the production keys menu, parser and
+registry lookups into a strict ASan/UBSan fixture. It checks authored labels and
+exact saved-row dedup, new-draft grammar, overflow, cancellation, capture call
+ordering, long payloads and menu lifecycle gates. Native key execution,
+configuration, rendering and XR routing are explicitly stubbed boundaries.
+
+```sh
+python3 -B tests/custom_mod_bindings_fixture.py
+```
+
+`run_custom_mod_bindings_native.py` separately launches the Debug engine under
+GDB in private profiles with locally owned id1/Sacrilege assets. It exercises
+real aliases (hook impulses 24/25), logical VR key dispatch, capture cancellation,
+interruption/reopening, 255-byte assignment and save/restart/mod-switch behavior,
+with normal configuration and postcfg write-back. It never modifies installed
+settings or sends external input/focus. Deliberate inferior kill status 255 is
+accepted only with a typed completion receipt. Optional screenshots capture the
+native menu through its own renderer. This does not certify physical XR input.
+
+```sh
+python3 -B tests/run_custom_mod_bindings_native.py \
+  --engine /path/to/debug/vkquake --assets /path/to/owned/quake \
+  --library-path /path/to/matching/runtime --screenshots
+```
+
+The broad input adapter fixture also needs typed fail-closed seams for cached
+MD5 edges, held-melee presentation, raw grip offsets and menu cancellation.
+Its profile-change scenario now respects the existing pose-history reset and
+neutral rearm gates; this fixture update changes no production locomotion.

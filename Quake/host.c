@@ -1568,7 +1568,6 @@ void Host_Init (void)
 		// note: two leading newlines because the command buffer swallows one of them.
 		Cbuf_AddText ("\n\nvid_unlock\n");
 		Cmd_QueuePostConfig ();
-		Cbuf_AddText ("vr_migrate_mod_bindings\n");
 	}
 
 	if (cls.state == ca_dedicated)

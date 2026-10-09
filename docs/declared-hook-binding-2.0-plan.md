@@ -1,5 +1,10 @@
 # Declared held-hook action on the existing VR secondary binding
 
+Superseded by [generic custom mod bindings](custom-mod-bindings-plan.md). The
+automatic hook assignment/cleanup is retired because it can overwrite explicit
+post-config choices. The historical design below is retained as context; mod
+actions now use authored bind lists or deliberate custom-command assignment.
+
 2026-09-30. A remaining inherited behavior found during the command-source
 audit, not a requirement to preserve a migration-command spelling. Read-only
 primary pin51b452c0 vr.c:133–179 loads the active quake.rc, checks its +hook and
