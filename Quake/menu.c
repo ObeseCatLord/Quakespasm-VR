@@ -361,21 +361,6 @@ static qboolean M_PixelToMenuCanvasCoord (int *x, int *y)
 
 /*
 ================
-M_PrintHighlighted
-================
-*/
-static void M_PrintHighlighted (cb_context_t *cbx, int cx, int cy, const char *str)
-{
-	while (*str)
-	{
-		Draw_Character (cbx, cx, cy, (*str));
-		str++;
-		cx += CHARACTER_SIZE;
-	}
-}
-
-/*
-================
 M_Print
 ================
 */
