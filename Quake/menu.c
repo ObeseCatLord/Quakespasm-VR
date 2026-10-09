@@ -5121,6 +5121,24 @@ static int		keys_cursor;
 static int		first_key;
 static qboolean bind_grab;
 
+/* A NULL command is the pinned editor action, never a binding or separator. */
+static const menukeybind_t keys_command_action = {NULL, "Custom command..."};
+static char *keys_pending_command;
+static qboolean keys_command_editor;
+static qboolean keys_command_overflow;
+static char keys_command_draft[256];
+static char keys_command_error[40];
+static int keys_command_keyboard_cursor;
+
+static void M_Keys_ResetCommand (void)
+{
+	bind_grab = false;
+	keys_command_editor = false;
+	keys_command_overflow = false;
+	keys_command_draft[0] = keys_command_error[0] = '\0';
+	SAFE_FREE (keys_pending_command);
+}
+
 static void M_Keys_AddCustomEntry (const char *command, const char *description)
 {
 	static const char *const deprecated_commands[] = {
@@ -5173,18 +5191,19 @@ static void M_Keys_AddCustomEntry (const char *command, const char *description)
 
 static void M_Keys_AddItem (const menukeybind_t *item)
 {
-	if (item->command[0])
+	if (item->command && item->command[0])
 	{
 		for (int i = 0; i < VEC_SIZE (bindnames); i++)
-			if (bindnames[i].command[0] && !strcmp (bindnames[i].command, item->command))
+			if (bindnames[i].command && !strcmp (bindnames[i].command, item->command))
 				return;
 	}
 
 	// Collapse adjacent separators.
-	if (VEC_SIZE (bindnames) && !bindnames[VEC_SIZE (bindnames) - 1].command[0] && !item->command[0])
+	if (VEC_SIZE (bindnames) && bindnames[VEC_SIZE (bindnames) - 1].command && item->command &&
+		!bindnames[VEC_SIZE (bindnames) - 1].command[0] && !item->command[0])
 		return;
 
-	menukeybind_t copy = {.command = q_strdup (item->command), .description = q_strdup (item->description)};
+	menukeybind_t copy = {.command = item->command ? q_strdup (item->command) : NULL, .description = q_strdup (item->description)};
 	VEC_PUSH (bindnames, copy);
 }
 
@@ -5224,10 +5243,22 @@ static void M_Keys_Populate (void)
 
 		M_Keys_AddItem (item);
 	}
+
+	/* Saved assignments are authoritative, including unknown commands and macros.
+	 * Exact dedup leaves authored/native descriptions in charge of their rows. */
+	for (int key = 0; key < MAX_KEYS; ++key)
+	{
+		if (!keybindings[key] || !keybindings[key][0])
+			continue;
+		const menukeybind_t item = {keybindings[key], keybindings[key]};
+		M_Keys_AddItem (&item);
+	}
+	M_Keys_AddItem (&keys_command_action);
 }
 
 void M_Menu_Keys_f (void)
 {
+	M_Keys_ResetCommand ();
 	m_keys_parent = m_options;
 	for (int i = 0; i < VEC_SIZE (custom_bindnames); i++)
 	{
@@ -5304,7 +5335,7 @@ void M_UnbindCommand (const char *command)
 
 extern qpic_t *pic_up, *pic_down;
 
-#define BINDS_PER_PAGE 19
+#define BINDS_PER_PAGE 17 // leave space for the full command and pinned action
 
 static void M_Keys_SelectCommand (const char *command)
 {
@@ -5312,7 +5343,7 @@ static void M_Keys_SelectCommand (const char *command)
 
 	for (int i = 0; i < count; i++)
 	{
-		if (strcmp (bindnames[i].command, command))
+		if (!bindnames[i].command || strcmp (bindnames[i].command, command))
 			continue;
 
 		keys_cursor = i;
@@ -5322,12 +5353,237 @@ static void M_Keys_SelectCommand (const char *command)
 	}
 }
 
+static void M_Keys_StartCapture (const char *command)
+{
+	if (!command || !command[0])
+		return;
+	/* Rows and keybindings can be rebuilt/freed before capture completes. */
+	char *pending = q_strdup (command);
+	SAFE_FREE (keys_pending_command);
+	keys_pending_command = pending;
+	keys_command_editor = false;
+	bind_grab = true;
+	slider_grab = scrollbar_grab = false;
+	scrollbar_size = 0;
+	M_MenuChanged ();
+	IN_Activate ();
+}
+
+static void M_Keys_BeginCommand (void)
+{
+	M_Keys_ResetCommand ();
+	keys_command_editor = true;
+	keys_command_keyboard_cursor = 0;
+	slider_grab = scrollbar_grab = false;
+	scrollbar_size = 0;
+	M_MenuChanged ();
+}
+
+static void M_Keys_CommandChar (int key)
+{
+	if (!keys_command_editor)
+		return;
+	if (key < 32 || key > 126)
+	{
+		q_strlcpy (keys_command_error, "Use printable ASCII; no controls.", sizeof (keys_command_error));
+		return;
+	}
+	const size_t length = strlen (keys_command_draft);
+	if (length == sizeof (keys_command_draft) - 1)
+	{
+		keys_command_overflow = true;
+		q_strlcpy (keys_command_error, "255 byte limit: shorten or clear.", sizeof (keys_command_error));
+		return;
+	}
+	keys_command_draft[length] = key;
+	keys_command_draft[length + 1] = '\0';
+	keys_command_error[0] = '\0';
+}
+
+static qboolean M_Keys_CommandKnown (const char *name, qboolean button)
+{
+	const cmd_function_t *command = Cmd_FindCommand (name);
+	return (command && command->srctype == src_command) || Cmd_AliasExists (name) || (!button && Cvar_FindVar (name));
+}
+
+static qboolean M_Keys_SubmitCommand (void)
+{
+	char command[sizeof (keys_command_draft)];
+	char name[sizeof (keys_command_draft)];
+	const char *start = keys_command_draft;
+	size_t length, token_length;
+	const char *error = NULL;
+
+	if (!keys_command_editor)
+		return false;
+	if (keys_command_overflow)
+	{
+		q_strlcpy (keys_command_error, "255 byte limit: shorten or clear.", sizeof (keys_command_error));
+		return false;
+	}
+	while (*start == ' ')
+		++start;
+	length = strlen (start);
+	while (length && start[length - 1] == ' ')
+		--length;
+	memcpy (command, start, length);
+	command[length] = '\0';
+	if (!length)
+		error = "Enter a command first.";
+	for (size_t i = 0; i < length && !error; ++i)
+	{
+		const unsigned char c = command[i];
+		if (c < 32 || c == 127 || c == '"' || c == '\'' || c == ';')
+			error = "No controls, quotes or semicolons.";
+	}
+	if (!error && (strstr (command, "//") || strstr (command, "/*")))
+		error = "Comment delimiters are not allowed.";
+
+	/* Only new drafts use this grammar; imported/authored macros stay verbatim. */
+	token_length = strcspn (command, " ");
+	memcpy (name, command, token_length);
+	name[token_length] = '\0';
+	if (!error && command[0] == '+')
+	{
+		if (token_length != length)
+			error = "Use a bare +command, no arguments.";
+		else if (!M_Keys_CommandKnown (name, true))
+			error = "Unknown +command or alias.";
+		else
+		{
+			name[0] = '-';
+			if (!M_Keys_CommandKnown (name, true))
+				error = "The matching -command is missing.";
+		}
+	}
+	else if (!error && !M_Keys_CommandKnown (name, false))
+		error = "Unknown command, alias or cvar.";
+	if (error)
+	{
+		q_strlcpy (keys_command_error, error, sizeof (keys_command_error));
+		return false;
+	}
+
+	M_Keys_StartCapture (command);
+	return true;
+}
+
+static void M_Keys_CommandErase (qboolean clear)
+{
+	const size_t length = strlen (keys_command_draft);
+	if (length)
+		keys_command_draft[clear ? 0 : length - 1] = '\0';
+	keys_command_overflow = false;
+	keys_command_error[0] = '\0';
+}
+
+static void M_Keys_CommandActivate (void)
+{
+	const int key = keys_command_keyboard_cursor;
+	if (key < 26)
+		M_Keys_CommandChar ('a' + key);
+	else if (key < 36)
+		M_Keys_CommandChar ('0' + key - 26);
+	else if (key < 40)
+		M_Keys_CommandChar (" -_+"[key - 36]);
+	else if (key < 42)
+		M_Keys_CommandErase (key == 41);
+	else
+		M_Keys_SubmitCommand ();
+}
+
+static void M_Keys_CommandKey (int key)
+{
+	switch (key)
+	{
+	case K_MOUSE2:
+	case K_ESCAPE:
+	case K_BBUTTON:
+		M_Keys_ResetCommand ();
+		M_MenuChanged ();
+		break;
+	case K_LEFTARROW:
+	case K_RIGHTARROW:
+		keys_command_keyboard_cursor = (keys_command_keyboard_cursor + MOD_BROWSER_KEY_COUNT +
+			(key == K_LEFTARROW ? -1 : 1)) % MOD_BROWSER_KEY_COUNT;
+		break;
+	case K_UPARROW:
+	case K_VR_RIGHT_STICK_UP:
+	case K_DOWNARROW:
+	case K_VR_RIGHT_STICK_DOWN:
+		keys_command_keyboard_cursor = ModBrowser_KeyVertical (keys_command_keyboard_cursor,
+			key == K_UPARROW || key == K_VR_RIGHT_STICK_UP ? -1 : 1);
+		break;
+	case K_BACKSPACE:
+	case K_DEL:
+	case K_XBUTTON:
+		M_Keys_CommandErase (key != K_BACKSPACE);
+		break;
+	case K_ENTER:
+	case K_KP_ENTER:
+		M_Keys_SubmitCommand ();
+		break;
+	case K_MOUSE1:
+		if (!ModBrowser_Contains (ModBrowser_KeyRect (keys_command_keyboard_cursor), m_mouse_x, m_mouse_y))
+			return;
+		/* fall through */
+	case K_ABUTTON:
+		M_Keys_CommandActivate ();
+		break;
+	default:
+		return;
+	}
+	S_LocalSound ("misc/menu1.wav");
+}
+
+static void M_Keys_CommandDraw (cb_context_t *cbx)
+{
+	char field[sizeof (keys_command_draft) + 1];
+	M_PrintWhite (cbx, 8, 4, "CUSTOM COMMAND");
+	M_PrintWhite (cbx, 8, 14, "Enter: bind   Esc/B: cancel");
+	Draw_Fill (cbx, 8, 24, 304, 22, 4, 0.95f);
+	q_snprintf (field, sizeof (field), "%s_", keys_command_draft);
+	M_PrintScroll (cbx, 16, 31, 288, field, realtime * 0.5, false);
+	for (int key = 0; key < MOD_BROWSER_KEY_COUNT; ++key)
+	{
+		const mod_browser_rect_t r = ModBrowser_KeyRect (key);
+		char glyph[2] = {key < 26 ? 'a' + key : '0' + key - 26, 0};
+		const char *label = key < 36 ? glyph :
+			key == 36 ? "SP" : key == 37 ? "-" : key == 38 ? "_" :
+			key == 39 ? "+" : key == 40 ? "Backspace" : key == 41 ? "Clear" : "Bind";
+		M_Mouse_UpdateCursor (&keys_command_keyboard_cursor, r.x, r.x + r.w - 1, r.y, r.h - 1, key);
+		Draw_Fill (cbx, r.x, r.y, r.w, r.h, key == keys_command_keyboard_cursor ? 14 : 4, 0.9f);
+		M_PrintWhite (cbx, r.x + (r.w - (int)strlen (label) * CHARACTER_SIZE) / 2, r.y + 7, label);
+	}
+	M_PrintWhite (cbx, 8, 180, keys_command_error[0] ? keys_command_error : "Arrows: choose   A/trigger: type");
+	M_PrintWhite (cbx, 8, 190, "255 bytes max   X/Del: clear");
+}
+
+/* Truncation belongs only to drawing; row/pending commands remain complete. */
+static void M_Keys_DrawLabel (cb_context_t *cbx, int x, int y, const char *text, size_t columns)
+{
+	char label[40];
+	const size_t length = strlen (text);
+	const size_t count = q_min (length, columns);
+	memcpy (label, text, count);
+	label[count] = '\0';
+	if (length > count)
+		memcpy (label + count - 3, "...", 3);
+	M_Print (cbx, x, y, label);
+}
+
 static void M_Keys_Draw (cb_context_t *cbx)
 {
-	int			i, x, y;
-	int			keys[2];
-	const char *name;
-	qpic_t	   *p;
+	int i, y;
+	int keys[2];
+	qpic_t *p;
+	const int action = (int)VEC_SIZE (bindnames) - 1;
+
+	if (keys_command_editor)
+	{
+		M_Keys_CommandDraw (cbx);
+		return;
+	}
 
 	p = Draw_CachePic ("gfx/ttl_cstm.lmp");
 	M_DrawPic (cbx, (320 - p->width) / 2, 4, p);
@@ -5338,64 +5594,86 @@ static void M_Keys_Draw (cb_context_t *cbx)
 		M_Print (cbx, 18, 32, "Enter to change, backspace to clear");
 
 	// search for known bindings
-	for (i = 0; i < BINDS_PER_PAGE && i < (int)VEC_SIZE (bindnames); i++)
+	for (i = 0; i < BINDS_PER_PAGE && i + first_key < action; i++)
 	{
 #define KEY_STRING_DRAW_POS (160)
+		const menukeybind_t *item = &bindnames[i + first_key];
+		char key_label[256];
 		y = 48 + 8 * i;
 
-		M_Print (cbx, 10, y, bindnames[i + first_key].description);
+		M_Keys_DrawLabel (cbx, 10, y, item->description, 18);
 		/* Keep the selected action fixed while its next key is being captured. */
-		if (!bind_grab && bindnames[i + first_key].command[0])
-			M_Mouse_UpdateCursor (&keys_cursor, 12, 400, y, 8, i + first_key);
+		if (!bind_grab && item->command[0])
+			M_Mouse_UpdateCursor (&keys_cursor, 12, 304, y, 7, i + first_key);
+		if (!item->command[0])
+			continue;
+		M_FindKeysForCommand (item->command, keys);
 
-		M_FindKeysForCommand (bindnames[i + first_key].command, keys);
-
-		// do not draw anything if the bindnames is empty, it means a plceholder separator.
-		if (strlen (bindnames[i + first_key].command) && (keys[0] == -1))
+		if (keys[0] == -1)
 		{
 			M_Print (cbx, KEY_STRING_DRAW_POS, y, "???");
 		}
 		else
 		{
-			name = Key_KeynumToString (keys[0]);
-			M_Print (cbx, KEY_STRING_DRAW_POS, y, name);
-			x = strlen (name) * 8;
+			q_strlcpy (key_label, Key_KeynumToString (keys[0]), sizeof (key_label));
 			if (keys[1] != -1)
 			{
-				name = Key_KeynumToString (keys[1]);
-				M_PrintHighlighted (cbx, (KEY_STRING_DRAW_POS - 2) + x, y, ",");
-				M_Print (cbx, (KEY_STRING_DRAW_POS - 2) + x + 12, y, name);
-				x = x + 12 + strlen (name) * 8;
+				q_strlcat (key_label, ", ", sizeof (key_label));
+				q_strlcat (key_label, Key_KeynumToString (keys[1]), sizeof (key_label));
 			}
+			M_Keys_DrawLabel (cbx, KEY_STRING_DRAW_POS, y, key_label, 18);
 		}
 	}
+
+	M_Print (cbx, 10, 192, keys_command_action.description);
+	if (!bind_grab)
+		M_Mouse_UpdateCursor (&keys_cursor, 12, 304, 192, 7, action);
+	const char *selected = bind_grab ? keys_pending_command : bindnames[keys_cursor].command;
+	if (selected && selected[0])
+		M_PrintScroll (cbx, 10, 184, 288, selected, realtime * 0.25, false);
 
 	if (VEC_SIZE (bindnames) > BINDS_PER_PAGE)
 		M_DrawScrollbar (cbx, MENU_SCROLLBAR_X, 56, (float)(first_key) / (VEC_SIZE (bindnames) - BINDS_PER_PAGE), BINDS_PER_PAGE - 2);
 
+	y = keys_cursor == action ? 192 : 48 + (keys_cursor - first_key) * 8;
 	if (bind_grab)
-		Draw_Character (cbx, (KEY_STRING_DRAW_POS - 10), 48 + (keys_cursor - first_key) * 8, '=');
+		Draw_Character (cbx, (KEY_STRING_DRAW_POS - 10), y, '=');
 	else
 	{
-		Draw_Character (cbx, 0, 48 + (keys_cursor - first_key) * 8, 12 + ((int)(realtime * 4) & 1));
+		Draw_Character (cbx, 0, y, 12 + ((int)(realtime * 4) & 1));
 	}
 }
 
 void M_Keys_Key (int k)
 {
-	char cmd[80];
-	int	 keys[2];
+	int keys[2];
+
+	if (keys_command_editor)
+	{
+		M_Keys_CommandKey (k);
+		/* Submitting (including a held trigger) only enters capture. The next
+		 * deliberate press belongs to the inherited binding-capture owner. */
+		return;
+	}
 
 	if (bind_grab)
 	{ // defining a key
 		S_LocalSound ("misc/menu1.wav");
-		if ((k != K_ESCAPE) && (k != '`'))
+		if ((k != K_ESCAPE) && (k != '`') && k >= 0 && k < MAX_KEYS && keys_pending_command)
 		{
-			q_snprintf (cmd, sizeof (cmd), "bind \"%s\" \"%s\"\n", Key_KeynumToString (k), bindnames[keys_cursor].command);
-			Cbuf_InsertText (cmd);
+			/* Retire capture-down using the OLD binding before any unbinding or
+			 * installation. The normal stray-keyup guard consumes physical up. */
+			Key_Event (k, false);
+			M_FindKeysForCommand (keys_pending_command, keys);
+			if (keys[1] != -1)
+				M_UnbindCommand (keys_pending_command);
+			Key_SetBinding (k, keys_pending_command);
+			M_Keys_Populate ();
+			M_Keys_SelectCommand (keys_pending_command);
 		}
 
-		bind_grab = false;
+		M_Keys_ResetCommand ();
+		M_MenuChanged ();
 		IN_DeactivateForMenu (); // deactivate because we're returning to the menu
 		return;
 	}
@@ -5425,21 +5703,28 @@ void M_Keys_Key (int k)
 	case K_ENTER: // go into bind mode
 	case K_KP_ENTER:
 	case K_ABUTTON:
-		M_FindKeysForCommand (bindnames[keys_cursor].command, keys);
+		if (!bindnames[keys_cursor].command)
+		{
+			M_Keys_BeginCommand ();
+			return;
+		}
 		// if bindnames is empty, it means as a placeholder separator
 		if (!strlen (bindnames[keys_cursor].command))
 			return;
 		S_LocalSound ("misc/menu2.wav");
-		if (keys[1] != -1)
-			M_UnbindCommand (bindnames[keys_cursor].command);
-		bind_grab = true;
-		IN_Activate (); // activate to allow mouse key binding
+		M_Keys_StartCapture (bindnames[keys_cursor].command);
 		break;
 
 	case K_BACKSPACE: // delete bindings
 	case K_DEL:
+		if (!bindnames[keys_cursor].command || !bindnames[keys_cursor].command[0])
+			return;
 		S_LocalSound ("misc/menu2.wav");
 		M_UnbindCommand (bindnames[keys_cursor].command);
+		M_Keys_Populate ();
+		keys_cursor = q_min (keys_cursor, (int)VEC_SIZE (bindnames) - 1);
+		first_key = CLAMP (0, first_key, q_max (0, (int)VEC_SIZE (bindnames) - BINDS_PER_PAGE));
+		M_MenuChanged ();
 		break;
 	}
 }
@@ -8720,7 +9005,7 @@ void M_Draw (cb_context_t *cbx)
 
 static qboolean M_Mouse_ClickValid (void)
 {
-	return bind_grab || m_state == m_help || m_mouse_hover_state == m_state || M_InScrollbar ();
+	return M_WaitingForKeyBinding () || m_state == m_help || m_mouse_hover_state == m_state || M_InScrollbar ();
 }
 
 qboolean M_VRPointerCanClick (void)
@@ -8731,12 +9016,12 @@ qboolean M_VRPointerCanClick (void)
 
 qboolean M_VRPointerRequiresHit (void)
 {
-	return m_state == m_mods && mods_keyboard;
+	return (m_state == m_mods && mods_keyboard) || (key_dest == key_menu && m_state == m_keys && keys_command_editor);
 }
 
 qboolean M_VRPointerBindingGrab (void)
 {
-	return bind_grab;
+	return key_dest == key_menu && m_state == m_keys && bind_grab;
 }
 
 static qboolean M_IsMouseKey (int key)
@@ -8746,7 +9031,7 @@ static qboolean M_IsMouseKey (int key)
 
 void M_Keydown (int key, qboolean repeat)
 {
-	if (!ui_mouse.value && !V_TrackedSessionActive () && !bind_grab && M_IsMouseKey (key))
+	if (!ui_mouse.value && !V_TrackedSessionActive () && !M_WaitingForKeyBinding () && M_IsMouseKey (key))
 		return;
 	if (key == K_ESCAPE && key_dest == key_menu && M_CancelPendingConnection ())
 		return;
@@ -8754,7 +9039,7 @@ void M_Keydown (int key, qboolean repeat)
 	// Repeat navigation and editing, but never menu activation or binding capture.
 	if (repeat)
 	{
-		if (bind_grab)
+		if (M_WaitingForKeyBinding ())
 			return;
 		switch (key)
 		{
@@ -8896,6 +9181,9 @@ void M_Charinput (int key)
 {
 	switch (m_state)
 	{
+	case m_keys:
+		M_Keys_CommandChar (key);
+		return;
 	case m_setup:
 		M_Setup_Char (key);
 		return;
@@ -8920,6 +9208,8 @@ qboolean M_TextEntry (void)
 {
 	switch (m_state)
 	{
+	case m_keys:
+		return key_dest == key_menu && keys_command_editor;
 	case m_setup:
 		return M_Setup_TextEntry ();
 	case m_mods:

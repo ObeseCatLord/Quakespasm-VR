@@ -294,6 +294,27 @@ char *keybindings[MAX_KEYS];
 
 void VRXR_SetTrackerEnabled (int enabled) { (void)enabled; }
 qboolean VR_WeaponMenu_IsOpenVR (void) { return false; }
+
+/* These external presentation/model owners are unavailable in this adapter
+ * fixture. Fail closed rather than claiming native grip/MD5/menu integration. */
+void VR_WeaponMenu_Cancel (void) {}
+qboolean V_TrackedRawGripBodyOffset (int physical_hand, vec3_t out)
+{
+	(void)physical_hand;
+	memset (out, 0, sizeof (vec3_t));
+	return false;
+}
+entity_t *V_HeldMeleeEntity (void) { return NULL; }
+qboolean Mod_GetMD5StockAxeEdge (const qmodel_t *mod, const aliashdr_t *selected,
+	int pose0, int pose1, stockaxe_edge_t *out)
+{
+	(void)mod;
+	(void)selected;
+	(void)pose0;
+	(void)pose1;
+	memset (out, 0, sizeof (*out));
+	return false;
+}
 qboolean M_VRPointerRequiresHit (void) { return false; }
 qboolean VR_WeaponCalibrationAdjustActive (void) { return false; }
 void VR_WeaponCalibrationAdjustCancel (void) {}
@@ -497,7 +518,7 @@ static void native_clear_then_neutral (vrxr_frame_t *frame)
 static void test_init_and_no_vr (void)
 {
 	static const char *expected_commands[] = {
-		"vr_turn180", "vr_defaultbindings", "vr_migrate_mod_bindings",
+		"vr_turn180", "vr_defaultbindings",
 		"vr_fbt_list", "vr_fbt_assign", "vr_fbt_unassign",
 		"vr_fbt_profile_select", "vr_fbt_profile_reset", "vr_fbt_profile_list",
 		"vr_fbt_profile_save", "vr_fbt_calibrate_begin", "vr_fbt_calibrate_capture",
@@ -1437,16 +1458,23 @@ static void test_motion_ownership_and_tracking_loss (void)
 	cls.state = ca_disconnected;
 	turn180_command ();
 	cls.state = ca_connected;
+	frame.hands[0].stick[1] = 0; // reconnect requires neutral before locomotion rearms
 	frame.hands[1].stick[0] = 0;
 	motion_sample (&frame);
 	motion_sample (&frame);
 	near_motion (fixture_turn_yaw, -182);
-	// A profile-only change gates that hand's dependencies, not unrelated
-	// locomotion/turn channels that remain held and valid.
+	// A profile change rebases tracked pose histories and requires neutral
+	// before locomotion/turning can use the new controller convention.
 	frame.hands[0].stick[1] = 1;
 	motion_sample (&frame);
 	assert (cl.pendingcmd.vr_pending_move_valid);
 	frame.hands[1].profile = VRXR_PROFILE_INDEX;
+	motion_sample (&frame);
+	assert (!cl.pendingcmd.vr_pending_move_valid);
+	frame.hands[0].stick[1] = 0;
+	motion_sample (&frame);
+	motion_sample (&frame);
+	frame.hands[0].stick[1] = 1;
 	motion_sample (&frame);
 	assert (cl.pendingcmd.vr_pending_move_valid);
 	near_motion (cl.pendingcmd.vr_pending_move[0], 200);
@@ -1456,6 +1484,12 @@ static void test_motion_ownership_and_tracking_loss (void)
 	motion_sample (&frame);
 	float prior_turn = fixture_turn_yaw;
 	frame.hands[0].profile = VRXR_PROFILE_INDEX;
+	motion_sample (&frame);
+	near_motion (fixture_turn_yaw, prior_turn);
+	frame.hands[0].stick[1] = frame.hands[1].stick[0] = 0;
+	motion_sample (&frame);
+	motion_sample (&frame);
+	frame.hands[1].stick[0] = 1;
 	motion_sample (&frame);
 	near_motion (fixture_turn_yaw, prior_turn - 2);
 

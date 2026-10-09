@@ -3648,8 +3648,6 @@ void COM_SwitchGame (const char *paths)
 	Cbuf_AddText ("exec quake.rc\n");
 	Cbuf_AddText ("vid_unlock\n");
 	Cmd_QueuePostConfigAfterGameChange ();
-	if (!isDedicated)
-		Cbuf_AddText ("vr_migrate_mod_bindings\n");
 }
 
 static qboolean COM_CurrentGameHasStartMap (void)
