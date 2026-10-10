@@ -89,3 +89,23 @@ The current single-stick Steam Controller installation uses movement axes for
 selection; the generic gamepad default uses look axes. Both reuse the same
 selector and the menu setting. Existing settings were backed up locally, with
 only relevant controller bindings, gyro enable and wheel-axis preference changed.
+
+
+## Qualification result
+
+Strict native Debug build passed. The SDL3 virtual-gamepad proof passed using
+private Xvfb/XTest and a fresh profile: gyro off with a real sensor sample,
+normal stick look, directional wheel selection, real QuakeC equip, neutral axes,
+Back/Tab release, mouse ownership and deadzone rejection, delayed mouse-to-stick
+takeover, same-poll axes plus release with camera suppression, Move/swapped Look
+routing, and keyboard wheel/scoreboard holds surviving native unplug until their
+own releases. No hover, inventory, key-state, or equip result was manufactured.
+
+The native mouse-wheel lifecycle regression passed. Native XR action-frame
+lifecycle/gameplay probes passed, including authoritative movement and ammo use;
+these use completed input-frame injection, not headset hardware. Native custom
+binding capture/save/reload passed with and without post-config overrides,
+including mouse/SDL/XR attack coexistence and Sacrilege hook aliases. ASan/UBSan
+adapter, default-binding and movement-continuity fixtures and stable key-name
+roundtrips passed. Physical Steam Controller and Steam Input profile validation
+remain with the user.

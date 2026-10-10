@@ -2584,8 +2584,8 @@ ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-default-bindings-fixture
 ```
 
 `vr_input_keys_fixture.c` links the production key-name converters and checks
-that existing gamepad/alternate key codes remain unchanged and the three VR
-names round-trip within the native table capacity:
+that existing gamepad/alternate key codes remain unchanged and the dedicated VR
+names round-trip within the expanded native table capacity:
 
 ```sh
 for source in keys common; do
@@ -4280,3 +4280,22 @@ The broad input adapter fixture also needs typed fail-closed seams for cached
 MD5 edges, held-melee presentation, raw grip offsets and menu cancellation.
 Its profile-change scenario now respects the existing pose-history reset and
 neutral rearm gates; this fixture update changes no production locomotion.
+
+
+### Desktop gamepad wheel and independent XR bindings
+
+`desktop_gamepad_input.gdb` uses SDL3's virtual gamepad and sensor APIs in an
+initialized desktop game. Run it only on a private Xvfb display, with
+`SDL_VIDEODRIVER=x11`, `SDL_JOYSTICK_HIDAPI=0`,
+`QSVR_GAMEPAD_PRIVATE_DISPLAY=1`, `QSVR_GAMEPAD_BASEDIR` pointing to private
+licensed id1 assets, `QSVR_GAMEPAD_USERDIR` pointing to a fresh private profile
+with an id1 directory, and `QSVR_GAMEPAD_RESULT` naming a JSON result file. Wrap
+GDB in a 120-second timeout. Require its typed successful receipt; no physical
+controller or Steam Input hardware certification is implied.
+
+Desktop SDL controls and gameplay/capture XR controls use independent native
+keycodes. The custom-binding native probe now retains every existing assignment
+when adding another, and checks mouse, SDL trigger, and XR trigger coexistence
+through capture, press/release, save/reload and post-config overrides. Explicit
+clear-all remains available. The XR lifecycle probe retains physical SDL ALT
+ownership checks separately from XR gameplay and binding capture.
