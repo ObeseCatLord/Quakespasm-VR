@@ -25,7 +25,7 @@ class ReleaseTests(unittest.TestCase):
         self.base = Path(self.temporary.name)
         self.repo = self.base / 'source-repo'
         self.repo.mkdir()
-        self.command('init', '--quiet', '-b', '2.0')
+        self.command('init', '--quiet', '-b', 'main')
         self.command('config', 'user.name', 'Release fixture')
         self.command('config', 'user.email', 'fixture@example.invalid')
         (self.repo / 'engine.c').write_text('committed engine\n')
@@ -107,7 +107,7 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Output conflict'):
             release.prepare(self.root, self.rev, self.repo)
         self.command('checkout', '--quiet', '-b', 'other')
-        with self.assertRaisesRegex(RuntimeError, 'branch 2.0'):
+        with self.assertRaisesRegex(RuntimeError, 'branch main'):
             release.verify_source(self.root, self.repo)
 
     def test_revision_mismatch_and_forged_archive_rejected(self):

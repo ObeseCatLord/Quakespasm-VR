@@ -1,11 +1,13 @@
-# Quakespasm VR 2.0 working instructions
+# Quakespasm VR working instructions
 
 ## Workspace and branch
 
-This checkout is the vkQuake-based engine. Make changes on `2.0` only. Do not
-edit, reset, merge into, or force-push `main` or `legacy1.0`. Keep inherited
-vkQuake systems and reuse upstream code through narrow adapters where possible.
-Read-only sibling checkouts can supply behavioral references.
+This checkout is the vkQuake-based engine. Work directly on `main`; it contains
+all migrated `2.0` work. Keep `legacy1.0` unchanged and never reset or force-push
+published branches without explicit user authorization. The existing `2.0`
+download channel is independent of the source branch and remains unchanged.
+Keep inherited vkQuake systems and reuse upstream code through narrow adapters
+where possible. Read-only sibling checkouts can supply behavioral references.
 
 Installed Quake and mod files are in
 `/home/obesecatlord/Windows/Games/quakespasm_straight`. They are external test
@@ -53,9 +55,9 @@ GitHub Actions remain disabled.
 
 - Finish implementation first, then run relevant end checks. Build Windows once
   at the end alongside Linux and native Linux ARM64, not after each small edit.
-- Commit the engine changes on `2.0`, then prepare one immutable git archive and
+- Commit the engine changes on `main`, then prepare one immutable git archive and
   source manifest. All platform packages must identify that exact revision and
-  archive checksum. Push the engine revision before publication.
+  archive checksum. Push the engine revision to `origin/main` before publication.
 - Use a separate output directory per source revision. Resume only after
   verifying source identity and complete artifact inventories. Failed or partial
   builds are not successful receipts; never copy stale engine objects.
@@ -80,7 +82,7 @@ GitHub Actions remain disabled.
 - Automation/docs-only commits do not justify rebuilding already qualified
   engine packages. Clearly record the published engine revision separately from
   a newer automation commit. Normal publication requires that revision to be the
-  tip of `origin/2.0`, so finish publication before pushing later automation
+  tip of `origin/main`, so finish publication before pushing later automation
   changes. An explicit public-only refresh of an already-published cohort may
   reuse its qualified packages after verifying release identity and asset
   digests; do not rebuild engines for documentation removal.
@@ -101,7 +103,7 @@ a verified shared model/protocol behavior can handle the case.
 
 Use `rg` for searches. Inspect every delegated result, integrate it, and report
 the relevant verification and remaining limitations. Commit coherent changes
-regularly on `2.0`; never stage build outputs, local release configs or installed
+regularly on `main`; never stage build outputs, local release configs or installed
 game assets. Do not delete deployment folders, reset user changes or force-push
 without explicit intent. Keep operational telemetry private and summarize it
 when sharing outside the local machine.

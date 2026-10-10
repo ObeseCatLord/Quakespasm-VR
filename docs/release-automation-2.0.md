@@ -3,8 +3,10 @@
 Use `Packaging/Release/release.py` for builds, package verification, deployment
 and publication. It calls the existing native Linux/ARM recipes, Windows
 MSBuild adapter and R2 publisher. It does not use GitHub Actions or install game
-data. Run on the Linux release host from the `2.0` checkout with Python 3.11 or
+data. Run on the Linux release host from the `main` checkout with Python 3.11 or
 newer. Windows compilation runs inside WinBoat through its private adapter.
+The source branch is `main`; runtime names and the existing `2.0` download
+channel retain their current identity.
 
 ## Once per build machine
 
@@ -36,7 +38,7 @@ checksum identify its inputs; a newer automation commit does not relabel it.
 
 ## Normal release
 
-Finish implementation and relevant tests, commit on `2.0`, and push that engine
+Finish implementation and relevant tests, commit on `main`, and push that engine
 revision. Use the CLI's `run` command with the selected platform targets and
 explicit deployment/publication options. `--help` lists the commands and flags.
 The command reuses successful, verified targets when resumed. Platform build
@@ -86,7 +88,7 @@ Explicit verification/import can adopt an already-qualified cohort, including
 the Peril/desktop-wheel release at
 `ad198cf7b27d04bfa10f87478e9dd1745e8bb28f`, without rebuilding it for
 automation-only changes. Publication is stricter: the existing R2 publisher
-requires the engine revision to equal the current tip of `origin/2.0`. Finish
+requires the engine revision to equal the current tip of `origin/main`. Finish
 publishing before pushing later documentation or automation commits. Do not
 reset the branch to make an old cohort publishable.
 
@@ -150,7 +152,7 @@ python3 Packaging/Release/release.py \
 This preserves the engine revision and release tag. It requires the existing
 publication receipt and matching GitHub release identity and asset digests;
 it cannot publish an unrelated build. Normal new-build publication still
-requires the exact engine revision at the tip of `origin/2.0`. No new engine
+requires the exact engine revision at the tip of `origin/main`. No new engine
 build or private distribution update is needed for public documentation cleanup.
 
 ## Results

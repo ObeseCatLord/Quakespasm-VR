@@ -137,8 +137,8 @@ def publish(args):
     out = args.stage.resolve()
     release = json.loads((out / 'release.json').read_text())
     revision = release['revision']
-    remote_revision = subprocess.check_output(['git', 'ls-remote', 'origin', 'refs/heads/2.0'], text=True).split()[0]
-    require(remote_revision == revision, 'Publishing requires source revision on origin/2.0')
+    remote_revision = subprocess.check_output(['git', 'ls-remote', 'origin', 'refs/heads/main'], text=True).split()[0]
+    require(remote_revision == revision, 'Publishing requires source revision on origin/main')
     require(args.remote.rstrip('/').endswith('/2.0'), 'Publisher only writes the isolated 2.0 channel')
     actual = scan(out)
     actual.pop('release.json', None)

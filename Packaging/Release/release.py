@@ -54,11 +54,11 @@ def git(repo, *args):
 
 
 def revision(repo, value):
-    require(git(repo, 'branch', '--show-current') == '2.0', 'Source checkout must be on branch 2.0')
+    require(git(repo, 'branch', '--show-current') == 'main', 'Source checkout must be on branch main')
     require(value and not value.startswith('-'), 'Invalid revision')
     resolved = git(repo, 'rev-parse', '--verify', value + '^{commit}')
     require(re.fullmatch('[0-9a-f]{40}', resolved), 'Expected full committed revision')
-    subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor', resolved, '2.0'], check=True)
+    subprocess.run(['git', '-C', str(repo), 'merge-base', '--is-ancestor', resolved, 'main'], check=True)
     return resolved
 
 
@@ -426,8 +426,8 @@ def publish_github(root, config, repo=REPO, config_path=None, refresh_existing=F
             'R2 public URL must use HTTPS')
     # Mirror the existing publisher's exact origin requirement; never create or move a tag.
     if not refresh_existing:
-        remote = git(repo, 'ls-remote', 'origin', 'refs/heads/2.0').split()
-        require(remote and remote[0] == release['revision'], 'GitHub publication requires engine revision on origin/2.0')
+        remote = git(repo, 'ls-remote', 'origin', 'refs/heads/main').split()
+        require(remote and remote[0] == release['revision'], 'GitHub publication requires engine revision on origin/main')
     gh = ['gh', 'release']
     view = lambda: json.loads(subprocess.check_output(
         gh + ['view', tag, '--repo', repository, '--json', 'tagName,id,body,assets'], text=True))
@@ -496,7 +496,7 @@ def parser():
     result.add_argument('--config', required=True, type=Path, help='local JSON paths/options; no secrets')
     result.add_argument('--root', required=True, type=Path, help='cohort directory below config.output_base')
     commands = result.add_subparsers(dest='command', required=True)
-    for name, help_text in [('prepare', 'archive a committed 2.0 revision'), ('build', 'build/resume verified platforms'),
+    for name, help_text in [('prepare', 'archive a committed main revision'), ('build', 'build/resume verified platforms'),
                             ('verify', 'verify committed archive and complete package inventories'),
                             ('import', 'copy an explicitly qualified cohort to a new output'),
                             ('stage', 'stage all runtime/source-access archives using publish-r2.py'),
@@ -506,7 +506,7 @@ def parser():
         sub = commands.add_parser(name, help=help_text)
         if name in ('prepare', 'verify', 'import', 'run'):
             sub.add_argument('--revision', required=name == 'import', default='HEAD' if name == 'prepare' else None,
-                             help='committed 2.0 revision; import requires explicit engine revision')
+                             help='committed main revision; import requires explicit engine revision')
         if name in ('build', 'verify', 'import', 'run'):
             sub.add_argument('--platforms', type=platform_list, default=list(PLATFORMS))
         if name == 'import':
@@ -576,7 +576,7 @@ def main(argv=None):
     config = read(unix.regular(config_path))
     root = output_root(config, args.root.absolute())
     # Recheck branch even for import/verify; never derive import identity from HEAD.
-    require(git(REPO, 'branch', '--show-current') == '2.0', 'Source checkout must be on branch 2.0')
+    require(git(REPO, 'branch', '--show-current') == 'main', 'Source checkout must be on branch main')
     with cohort_lock(root, absolute(config['output_base'])):
         return execute(args, config, config_path, root)
 

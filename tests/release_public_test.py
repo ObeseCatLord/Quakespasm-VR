@@ -152,7 +152,7 @@ class PublicReleaseTests(unittest.TestCase):
             if refresh:
                 git.assert_not_called()
             else:
-                git.assert_called_once_with(release.REPO, 'ls-remote', 'origin', 'refs/heads/2.0')
+                git.assert_called_once_with(release.REPO, 'ls-remote', 'origin', 'refs/heads/main')
 
     def test_archive_cleanup_preserves_payloads_modes_links_notices_and_originals(self):
         for extension in ('tar.gz', 'zip'):
@@ -280,8 +280,8 @@ class PublicReleaseTests(unittest.TestCase):
             self.publish()
         self.assertEqual(release.read(self.root / 'github-publication.json'), self.identity)
 
-    def test_normal_publication_origin_gate_is_unchanged(self):
-        with self.assertRaisesRegex(RuntimeError, 'engine revision on origin/2.0'):
+    def test_normal_publication_requires_exact_main_revision(self):
+        with self.assertRaisesRegex(RuntimeError, 'engine revision on origin/main'):
             self.publish(refresh=False)
         self.assertEqual(self.commands, [])
         self.publish(refresh=False, remote=self.rev)
