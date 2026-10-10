@@ -61,7 +61,18 @@ if mode=='save':
  setv('key_dest','key_console');assert not num('M_VRPointerBindingGrab()')
  openmenu();assert not num('M_WaitingForKeyBinding()')
  enter('  +hook  ');assert num('M_WaitingForKeyBinding()');capture(vkey)
- assert binding(vkey)=='+hook' and all(not binding(k) for k in (ord('x'),ord('y'),ord('z')))
+ assert binding(vkey)=='+hook' and all(binding(k)=='+hook' for k in (ord('x'),ord('y'),ord('z')))
+ assert num('M_Keys_CountBindings("+hook")') >= 4
+ # Capturing a dedicated XR attack must retain native mouse/gamepad owners.
+ attackkeys=(num('K_MOUSE1'),num('K_RTRIGGER'),num('K_VR_RTRIGGER'))
+ for ak in attackkeys[:2]:call('Key_SetBinding(%d,"+attack")'%ak)
+ openmenu();call('M_Keys_SelectCommand("+attack")');call('M_Keys_Key(%d)'%num('K_ENTER'))
+ capture(attackkeys[2]);assert all(binding(ak)=='+attack' for ak in attackkeys)
+ setv('key_dest','key_game')
+ for ak in attackkeys[1:]:call('Key_Event(%d,1)'%ak);call('Cbuf_Execute()')
+ assert num('in_attack.state & 1')
+ call('Key_Event(%d,0)'%attackkeys[1]);call('Cbuf_Execute()');assert num('in_attack.state & 1')
+ call('Key_Event(%d,0)'%attackkeys[2]);call('Cbuf_Execute()');assert not num('in_attack.state & 1')
  # Real key dispatch expands the actual mod's aliases to press and release impulses.
  setv('key_dest','key_game');setv('in_impulse',0)
  call('Key_Event(%d,1)'%vkey);call('Cbuf_Execute()');assert num('in_impulse')==24
@@ -71,6 +82,8 @@ if mode=='save':
 else:
  assert binding(vkey)=='+hook',binding(vkey)
  assert binding(lkey)==longcmd,binding(lkey)
+ assert all(binding(num(k))=='+attack' for k in ('K_MOUSE1','K_RTRIGGER','K_VR_RTRIGGER'))
+ assert all(binding(k)=='+hook' for k in (ord('x'),ord('y'),ord('z')))
  openmenu();call('M_Keys_SelectCommand("+hook")')
  assert string('bindnames[keys_cursor].command')=='+hook'
  command('game id1')

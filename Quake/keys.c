@@ -176,6 +176,16 @@ keyname_t keynames[] = {
 	{"VR_RIGHT_STICK_UP", K_VR_RIGHT_STICK_UP},
 	{"VR_RIGHT_STICK_DOWN", K_VR_RIGHT_STICK_DOWN},
 	{"VR_ALTFIRE", K_VR_ALTFIRE},
+	{"VR_ABUTTON", K_VR_ABUTTON},
+	{"VR_BBUTTON", K_VR_BBUTTON},
+	{"VR_XBUTTON", K_VR_XBUTTON},
+	{"VR_YBUTTON", K_VR_YBUTTON},
+	{"VR_LTHUMB", K_VR_LTHUMB},
+	{"VR_RTHUMB", K_VR_RTHUMB},
+	{"VR_LSHOULDER", K_VR_LSHOULDER},
+	{"VR_RSHOULDER", K_VR_RSHOULDER},
+	{"VR_LTRIGGER", K_VR_LTRIGGER},
+	{"VR_RTRIGGER", K_VR_RTRIGGER},
 
 	{NULL, 0}};
 
@@ -1065,6 +1075,36 @@ Called by the system between frames for both key up and key down events
 Should NOT be called during an interrupt!
 ===================
 */
+/* Only SDL's shared navigation aliases need source merging. Gameplay buttons
+ * already have distinct SDL/XR keycodes. Keep native dispatch/bindings intact. */
+static const int gamepad_alias_keys[] = {K_TAB, K_ESCAPE, K_LEFTARROW,
+	K_RIGHTARROW, K_UPARROW, K_DOWNARROW};
+static qboolean gamepad_alias_down[countof (gamepad_alias_keys)];
+static qboolean ordinary_alias_down[countof (gamepad_alias_keys)];
+static void Key_DispatchEvent (int key, qboolean down, int keycode);
+
+void Key_GamepadAliasEvent (int key, qboolean down)
+{
+	for (int i = 0; i < countof (gamepad_alias_keys); ++i)
+		if (key == gamepad_alias_keys[i])
+		{
+			gamepad_alias_down[i] = down;
+			if (down || !ordinary_alias_down[i])
+				Key_DispatchEvent (key, down, 0);
+			return;
+		}
+	Key_DispatchEvent (key, down, 0);
+}
+
+void Key_ReleaseBindingCaptureKey (int key)
+{
+	/* Capture consumes this press before replacing its OLD binding. */
+	for (int i = 0; i < countof (gamepad_alias_keys); ++i)
+		if (key == gamepad_alias_keys[i])
+			gamepad_alias_down[i] = ordinary_alias_down[i] = false;
+	Key_DispatchEvent (key, false, 0);
+}
+
 void Key_Event (int key, qboolean down)
 {
 	Key_EventWithKeycode (key, down, 0);
@@ -1079,6 +1119,26 @@ void Key_ClearDesktopWeaponMenuCommands (void)
 {
 	memset (desktop_weaponmenu_token, 0, sizeof (desktop_weaponmenu_token));
 	memset (desktop_weaponmenu_pending, 0, sizeof (desktop_weaponmenu_pending));
+}
+
+qboolean Key_IsNativeGamepadOnlySource (int key)
+{
+	if (key >= K_LTHUMB && key <= K_TOUCHPAD_ALT)
+		return true;
+	for (int i = 0; i < countof (gamepad_alias_keys); ++i)
+		if (key == gamepad_alias_keys[i])
+			return gamepad_alias_down[i] && !ordinary_alias_down[i];
+	return false;
+}
+
+void Key_ClearNativeGamepadWeaponMenuCommands (void)
+{
+	for (int key = 0; key < MAX_KEYS; ++key)
+		if (Key_IsNativeGamepadOnlySource (key))
+		{
+			desktop_weaponmenu_token[key] = 0;
+			desktop_weaponmenu_pending[key] = false;
+		}
 }
 
 static qboolean Key_DesktopWeaponMenuCommandSource (int *key, unsigned int *token)
@@ -1167,6 +1227,19 @@ not the US-keyboard-based scancode. Pass 0 if not applicable.
 ===================
 */
 void Key_EventWithKeycode (int key, qboolean down, int keycode)
+{
+	for (int i = 0; i < countof (gamepad_alias_keys); ++i)
+		if (key == gamepad_alias_keys[i])
+		{
+			ordinary_alias_down[i] = down;
+			if (!down && gamepad_alias_down[i])
+				return;
+			break;
+		}
+	Key_DispatchEvent (key, down, keycode);
+}
+
+static void Key_DispatchEvent (int key, qboolean down, int keycode)
 {
 	char *kb;
 	char  cmd[1024];
@@ -1474,6 +1547,8 @@ void Key_ClearStates (void)
 	int i;
 	/* Synthetic releases from modal/focus/video changes must never select. */
 	IN_CancelDesktopWeaponMenu ();
+	memset (gamepad_alias_down, 0, sizeof (gamepad_alias_down));
+	memset (ordinary_alias_down, 0, sizeof (ordinary_alias_down));
 
 	for (i = 0; i < MAX_KEYS; i++)
 	{

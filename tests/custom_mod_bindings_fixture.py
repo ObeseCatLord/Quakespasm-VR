@@ -201,6 +201,7 @@ void Key_Event(int key,qboolean down) {
     if(!down) q_strlcpy(release_observed_binding,keybindings[key]?keybindings[key]:"",sizeof(release_observed_binding));
     fixture_down[key]=down; observe(down?'D':'R',key);
 }
+void Key_ReleaseBindingCaptureKey(int key) { Key_Event(key, false); }
 void Key_SetBinding(int key,const char *binding) {
     assert(key>=0 && key<MAX_KEYS); observe(binding&&*binding?'B':'U',key);
     free(keybindings[key]); keybindings[key]=binding?q_strdup(binding):NULL;
@@ -460,9 +461,15 @@ static void cancellation_and_capture(void) {
         M_Keys_Populate(); untouched();
         fixture_down['q']=true; M_Keydown('q',true); untouched(); assert(M_WaitingForKeyBinding());
         M_Keydown('q',false); assert_binding('q',command);
-        assert(!keybindings['j'] || !keybindings['j'][0]);
-        assert(!keybindings['k'] || !keybindings['k'][0]);
-        assert(!keybindings['l'] || !keybindings['l'][0]);
+        assert_binding('j',command); assert_binding('k',command);
+        if(old==3) assert_binding('l',command);
+        else assert(!keybindings['l'] || !keybindings['l'][0]);
+        assert(M_Keys_CountBindings(command)==old+1);
+        printed_count=0; M_Keys_Draw(NULL);
+        int details=0;
+        for(int i=0;i<printed_count;++i)
+            if(printed[i].y==184 && strstr(printed[i].text,command)) ++details;
+        assert(details==1);
         int release=-1, first_set=-1;
         for(int i=0;i<observation_count;++i) {
             if(observations[i].kind=='R' && observations[i].key=='q') release=i;

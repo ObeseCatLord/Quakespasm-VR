@@ -1,6 +1,8 @@
 void	 IN_StartupJoystick (void);
 void	 IN_ShutdownJoystick (void);
 void	 IN_SetGamepadInputActive (qboolean active);
+void	 IN_DesktopMouseMotion (float x, float y);
+void	 IN_ReleaseNativeGamepadInputs (void);
 qboolean IN_HasRumble (void);
 void	 IN_Rumble (uint16_t low_frequency, uint16_t high_frequency, uint32_t duration_ms);
 void	 IN_SetGyroAvailable (qboolean available);

@@ -34,7 +34,7 @@ gdb.execute('set $vrtest->hands[0].active = 1',to_string=True)
 gdb.execute('set $vrtest->hands[1].active = 1',to_string=True)
 gdb.execute('set $vrtest->hands[0].profile = VRXR_PROFILE_INDEX',to_string=True)
 gdb.execute('set $vrtest->hands[1].profile = VRXR_PROFILE_INDEX',to_string=True)
-gdb.execute('call (void)Cbuf_AddText('+json.dumps('bind ABUTTON +forward\nbind RTRIGGER +attack\n')+')',to_string=True)
+gdb.execute('call (void)Cbuf_AddText('+json.dumps('bind VR_ABUTTON +forward\nbind VR_RTRIGGER +attack\n')+')',to_string=True)
 phase='neutral'
 phase_time=time.monotonic()
 class Input(gdb.Breakpoint):

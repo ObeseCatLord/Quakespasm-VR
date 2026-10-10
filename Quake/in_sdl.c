@@ -47,10 +47,11 @@ static cvar_t joy_invert = {"joy_invert", "0", CVAR_ARCHIVE_GAME};
 static cvar_t joy_exponent = {"joy_exponent", "2", CVAR_ARCHIVE_GAME};
 static cvar_t joy_exponent_move = {"joy_exponent_move", "2", CVAR_ARCHIVE_GAME};
 static cvar_t joy_swapmovelook = {"joy_swapmovelook", "0", CVAR_ARCHIVE_GAME};
+static cvar_t joy_wheel_axis = {"joy_wheel_axis", "0", CVAR_ARCHIVE_GAME};
 static cvar_t joy_enable = {"joy_enable", "1", CVAR_ARCHIVE_GAME};
 static cvar_t joy_always_active = {"joy_always_active", "0", CVAR_ARCHIVE_GAME};
 static cvar_t joy_rumble = {"joy_rumble", "0.3", CVAR_ARCHIVE_GAME};
-static cvar_t gyro_enable = {"gyro_enable", "1", CVAR_ARCHIVE_GAME};
+static cvar_t gyro_enable = {"gyro_enable", "0", CVAR_ARCHIVE_GAME};
 static cvar_t gyro_mode = {"gyro_mode", "2", CVAR_ARCHIVE_GAME};
 static cvar_t gyro_turning_axis = {"gyro_turning_axis", "0", CVAR_ARCHIVE_GAME};
 static cvar_t gyro_yawsensitivity = {"gyro_yawsensitivity", "2.5", CVAR_ARCHIVE_GAME};
@@ -251,6 +252,33 @@ static void IN_JoyAltModifierUp (void)
 	joy_altmodifier_pressed = false;
 }
 
+typedef struct joy_default_binding_s
+{
+	int		key;
+	const char	*binding;
+} joy_default_binding_t;
+
+/* Keep this limited to standard SDL gamepad outputs. VR-specific keys and
+ * keyboard/mouse bindings have independent owners and are deliberately absent. */
+static const joy_default_binding_t joy_default_bindings[] = {
+	{K_LSHOULDER, "impulse 12"},
+	{K_RSHOULDER, "impulse 10"},
+	{K_LTRIGGER, "+jump"},
+	{K_RTRIGGER, "+attack"},
+	{K_RTHUMB, "+vr_weaponmenu"},
+	{K_ABUTTON, "+jump"},
+	{K_BBUTTON, "+movedown"},
+	{K_XBUTTON, "+gyroaction"},
+	{K_YBUTTON, "+showscores"},
+	{K_LTHUMB, "+speed"},
+};
+
+static void IN_JoyDefaultBindings_f (void)
+{
+	for (size_t i = 0; i < countof (joy_default_bindings); ++i)
+		Key_SetBinding (joy_default_bindings[i].key, joy_default_bindings[i].binding);
+}
+
 void IN_Activate (void)
 {
 	/* Other UI transitions must not recapture a desktop wheel's cursor. */
@@ -391,6 +419,7 @@ void IN_Init (void)
 	Cvar_RegisterVariable (&joy_exponent);
 	Cvar_RegisterVariable (&joy_exponent_move);
 	Cvar_RegisterVariable (&joy_swapmovelook);
+	Cvar_RegisterVariable (&joy_wheel_axis);
 	Cvar_RegisterVariable (&joy_enable);
 	Cvar_RegisterVariable (&joy_always_active);
 	Cvar_RegisterVariable (&joy_rumble);
@@ -412,6 +441,7 @@ void IN_Init (void)
 	Cmd_AddCommand ("gyro_calibrate", IN_StartGyroCalibration_f);
 	Cmd_AddCommand ("+gyroaction", IN_GyroActionDown);
 	Cmd_AddCommand ("-gyroaction", IN_GyroActionUp);
+	Cmd_AddCommand ("joy_defaultbindings", IN_JoyDefaultBindings_f);
 
 	Cmd_AddCommand ("+altmodifier", IN_JoyAltModifierDown);
 	Cmd_AddCommand ("-altmodifier", IN_JoyAltModifierUp);
@@ -443,6 +473,16 @@ void IN_MouseMotion (float dx, float dy)
 	total_dy += dy;
 }
 
+void IN_DesktopMouseMotion (float x, float y)
+{
+	int pointer_x, pointer_y;
+
+	IN_ScaleMouseCoords (x, y, &pointer_x, &pointer_y);
+	pointer_x = vid.width > 0 ? (int)((double)pointer_x * glwidth / vid.width) : -1;
+	pointer_y = vid.height > 0 ? (int)((double)pointer_y * glheight / vid.height) : -1;
+	VR_WeaponMenu_DesktopMouseMotion (pointer_x, pointer_y);
+}
+
 typedef struct joyaxis_s
 {
 	float x;
@@ -464,6 +504,30 @@ static joyaxisstate_t	joy_axisstate;
 
 static double joy_buttontimer[SDL_GAMEPAD_BUTTON_COUNT];
 static double joy_emulatedkeytimer[6];
+static int joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 6];
+static qboolean joy_wheel_poll_capture;
+
+void IN_ReleaseNativeGamepadInputs (void)
+{
+	/* Retire the wheel before its physical owner can generate a release. */
+	IN_CancelNativeGamepadWeaponMenu ();
+	/* Dedicated XR keycodes keep its held inputs out of this physical SDL
+	 * range. Key_Event also releases an active alt-layer key through its
+	 * recorded physical owner. */
+	for (int key = K_LTHUMB; key <= K_TOUCHPAD; ++key)
+		Key_Event (key, false);
+	for (int i = 0; i < countof (joy_emittedkeys); ++i)
+		if (joy_emittedkeys[i])
+			Key_GamepadAliasEvent (joy_emittedkeys[i], false);
+	memset (joy_emittedkeys, 0, sizeof (joy_emittedkeys));
+	joy_wheel_poll_capture = false;
+	memset (&joy_buttonstate, 0, sizeof (joy_buttonstate));
+	memset (&joy_axisstate, 0, sizeof (joy_axisstate));
+	memset (joy_buttontimer, 0, sizeof (joy_buttontimer));
+	memset (joy_emulatedkeytimer, 0, sizeof (joy_emulatedkeytimer));
+	joy_altmodifier_pressed = false;
+	IN_ResetFlickState ();
+}
 
 /*
 ================
@@ -598,7 +662,7 @@ and generates key repeats if the button is held down.
 Adapted from DarkPlaces by lordhavoc
 ================
 */
-static void IN_JoyKeyEvent (qboolean wasdown, qboolean isdown, int key, double *timer)
+static void IN_JoyKeyEvent (qboolean wasdown, qboolean isdown, int key, double *timer, int *owner)
 {
 	// we can't use `realtime` for key repeats because it is not monotomic
 	const double currenttime = Sys_DoubleTime ();
@@ -611,14 +675,21 @@ static void IN_JoyKeyEvent (qboolean wasdown, qboolean isdown, int key, double *
 			{
 				*timer = currenttime + 0.1;
 				IN_SetGamepadInputActive (true);
-				Key_Event (key, true);
+				Key_GamepadAliasEvent (*owner, true);
 			}
 		}
 		else
 		{
 			*timer = 0;
 			IN_SetGamepadInputActive (true);
-			Key_Event (key, false);
+			const int released = *owner;
+			*owner = 0;
+			qboolean another = false;
+			for (int i = 0; i < countof (joy_emittedkeys); ++i)
+				if (joy_emittedkeys[i] == released)
+					another = true;
+			if (released && !another)
+				Key_GamepadAliasEvent (released, false);
 		}
 	}
 	else
@@ -627,7 +698,8 @@ static void IN_JoyKeyEvent (qboolean wasdown, qboolean isdown, int key, double *
 		{
 			*timer = currenttime + 0.5;
 			IN_SetGamepadInputActive (true);
-			Key_Event (key, true);
+			*owner = key;
+			Key_GamepadAliasEvent (key, true);
 		}
 	}
 }
@@ -652,6 +724,30 @@ void IN_Commands (void)
 	if (!joy_active_controller)
 		return;
 
+	joy_wheel_poll_capture = VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR ();
+
+	/* Sample and publish stick selection before button transitions queue a
+	 * +vr_weaponmenu release command. Selection follows the logical stick
+	 * assignments after swap, just like movement and looking do. */
+	for (i = 0; i < SDL_GAMEPAD_AXIS_COUNT; i++)
+		newaxisstate.axisvalue[i] = SDL_GetGamepadAxis (joy_active_controller,
+			(SDL_GamepadAxis)i) / 32768.0f;
+	{
+		joyaxis_t move_axis = {newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTX],
+			newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTY]};
+		joyaxis_t look_axis = {newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_RIGHTX],
+			newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_RIGHTY]};
+		if (joy_swapmovelook.value)
+		{
+			const joyaxis_t temp = move_axis;
+			move_axis = look_axis;
+			look_axis = temp;
+		}
+		VR_WeaponMenu_SetDesktopStick (joy_wheel_axis.value ? move_axis.x : look_axis.x,
+			joy_wheel_axis.value ? move_axis.y : look_axis.y,
+			joy_wheel_axis.value ? joy_deadzone_move.value : joy_deadzone_look.value);
+	}
+
 	// emit key events for controller buttons
 	for (i = 0; i < SDL_GAMEPAD_BUTTON_COUNT; i++)
 	{
@@ -674,12 +770,7 @@ void IN_Commands (void)
 		}
 
 		// NOTE: This can cause a reentrant call of IN_Commands, via SCR_ModalMessage when confirming a new game.
-		IN_JoyKeyEvent (oldstate, newstate, key, &joy_buttontimer[i]);
-	}
-
-	for (i = 0; i < SDL_GAMEPAD_AXIS_COUNT; i++)
-	{
-		newaxisstate.axisvalue[i] = SDL_GetGamepadAxis (joy_active_controller, (SDL_GamepadAxis)i) / 32768.0f;
+		IN_JoyKeyEvent (oldstate, newstate, key, &joy_buttontimer[i], &joy_emittedkeys[i]);
 	}
 
 	if (key_dest == key_game && !gamepad_input_active)
@@ -696,30 +787,28 @@ void IN_Commands (void)
 			IN_SetGamepadInputActive (true);
 	}
 
-	// emit emulated arrow keys so the analog sticks can be used in the menu
-	if (key_dest != key_game)
-	{
-		IN_JoyKeyEvent (
-			joy_axisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTX] < -stickthreshold, newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTX] < -stickthreshold, K_LEFTARROW,
-			&joy_emulatedkeytimer[0]);
-		IN_JoyKeyEvent (
-			joy_axisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTX] > stickthreshold, newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTX] > stickthreshold, K_RIGHTARROW,
-			&joy_emulatedkeytimer[1]);
-		IN_JoyKeyEvent (
-			joy_axisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTY] < -stickthreshold, newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTY] < -stickthreshold, K_UPARROW,
-			&joy_emulatedkeytimer[2]);
-		IN_JoyKeyEvent (
-			joy_axisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTY] > stickthreshold, newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTY] > stickthreshold, K_DOWNARROW,
-			&joy_emulatedkeytimer[3]);
-	}
+	/* Retire menu arrows on destination changes even if the stick remains
+	 * deflected. Emitted identity, not gameplay axis history, owns each key. */
+	IN_JoyKeyEvent (joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 0] != 0,
+		key_dest != key_game && newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTX] < -stickthreshold,
+		K_LEFTARROW, &joy_emulatedkeytimer[0], &joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 0]);
+	IN_JoyKeyEvent (joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 1] != 0,
+		key_dest != key_game && newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTX] > stickthreshold,
+		K_RIGHTARROW, &joy_emulatedkeytimer[1], &joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 1]);
+	IN_JoyKeyEvent (joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 2] != 0,
+		key_dest != key_game && newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTY] < -stickthreshold,
+		K_UPARROW, &joy_emulatedkeytimer[2], &joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 2]);
+	IN_JoyKeyEvent (joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 3] != 0,
+		key_dest != key_game && newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFTY] > stickthreshold,
+		K_DOWNARROW, &joy_emulatedkeytimer[3], &joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 3]);
 
 	// emit emulated keys for the analog triggers
 	IN_JoyKeyEvent (
 		joy_axisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] > triggerthreshold, newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_LEFT_TRIGGER] > triggerthreshold,
-		K_LTRIGGER, &joy_emulatedkeytimer[4]);
+		K_LTRIGGER, &joy_emulatedkeytimer[4], &joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 4]);
 	IN_JoyKeyEvent (
 		joy_axisstate.axisvalue[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] > triggerthreshold, newaxisstate.axisvalue[SDL_GAMEPAD_AXIS_RIGHT_TRIGGER] > triggerthreshold,
-		K_RTRIGGER, &joy_emulatedkeytimer[5]);
+		K_RTRIGGER, &joy_emulatedkeytimer[5], &joy_emittedkeys[SDL_GAMEPAD_BUTTON_COUNT + 5]);
 
 	joy_axisstate = newaxisstate;
 
@@ -765,6 +854,8 @@ void IN_JoyMove (usercmd_t *cmd)
 		moveRaw = lookRaw;
 		lookRaw = temp;
 	}
+	const qboolean desktop_wheel = joy_wheel_poll_capture ||
+		(VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR ());
 
 	moveDeadzone = IN_ApplyDeadzone (moveRaw, joy_deadzone_move.value, joy_outer_threshold_move.value);
 	lookDeadzone = IN_ApplyDeadzone (lookRaw, joy_deadzone_look.value, joy_outer_threshold_look.value);
@@ -782,8 +873,16 @@ void IN_JoyMove (usercmd_t *cmd)
 		// not running, with always run = off or quakespasm
 		speed = cl_forwardspeed.value;
 
-	cmd->sidemove += speed * moveEased.x;
-	cmd->forwardmove -= speed * moveEased.y;
+	if (!(desktop_wheel && joy_wheel_axis.value))
+	{
+		cmd->sidemove += speed * moveEased.x;
+		cmd->forwardmove -= speed * moveEased.y;
+	}
+	if (desktop_wheel)
+	{
+		IN_ResetFlickState ();
+		return;
+	}
 
 	if (CL_AngleLocked ())
 		return;
@@ -860,7 +959,8 @@ void IN_JoyMove (usercmd_t *cmd)
 static void IN_GyroMove (void)
 {
 	float scale;
-	if (!gyro_enable.value || !gyro_present || !IN_JoyActive () || gyro_calibration_samples || cl.paused || key_dest != key_game || CL_AngleLocked ())
+	if (!gyro_enable.value || !gyro_present || !IN_JoyActive () || gyro_calibration_samples || cl.paused || key_dest != key_game || CL_AngleLocked () ||
+		(joy_wheel_poll_capture || (VR_WeaponMenu_IsOpen () && !VR_WeaponMenu_IsOpenVR ())))
 		return;
 
 	scale = (180.f / M_PI) * host_rawframetime;

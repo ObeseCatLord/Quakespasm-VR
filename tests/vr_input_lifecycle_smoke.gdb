@@ -39,10 +39,10 @@ def snapshot(label):
         dest=integer('key_dest'),
         menu_state=integer('m_state'),
         binding_capture=integer('bind_grab'),
-        rtrigger_binding=cstring('keybindings[K_RTRIGGER]'),
+        rtrigger_binding=cstring('keybindings[K_VR_RTRIGGER]'),
         keydown={name: integer('keydown[%s]' % name) for name in (
-            'K_LTHUMB', 'K_LTRIGGER', 'K_LTRIGGER_ALT', 'K_RTRIGGER',
-            'K_ABUTTON', 'K_XBUTTON', 'K_YBUTTON', 'K_ESCAPE')})
+            'K_VR_LTHUMB', 'K_VR_LTRIGGER', 'K_LTRIGGER_ALT', 'K_LTRIGGER', 'K_LTHUMB', 'K_VR_RTRIGGER',
+            'K_VR_ABUTTON', 'K_VR_XBUTTON', 'K_VR_YBUTTON', 'K_ESCAPE')})
     samples.append(sample)
     return sample
 
@@ -117,13 +117,14 @@ try:
     # Bind through Quake's native command buffer. LTHUMB acts as the real
     # +altmodifier key; the trigger's release must follow its original ALT map.
     for binding in (
-        'bind LTHUMB +altmodifier',
-        'bind LTRIGGER +attack',
+        'bind VR_LTHUMB +altmodifier',
+        'bind VR_LTRIGGER +attack',
         'bind LTRIGGER_ALT +jump',
-        'bind RTRIGGER +attack',
-        'bind ABUTTON +attack',
-        'bind XBUTTON +jump',
-        'bind YBUTTON +attack'):
+        'bind LTHUMB +altmodifier', 'bind LTRIGGER +attack',
+        'bind VR_RTRIGGER +attack',
+        'bind VR_ABUTTON +attack',
+        'bind VR_XBUTTON +jump',
+        'bind VR_YBUTTON +attack'):
         add_command(binding)
     execute('call (void)Cbuf_Execute()')
     execute('call (void)Cvar_SetValue("vr_lefthanded", 0.0)')
@@ -133,29 +134,32 @@ try:
     sample = step('initial_neutral')
     require(no_actions(sample), 'initial neutral sample activated a binding')
 
-    step('alt_modifier_down', left_buttons=button_stick)
-    sample = step('alt_trigger_down', left_buttons=button_stick | button_trigger)
+    # Native desktop ALT ownership remains independent of dedicated XR keys.
+    execute('call (void)Key_Event(K_LTHUMB,1)')
+    execute('call (void)Cbuf_Execute()')
+    execute('call (void)Key_Event(K_LTRIGGER,1)')
+    execute('call (void)Cbuf_Execute()')
+    sample = snapshot('physical_alt_trigger_down')
     require(sample['jump'] == 1 and sample['attack'] == 0 and
-            sample['keydown']['K_LTRIGGER_ALT'] and
-            not sample['keydown']['K_LTRIGGER'],
-            'trigger did not select its native ALT binding')
-    sample = step('alt_modifier_released_while_trigger_held',
-                  left_buttons=button_trigger)
-    require(sample['jump'] == 1 and sample['keydown']['K_LTRIGGER_ALT'] and
-            not sample['keydown']['K_LTHUMB'],
-            'modifier change released or remapped the held trigger')
-    sample = step('alt_trigger_released', left_buttons=0)
-    require(no_actions(sample) and not sample['keydown']['K_LTRIGGER_ALT'],
-            'ALT-mapped trigger release did not reach its original native key')
+            sample['keydown']['K_LTRIGGER_ALT'] and not sample['keydown']['K_LTRIGGER'],
+            'physical trigger did not select its native ALT binding')
+    execute('call (void)Key_Event(K_LTHUMB,0)')
+    execute('call (void)Cbuf_Execute()')
+    sample = snapshot('physical_alt_modifier_released')
+    require(sample['jump'] == 1 and sample['keydown']['K_LTRIGGER_ALT'],
+            'modifier release remapped the held physical trigger')
+    execute('call (void)Key_Event(K_LTRIGGER,0)')
+    execute('call (void)Cbuf_Execute()')
+    require(no_actions(snapshot('physical_alt_trigger_released')), 'ALT release leaked')
 
     sample = step('shared_y_down', left_buttons=button_pad, right_buttons=button_pad)
-    require(sample['attack'] == 1 and sample['keydown']['K_YBUTTON'],
+    require(sample['attack'] == 1 and sample['keydown']['K_VR_YBUTTON'],
             'Index pads did not press native YBUTTON')
     sample = step('shared_y_one_hand_released', right_buttons=button_pad)
-    require(sample['attack'] == 1 and sample['keydown']['K_YBUTTON'],
+    require(sample['attack'] == 1 and sample['keydown']['K_VR_YBUTTON'],
             'one Index pad released the other hand\'s YBUTTON contribution')
     sample = step('shared_y_final_release')
-    require(no_actions(sample) and not sample['keydown']['K_YBUTTON'],
+    require(no_actions(sample) and not sample['keydown']['K_VR_YBUTTON'],
             'YBUTTON stayed down after its final contributor released')
 
     sample = step('role_swap_before', left_buttons=button_primary,
@@ -165,8 +169,8 @@ try:
     execute('call (void)Cvar_SetValue("vr_lefthanded", 1.0)')
     sample = step('role_swap_held', left_buttons=button_primary,
                   right_buttons=button_primary)
-    require(no_actions(sample) and not sample['keydown']['K_ABUTTON'] and
-            not sample['keydown']['K_XBUTTON'],
+    require(no_actions(sample) and not sample['keydown']['K_VR_ABUTTON'] and
+            not sample['keydown']['K_VR_XBUTTON'],
             'held physical buttons survived a logical role swap')
     step('role_swap_neutral')
     sample = step('role_swap_rearmed', left_buttons=button_primary,
@@ -183,7 +187,7 @@ try:
     sample = step('missing_left_hand', left_active=0,
                   left_buttons=button_primary, right_buttons=button_primary)
     require(sample['attack'] == 1 and sample['jump'] == 0 and
-            sample['keydown']['K_ABUTTON'] and not sample['keydown']['K_XBUTTON'],
+            sample['keydown']['K_VR_ABUTTON'] and not sample['keydown']['K_VR_XBUTTON'],
             'missing hand did not release only its owned native key')
     sample = step('missing_hand_still_held', left_buttons=button_primary,
                   right_buttons=button_primary)
@@ -197,7 +201,7 @@ try:
     sample = step('focus_before', right_buttons=button_primary)
     require(sample['attack'] == 1, 'focus test binding was not held')
     sample = step('focus_lost', focused=0, right_buttons=button_primary)
-    require(no_actions(sample) and not sample['keydown']['K_ABUTTON'],
+    require(no_actions(sample) and not sample['keydown']['K_VR_ABUTTON'],
             'focus loss did not release native keys')
     sample = step('focus_restored_held', right_buttons=button_primary)
     require(no_actions(sample), 'focus restore bypassed neutral rearm')
@@ -209,19 +213,19 @@ try:
     # Rebinding a held native RTRIGGER must queue the old +attack release
     # before replacing its binding; the new +jump mapping applies next press.
     sample = step('rtrigger_rebind_before', left_buttons=button_trigger)
-    require(sample['attack'] == 1 and sample['keydown']['K_RTRIGGER'],
+    require(sample['attack'] == 1 and sample['keydown']['K_VR_RTRIGGER'],
             'RTRIGGER +attack was not held before rebinding')
-    add_command('bind RTRIGGER +jump')
+    add_command('bind VR_RTRIGGER +jump')
     execute('call (void)Cbuf_Execute()')
     sample = snapshot('rtrigger_rebound_while_held')
     require(sample['attack'] == 0 and sample['jump'] == 0 and
-            sample['keydown']['K_RTRIGGER'],
+            sample['keydown']['K_VR_RTRIGGER'],
             'rebinding did not release old +attack while retaining the held key')
     sample = step('rtrigger_rebound_still_held', left_buttons=button_trigger)
-    require(no_actions(sample) and sample['keydown']['K_RTRIGGER'],
+    require(no_actions(sample) and sample['keydown']['K_VR_RTRIGGER'],
             'held RTRIGGER dispatched the new binding without a fresh press')
     sample = step('rtrigger_rebound_release')
-    require(no_actions(sample) and not sample['keydown']['K_RTRIGGER'],
+    require(no_actions(sample) and not sample['keydown']['K_VR_RTRIGGER'],
             'rebound RTRIGGER did not release cleanly')
     sample = step('rtrigger_new_binding', left_buttons=button_trigger)
     require(sample['jump'] == 1 and sample['attack'] == 0,
@@ -240,7 +244,7 @@ try:
     sample = dispatch('modal_grab_same_sample_trigger')
     execute('call (void)Key_GetGrabbedInput($grabkey, $grabchar)')
     require(integer('Key_InputGrabActive()') and integer('*$grabkey') == -1 and
-            no_actions(sample) and not sample['keydown']['K_RTRIGGER'],
+            no_actions(sample) and not sample['keydown']['K_VR_RTRIGGER'],
             'same-sample RTRIGGER was caught by native modal grab')
     execute('call (void)Key_EndInputGrab()')
     execute('call (void)Cbuf_Execute()')
@@ -255,12 +259,12 @@ try:
     execute('call (void)Cvar_SetValue("vr_lefthanded", 0.0)')
     step('clear_test_neutral')
     sample = step('key_clear_before', left_buttons=button_trigger)
-    require(sample['attack'] == 1 and sample['keydown']['K_LTRIGGER'],
+    require(sample['attack'] == 1 and sample['keydown']['K_VR_LTRIGGER'],
             'native key was not held before Key_ClearStates')
     execute('call (void)Key_ClearStates()')
     execute('call (void)Cbuf_Execute()')
     sample = snapshot('key_clear_released')
-    require(no_actions(sample) and not sample['keydown']['K_LTRIGGER'],
+    require(no_actions(sample) and not sample['keydown']['K_VR_LTRIGGER'],
             'Key_ClearStates did not release native key/binding state')
     sample = step('key_clear_held_waits_for_neutral', left_buttons=button_trigger)
     require(no_actions(sample), 'held action bypassed Key_ClearStates neutral gate')
@@ -274,14 +278,14 @@ try:
     sample = step('game_escape_with_primary',
                   right_buttons=button_secondary | button_primary)
     require(sample['dest'] == integer('key_menu') and no_actions(sample) and
-            not sample['keydown']['K_ABUTTON'],
+            not sample['keydown']['K_VR_ABUTTON'],
             'game-to-menu Escape caused same-sample primary clickthrough')
     step('menu_held_waits_for_neutral', right_buttons=button_secondary | button_primary)
     step('menu_neutral')
     sample = step('menu_escape_with_primary',
                   right_buttons=button_secondary | button_primary)
     require(sample['dest'] == integer('key_game') and no_actions(sample) and
-            not sample['keydown']['K_ABUTTON'],
+            not sample['keydown']['K_VR_ABUTTON'],
             'menu-to-game Escape caused same-sample primary clickthrough')
 
     # Exercise the actual keys menu and its bind_grab state. A logical-left
@@ -306,12 +310,12 @@ try:
     require(sample['dest'] == integer('key_menu') and no_actions(sample) and
             not integer('M_WaitingForKeyBinding()'),
             'menu-entry neutral sample did not leave binding capture idle')
-    prior_trigger_binding = cstring('keybindings[K_RTRIGGER]')
+    prior_trigger_binding = cstring('keybindings[K_VR_RTRIGGER]')
     sample = step('binding_capture_primary_and_trigger_same_sample',
                   left_buttons=button_primary, right_buttons=button_trigger)
     require(sample['dest'] == integer('key_menu') and no_actions(sample) and
             integer('M_WaitingForKeyBinding()') and
-            cstring('keybindings[K_RTRIGGER]') == prior_trigger_binding,
+            cstring('keybindings[K_VR_RTRIGGER]') == prior_trigger_binding,
             'same-sample primary/trigger did not stop at native bind_grab')
     step('binding_capture_neutral')
     require(integer('M_WaitingForKeyBinding()'),
@@ -319,8 +323,8 @@ try:
     sample = step('binding_capture_fresh_rtrigger', right_buttons=button_trigger)
     require(sample['dest'] == integer('key_menu') and no_actions(sample) and
             not integer('M_WaitingForKeyBinding()') and
-            cstring('keybindings[K_RTRIGGER]') == '+attack' and
-            not sample['keydown']['K_RTRIGGER'],
+            cstring('keybindings[K_VR_RTRIGGER]') == '+attack' and
+            not sample['keydown']['K_VR_RTRIGGER'],
             'fresh native RTRIGGER was not captured into the selected +attack row')
 
     # No server is active here: a leaked second activation would queue a new

@@ -454,14 +454,15 @@ static int VR_InputRoleForPhysicalHand (int physical_hand)
 	return lefthanded ? 1 - physical_hand : physical_hand;
 }
 
-/* Index pad coordinates belong to wheel selection when its right-thumb
- * source is bound to the wheel. Filter only private motion/key samples; the
- * completed XR frame remains intact for the wheel and other consumers. */
+/* Index pad coordinates belong to wheel selection when the dedicated XR
+ * right-thumb source is bound to the wheel. Filter only private motion/key
+ * samples; the completed XR frame remains intact for the wheel and other
+ * consumers. */
 static void VR_InputFilterWheelPadAxes (vrxr_input_t *input, int physical_hand)
 {
 	if (input->profile == VRXR_PROFILE_INDEX &&
 		VR_InputRoleForPhysicalHand (physical_hand) == VR_INPUT_ROLE_RIGHT &&
-		keybindings[K_RTHUMB] && !strcmp (keybindings[K_RTHUMB], "+vr_weaponmenu"))
+		keybindings[K_VR_RTHUMB] && !strcmp (keybindings[K_VR_RTHUMB], "+vr_weaponmenu"))
 		input->pad[0] = input->pad[1] = 0.0f;
 }
 
@@ -3947,6 +3948,31 @@ static void VR_InputAddKey (qboolean desired[2][MAX_KEYS], int hand, int key)
 		desired[hand][key] = true;
 }
 
+/* Gameplay and native binding capture need a source-specific key so a held
+ * desktop controller control cannot own the XR controller's binding. Normal
+ * menus and modal grabs keep their established physical controller aliases. */
+static int VR_InputBindingKey (int key, const vr_input_context_t *context)
+{
+	if (context->input_grab ||
+		(context->destination != key_game && !context->binding_capture))
+		return key;
+
+	switch (key)
+	{
+	case K_ABUTTON: return K_VR_ABUTTON;
+	case K_BBUTTON: return K_VR_BBUTTON;
+	case K_XBUTTON: return K_VR_XBUTTON;
+	case K_YBUTTON: return K_VR_YBUTTON;
+	case K_LTHUMB: return K_VR_LTHUMB;
+	case K_RTHUMB: return K_VR_RTHUMB;
+	case K_LSHOULDER: return K_VR_LSHOULDER;
+	case K_RSHOULDER: return K_VR_RSHOULDER;
+	case K_LTRIGGER: return K_VR_LTRIGGER;
+	case K_RTRIGGER: return K_VR_RTRIGGER;
+	default: return key;
+	}
+}
+
 static void VR_InputAddAxis (qboolean desired[2][MAX_KEYS], int hand, const vrxr_input_t *input,
 	int axis, int negative_key, int positive_key, float extra)
 {
@@ -3993,40 +4019,44 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 	}
 
 	if (pressed & (VRXR_BUTTON_SECONDARY | VRXR_BUTTON_MENU))
-		VR_InputAddKey (desired, hand, logical_left ? K_ESCAPE : K_BBUTTON);
+		VR_InputAddKey (desired, hand,
+			VR_InputBindingKey (logical_left ? K_ESCAPE : K_BBUTTON, context));
 	if (pressed & VRXR_BUTTON_PRIMARY)
-		VR_InputAddKey (desired, hand, logical_left ? K_ABUTTON : K_XBUTTON);
-	/* The migration bridge deliberately preserves the donor's legacy naming:
+		VR_InputAddKey (desired, hand,
+			VR_InputBindingKey (logical_left ? K_ABUTTON : K_XBUTTON, context));
+	/* XR controller profiles preserve the donor's legacy naming:
 	 * Vive PAD and every other profile's STICK are SteamVR_Touchpad. VR_Move
 	 * maps that composed click to LTHUMB on the logical left, and on the logical
 	 * right to Index ALTFIRE or otherwise RTHUMB. Index PAD is legacy Axis2 and
 	 * both logical hands map it to YBUTTON. */
 	if (pressed & selected_click)
 		VR_InputAddKey (desired, hand,
-			logical_left ? K_LTHUMB : (state->profile == VRXR_PROFILE_INDEX ? K_VR_ALTFIRE : K_RTHUMB));
+			VR_InputBindingKey (logical_left ? K_LTHUMB :
+				(state->profile == VRXR_PROFILE_INDEX ? K_VR_ALTFIRE : K_RTHUMB), context));
 	/* The same right-thumb wheel binding uses Index pad touch. Preserve its
 	 * stick-click alternate fire and pad-click mapping as independent sources. */
 	if (!logical_left && state->profile == VRXR_PROFILE_INDEX &&
 		!state->wheel_touch_wait_release && (input->touched & VRXR_BUTTON_PAD) &&
 		(context->destination == key_game || context->binding_capture))
-		VR_InputAddKey (desired, hand, K_RTHUMB);
+		VR_InputAddKey (desired, hand, K_VR_RTHUMB);
 	if (state->profile == VRXR_PROFILE_INDEX && (pressed & VRXR_BUTTON_PAD))
-		VR_InputAddKey (desired, hand, K_YBUTTON);
+		VR_InputAddKey (desired, hand, VR_InputBindingKey (K_YBUTTON, context));
 	if (pressed & VRXR_BUTTON_GRIP)
 	{
 		if (logical_left)
-			VR_InputAddKey (desired, hand, K_LSHOULDER);
+			VR_InputAddKey (desired, hand, VR_InputBindingKey (K_LSHOULDER, context));
 		else
-			VR_InputAddKey (desired, hand, state->profile == VRXR_PROFILE_INDEX ? K_RSHOULDER : K_VR_ALTFIRE);
+			VR_InputAddKey (desired, hand, VR_InputBindingKey (
+				state->profile == VRXR_PROFILE_INDEX ? K_RSHOULDER : K_VR_ALTFIRE, context));
 	}
 
 	VR_InputUpdateTrigger (state, input);
 	if (state->trigger_down && !suppress_trigger)
 	{
-		int trigger_key = logical_left ? K_LTRIGGER : K_RTRIGGER;
+		int trigger_key = VR_InputBindingKey (logical_left ? K_LTRIGGER : K_RTRIGGER, context);
 		qboolean gesture_suppressed = false;
 		if (!logical_left && context->destination == key_menu)
-			trigger_key = context->binding_capture ? K_RTRIGGER : state->menu_trigger_key;
+			trigger_key = context->binding_capture ? K_VR_RTRIGGER : state->menu_trigger_key;
 		if (trigger_key && context->destination == key_game &&
 			!context->binding_capture &&
 			!VR_WeaponMenu_IsOpenVR () && !VR_WeaponCalibrationAdjustActive () &&
@@ -4110,19 +4140,19 @@ typedef struct
 	const char *binding;
 } vr_default_binding_t;
 
-/* The inherited VR defaults fill controls absent from vkQuake's desktop
- * config. Existing user/gamepad bindings remain authoritative. */
+/* The inherited VR defaults fill only dedicated XR controls. Existing user
+ * and physical desktop-gamepad bindings remain authoritative. */
 static const vr_default_binding_t vr_default_bindings[] = {
-	{K_LTRIGGER, "+jump"},
-	{K_RTRIGGER, "+attack"},
-	{K_BBUTTON, "impulse 10"},
-	{K_LTHUMB, "+speed"},
-	{K_RTHUMB, "+vr_weaponmenu"},
+	{K_VR_LTRIGGER, "+jump"},
+	{K_VR_RTRIGGER, "+attack"},
+	{K_VR_BBUTTON, "impulse 10"},
+	{K_VR_LTHUMB, "+speed"},
+	{K_VR_RTHUMB, "+vr_weaponmenu"},
 	{K_VR_ALTFIRE, "+button3"},
-	{K_LSHOULDER, "+showscores"},
-	{K_RSHOULDER, "+showscores"},
-	{K_ABUTTON, "+showscores"},
-	{K_XBUTTON, "impulse 12"},
+	{K_VR_LSHOULDER, "+showscores"},
+	{K_VR_RSHOULDER, "+showscores"},
+	{K_VR_ABUTTON, "+showscores"},
+	{K_VR_XBUTTON, "impulse 12"},
 };
 
 typedef enum
@@ -4372,8 +4402,8 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 			if (state->role == VR_INPUT_ROLE_RIGHT && state->profile == VRXR_PROFILE_VIVE &&
 				context.destination == key_game && !context.binding_capture &&
 				!context.input_grab && !impulse_blocked_at_entry &&
-				desired[hand][K_RTHUMB] && !state->owned[K_RTHUMB] &&
-				(!keybindings[K_RTHUMB] || strcmp (keybindings[K_RTHUMB], "+vr_weaponmenu")))
+				desired[hand][K_VR_RTHUMB] && !state->owned[K_VR_RTHUMB] &&
+				(!keybindings[K_VR_RTHUMB] || strcmp (keybindings[K_VR_RTHUMB], "+vr_weaponmenu")))
 			{
 				const float weapon_axis = VR_InputFilteredAxis (input, 0, 0.0f);
 				if (weapon_axis > 0.3f)
