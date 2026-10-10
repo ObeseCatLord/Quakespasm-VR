@@ -235,9 +235,21 @@ static qboolean vr_weapon_menu_has_discoveries;
 
 static qboolean vr_weapon_menu_open;
 static qboolean vr_weapon_menu_open_vr;
+typedef enum
+{
+	VR_WEAPON_MENU_DESKTOP_MOUSE,
+	VR_WEAPON_MENU_DESKTOP_STICK
+} vr_weapon_menu_desktop_owner_t;
+static vr_weapon_menu_desktop_owner_t vr_weapon_menu_desktop_owner;
 static qboolean vr_weapon_menu_pointer_valid;
 static qboolean vr_weapon_menu_tracking_valid;
 static int vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y;
+static qboolean vr_weapon_menu_desktop_pointer_seen;
+static unsigned int vr_weapon_menu_desktop_mouse_serial;
+static unsigned int vr_weapon_menu_desktop_stick_mouse_serial;
+static qboolean vr_weapon_menu_desktop_stick_seen;
+static float vr_weapon_menu_desktop_stick_x, vr_weapon_menu_desktop_stick_y;
+static float vr_weapon_menu_desktop_stick_deadzone;
 static int vr_weapon_menu_hover_id = -1;
 static int vr_weapon_menu_retained_id = -1;
 static int vr_weapon_menu_hover_action_slot = -1;
@@ -1160,9 +1172,16 @@ static void VR_WeaponMenu_ClearSession (void)
 {
 	vr_weapon_menu_open = false;
 	vr_weapon_menu_open_vr = false;
+	vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
 	vr_weapon_menu_pointer_valid = false;
 	vr_weapon_menu_tracking_valid = false;
 	vr_weapon_menu_pointer_x = vr_weapon_menu_pointer_y = -1;
+	vr_weapon_menu_desktop_pointer_seen = false;
+	vr_weapon_menu_desktop_mouse_serial = 0;
+	vr_weapon_menu_desktop_stick_mouse_serial = 0;
+	vr_weapon_menu_desktop_stick_seen = false;
+	vr_weapon_menu_desktop_stick_x = vr_weapon_menu_desktop_stick_y = 0.0f;
+	vr_weapon_menu_desktop_stick_deadzone = 0.0f;
 	vr_weapon_menu_hover_id = -1;
 	vr_weapon_menu_retained_id = -1;
 	vr_weapon_menu_hover_action_slot = -1;
@@ -2490,6 +2509,11 @@ void VR_WeaponMenu_Open (void)
 		return;
 	vr_weapon_menu_open = true;
 	vr_weapon_menu_open_vr = vulkan_globals.stereo_active;
+	vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
+	vr_weapon_menu_desktop_pointer_seen = false;
+	vr_weapon_menu_desktop_mouse_serial = 0;
+	vr_weapon_menu_desktop_stick_mouse_serial = 0;
+	vr_weapon_menu_desktop_stick_seen = false;
 	vr_weapon_menu_hover_id = vr_weapon_menu_retained_id = -1;
 	vr_weapon_menu_hover_action_slot = -1;
 	vr_weapon_menu_hover_action_name[0] = '\0';
@@ -2854,6 +2878,52 @@ static void VR_WeaponMenu_ResolvePreparedSelection (qboolean pointer_valid,
 		}
 }
 
+static void VR_WeaponMenu_ResolveDesktopStickSelection (void)
+{
+	int selected = -1;
+	float best_dot = -FLT_MAX;
+	const float magnitude = sqrtf (vr_weapon_menu_desktop_stick_x * vr_weapon_menu_desktop_stick_x +
+		vr_weapon_menu_desktop_stick_y * vr_weapon_menu_desktop_stick_y);
+
+	vr_weapon_menu_hover_id = -1;
+	vr_weapon_menu_hover_action_slot = -1;
+	vr_weapon_menu_hover_action_name[0] = '\0';
+	if (isfinite (magnitude) && magnitude > CLAMP (0.0f,
+		vr_weapon_menu_desktop_stick_deadzone, 1.0f))
+	{
+		const float center_x = glwidth * 0.5f;
+		const float center_y = glheight * 0.5f;
+		const float stick_x = vr_weapon_menu_desktop_stick_x / magnitude;
+		const float stick_y = vr_weapon_menu_desktop_stick_y / magnitude;
+		for (int i = 0; i < vr_weapon_menu_frame.count; ++i)
+		{
+			const vr_weapon_menu_visible_t *visible = &vr_weapon_menu_frame.visible[i];
+			const float dx = visible->center_x - center_x;
+			const float dy = visible->center_y - center_y;
+			const float distance = sqrtf (dx * dx + dy * dy);
+			const float dot = distance > 0.0f ? (stick_x * dx + stick_y * dy) / distance : -FLT_MAX;
+			if (visible->selectable && isfinite (dot) && dot > best_dot)
+			{
+				best_dot = dot;
+				selected = i;
+			}
+		}
+	}
+	if (selected >= 0)
+	{
+		vr_weapon_menu_retained_id = vr_weapon_menu_frame.visible[selected].entry->id;
+		vr_weapon_menu_hover_id = vr_weapon_menu_retained_id;
+		return;
+	}
+	for (int i = 0; i < vr_weapon_menu_frame.count; ++i)
+		if (vr_weapon_menu_frame.visible[i].entry->id == vr_weapon_menu_retained_id &&
+			vr_weapon_menu_frame.visible[i].selectable)
+		{
+			vr_weapon_menu_hover_id = vr_weapon_menu_retained_id;
+			break;
+		}
+}
+
 /* Return true only when finite model bounds prove the prepared mesh is outside
  * the renderer's active frustum. R_CullBox uses the stereo-union frustum when
  * OpenXR stereo is active. */
@@ -3070,14 +3140,72 @@ void VR_WeaponMenu_SetDesktopPointer (qboolean pointer_valid,
 		VR_WeaponMenu_ClearSession ();
 		return;
 	}
+	/* A sampled stationary cursor is not mouse input. Only an absolute SDL
+	 * motion event may take ownership back from the wheel stick. */
+	if (!vr_weapon_menu_desktop_pointer_seen &&
+		vr_weapon_menu_desktop_owner != VR_WEAPON_MENU_DESKTOP_STICK)
+		vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
+	vr_weapon_menu_desktop_pointer_seen = true;
 	vr_weapon_menu_pointer_valid = pointer_valid;
 	vr_weapon_menu_pointer_x = pointer_valid ? pointer_x : -1;
 	vr_weapon_menu_pointer_y = pointer_valid ? pointer_y : -1;
 	VR_WeaponMenu_PrepareFrame (VR_WeaponMenu_CurrentCatalog (), radius, scale,
 		NULL, false);
-	VR_WeaponMenu_ResolvePreparedSelection (pointer_valid,
-		vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y,
-		NULL, NULL, NULL, false);
+	if (vr_weapon_menu_desktop_owner == VR_WEAPON_MENU_DESKTOP_STICK)
+		VR_WeaponMenu_ResolveDesktopStickSelection ();
+	else
+		VR_WeaponMenu_ResolvePreparedSelection (pointer_valid,
+			vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y,
+			NULL, NULL, NULL, false);
+}
+
+void VR_WeaponMenu_DesktopMouseMotion (int pointer_x, int pointer_y)
+{
+	if (!vr_weapon_menu_open || vr_weapon_menu_open_vr || pointer_x < 0 || pointer_y < 0)
+		return;
+	if (!vr_weapon_menu_desktop_pointer_seen ||
+		pointer_x != vr_weapon_menu_pointer_x || pointer_y != vr_weapon_menu_pointer_y)
+	{
+		if (++vr_weapon_menu_desktop_mouse_serial == 0)
+			++vr_weapon_menu_desktop_mouse_serial;
+		vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
+	}
+}
+
+void VR_WeaponMenu_SetDesktopStick (float x, float y, float deadzone)
+{
+	const qboolean changed = !vr_weapon_menu_desktop_stick_seen ||
+		x != vr_weapon_menu_desktop_stick_x || y != vr_weapon_menu_desktop_stick_y ||
+		deadzone != vr_weapon_menu_desktop_stick_deadzone;
+	const float radius = q_min (glwidth, glheight) * 0.32f;
+	const float scale = CLAMP (0.85f,
+		q_min (glwidth, glheight) / 720.0f, 1.5f);
+
+	vr_weapon_menu_desktop_stick_seen = true;
+	vr_weapon_menu_desktop_stick_x = x;
+	vr_weapon_menu_desktop_stick_y = y;
+	vr_weapon_menu_desktop_stick_deadzone = deadzone;
+	if (!vr_weapon_menu_open || vr_weapon_menu_open_vr)
+		return;
+	if (!VR_WeaponMenu_SessionValid ())
+	{
+		VR_WeaponMenu_ClearSession ();
+		return;
+	}
+	/* Consume mouse activity each poll. Only a deliberate deflection acquires
+	 * stick ownership; neutral/deadzone noise cannot dismiss mouse actions. */
+	const qboolean mouse_changed = vr_weapon_menu_desktop_stick_mouse_serial !=
+		vr_weapon_menu_desktop_mouse_serial;
+	vr_weapon_menu_desktop_stick_mouse_serial = vr_weapon_menu_desktop_mouse_serial;
+	const float magnitude = sqrtf (x * x + y * y);
+	if (changed && !mouse_changed && isfinite (magnitude) &&
+		magnitude > CLAMP (0.0f, deadzone, 1.0f))
+		vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_STICK;
+	if (vr_weapon_menu_desktop_owner != VR_WEAPON_MENU_DESKTOP_STICK)
+		return;
+	VR_WeaponMenu_PrepareFrame (VR_WeaponMenu_CurrentCatalog (), radius, scale,
+		NULL, false);
+	VR_WeaponMenu_ResolveDesktopStickSelection ();
 }
 
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,

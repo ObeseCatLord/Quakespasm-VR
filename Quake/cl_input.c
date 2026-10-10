@@ -95,6 +95,30 @@ qboolean IN_CancelDesktopWeaponMenu (void)
 	return IN_CloseDesktopWeaponMenu ();
 }
 
+void IN_CancelNativeGamepadWeaponMenu (void)
+{
+	qboolean native_owner = false;
+	/* Also invalidate a native opening queued before command execution. */
+	Key_ClearNativeGamepadWeaponMenuCommands ();
+
+	/* Native SDL keys may have been captured through the alt layer. Remove
+	 * only their contributors; dedicated XR and keyboard holds remain live. */
+	for (int source = 0; source < countof (in_vr_weaponmenu.down); ++source)
+		if (Key_IsNativeGamepadOnlySource (in_vr_weaponmenu.down[source]))
+		{
+			in_vr_weaponmenu.down[source] = 0;
+			native_owner = true;
+		}
+	if (!native_owner)
+		return;
+	if (in_vr_weaponmenu.down[0] || in_vr_weaponmenu.down[1])
+		return;
+	memset (&in_vr_weaponmenu, 0, sizeof (in_vr_weaponmenu));
+	VR_WeaponMenu_Cancel ();
+	if (in_vr_weaponmenu_desktop_capture)
+		IN_VRWeaponMenuRestoreCapture ();
+}
+
 void IN_UpdateDesktopWeaponMenu (void)
 {
 	if (in_vr_weaponmenu_desktop_capture &&

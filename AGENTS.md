@@ -20,8 +20,10 @@ adjacent systems. Reopen the design if it grows into duplicated state/policy.
 Use the `senior-review` skill with local Astra at explicit `xhigh` for difficult
 architecture decisions; record a recommendation/disposition table.
 
-Use Sol coding subagents at medium or high effort when delegation materially
-helps. Give each a concrete objective, exact workspace and non-overlapping write
+Use the main agent or GPT-5.6 Terra for substantive investigation and
+implementation when delegation materially helps. All delegated reviews require
+explicit gpt-6-astra at xhigh (or supported Astra Max/Ultra); fixed-model
+deep-reviewer is for investigation/debugging only, never review. Give each a concrete objective, exact workspace and non-overlapping write
 set, expected output, verification target and failure boundary. They are not
 alone and must not revert others' changes. Keep final integration and review in
 the main agent. Spark is limited to fully specified mechanical tasks; never use

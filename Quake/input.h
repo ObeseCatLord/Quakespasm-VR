@@ -33,6 +33,8 @@ void IN_Commands (void);
 
 // mouse moved by dx and dy pixels
 void IN_MouseMotion (float dx, float dy);
+// absolute window coordinates, including motion discarded by the relative-input filter
+void IN_DesktopMouseMotion (float x, float y);
 
 void IN_SendKeyEvents (void);
 // used as a callback for Sys_SendKeyEvents() by some drivers
@@ -40,6 +42,7 @@ void IN_SendKeyEvents (void);
 void IN_UpdateInputMode (void);
 qboolean IN_DesktopWeaponMenuCaptureAllowed (void);
 qboolean IN_CancelDesktopWeaponMenu (void);
+void IN_CancelNativeGamepadWeaponMenu (void);
 void IN_UpdateDesktopWeaponMenu (void);
 // do stuff if input mode (text/non-text) changes matter to the keyboard driver
 

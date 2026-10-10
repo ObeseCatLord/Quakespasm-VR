@@ -208,7 +208,7 @@ try:
     call('M_Keys_AddCustomEntry("impulse 99", "Mod weapon")')
     call('M_Keys_Populate()')
     rows = iv('((vec_header_t *)bindnames)[-1].size')
-    wheelrows = [i for i in range(rows) if text('bindnames[%d].command' % i) == '+vr_weaponmenu']
+    wheelrows = [i for i in range(rows) if iv('bindnames[%d].command != 0' % i) and text('bindnames[%d].command' % i) == '+vr_weaponmenu']
     require(len(wheelrows) == 1 and text('bindnames[%d].description' % wheelrows[0]) == 'Weapon Wheel', 'mod bindlist shadowed wheel row')
     run('set keys_cursor = %d' % wheelrows[0])
     call('M_Keys_Key(K_ENTER)')
@@ -490,6 +490,8 @@ try:
     closed('disconnect_cancel', 0)
     result = dict(ok=True, samples=samples)
 except Exception as error:
+    import traceback
+    traceback.print_exc()
     result = dict(ok=False, phase=phase, error=repr(error), samples=samples)
 with open(result_path, 'w') as output: json.dump(result, output, indent=2)
 print('DESKTOP_WEAPON_WHEEL_RESULT ' + json.dumps(result), flush=True)

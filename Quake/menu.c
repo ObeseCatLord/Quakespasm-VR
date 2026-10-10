@@ -198,7 +198,7 @@ cvar_t ui_mouse = {"ui_mouse", "1", CVAR_ARCHIVE};
 void		M_ConfigureNetSubsystem (void);
 static void M_SetSkillMenuMap (const char *name);
 
-extern qboolean keydown[256];
+extern qboolean keydown[MAX_KEYS];
 
 extern cvar_t scr_fov;
 extern cvar_t scr_showfps;
@@ -4711,6 +4711,7 @@ enum
 	CONTROLLER_PITCH,
 	CONTROLLER_INVERT,
 	CONTROLLER_SWAP,
+	CONTROLLER_WHEEL_AXIS,
 	CONTROLLER_ALWAYS_ACTIVE,
 	CONTROLLER_LOOK_DEADZONE,
 	CONTROLLER_MOVE_DEADZONE,
@@ -4724,6 +4725,7 @@ enum
 	CONTROLLER_GYRO_PITCH,
 	CONTROLLER_GYRO_NOISE,
 	CONTROLLER_CALIBRATE,
+	CONTROLLER_RESTORE,
 	CONTROLLER_ITEMS
 };
 
@@ -4765,6 +4767,10 @@ static void M_ControllerOptions_Adjust (int dir)
 		break;
 	case CONTROLLER_SWAP:
 		var = M_ControllerCvar ("joy_swapmovelook");
+		value = !var->value;
+		break;
+	case CONTROLLER_WHEEL_AXIS:
+		var = M_ControllerCvar ("joy_wheel_axis");
 		value = !var->value;
 		break;
 	case CONTROLLER_ALWAYS_ACTIVE:
@@ -4825,6 +4831,9 @@ static void M_ControllerOptions_Adjust (int dir)
 		if (IN_HasGyro ())
 			Cbuf_AddText ("gyro_calibrate\n");
 		return;
+	case CONTROLLER_RESTORE:
+		Cbuf_AddText ("joy_defaultbindings\n");
+		return;
 	}
 	Cvar_SetValueQuick (var, value);
 }
@@ -4861,9 +4870,9 @@ static void M_ControllerOptions_Key (int key)
 
 static void M_ControllerOptions_Draw (cb_context_t *cbx)
 {
-	static const char *const labels[CONTROLLER_ITEMS] = {"Look yaw",	  "Look pitch",		  "Invert pitch", "Swap sticks", "Always active", "Look deadzone",
+	static const char *const labels[CONTROLLER_ITEMS] = {"Look yaw",	  "Look pitch",		  "Invert pitch", "Swap sticks", "Wheel stick", "Always active", "Look deadzone",
 														 "Move deadzone", "Trigger deadzone", "Vibration",	  "Gyro",		 "Flick stick",	  "Gyro button",
-														 "Turning axis",  "Gyro yaw",		  "Gyro pitch",	  "Gyro noise",	 "Calibrate gyro"};
+														 "Turning axis",  "Gyro yaw",		  "Gyro pitch",	  "Gyro noise",	 "Calibrate gyro", "Restore controls"};
 	qpic_t					*p;
 	const int				 top = 32;
 
@@ -4883,6 +4892,7 @@ static void M_ControllerOptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_PITCH * CHARACTER_SIZE, va ("%.0f", VALUE ("joy_sensitivity_pitch")));
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_INVERT * CHARACTER_SIZE, VALUE ("joy_invert"));
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_SWAP * CHARACTER_SIZE, VALUE ("joy_swapmovelook") ? "Left" : "Right");
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_WHEEL_AXIS * CHARACTER_SIZE, VALUE ("joy_wheel_axis") ? "Move" : "Look");
 	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CONTROLLER_ALWAYS_ACTIVE * CHARACTER_SIZE, VALUE ("joy_always_active"));
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_LOOK_DEADZONE * CHARACTER_SIZE, va ("%.0f%%", VALUE ("joy_deadzone_look") * 100.f));
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_MOVE_DEADZONE * CHARACTER_SIZE, va ("%.0f%%", VALUE ("joy_deadzone_move") * 100.f));
@@ -4901,13 +4911,14 @@ static void M_ControllerOptions_Draw (cb_context_t *cbx)
 		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO * CHARACTER_SIZE, "N/A");
 		M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_FLICK * CHARACTER_SIZE, "N/A");
 	}
-	static const char *const modes[] = {"Ignored", "Enables", "Disables", "Inverts"};
+	static const char *const modes[] = {"Always", "Hold enable", "Hold disable", "Hold invert"};
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_MODE * CHARACTER_SIZE, modes[CLAMP (0, (int)VALUE ("gyro_mode"), 3)]);
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_AXIS * CHARACTER_SIZE, VALUE ("gyro_turning_axis") ? "Roll" : "Yaw");
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_YAW * CHARACTER_SIZE, va ("%.1f", VALUE ("gyro_yawsensitivity")));
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_PITCH * CHARACTER_SIZE, va ("%.1f", VALUE ("gyro_pitchsensitivity")));
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_GYRO_NOISE * CHARACTER_SIZE, va ("%.1f", VALUE ("gyro_noise_thresh")));
 	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_CALIBRATE * CHARACTER_SIZE, IN_HasGyro () ? "Start" : "N/A");
+	M_Print (cbx, MENU_VALUE_X, top + CONTROLLER_RESTORE * CHARACTER_SIZE, "Defaults");
 #undef VALUE
 
 	Draw_Character (cbx, MENU_CURSOR_X, top + controller_options_cursor * CHARACTER_SIZE, 12 + ((int)(realtime * 4) & 1));
@@ -5318,6 +5329,33 @@ void M_UnbindCommand (const char *command)
 	VR_InputDefaultCommandCleared (command);
 }
 
+static int M_Keys_CountBindings (const char *command)
+{
+	int count = 0;
+	for (int key = 0; key < MAX_KEYS; ++key)
+		if (keybindings[key] && !strcmp (keybindings[key], command))
+			++count;
+	return count;
+}
+
+static void M_Keys_DrawBindingDetails (cb_context_t *cbx, const char *command)
+{
+	/* Display every source without changing the native binding payload. */
+	char details[MAX_KEYS * 32 + MAXCMDLINE];
+	q_strlcpy (details, command, sizeof (details));
+	q_strlcat (details, ": ", sizeof (details));
+	qboolean first = true;
+	for (int key = 0; key < MAX_KEYS; ++key)
+	{
+		if (!keybindings[key] || strcmp (keybindings[key], command))
+			continue;
+		q_strlcat (details, first ? "" : ", ", sizeof (details));
+		q_strlcat (details, Key_KeynumToString (key), sizeof (details));
+		first = false;
+	}
+	M_PrintScroll (cbx, 10, 184, 288, details, realtime * 0.25, false);
+}
+
 extern qpic_t *pic_up, *pic_down;
 
 #define BINDS_PER_PAGE 17 // leave space for the full command and pinned action
@@ -5576,7 +5614,7 @@ static void M_Keys_Draw (cb_context_t *cbx)
 	if (bind_grab)
 		M_Print (cbx, 12, 32, "Press a key or button for this action");
 	else
-		M_Print (cbx, 18, 32, "Enter to change, backspace to clear");
+		M_Print (cbx, 18, 32, "Enter: add, Backspace: clear all");
 
 	// search for known bindings
 	for (i = 0; i < BINDS_PER_PAGE && i + first_key < action; i++)
@@ -5606,6 +5644,13 @@ static void M_Keys_Draw (cb_context_t *cbx)
 				q_strlcat (key_label, ", ", sizeof (key_label));
 				q_strlcat (key_label, Key_KeynumToString (keys[1]), sizeof (key_label));
 			}
+			const int extra = M_Keys_CountBindings (item->command) - 2;
+			if (extra > 0)
+			{
+				char suffix[32];
+				q_snprintf (suffix, sizeof (suffix), " (+%d)", extra);
+				q_strlcat (key_label, suffix, sizeof (key_label));
+			}
 			M_Keys_DrawLabel (cbx, KEY_STRING_DRAW_POS, y, key_label, 18);
 		}
 	}
@@ -5615,7 +5660,7 @@ static void M_Keys_Draw (cb_context_t *cbx)
 		M_Mouse_UpdateCursor (&keys_cursor, 12, 304, 192, 7, action);
 	const char *selected = bind_grab ? keys_pending_command : bindnames[keys_cursor].command;
 	if (selected && selected[0])
-		M_PrintScroll (cbx, 10, 184, 288, selected, realtime * 0.25, false);
+		M_Keys_DrawBindingDetails (cbx, selected);
 
 	if (VEC_SIZE (bindnames) > BINDS_PER_PAGE)
 		M_DrawScrollbar (cbx, MENU_SCROLLBAR_X, 56, (float)(first_key) / (VEC_SIZE (bindnames) - BINDS_PER_PAGE), BINDS_PER_PAGE - 2);
@@ -5631,8 +5676,6 @@ static void M_Keys_Draw (cb_context_t *cbx)
 
 void M_Keys_Key (int k)
 {
-	int keys[2];
-
 	if (keys_command_editor)
 	{
 		M_Keys_CommandKey (k);
@@ -5648,10 +5691,8 @@ void M_Keys_Key (int k)
 		{
 			/* Retire capture-down using the OLD binding before any unbinding or
 			 * installation. The normal stray-keyup guard consumes physical up. */
-			Key_Event (k, false);
-			M_FindKeysForCommand (keys_pending_command, keys);
-			if (keys[1] != -1)
-				M_UnbindCommand (keys_pending_command);
+			Key_ReleaseBindingCaptureKey (k);
+			/* Adding XR, SDL or keyboard input must preserve the other sources. */
 			Key_SetBinding (k, keys_pending_command);
 			M_Keys_Populate ();
 			M_Keys_SelectCommand (keys_pending_command);

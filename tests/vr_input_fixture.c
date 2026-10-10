@@ -250,7 +250,7 @@ void Key_Event (int key, qboolean down)
 		waiting_for_binding = true;
 		start_binding_on_abutton = 0;
 	}
-	if (!down && key == K_ABUTTON && mutate_frame_on_release)
+	if (!down && key == K_VR_ABUTTON && mutate_frame_on_release)
 	{
 		mutate_frame_on_release->hands[1].pressed = 0;
 		mutate_frame_on_release = NULL;
@@ -569,33 +569,33 @@ static void test_lifecycle_and_hysteresis (void)
 	frame.hands[1].pressed = VRXR_BUTTON_PRIMARY;
 	VR_InputCommands (&frame);
 	assert (event_count == 2);
-	expect_event (0, K_ABUTTON, 1);
-	expect_event (1, K_XBUTTON, 1);
+	expect_event (0, K_VR_ABUTTON, 1);
+	expect_event (1, K_VR_XBUTTON, 1);
 
 	reset_events ();
 	frame.hands[0].active = 0;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_ABUTTON, 0);
+	expect_event (0, K_VR_ABUTTON, 0);
 	frame.hands[0].active = 1;
 	frame.hands[0].pressed = 0;
 	frame.hands[1].pressed = 0;
 	VR_InputCommands (&frame);
 	assert (event_count == 2);
-	expect_event (1, K_XBUTTON, 0);
+	expect_event (1, K_VR_XBUTTON, 0);
 
 	native_clear_then_neutral (&frame);
 	frame.hands[0].trigger = 0.56f;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_LTRIGGER, 1);
+	expect_event (0, K_VR_LTRIGGER, 1);
 	frame.hands[0].trigger = 0.50f;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
 	frame.hands[0].trigger = 0.44f;
 	VR_InputCommands (&frame);
 	assert (event_count == 2);
-	expect_event (1, K_LTRIGGER, 0);
+	expect_event (1, K_VR_LTRIGGER, 0);
 
 	reset_events ();
 	frame.hands[0].profile = VRXR_PROFILE_SIMPLE;
@@ -608,7 +608,7 @@ static void test_lifecycle_and_hysteresis (void)
 	frame.hands[0].pressed = VRXR_BUTTON_TRIGGER;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_LTRIGGER, 1);
+	expect_event (0, K_VR_LTRIGGER, 1);
 }
 
 static void test_role_profile_and_duplicate_mapping (void)
@@ -623,12 +623,12 @@ static void test_role_profile_and_duplicate_mapping (void)
 	frame.hands[0].pressed = VRXR_BUTTON_STICK;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_LTHUMB, 1);
+	expect_event (0, K_VR_LTHUMB, 1);
 	reset_events ();
 	frame.hands[0].pressed = 0;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_LTHUMB, 0);
+	expect_event (0, K_VR_LTHUMB, 0);
 
 	reset_events ();
 	frame.hands[1].profile = VRXR_PROFILE_INDEX;
@@ -640,11 +640,11 @@ static void test_role_profile_and_duplicate_mapping (void)
 	frame.hands[1].pressed = VRXR_BUTTON_GRIP;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_RSHOULDER, 1);
+	expect_event (0, K_VR_RSHOULDER, 1);
 	reset_events ();
 	frame.hands[1].pressed = 0;
 	VR_InputCommands (&frame);
-	expect_event (0, K_RSHOULDER, 0);
+	expect_event (0, K_VR_RSHOULDER, 0);
 	frame.hands[1].pressed = VRXR_BUTTON_STICK;
 	VR_InputCommands (&frame);
 	expect_event (1, K_VR_ALTFIRE, 1);
@@ -661,8 +661,8 @@ static void test_role_profile_and_duplicate_mapping (void)
 	frame.hands[1].pressed = VRXR_BUTTON_PRIMARY;
 	VR_InputCommands (&frame);
 	assert (event_count == 2);
-	expect_event (0, K_ABUTTON, 1);
-	expect_event (1, K_XBUTTON, 1);
+	expect_event (0, K_VR_ABUTTON, 1);
+	expect_event (1, K_VR_XBUTTON, 1);
 
 	/* Both Index pads compose to the same logical Y key. Aggregate ownership
 	 * keeps it down until the final contributing hand releases. */
@@ -675,7 +675,7 @@ static void test_role_profile_and_duplicate_mapping (void)
 	frame.hands[0].pressed = frame.hands[1].pressed = VRXR_BUTTON_PAD;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_YBUTTON, 1);
+	expect_event (0, K_VR_YBUTTON, 1);
 	reset_events ();
 	frame.hands[0].pressed = 0;
 	VR_InputCommands (&frame);
@@ -683,14 +683,16 @@ static void test_role_profile_and_duplicate_mapping (void)
 	frame.hands[1].pressed = 0;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_YBUTTON, 0);
+	expect_event (0, K_VR_YBUTTON, 0);
 }
 
 static void test_index_wheel_touch (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
-	char *saved_binding = keybindings[K_RTHUMB];
-	keybindings[K_RTHUMB] = "+vr_weaponmenu";
+	char *saved_binding = keybindings[K_VR_RTHUMB];
+	char *saved_physical_binding = keybindings[K_RTHUMB];
+	keybindings[K_VR_RTHUMB] = "+vr_weaponmenu";
+	keybindings[K_RTHUMB] = "+jump";
 	key_dest = key_game;
 	set_cvar ("vr_lefthanded", 0.0f);
 	frame.hands[0].profile = frame.hands[1].profile = VRXR_PROFILE_INDEX;
@@ -701,11 +703,11 @@ static void test_index_wheel_touch (void)
 	frame.hands[1].touched = VRXR_BUTTON_PAD;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_RTHUMB, 1);
+	expect_event (0, K_VR_RTHUMB, 1);
 	reset_events ();
 	frame.hands[1].touched = 0;
 	VR_InputCommands (&frame);
-	expect_event (0, K_RTHUMB, 0);
+	expect_event (0, K_VR_RTHUMB, 0);
 
 	/* Focus recovery while a finger rests on the pad cannot reopen the wheel.
 	 * Discrete buttons independently rearm without waiting for that finger. */
@@ -721,7 +723,7 @@ static void test_index_wheel_touch (void)
 	frame.hands[1].pressed = VRXR_BUTTON_PRIMARY;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_XBUTTON, 1);
+	expect_event (0, K_VR_XBUTTON, 1);
 	frame.hands[1].pressed = 0;
 	VR_InputCommands (&frame);
 	reset_events ();
@@ -729,7 +731,7 @@ static void test_index_wheel_touch (void)
 	VR_InputCommands (&frame);
 	frame.hands[1].touched = VRXR_BUTTON_PAD;
 	VR_InputCommands (&frame);
-	expect_event (0, K_RTHUMB, 1);
+	expect_event (0, K_VR_RTHUMB, 1);
 
 	key_dest = key_menu;
 	waiting_for_binding = false;
@@ -743,7 +745,7 @@ static void test_index_wheel_touch (void)
 	native_clear_then_neutral (&frame);
 	frame.hands[1].touched = VRXR_BUTTON_PAD;
 	VR_InputCommands (&frame);
-	expect_event (0, K_RTHUMB, 1);
+	expect_event (0, K_VR_RTHUMB, 1);
 	waiting_for_binding = false;
 
 	key_dest = key_game;
@@ -752,9 +754,10 @@ static void test_index_wheel_touch (void)
 	native_clear_then_neutral (&frame);
 	frame.hands[0].touched = VRXR_BUTTON_PAD;
 	VR_InputCommands (&frame);
-	expect_event (0, K_RTHUMB, 1);
+	expect_event (0, K_VR_RTHUMB, 1);
 	set_cvar ("vr_lefthanded", 0.0f);
-	keybindings[K_RTHUMB] = saved_binding;
+	keybindings[K_VR_RTHUMB] = saved_binding;
+	keybindings[K_RTHUMB] = saved_physical_binding;
 	puts ("VR wheel: Index touch, release, focus rearm, binding capture and handedness passed");
 }
 
@@ -768,11 +771,11 @@ static void test_button_profiles_and_menu_axes (void)
 	frame.hands[1].pressed = VRXR_BUTTON_SECONDARY;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_BBUTTON, 1);
+	expect_event (0, K_VR_BBUTTON, 1);
 	reset_events ();
 	frame.hands[1].pressed = 0;
 	VR_InputCommands (&frame);
-	expect_event (0, K_BBUTTON, 0);
+	expect_event (0, K_VR_BBUTTON, 0);
 
 	frame.hands[1].profile = VRXR_PROFILE_FRAME;
 	frame.hands[1].pressed = VRXR_BUTTON_GRIP;
@@ -987,10 +990,10 @@ static void test_menu_trigger_dispatch_and_capture_transition (void)
 	frame.hands[1].trigger = 0.60f;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_RTRIGGER, 1);
+	expect_event (0, K_VR_RTRIGGER, 1);
 	assert (haptic_count == 0); /* capture input never fires menu feedback */
 	VR_InputMenuPanelTrigger (&frame, true);
-	assert (event_count == 1); /* binding capture keeps the physical trigger mapping */
+	assert (event_count == 1); /* binding capture keeps the dedicated XR trigger mapping */
 	assert (haptic_count == 0);
 	fixture_frame = NULL;
 }
@@ -1153,7 +1156,7 @@ static void test_modal_grab_overrides_destination_and_rearms (void)
 	VR_InputCommands (&frame);
 	VR_InputMenuPanelTrigger (&frame, true);
 	assert (event_count == 1);
-	expect_event (0, K_RTRIGGER, 1);
+	expect_event (0, K_VR_RTRIGGER, 1);
 	assert (haptic_count == 0);
 	fixture_frame = NULL;
 }
@@ -1239,7 +1242,7 @@ static void test_input_hands_are_snapshotted_before_release_callbacks (void)
 	frame.hands[0].pressed = VRXR_BUTTON_PRIMARY;
 	VR_InputCommands (&frame);
 	assert (event_count == 1);
-	expect_event (0, K_ABUTTON, 1);
+	expect_event (0, K_VR_ABUTTON, 1);
 
 	reset_events ();
 	frame.hands[0].profile = VRXR_PROFILE_FRAME;
@@ -1248,8 +1251,8 @@ static void test_input_hands_are_snapshotted_before_release_callbacks (void)
 	mutate_frame_on_release = &frame;
 	VR_InputCommands (&frame);
 	assert (event_count == 2);
-	expect_event (0, K_ABUTTON, 0);
-	expect_event (1, K_XBUTTON, 1);
+	expect_event (0, K_VR_ABUTTON, 0);
+	expect_event (1, K_VR_XBUTTON, 1);
 	assert (frame.hands[1].pressed == 0); /* callback mutation did not alter this sample */
 }
 
@@ -1268,8 +1271,8 @@ static void near_motion (float actual, float expected)
 static void test_wheel_motion_and_vive_cycle (void)
 {
 	vrxr_frame_t frame = neutral_frame ();
-	char *saved_binding = keybindings[K_RTHUMB];
-	keybindings[K_RTHUMB] = "+vr_weaponmenu";
+	char *saved_binding = keybindings[K_VR_RTHUMB];
+	keybindings[K_VR_RTHUMB] = "+vr_weaponmenu";
 	key_dest = key_game;
 	input_grab_active = waiting_for_binding = angle_locked = false;
 	cls.state = ca_connected;
@@ -1317,18 +1320,18 @@ static void test_wheel_motion_and_vive_cycle (void)
 	VR_InputCommands (&frame);
 	int thumb_event = -1;
 	for (int i = 0; i < event_count; ++i)
-		if (events[i].key == K_RTHUMB)
+		if (events[i].key == K_VR_RTHUMB)
 			thumb_event = i;
 	assert (thumb_event >= 0);
-	expect_event (thumb_event, K_RTHUMB, 1);
+	expect_event (thumb_event, K_VR_RTHUMB, 1);
 	assert (fixture_cycle_impulses == 0);
-	keybindings[K_RTHUMB] = "+jump";
+	keybindings[K_VR_RTHUMB] = "+jump";
 	frame.hands[1].pressed = 0;
 	VR_InputCommands (&frame);
 	frame.hands[1].pressed = VRXR_BUTTON_PAD;
 	VR_InputCommands (&frame);
 	assert (fixture_cycle_impulses == 1); /* Custom click retains legacy cycling. */
-	keybindings[K_RTHUMB] = saved_binding;
+	keybindings[K_VR_RTHUMB] = saved_binding;
 	fixture_frame = NULL;
 	puts ("VR wheel: off-center touch preserves stick motion and Vive wheel excludes cycling");
 }

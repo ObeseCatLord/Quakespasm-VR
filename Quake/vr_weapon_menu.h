@@ -60,6 +60,10 @@ void VR_WeaponMenu_ObserveActive (void);
 void VR_WeaponMenu_ClientReset (void);
 void VR_WeaponMenu_SetDesktopPointer (qboolean pointer_valid,
 	int pointer_x, int pointer_y);
+/* SDL publishes the currently selected logical stick before button release
+ * commands are queued. The desktop wheel keeps source ownership itself. */
+void VR_WeaponMenu_SetDesktopStick (float x, float y, float deadzone);
+void VR_WeaponMenu_DesktopMouseMotion (int pointer_x, int pointer_y);
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
 	int pointer_x, int pointer_y, const float world_from_ndc[16],
 	const float ray_origin[3], const float ray_direction[3], qboolean playspace);
