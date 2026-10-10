@@ -11,6 +11,7 @@
 #define QBJ3_MDL_BERSERK_SOURCE_SIZE ((size_t)656804)
 #define ENYO_MDL_SMG_SOURCE_SIZE ((size_t)322196)
 #define DWELL_MDL_BERSERK_SOURCE_SIZE ((size_t)106284)
+#define PERIL_MDL_SMG_SOURCE_SIZE ((size_t)84020)
 #define QBJ3_MDL_WRENCH_SOURCE_SIZE ((size_t)798364)
 #define ENYO_MDL_KATANA_SOURCE_SIZE ((size_t)403284)
 #define RANGER_MDL_HAND_SOURCE_SIZE ((size_t)57908)
@@ -79,6 +80,7 @@ typedef enum {
 	BONK_MDL_WEAPON_MACE_DOMINANT = 34,
 	RANGER_MDL_WEAPON_HAND = 35,
 	ENYO_MDL_WEAPON_HAND = 36,
+	PERIL_MDL_WEAPON_SMG = 37,
 	VR_MDL_SPLIT_WEAPON_COUNT
 } qbj3_mdl_weapon_t;
 
@@ -94,6 +96,7 @@ static size_t QBJ3_MDL_SourceSize (qbj3_mdl_weapon_t weapon)
 		weapon == QBJ3_MDL_WEAPON_BERSERK ? QBJ3_MDL_BERSERK_SOURCE_SIZE :
 		weapon == ENYO_MDL_WEAPON_SMG ? ENYO_MDL_SMG_SOURCE_SIZE :
 		weapon == DWELL_MDL_WEAPON_BERSERK ? DWELL_MDL_BERSERK_SOURCE_SIZE :
+		weapon == PERIL_MDL_WEAPON_SMG ? PERIL_MDL_SMG_SOURCE_SIZE :
 		weapon == QBJ3_MDL_WEAPON_WRENCH_DOMINANT ? QBJ3_MDL_WRENCH_SOURCE_SIZE :
 		weapon == ENYO_MDL_WEAPON_KATANA_DOMINANT ? ENYO_MDL_KATANA_SOURCE_SIZE :
 		weapon == RANGER_MDL_WEAPON_HAND ? RANGER_MDL_HAND_SOURCE_SIZE :
@@ -322,6 +325,13 @@ static int QBJ3_MDL_Split (const unsigned char *input, size_t input_size,
 		expected_output_size = 70284;
 		expected_output_crc = side == QBJ3_MDL_SIDE_LEFT ? 0x8e5fd44bu : 0xf3c035b6u;
 	}
+	else if (weapon == PERIL_MDL_WEAPON_SMG)
+	{
+		expected_input_size = PERIL_MDL_SMG_SOURCE_SIZE; expected_input_crc = 0x5ea01698u;
+		expected_verts = 292; expected_tris = 258; expected_frames = 9;
+		expected_output_size = 74948;
+		expected_output_crc = side == QBJ3_MDL_SIDE_LEFT ? 0x0ca1aa33u : 0xbe17c930u;
+	}
 	else if (weapon == QBJ3_MDL_WEAPON_WRENCH_DOMINANT)
 	{
 		expected_input_size = QBJ3_MDL_WRENCH_SOURCE_SIZE; expected_input_crc = 0x4e2e4720u;
@@ -486,6 +496,17 @@ static int QBJ3_MDL_Split (const unsigned char *input, size_t input_size,
 	if (dominant_recipe)
 	{
 		/* Every source triangle must wholly remain or wholly be removed. */
+	}
+	else if (weapon == PERIL_MDL_WEAPON_SMG)
+	{
+		/* Pinned Peril geometry: left gun/arm 0..135, right 136..271;
+		 * left flash 272..281, right flash 282..291. Right-flash vertex
+		 * 288 crosses Y=0 in frame 3, so an all-frame side test is wrong.
+		 * As with Dwell, verify topology never joins the partitions. */
+		for (i = 0; i < numverts; ++i)
+			evidence[parent[i]] |= (i < 136 || (i >= 272 && i < 282)) ? 1 : 2;
+		for (i = 0; i < numverts; ++i)
+			if (evidence[parent[i]] != 1 && evidence[parent[i]] != 2) goto fail;
 	}
 	else if (weapon == DWELL_MDL_WEAPON_BERSERK)
 	{

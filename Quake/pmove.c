@@ -1302,7 +1302,10 @@ void PM_AirMove (void)
 		else
 			blocked = PM_SlideMove ();
 
-		if (movevars.pground && (blocked & BLOCKED_FLOOR))
+		/* Landing on an uphill floor can create rising velocity. Let QC jump
+		 * owners reach the final support probe instead of treating that rise
+		 * as another takeoff. The probe still rejects an edge or solid start. */
+		if ((movevars.pground || pmove.qc_jump_owner) && (blocked & BLOCKED_FLOOR))
 			pmove.onground = true;
 	}
 }
@@ -1398,8 +1401,10 @@ void PM_CategorizePosition (void)
 	VectorAdd(pmove.origin, pmove.gravitydir, point);
 	trace.startsolid = trace.allsolid = true;
 	VectorClear(trace.endpos);
+	/* Supported uphill motion can rise; protect real QC takeoff only once
+	 * QC has cleared support, so the ground probe cannot snap it back. */
 	if (-DotProduct(pmove.gravitydir, pmove.velocity) > 180 ||
-		(pmove.qc_jump_owner && -DotProduct(pmove.gravitydir, pmove.velocity) > 0) ||
+		(pmove.qc_jump_owner && !pmove.onground && -DotProduct(pmove.gravitydir, pmove.velocity) > 0) ||
 		(PM_GorillaGroundContact() && -DotProduct(pmove.gravitydir, pmove.velocity) > .01f))
 	{
 		pmove.onground = false;

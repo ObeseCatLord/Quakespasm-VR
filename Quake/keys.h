@@ -151,13 +151,23 @@ typedef enum keycode_t
 	K_VR_RIGHT_STICK_UP,
 	K_VR_RIGHT_STICK_DOWN,
 	K_VR_ALTFIRE,
+	K_VR_ABUTTON,
+	K_VR_BBUTTON,
+	K_VR_XBUTTON,
+	K_VR_YBUTTON,
+	K_VR_LTHUMB,
+	K_VR_RTHUMB,
+	K_VR_LSHOULDER,
+	K_VR_RSHOULDER,
+	K_VR_LTRIGGER,
+	K_VR_RTRIGGER,
 
 	NUM_KEYCODES,
 } keycode_t;
 
 // clang-format on
 
-#define MAX_KEYS 256
+#define MAX_KEYS 512
 
 #define MAXCMDLINE 256
 
@@ -186,6 +196,14 @@ extern qboolean chat_team;
 
 void Key_Init (void);
 void Key_ClearStates (void);
+void Key_ReleaseWeaponMenuMouseButtons (void);
+void Key_ClearDesktopWeaponMenuCommands (void);
+void Key_GamepadAliasEvent (int key, qboolean down);
+void Key_ReleaseBindingCaptureKey (int key);
+void Key_ClearNativeGamepadWeaponMenuCommands (void);
+qboolean Key_IsNativeGamepadOnlySource (int key);
+qboolean Key_ValidateDesktopWeaponMenuCommand (qboolean down, qboolean *key_released);
+void Key_InvalidateDesktopWeaponMenuCommand (void);
 void Key_UpdateForDest (void);
 
 void Key_BeginInputGrab (void);

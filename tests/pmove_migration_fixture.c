@@ -374,6 +374,15 @@ static void check_qc_takeoff_water (void)
 	PM_CategorizePosition ();
 	assert (!pmove.onground);
 	assert (pmove.waterlevel == 3 && (pmove.watertype & CONTENTBIT_WATER));
+	/* Level1 goes through AirMove; it must not reinterpret a low authored
+	 * impulse as a landing merely because water and floor are both nearby. */
+	pmove.physents[1].maxs[2] = 12;
+	pmove.cmd.seconds = .005f;
+	pmove.cmd.msec = 5;
+	pmove.jump_held = true;
+	PM_PlayerMove (1);
+	assert (pmove.waterlevel == 1 && !pmove.onground &&
+		pmove.velocity[2] > 0 && pmove.jump_held);
 }
 
 static void prepare_qc_support (void)
@@ -459,6 +468,61 @@ static void check_qc_repeated_support (int msec)
 	}
 }
 
+/* A genuine downhill-to-uphill collision creates positive vertical velocity.
+ * Support belongs to the final trace, including a nonworld brush and removal. */
+static void check_qc_running_slope_landing (void)
+{
+	mplane_t saved_planes[2];
+	memcpy (saved_planes, floor_planes, sizeof (saved_planes));
+	for (int i = 0; i < 2; ++i)
+	{
+		VectorSet (floor_planes[i].normal, -.4472136f, 0, .8944272f);
+		floor_planes[i].type = 3;
+		floor_planes[i].dist = i ? 28.62167f : 0;
+	}
+	qmodel_t empty_world = {0};
+	empty_world.type = mod_brush;
+	for (int i = 0; i < 3; ++i)
+		empty_world.hulls[i].firstclipnode = CONTENTS_EMPTY;
+	for (int platform = 0; platform < 2; ++platform)
+	{
+		prepare ();
+		pmove.qc_jump_owner = true;
+		pmove.jump_held = true; // collision cannot change QC's latch
+		VectorSet (pmove.gravitydir, 0, 0, -1);
+		VectorSet (pmove.origin, 0, 0, 36);
+		VectorSet (pmove.velocity, 200, 0, -80);
+		pmove.cmd.forwardmove = 320;
+		pmove.cmd.seconds = .04f;
+		/* Observe the collision result before another duration substep. */
+		pmove.cmd.msec = 0;
+		if (platform)
+		{
+			pmove.physents[0].model = &empty_world;
+			pmove.numphysent = 2;
+			pmove.physents[1].model = &floor_model;
+			pmove.physents[1].info = 7;
+		}
+		PM_PlayerMove (1);
+		assert (pmove.onground && pmove.velocity[2] > 0 && pmove.jump_held);
+		assert (pmove.groundent == platform);
+		/* A completed collision's provisional support cannot survive losing
+		 * the supporting brush before the final probe, even while rising. */
+		pmove.physents[0].model = &empty_world;
+		pmove.numphysent = 1;
+		PM_CategorizePosition ();
+		assert (!pmove.onground && pmove.jump_held);
+	}
+	memcpy (floor_planes, saved_planes, sizeof (saved_planes));
+	prepare ();
+	pmove.qc_jump_owner = true;
+	VectorSet (pmove.origin, 0, 0, -64); // beyond native step-height unsticking
+	VectorSet (pmove.gravitydir, 0, 0, -1);
+	VectorSet (pmove.velocity, 100, 0, -10);
+	PM_PlayerMove (1);
+	assert (!pmove.onground);
+}
+
 int main (void)
 {
 	floor_model.type = mod_brush;
@@ -475,11 +539,16 @@ int main (void)
 		floor_model.hulls[i].clipnodes = &floor_nodes[i];
 		floor_model.hulls[i].firstclipnode = floor_model.hulls[i].lastclipnode = 0;
 	}
+	/* Hull1 is the compiled player hull. Match its native placement so the
+	 * hull adapter does not add a second player-mins offset to this floor. */
+	VectorSet (floor_model.hulls[1].clip_mins, -16, -16, -24);
+	VectorSet (floor_model.hulls[1].clip_maxs, 16, 16, 32);
 	// Exercise both donor trace implementations, including the enabled default.
 	for (int fast = 0; fast < 2; ++fast)
 	{
 		pr_checkextension.value = 1;
 		sv_fte_recursivehullckeck.value = fast;
+		check_qc_running_slope_landing ();
 		check_teleport_backmove ();
 		check_transient_fluid_crossing ();
 		check_vr_instant_stop ();

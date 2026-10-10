@@ -2161,6 +2161,7 @@ static void SCR_DrawTextPopupConsole (cb_context_t *cbx)
 static void SCR_VRWeaponMenuPrepare (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
+	vrxr_device_t controller;
 	vec3_t ray_origin, ray_direction, ray_right, ray_up, hand_origin;
 	vec3_t anchor_right, anchor_up, anchor_forward;
 	vec3_t forward, right, up, down, normal, view_angles;
@@ -2201,6 +2202,7 @@ static void SCR_VRWeaponMenuPrepare (void)
 	}
 	dominant = VR_InputDominantPhysicalHand ();
 	if (dominant < 0 || dominant > 1 ||
+		!VR_LocomotionControllerDevice (frame, dominant, &controller) ||
 		!R_TrackedControllerRay (dominant, ray_origin, ray_direction))
 	{
 		VR_WeaponMenu_Cancel ();
@@ -2209,7 +2211,7 @@ static void SCR_VRWeaponMenuPrepare (void)
 	}
 	live_gun_angle = V_VRGunAngle ();
 	if (!isfinite (live_gun_angle) ||
-		!R_TrackedPoseBasis (frame->devices[dominant + 1].matrix, &live_gun_angle,
+		!R_TrackedPoseBasis (controller.matrix, &live_gun_angle,
 		ray_origin, ray_right, ray_up, ray_direction))
 	{
 		VR_WeaponMenu_Cancel ();
@@ -2221,7 +2223,7 @@ static void SCR_VRWeaponMenuPrepare (void)
 	{
 		if (!vr_weapon_menu_anchor.valid)
 		{
-			memcpy (vr_weapon_menu_opening_matrix, frame->devices[dominant + 1].matrix,
+			memcpy (vr_weapon_menu_opening_matrix, controller.matrix,
 				sizeof (vr_weapon_menu_opening_matrix));
 			vr_weapon_menu_opening_gun_angle = live_gun_angle;
 		}

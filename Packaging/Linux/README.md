@@ -1,8 +1,14 @@
 # Portable native Linux builds
 
-These scripts are source-integrated infrastructure. Final builds, artifact and
-loaded-software qualification are still pending. Execute them after required
-implementation is complete. They do not install into a game/server directory.
+These scripts are the portable native release recipes used by the local
+[release workflow](../../docs/release-automation-2.0.md). Use that coordinator
+for normal releases and resumable deployment/publication. The lower-level
+commands below remain useful for isolated build diagnosis. They do not install
+into a game/server directory.
+
+Linux x86-64 and native ARM64 packages have passed the production build,
+inventory and dedicated-startup checks recorded in the release results. Those
+checks do not certify headset presentation or hardware-specific performance.
 
 Create one committed source archive and use it unchanged for both architectures.
 Existing Quake/mod assets are external; no assets are included in the package.
@@ -45,4 +51,5 @@ The declared GLIBC ceiling is2.39; actual GLIBCXX/CXXABI requirements are record
 Host display/audio services, GPU ICDs, an installed OpenXR runtime/layers and
 CA/audio configuration remain prerequisites. Do not set a global LD_LIBRARY_PATH.
 Vulkan/OpenXR loaders and application dependencies follow `host-policy.json`.
-Windows builds, live headset/gaze checks and performance measurement are deferred.
+Windows has a separate native Release adapter in `Packaging/Release/windows`.
+Live headset/gaze checks and hardware performance remain user validation.

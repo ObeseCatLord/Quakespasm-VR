@@ -17,7 +17,7 @@ float V_VRUnitsPerMetre (void) { return 10; }
 void Con_DPrintf (const char *format, ...) {}
 static int released_keys;
 void Key_Event (int key, qboolean down)
-{ assert ((key == K_LTRIGGER || key == K_RTRIGGER) && !down); ++released_keys; }
+{ assert ((key == K_VR_LTRIGGER || key == K_VR_RTRIGGER) && !down); ++released_keys; }
 
 static void check_pause_roomscale (const char *sample, float x, float y, float z)
 {
@@ -120,12 +120,12 @@ int main (void)
 	assert (!cl.pendingcmd.vr_roomscalemove[0]);
 	/* Same release/neutral helpers called by missing/unfocused frame handling.
 	 * This does not execute the complete VR_InputCommands dispatcher. */
-	vr_input_hands[0].owned[K_LTRIGGER] = true;
-	vr_input_hands[1].owned[K_RTRIGGER] = true;
-	vr_input_emitted[K_LTRIGGER] = vr_input_emitted[K_RTRIGGER] = true;
+	vr_input_hands[0].owned[K_VR_LTRIGGER] = true;
+	vr_input_hands[1].owned[K_VR_RTRIGGER] = true;
+	vr_input_emitted[K_VR_LTRIGGER] = vr_input_emitted[K_VR_RTRIGGER] = true;
 	vr_input_hands[0].trigger_down = vr_input_hands[1].trigger_down = true;
 	assert (VR_InputGateAndReleaseAll (vr_input_dispatch_epoch));
-	assert (released_keys == 2 && !vr_input_emitted[K_LTRIGGER] && !vr_input_emitted[K_RTRIGGER]);
+	assert (released_keys == 2 && !vr_input_emitted[K_VR_LTRIGGER] && !vr_input_emitted[K_VR_RTRIGGER]);
 	assert (vr_input_hands[0].wait_neutral && vr_input_hands[1].wait_neutral &&
 		!vr_input_hands[0].trigger_down && !vr_input_hands[1].trigger_down);
 	vrxr_input_t hand = {0}; hand.active = true; hand.trigger = 1;

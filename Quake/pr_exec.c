@@ -204,6 +204,7 @@ void PR_RunError (const char *error, ...)
 
 	Con_Printf ("%s\n", string);
 
+	PR_BonkSkinAbort (qcvm);
 	qcvm->depth = 0; // dump the stack so host_error can shutdown functions
 
 	Host_Error ("Program error");
@@ -224,6 +225,164 @@ void PR_RunWarning (const char *error, ...)
 	Con_Warning ("%s\n", string);
 }
 
+/* Original Bonk's scalar selector is projected through the existing QC frames.
+ * Only client parm11 persists it; native helpers inherit the current actor. */
+static client_t *PR_BonkSkinClient (int owner)
+{
+	int number;
+	client_t *client;
+	if (!svs.clients || !qcvm->edicts || qcvm->edict_size <= 0 ||
+		owner <= 0 || owner % qcvm->edict_size)
+		return NULL;
+	number = owner / qcvm->edict_size;
+	if (number > svs.maxclients || number >= qcvm->num_edicts)
+		return NULL;
+	client = &svs.clients[number - 1];
+	return client->active && client->edict == PROG_TO_EDICT (owner) &&
+		!client->edict->free ? client : NULL;
+}
+
+static client_t *PR_BonkSkinFrameClient (const prstack_t *frame)
+{
+	client_t *client = PR_BonkSkinClient (frame->bonk_skin_owner);
+	return client && client->voice_generation == frame->bonk_skin_generation ? client : NULL;
+}
+
+static void PR_BonkSkinFlush (const prstack_t *frame)
+{
+	client_t *client = PR_BonkSkinFrameClient (frame);
+	if (client)
+		client->spawn_parms[10] = qcvm->globals[873];
+}
+
+void PR_BonkSkinAbort (qcvm_t *vm)
+{
+	/* Never resolve a client during error unwind or destruction. Suspension
+	 * through PR_SwitchQCVM deliberately leaves these live frames intact. */
+	if (vm && vm->bonk_skin_scope_depth)
+	{
+		if (vm->bonk_hammer_program && vm->globals)
+			vm->globals[873] = vm->bonk_skin_unscoped;
+		vm->bonk_skin_scope_depth = 0;
+	}
+}
+
+float PR_BonkSkinValue (edict_t *ent)
+{
+	uintptr_t offset;
+	client_t *client;
+	prstack_t *frame;
+	if (!qcvm->bonk_hammer_program || !pr_global_struct->coop)
+		return qcvm->globals[873];
+	if (!ent || (uintptr_t)ent < (uintptr_t)qcvm->edicts)
+		return NAN;
+	offset = (uintptr_t)ent - (uintptr_t)qcvm->edicts;
+	if (offset > INT_MAX || !(client = PR_BonkSkinClient ((int)offset)))
+		return NAN;
+	if (qcvm->bonk_skin_scope_depth && qcvm->depth >= qcvm->bonk_skin_scope_depth)
+	{
+		frame = &qcvm->stack[qcvm->depth - 1];
+		if (frame->bonk_skin_owner == (int)offset && PR_BonkSkinFrameClient (frame) == client)
+			return qcvm->globals[873];
+	}
+	return client->spawn_parms[10];
+}
+
+static dfunction_t *PR_BonkSkinEnter (dfunction_t *f)
+{
+	prstack_t *frame = &qcvm->stack[qcvm->depth - 1], *parent = NULL;
+	client_t *client;
+	int index = f - qcvm->functions, owner = pr_global_struct->self;
+	qboolean root = !qcvm->bonk_skin_scope_depth;
+	if (root)
+	{
+		qcvm->bonk_skin_scope_depth = qcvm->depth;
+		qcvm->bonk_skin_unscoped = qcvm->globals[873];
+	}
+	else
+	{
+		parent = frame - 1;
+		PR_BonkSkinFlush (parent);
+	}
+	frame->bonk_skin_saved = qcvm->globals[873];
+	frame->bonk_skin_touch = index == 376 ? pr_global_struct->self : 0;
+	if (index == 376)
+		owner = pr_global_struct->other;
+	client = PR_BonkSkinClient (owner);
+	/* Root new-client setup must ignore stale self; world pedestal think
+	 * uses selector zero, letting original CFL_LOCKED logic decide touch. */
+	if ((index == 627 && root) || (index == 377 && !client))
+	{
+		client = NULL;
+		owner = 0;
+	}
+	else if (parent && ((index == 627) || (!client && index != 376)))
+	{
+		client = PR_BonkSkinFrameClient (parent);
+		owner = parent->bonk_skin_owner;
+	}
+	frame->bonk_skin_owner = client ? owner : 0;
+	frame->bonk_skin_generation = client ? client->voice_generation : 0;
+	if (client)
+		qcvm->globals[873] = client->spawn_parms[10];
+	else if (index == 627 && root)
+		qcvm->globals[873] = 1;
+	else if (index == 377)
+		qcvm->globals[873] = 0;
+	if (index == 627 || index == 626)
+		qcvm->globals[53] = qcvm->globals[873];
+	/* The exact void native no-op bypasses all repeat-selection effects.
+	 * Different selections still run original CheckValidTouch unchanged. */
+	if (index == 376 && client && frame->bonk_skin_touch > 0 &&
+		frame->bonk_skin_touch % qcvm->edict_size == 0 &&
+		frame->bonk_skin_touch / qcvm->edict_size < qcvm->num_edicts)
+	{
+		edict_t *stand = PROG_TO_EDICT (frame->bonk_skin_touch);
+		if (!stand->free && GetEdictFieldValue (stand, 114)->_float == qcvm->globals[873])
+			return &qcvm->functions[162];
+	}
+	return f;
+}
+
+static void PR_BonkSkinLeave (void)
+{
+	prstack_t *frame = &qcvm->stack[qcvm->depth - 1];
+	client_t *client;
+	if (qcvm->xfunction == &qcvm->functions[376] && PR_BonkSkinFrameClient (frame) &&
+		frame->bonk_skin_touch > 0 && frame->bonk_skin_touch % qcvm->edict_size == 0 &&
+		frame->bonk_skin_touch / qcvm->edict_size < qcvm->num_edicts)
+	{
+		edict_t *stand = PROG_TO_EDICT (frame->bonk_skin_touch);
+		if (!stand->free && stand->v.touch == 162 &&
+			GetEdictFieldValue (stand, 114)->_float == qcvm->globals[873])
+		{
+			int saved_self = pr_global_struct->self, saved_argc = qcvm->argc;
+			int saved_return[3];
+			memcpy (saved_return, qcvm->globals + OFS_RETURN, sizeof (saved_return));
+			pr_global_struct->self = frame->bonk_skin_touch;
+			qcvm->argc = 0;
+			PR_ExecuteProgram (377); // native neutral think immediately reopens an unlocked stand
+			pr_global_struct->self = saved_self;
+			qcvm->argc = saved_argc;
+			memcpy (qcvm->globals + OFS_RETURN, saved_return, sizeof (saved_return));
+		}
+	}
+	PR_BonkSkinFlush (frame);
+	if (qcvm->depth == qcvm->bonk_skin_scope_depth)
+	{
+		/* SetNewParms publishes a new-client default, never a stale actor's
+		 * selector. All other roots restore the unowned entry value. */
+		qcvm->globals[873] = qcvm->xfunction == &qcvm->functions[627] ?
+			1 : qcvm->bonk_skin_unscoped;
+		qcvm->bonk_skin_scope_depth = 0;
+	}
+	else
+	{
+		client = PR_BonkSkinFrameClient (frame - 1);
+		qcvm->globals[873] = client ? client->spawn_parms[10] : frame->bonk_skin_saved;
+	}
+}
+
 /*
 ====================
 PR_EnterFunction
@@ -240,6 +399,8 @@ static int PR_EnterFunction (dfunction_t *f)
 	qcvm->depth++;
 	if (qcvm->depth >= MAX_STACK_DEPTH)
 		PR_RunError ("stack overflow");
+	if (qcvm->bonk_hammer_program && (qcvm->bonk_skin_scope_depth || pr_global_struct->coop))
+		f = PR_BonkSkinEnter (f);
 
 	// save off any locals that the new function steps on
 	c = f->locals;
@@ -280,6 +441,8 @@ static int PR_LeaveFunction (void)
 	/* Dwell's scoped traceline2 result must be repaired before this helper's
 	 * locals are restored. The shared trace-scope owner ignores other calls. */
 	SV_VRAxeTraceLeaveFunction ();
+	if (qcvm->bonk_skin_scope_depth)
+		PR_BonkSkinLeave ();
 
 	// Restore locals from the stack
 	c = qcvm->xfunction->locals;

@@ -19,9 +19,13 @@ cvar_t vr_weaponmenu_player_teleport = {"vr_weaponmenu_player_teleport", "1", CV
 
 #define VR_WEAPON_MENU_MAX_ENTRIES VR_WEAPON_CATALOG_MAX_OBSERVATIONS
 #define VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE 0.28f
+#define VR_WEAPON_MENU_PLAYSPACE_ACTION_GLYPH (8.0f * 0.30f * 0.60f)
+#define VR_WEAPON_MENU_PLAYSPACE_ACTION_OUTLINE 0.28f
 
 typedef struct {
 	const vr_weapon_menu_entry_t *entry;
+	const char *label;
+	qpic_t *icon;
 	qboolean active;
 	qboolean selectable;
 	int ammo;
@@ -105,6 +109,19 @@ static const vr_weapon_menu_profile_entry_t vr_weapon_menu_ad_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, 16, 6, "GRENADE", "progs/g_rock.mdl", "progs/v_rock.mdl", STAT_ROCKETS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, 32, 7, "ROCKET", "progs/g_rock2.mdl", "progs/v_rock2.mdl", STAT_ROCKETS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, 64, 8, "LIGHTNING", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100)
+};
+
+/* pak2 my_progs/weapons.qc: eight native selectors, twelve held identities.
+ * AD upgrades replace their parent slot; they are not additional commands. */
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_peril_profile[] = {
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_AXE, 1, "QUAKE AXE", "progs/g_axe.mdl", "progs/v_shadaxe0.mdl", -1, 0),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SHOTGUN, 2, "SAWN-OFF SHOTGUN", "progs/g_shot1.mdl", "progs/v_shot.mdl", STAT_SHELLS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_SHOTGUN, 3, "DOUBLE-BARRELLED SHOTGUN", "progs/g_shot2.mdl", "progs/v_shot2.mdl", STAT_SHELLS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_NAILGUN, 4, "NAILGUN", "progs/g_nail.mdl", "progs/v_nail.mdl", STAT_NAILS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_NAILGUN, 5, "SUPER NAILGUN", "progs/g_nail2.mdl", "progs/v_nail2.mdl", STAT_NAILS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_GRENADE_LAUNCHER, 6, "GRENADE LAUNCHER", "progs/g_rock.mdl", "progs/v_rock.mdl", STAT_ROCKETS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_ROCKET_LAUNCHER, 7, "ROCKET LAUNCHER", "progs/g_rock2.mdl", "progs/v_rock2.mdl", STAT_ROCKETS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_LIGHTNING, 8, "THUNDERBOLT", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100)
 };
 
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_snack_profile[] = {
@@ -218,9 +235,21 @@ static qboolean vr_weapon_menu_has_discoveries;
 
 static qboolean vr_weapon_menu_open;
 static qboolean vr_weapon_menu_open_vr;
+typedef enum
+{
+	VR_WEAPON_MENU_DESKTOP_MOUSE,
+	VR_WEAPON_MENU_DESKTOP_STICK
+} vr_weapon_menu_desktop_owner_t;
+static vr_weapon_menu_desktop_owner_t vr_weapon_menu_desktop_owner;
 static qboolean vr_weapon_menu_pointer_valid;
 static qboolean vr_weapon_menu_tracking_valid;
 static int vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y;
+static qboolean vr_weapon_menu_desktop_pointer_seen;
+static unsigned int vr_weapon_menu_desktop_mouse_serial;
+static unsigned int vr_weapon_menu_desktop_stick_mouse_serial;
+static qboolean vr_weapon_menu_desktop_stick_seen;
+static float vr_weapon_menu_desktop_stick_x, vr_weapon_menu_desktop_stick_y;
+static float vr_weapon_menu_desktop_stick_deadzone;
 static int vr_weapon_menu_hover_id = -1;
 static int vr_weapon_menu_retained_id = -1;
 static int vr_weapon_menu_hover_action_slot = -1;
@@ -552,7 +581,9 @@ static void VR_WeaponMenu_ApplySchemaMetadata (
 		q_strlcpy (vr_weapon_menu_schema_models[index], schema->model_path,
 			sizeof (vr_weapon_menu_schema_models[index]));
 		entry->model_path = vr_weapon_menu_schema_models[index];
-		if (entry->label == vr_weapon_menu_wwheel_labels[index])
+		if (entry->label == vr_weapon_menu_wwheel_labels[index] &&
+			!(entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0") &&
+			  ((entry->schema_fields | fields) & VR_SCHEMA_WHEEL_VIEWMODEL)))
 			VR_WeaponMenu_SchemaLabel (vr_weapon_menu_wwheel_labels[index],
 				sizeof (vr_weapon_menu_wwheel_labels[index]), schema->model_path, entry->id);
 	}
@@ -561,6 +592,13 @@ static void VR_WeaponMenu_ApplySchemaMetadata (
 		q_strlcpy (vr_weapon_menu_held_models[index], schema->viewmodel_path,
 			sizeof (vr_weapon_menu_held_models[index]));
 		entry->viewmodel_path = vr_weapon_menu_held_models[index];
+		if (entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0"))
+		{
+			/* An authored held identity may replace a native upgrade entirely. */
+			VR_WeaponMenu_SchemaLabel (vr_weapon_menu_wwheel_labels[index],
+				sizeof (vr_weapon_menu_wwheel_labels[index]), entry->viewmodel_path, entry->id);
+			entry->label = vr_weapon_menu_wwheel_labels[index];
+		}
 		if (!entry->game_profile && !((entry->schema_fields | fields) & VR_SCHEMA_WHEEL_MODEL))
 		{
 			entry->model_path = entry->viewmodel_path;
@@ -692,8 +730,15 @@ static void VR_WeaponMenu_ApplySchema (
 	const vr_weapon_schema_entry_t *schemas, size_t schema_count)
 {
 	for (size_t s = 0; s < schema_count; ++s)
+	{
+		/* Peril's copied offset-only profile is calibration input, not a
+		 * held-identity override for the native upgradeable wheel slots. */
+		if (VR_WeaponMenu_GameDirIs ("peril3.0") &&
+			!(schemas[s].wheel.fields & ~VR_SCHEMA_WHEEL_VIEWMODEL))
+			continue;
 		if (VR_WeaponMenu_AddSchemaEntry (&schemas[s].wheel))
 			vr_weapon_menu_has_schema = true;
+	}
 }
 
 static qboolean VR_WeaponMenu_GameDirIs (const char *name)
@@ -712,6 +757,12 @@ static qboolean VR_WeaponMenu_IsADWeaponGame (void)
 {
 	return VR_WeaponMenu_GameDirIs ("ad") ||
 		VR_WeaponMenu_GameDirIs ("hwjam2");
+}
+
+static qboolean VR_WeaponMenu_UsesADWeaponUpgrades (void)
+{
+	return VR_WeaponMenu_IsADWeaponGame () ||
+		VR_WeaponMenu_GameDirIs ("peril3.0");
 }
 
 static int VR_WeaponMenu_ProfileAmmoMaxStat (int ammo_stat)
@@ -873,6 +924,10 @@ static void VR_WeaponMenu_AddProfile (
 
 static void VR_WeaponMenu_LoadBuiltinProfiles (void)
 {
+	const qboolean peril = VR_WeaponMenu_GameDirIs ("peril3.0");
+	if (peril)
+		VR_WeaponMenu_AddProfile (vr_weapon_menu_peril_profile,
+			sizeof (vr_weapon_menu_peril_profile) / sizeof (vr_weapon_menu_peril_profile[0]));
 	if (VR_WeaponMenu_IsADWeaponGame ())
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_ad_profile,
 			sizeof (vr_weapon_menu_ad_profile) / sizeof (vr_weapon_menu_ad_profile[0]));
@@ -906,16 +961,16 @@ static void VR_WeaponMenu_LoadBuiltinProfiles (void)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_mg3_profile,
 			sizeof (vr_weapon_menu_mg3_profile) /
 			sizeof (vr_weapon_menu_mg3_profile[0]));
-	if (hipnotic)
+	if (hipnotic && !peril)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_hipnotic_profile,
 			sizeof (vr_weapon_menu_hipnotic_profile) /
 			sizeof (vr_weapon_menu_hipnotic_profile[0]));
-	if (rogue)
+	if (rogue && !peril)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_rogue_profile,
 			sizeof (vr_weapon_menu_rogue_profile) /
 			sizeof (vr_weapon_menu_rogue_profile[0]));
 	/* Only the primary's verified complete families suppress stock guesses. */
-	if (VR_WeaponMenu_IsADWeaponGame () || VR_WeaponMenu_IsSnackGame () ||
+	if (peril || VR_WeaponMenu_IsADWeaponGame () || VR_WeaponMenu_IsSnackGame () ||
 		VR_WeaponMenu_GameDirIs ("alk") ||
 		VR_WeaponMenu_GameDirIs ("limjam") || VR_WeaponMenu_GameDirIs ("enyo") ||
 		VR_WeaponMenu_GameDirIs ("qbj3") || VR_WeaponMenu_GameDirIs ("dwell") ||
@@ -1117,9 +1172,16 @@ static void VR_WeaponMenu_ClearSession (void)
 {
 	vr_weapon_menu_open = false;
 	vr_weapon_menu_open_vr = false;
+	vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
 	vr_weapon_menu_pointer_valid = false;
 	vr_weapon_menu_tracking_valid = false;
 	vr_weapon_menu_pointer_x = vr_weapon_menu_pointer_y = -1;
+	vr_weapon_menu_desktop_pointer_seen = false;
+	vr_weapon_menu_desktop_mouse_serial = 0;
+	vr_weapon_menu_desktop_stick_mouse_serial = 0;
+	vr_weapon_menu_desktop_stick_seen = false;
+	vr_weapon_menu_desktop_stick_x = vr_weapon_menu_desktop_stick_y = 0.0f;
+	vr_weapon_menu_desktop_stick_deadzone = 0.0f;
 	vr_weapon_menu_hover_id = -1;
 	vr_weapon_menu_retained_id = -1;
 	vr_weapon_menu_hover_action_slot = -1;
@@ -1220,7 +1282,7 @@ static const char *VR_WeaponMenu_EntryViewmodel (const vr_weapon_menu_entry_t *e
 		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
 			return (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) & 16384) ?
 				"progs/ee_v_av72.mdl" : "progs/ee_v_smgs.mdl";
-		if (VR_WeaponMenu_IsADWeaponGame ())
+		if (VR_WeaponMenu_UsesADWeaponUpgrades ())
 		{
 			const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
 			switch (entry->selector)
@@ -1243,7 +1305,7 @@ static const char *VR_WeaponMenu_EntryPreviewPath (const vr_weapon_menu_entry_t 
 		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
 			return (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) & 16384) ?
 				"progs/ee_g_av72.mdl" : "progs/ee_g_smgs.mdl";
-		if (VR_WeaponMenu_IsADWeaponGame ())
+		if (VR_WeaponMenu_UsesADWeaponUpgrades ())
 		{
 			const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
 			switch (entry->selector)
@@ -1258,6 +1320,54 @@ static const char *VR_WeaponMenu_EntryPreviewPath (const vr_weapon_menu_entry_t 
 	return entry->model_path;
 }
 
+static const char *VR_WeaponMenu_EntryLabel (const vr_weapon_menu_entry_t *entry,
+	const int *stats, size_t num_stats)
+{
+	if (entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0"))
+	{
+		static const struct { const char *model; const char *label; } identities[] = {
+			{"progs/v_shadaxe0.mdl", "QUAKE AXE"},
+			{"progs/v_shadaxe3.mdl", "SHADOW AXE"},
+			{"progs/v_ghook.mdl", "GRAPPLE HOOK"},
+			{"progs/v_shot.mdl", "SAWN-OFF SHOTGUN"},
+			{"progs/v_shot2.mdl", "DOUBLE-BARRELLED SHOTGUN"},
+			{"progs/v_shot3.mdl", "WIDOWMAKER SHOTGUN"},
+			{"progs/v_nail.mdl", "NAILGUN"},
+			{"progs/v_nail2.mdl", "SUPER NAILGUN"},
+			{"progs/v_rock.mdl", "GRENADE LAUNCHER"},
+			{"progs/v_rock2.mdl", "ROCKET LAUNCHER"},
+			{"progs/v_light.mdl", "THUNDERBOLT"},
+			{"progs/v_plasma.mdl", "PLASMA GUN"}
+		};
+		const char *held = VR_WeaponMenu_EntryViewmodel (entry, stats, num_stats);
+		for (size_t i = 0; held && i < countof (identities); ++i)
+		{
+			if (!q_strcasecmp (held, identities[i].model))
+				return identities[i].label;
+		}
+	}
+	return entry->label;
+}
+
+static qpic_t *VR_WeaponMenu_EntryIcon (const vr_weapon_menu_entry_t *entry,
+	const int *stats, size_t num_stats)
+{
+	if (VR_WeaponMenu_GameDirIs ("peril3.0"))
+	{
+		/* gfx.wad is inherited stock art. Peril's SMGs and replacement
+		 * weapons have no correct icon in Sbar_WeaponMenuIcon's bank. */
+		if (!entry->game_profile ||
+			(entry->schema_fields & (VR_SCHEMA_WHEEL_MODEL | VR_SCHEMA_WHEEL_VIEWMODEL)))
+			return NULL;
+		const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
+		if (entry->selector == IT_AXE || entry->selector == IT_NAILGUN ||
+			(entry->selector == IT_SUPER_SHOTGUN && (modifiers & 2)) ||
+			(entry->selector == IT_LIGHTNING && (modifiers & 64)))
+			return NULL;
+	}
+	return Sbar_WeaponMenuIcon (entry->selector);
+}
+
 static qboolean VR_WeaponMenu_EntryModelMatches (
 	const vr_weapon_menu_entry_t *entry, const char *model_path,
 	const int *stats, size_t num_stats)
@@ -1268,12 +1378,16 @@ static qboolean VR_WeaponMenu_EntryModelMatches (
 			(!q_strcasecmp (model_path, "progs/ee_v_smgs.mdl") ||
 			 !q_strcasecmp (model_path, "progs/ee_v_av72.mdl")))
 			return true;
-		if (VR_WeaponMenu_IsADWeaponGame () &&
+		if (VR_WeaponMenu_UsesADWeaponUpgrades () &&
 			((entry->selector == IT_AXE && !q_strcasecmp (model_path, "progs/v_ghook.mdl")) ||
 			 (entry->selector == IT_SUPER_SHOTGUN &&
 			  (!q_strcasecmp (model_path, "progs/v_shot2.mdl") || !q_strcasecmp (model_path, "progs/v_shot3.mdl"))) ||
 			 (entry->selector == IT_LIGHTNING &&
 			  (!q_strcasecmp (model_path, "progs/v_light.mdl") || !q_strcasecmp (model_path, "progs/v_plasma.mdl")))))
+			return true;
+		if (VR_WeaponMenu_GameDirIs ("peril3.0") && entry->selector == IT_AXE &&
+			(!q_strcasecmp (model_path, "progs/v_shadaxe0.mdl") ||
+			 !q_strcasecmp (model_path, "progs/v_shadaxe3.mdl")))
 			return true;
 		if (VR_WeaponMenu_IsADWeaponGame () && entry->selector == IT_AXE &&
 			!q_strncasecmp (model_path, "progs/v_shadaxe", 15) &&
@@ -1364,6 +1478,10 @@ static qboolean VR_WeaponMenu_EntrySelectable (const vr_weapon_menu_entry_t *ent
 	if ((size_t)entry->ammo_stat >= num_stats)
 		return true;
 	ammo = VR_WeaponMenu_Stat (stats, num_stats, entry->ammo_stat);
+	if (entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0") &&
+		((entry->selector == IT_SUPER_SHOTGUN && entry->ammo_stat == STAT_SHELLS) ||
+		 (entry->selector == IT_SUPER_NAILGUN && entry->ammo_stat == STAT_NAILS)))
+		return ammo >= 2; /* W_ChangeWeapon, including two-shell Widowmaker. */
 	if (entry->game_profile && VR_WeaponMenu_IsSnackGame ())
 	{
 		if (entry->selector == IT_SUPER_SHOTGUN)
@@ -1454,15 +1572,16 @@ void VR_WeaponMenu_List_f (void)
 			entry->source == VR_WEAPON_CATALOG_SOURCE_DISCOVERED ? "observed" : "stock";
 		const char *preview = VR_WeaponMenu_EntryPreviewPath (entry, cl.stats, MAX_CL_STATS);
 		const char *held = VR_WeaponMenu_EntryViewmodel (entry, cl.stats, MAX_CL_STATS);
+		const char *label = VR_WeaponMenu_EntryLabel (entry, cl.stats, MAX_CL_STATS);
 		visible += reason == NULL;
 		Con_Printf ("[%03d] %s source=%s profile=%d selector=%d impulse=%d owned=%d active=%d "
-			"owned_stat=%d value=%d mask=%d active_stat=%d value=%d mask=%d preview=%s held=%s\n",
+			"owned_stat=%d value=%d mask=%d active_stat=%d value=%d mask=%d preview=%s held=%s label=%s\n",
 			(int)i, reason ? reason : "visible", source, entry->game_profile, entry->selector, entry->impulse,
 			owned, active, entry->owned_stat,
 			entry->owned_stat == STAT_ITEMS ? cl.items | cl.stats[STAT_ITEMS] :
 				VR_WeaponMenu_Stat (cl.stats, MAX_CL_STATS, entry->owned_stat), entry->owned_mask,
 			entry->active_stat, VR_WeaponMenu_Stat (cl.stats, MAX_CL_STATS, entry->active_stat), entry->active_mask,
-			preview ? preview : "none", held ? held : "none");
+			preview ? preview : "none", held ? held : "none", label ? label : "none");
 	}
 	Con_Printf ("VR weapon list: %d visible, %d hidden\n", visible, (int)catalog->count - visible);
 }
@@ -1484,6 +1603,8 @@ static int VR_WeaponMenu_BuildVisible (const vr_weapon_menu_catalog_t *catalog,
 			continue;
 
 		visible[count].entry = entry;
+		visible[count].label = VR_WeaponMenu_EntryLabel (entry, stats, num_stats);
+		visible[count].icon = VR_WeaponMenu_EntryIcon (entry, stats, num_stats);
 		visible[count].active = active;
 		visible[count].selectable = VR_WeaponMenu_EntrySelectable (entry, active, stats, num_stats);
 		/* QuakeC currentammo belongs only to the equipped weapon. */
@@ -1579,7 +1700,7 @@ typedef struct {
 	vr_weapon_menu_action_kind_t kind;
 	int id;
 	int slot;
-	char label[MAX_SCOREBOARDNAME];
+	char label[MAX_SCOREBOARDNAME + 3]; /* room for the source's two-character prefix */
 	char player_name[MAX_SCOREBOARDNAME];
 	float color[2][3]; /* prepared normal/hover colors for scene and UI tasks */
 	float left;
@@ -2184,6 +2305,59 @@ static int VR_WeaponMenu_BuildActions (const vr_weapon_menu_catalog_t *catalog,
 	return count;
 }
 
+/* Adapt the existing action identities to the source's world layout. The
+ * padded rectangles stay in panel pixels so drawing and picking share them. */
+static void VR_WeaponMenu_LayoutPlayspaceActions (
+	vr_weapon_menu_action_t *actions, int count, float outer_radius,
+	float world_units_per_pixel)
+{
+	const float glyph = VR_WEAPON_MENU_PLAYSPACE_ACTION_GLYPH / world_units_per_pixel;
+	const float padding = VR_WEAPON_MENU_PLAYSPACE_ACTION_OUTLINE / world_units_per_pixel;
+	const float pitch = 5.0f * 0.60f / world_units_per_pixel;
+	const float side = outer_radius + 6.0f / world_units_per_pixel;
+	const float center_x = glwidth * 0.5f;
+	const float center_y = glheight * 0.5f;
+	int players = 0, player_row = 0, first_player = -1;
+
+	for (int i = 0; i < count; ++i)
+		if (actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_PLAYER)
+		{
+			if (first_player < 0)
+				first_player = i;
+			++players;
+		}
+		else if (actions[i].kind == VR_WEAPON_MENU_ACTION_COOP_SPAWN && first_player >= 0)
+		{
+			const vr_weapon_menu_action_t spawn = actions[i];
+			memmove (&actions[first_player + 1], &actions[first_player],
+				(i - first_player) * sizeof (*actions));
+			actions[first_player] = spawn;
+		}
+
+	for (int i = 0; i < count; ++i)
+	{
+		vr_weapon_menu_action_t *action = &actions[i];
+		const qboolean quick = action->kind == VR_WEAPON_MENU_ACTION_QUICK_SAVE ||
+			action->kind == VR_WEAPON_MENU_ACTION_QUICK_LOAD;
+		const char *text = action->kind == VR_WEAPON_MENU_ACTION_QUICK_SAVE ? "QUICK SAVE" :
+			action->kind == VR_WEAPON_MENU_ACTION_QUICK_LOAD ? "QUICK LOAD" :
+			action->kind == VR_WEAPON_MENU_ACTION_COOP_SPAWN ? "RESPAWN" : action->player_name;
+		float row_up;
+		q_snprintf (action->label, sizeof (action->label), "  %s", text);
+		const float text_width = strlen (action->label) * glyph;
+		if (quick)
+			row_up = (action->kind == VR_WEAPON_MENU_ACTION_QUICK_SAVE ? 0.5f : -0.5f) * pitch;
+		else if (action->kind == VR_WEAPON_MENU_ACTION_COOP_SPAWN)
+			row_up = players > 0 ? (players - 1) * pitch * 0.5f + pitch : 0.0f;
+		else
+			row_up = (players - 1) * pitch * 0.5f - player_row++ * pitch;
+		action->width = text_width + 2.0f * padding;
+		action->height = glyph + 2.0f * padding;
+		action->left = center_x + (quick ? -side - text_width : side) - padding;
+		action->top = center_y - row_up - action->height * 0.5f;
+	}
+}
+
 /* One geometry and hit-test path keeps every action rectangle aligned with
  * drawing for both the desktop mouse and the OpenXR pointer. */
 static int VR_WeaponMenu_Actions (struct cb_context_s *context,
@@ -2246,8 +2420,8 @@ static qboolean VR_WeaponMenu_ActionStillValid (
 static void VR_WeaponMenu_SetSlotGeometry (vr_weapon_menu_visible_t *visible,
 	int index, float center_x, float center_y, float scale)
 {
-	const float text_width = visible[index].entry->label ?
-		strlen (visible[index].entry->label) * CHARACTER_SIZE * scale : 0.0f;
+	const char *label = visible[index].label;
+	const float text_width = label ? strlen (label) * CHARACTER_SIZE * scale : 0.0f;
 	const float box_width = q_max (text_width + 12.0f * scale, 40.0f * scale);
 	visible[index].center_x = center_x;
 	visible[index].center_y = center_y;
@@ -2335,6 +2509,11 @@ void VR_WeaponMenu_Open (void)
 		return;
 	vr_weapon_menu_open = true;
 	vr_weapon_menu_open_vr = vulkan_globals.stereo_active;
+	vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
+	vr_weapon_menu_desktop_pointer_seen = false;
+	vr_weapon_menu_desktop_mouse_serial = 0;
+	vr_weapon_menu_desktop_stick_mouse_serial = 0;
+	vr_weapon_menu_desktop_stick_seen = false;
 	vr_weapon_menu_hover_id = vr_weapon_menu_retained_id = -1;
 	vr_weapon_menu_hover_action_slot = -1;
 	vr_weapon_menu_hover_action_name[0] = '\0';
@@ -2389,6 +2568,7 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 		vr_weapon_menu_frame.geometry[i] = index < catalog->count &&
 			index < VR_WEAPON_MENU_MAX_ENTRIES ? vr_weapon_menu_assets.geometry[index] : NULL;
 		*copy = *source;
+		copy->label = vr_weapon_menu_frame.visible[i].label;
 		copy->model_path = VR_WeaponMenu_EntryPreviewPath (source, cl.stats, MAX_CL_STATS);
 		if (copy->label)
 		{
@@ -2396,6 +2576,7 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 				sizeof (vr_weapon_menu_frame.labels[i]));
 			copy->label = vr_weapon_menu_frame.labels[i];
 		}
+		vr_weapon_menu_frame.visible[i].label = copy->label;
 		if (copy->model_path)
 		{
 			q_strlcpy (vr_weapon_menu_frame.models[i], copy->model_path,
@@ -2408,6 +2589,9 @@ static void VR_WeaponMenu_PrepareFrame (const vr_weapon_menu_catalog_t *catalog,
 	vr_weapon_menu_frame.action_count = VR_WeaponMenu_BuildActions (catalog,
 		VR_WeaponMenu_QuickSaveAvailable (), layout_radius, scale,
 		vr_weapon_menu_frame.actions);
+	if (playspace && isfinite (world_units_per_pixel) && world_units_per_pixel > 0.0f)
+		VR_WeaponMenu_LayoutPlayspaceActions (vr_weapon_menu_frame.actions,
+			vr_weapon_menu_frame.action_count, layout_radius, world_units_per_pixel);
 	vr_weapon_menu_frame.generation = vr_weapon_menu_session_generation;
 	vr_weapon_menu_frame_valid = true;
 }
@@ -2459,41 +2643,60 @@ static qboolean VR_WeaponMenu_PanelBasis (const float world_from_ndc[16],
 		VectorNormalize (forward) > 0.0f;
 }
 
-static qboolean VR_WeaponMenu_RayBounds (const vec3_t mins, const vec3_t maxs,
-	const vec3_t ray_origin, const vec3_t ray_direction, float *distance)
+/* Preview yaw matches the scene entity transform. Center all native axes at
+ * the actual encoded draw scale, so spinning/highlighting preserves the slot. */
+static qboolean VR_WeaponMenu_CenteredModelOrigin (const qmodel_t *model,
+	float yaw, float visual_scale, const vec3_t slot_center,
+	vec3_t model_center, vec3_t origin)
 {
-	float near_distance = 0.0f;
-	float far_distance = FLT_MAX;
-
+	if (!isfinite (yaw) || !isfinite (visual_scale) || visual_scale <= 0.0f)
+		return false;
 	for (int axis = 0; axis < 3; ++axis)
 	{
-		float first, second;
-		if (!isfinite (mins[axis]) || !isfinite (maxs[axis]) ||
-			mins[axis] > maxs[axis] || !isfinite (ray_origin[axis]) ||
-			!isfinite (ray_direction[axis]))
+		if (!isfinite (model->mins[axis]) || !isfinite (model->maxs[axis]) ||
+			model->mins[axis] > model->maxs[axis] || !isfinite (slot_center[axis]))
 			return false;
-		if (fabsf (ray_direction[axis]) < 1.0e-8f)
-		{
-			if (ray_origin[axis] < mins[axis] || ray_origin[axis] > maxs[axis])
-				return false;
-			continue;
-		}
-		first = (mins[axis] - ray_origin[axis]) / ray_direction[axis];
-		second = (maxs[axis] - ray_origin[axis]) / ray_direction[axis];
-		if (first > second)
-		{
-			const float swap = first;
-			first = second;
-			second = swap;
-		}
-		near_distance = q_max (near_distance, first);
-		far_distance = q_min (far_distance, second);
-		if (near_distance > far_distance)
-			return false;
+		model_center[axis] = model->mins[axis] * 0.5f + model->maxs[axis] * 0.5f;
 	}
-	if (!isfinite (near_distance) || far_distance < 0.0f)
+	const float sine = sinf (DEG2RAD (yaw));
+	const float cosine = cosf (DEG2RAD (yaw));
+	origin[0] = slot_center[0] -
+		(model_center[0] * cosine - model_center[1] * sine) * visual_scale;
+	origin[1] = slot_center[1] -
+		(model_center[0] * sine + model_center[1] * cosine) * visual_scale;
+	origin[2] = slot_center[2] - model_center[2] * visual_scale;
+	return isfinite (origin[0]) && isfinite (origin[1]) && isfinite (origin[2]);
+}
+
+/* The source projects onto the wheel plane before measuring slot distance.
+ * Do not constrain this plane to the UI canvas: action labels extend past it. */
+static qboolean VR_WeaponMenu_WorldRayPoint (const float world_from_ndc[16],
+	const vec3_t ray_origin, const vec3_t ray_direction,
+	const vec3_t forward, vec3_t point)
+{
+	vec3_t delta, direction;
+	if (!world_from_ndc || !ray_origin || !ray_direction)
 		return false;
-	*distance = near_distance;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		if (!isfinite (world_from_ndc[12 + axis]) || !isfinite (ray_origin[axis]) ||
+			!isfinite (ray_direction[axis]) || !isfinite (forward[axis]))
+			return false;
+		delta[axis] = world_from_ndc[12 + axis] - ray_origin[axis];
+	}
+	VectorCopy (ray_direction, direction);
+	if (VectorNormalize (direction) == 0.0f)
+		return false;
+	const float denominator = DotProduct (direction, forward);
+	if (!isfinite (denominator) || fabsf (denominator) <= 0.001f)
+		return false;
+	const float distance = DotProduct (delta, forward) / denominator;
+	if (!isfinite (distance) || distance <= 0.0f || distance >= 128.0f)
+		return false;
+	VectorMA (ray_origin, distance, direction, point);
+	for (int axis = 0; axis < 3; ++axis)
+		if (!isfinite (point[axis]))
+			return false;
 	return true;
 }
 
@@ -2522,64 +2725,35 @@ static int VR_WeaponMenu_HitWorld (const vr_weapon_menu_frame_t *frame,
 	const float world_from_ndc[16], const vec3_t ray_origin,
 	const vec3_t ray_direction)
 {
-	vec3_t right, down, forward, direction;
+	vec3_t right, down, forward, pointer;
 	float best_distance = FLT_MAX;
-	const float model_yaw = world_from_ndc ?
-		VR_WeaponMenu_ModelYaw (world_from_ndc) : 0.0f;
-	const float yaw_radians = DEG2RAD (model_yaw);
-	const float yaw_cos = cosf (yaw_radians);
-	const float yaw_sin = sinf (yaw_radians);
 	const float mesh_scale = VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE;
 	int best = -1;
-	if (!world_from_ndc || !ray_origin || !ray_direction ||
-		!isfinite (model_yaw) ||
-		!VR_WeaponMenu_PanelBasis (world_from_ndc, right, down, forward))
-		return -1;
-	VectorCopy (ray_direction, direction);
-	if (VectorNormalize (direction) == 0.0f)
+	if (!frame || !world_from_ndc || glwidth <= 0 || glheight <= 0 ||
+		!VR_WeaponMenu_PanelBasis (world_from_ndc, right, down, forward) ||
+		!VR_WeaponMenu_WorldRayPoint (world_from_ndc, ray_origin, ray_direction, forward, pointer))
 		return -1;
 	for (int i = 0; i < frame->count; ++i)
 	{
-		const qmodel_t *model = frame->model[i];
-		const vr_weapon_menu_entry_t *entry = frame->visible[i].entry;
-		vec3_t target, local_origin, local_direction, contact;
-		float schema_scale, scale_value, layout_scale, entity_scale, world_scale, along;
-		float delta_x, delta_y;
-		if (!frame->visible[i].selectable || !model || !frame->geometry[i])
-			continue;
-		schema_scale = isfinite (entry->model_scale) && entry->model_scale > 0.0f ?
-			entry->model_scale : 1.0f;
-		/* A hit immediately draws this candidate at the selected model scale. */
-		scale_value = 0.40f * schema_scale;
-		layout_scale = 0.25f * schema_scale * mesh_scale;
-		entity_scale = ENTSCALE_DECODE (ENTSCALE_ENCODE (scale_value));
-		world_scale = entity_scale * mesh_scale;
-		if (!isfinite (layout_scale) || !isfinite (world_scale) || world_scale <= 0.0f)
+		vec3_t target, delta;
+		if (!frame->visible[i].selectable || !frame->model[i] || !frame->geometry[i])
 			continue;
 		VR_WeaponMenu_SlotWorldOrigin (&frame->visible[i], world_from_ndc,
 			right, down, forward, mesh_scale, target);
-		VectorMA (target, 0.5f * (model->mins[2] + model->maxs[2]) *
-			layout_scale, down, target);
 		if (!isfinite (target[0]) || !isfinite (target[1]) || !isfinite (target[2]))
 			continue;
-		delta_x = ray_origin[0] - target[0];
-		delta_y = ray_origin[1] - target[1];
-		local_origin[0] = (yaw_cos * delta_x + yaw_sin * delta_y) / world_scale;
-		local_origin[1] = (-yaw_sin * delta_x + yaw_cos * delta_y) / world_scale;
-		local_origin[2] = (ray_origin[2] - target[2]) / world_scale;
-		delta_x = direction[0];
-		delta_y = direction[1];
-		local_direction[0] = (yaw_cos * delta_x + yaw_sin * delta_y) / world_scale;
-		local_direction[1] = (-yaw_sin * delta_x + yaw_cos * delta_y) / world_scale;
-		local_direction[2] = direction[2] / world_scale;
-		if (!VR_WeaponMenu_RayBounds (model->mins, model->maxs,
-			local_origin, local_direction, &along) || along > 128.0f ||
-			along >= best_distance)
+		VectorSubtract (target, pointer, delta);
+		const float dx = DotProduct (delta, right);
+		const float dy = DotProduct (delta, down);
+		const float distance = dx * dx + dy * dy;
+		/* Five-unit rings, with the source's 0.55-radius selection tolerance.
+		 * Mesh extents, authored scales and selected growth cannot capture neighbors. */
+		if (!isfinite (distance) || distance > (5.0f * 0.55f) * (5.0f * 0.55f) ||
+			distance >= best_distance)
 			continue;
-		VectorMA (ray_origin, along, direction, contact);
-		if (!VR_WeaponMenu_WorldContactVisible (ray_origin, contact))
+		if (!VR_WeaponMenu_WorldContactVisible (ray_origin, target))
 			continue;
-		best_distance = along;
+		best_distance = distance;
 		best = i;
 	}
 	return best;
@@ -2600,15 +2774,8 @@ static qboolean VR_WeaponMenu_RetainedWorldVisible (
 	model = frame->model[index];
 	if (model && frame->geometry[index])
 	{
-		const vr_weapon_menu_entry_t *entry = visible->entry;
-		const float schema_scale = isfinite (entry->model_scale) &&
-			entry->model_scale > 0.0f ? entry->model_scale : 1.0f;
-		const float layout_scale = 0.25f * schema_scale *
-			VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE;
 		VR_WeaponMenu_SlotWorldOrigin (visible, world_from_ndc,
 			right, down, forward, VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE, target);
-		VectorMA (target, 0.5f * (model->mins[2] + model->maxs[2]) *
-			layout_scale, down, target);
 	}
 	else
 	{
@@ -2668,8 +2835,13 @@ static void VR_WeaponMenu_ResolvePreparedSelection (qboolean pointer_valid,
 		selected = VR_WeaponMenu_Hit (vr_weapon_menu_frame.visible,
 			vr_weapon_menu_frame.count, pointer_x, pointer_y, radius);
 	if (vr_weapon_menu_open_vr && playspace && selected < 0 && pointer_valid)
+	{
 		selected = VR_WeaponMenu_HitWorldFallback (&vr_weapon_menu_frame,
 			pointer_x, pointer_y);
+		if (selected >= 0 && !VR_WeaponMenu_RetainedWorldVisible (&vr_weapon_menu_frame,
+			selected, world_from_ndc, ray_origin))
+			selected = -1;
+	}
 	if (pointer_valid)
 		action = VR_WeaponMenu_Actions (NULL, vr_weapon_menu_frame.actions,
 			vr_weapon_menu_frame.action_count, scale,
@@ -2700,6 +2872,52 @@ static void VR_WeaponMenu_ResolvePreparedSelection (qboolean pointer_valid,
 			(!vr_weapon_menu_open_vr || !playspace ||
 			 VR_WeaponMenu_RetainedWorldVisible (&vr_weapon_menu_frame, i,
 				world_from_ndc, ray_origin)))
+		{
+			vr_weapon_menu_hover_id = vr_weapon_menu_retained_id;
+			break;
+		}
+}
+
+static void VR_WeaponMenu_ResolveDesktopStickSelection (void)
+{
+	int selected = -1;
+	float best_dot = -FLT_MAX;
+	const float magnitude = sqrtf (vr_weapon_menu_desktop_stick_x * vr_weapon_menu_desktop_stick_x +
+		vr_weapon_menu_desktop_stick_y * vr_weapon_menu_desktop_stick_y);
+
+	vr_weapon_menu_hover_id = -1;
+	vr_weapon_menu_hover_action_slot = -1;
+	vr_weapon_menu_hover_action_name[0] = '\0';
+	if (isfinite (magnitude) && magnitude > CLAMP (0.0f,
+		vr_weapon_menu_desktop_stick_deadzone, 1.0f))
+	{
+		const float center_x = glwidth * 0.5f;
+		const float center_y = glheight * 0.5f;
+		const float stick_x = vr_weapon_menu_desktop_stick_x / magnitude;
+		const float stick_y = vr_weapon_menu_desktop_stick_y / magnitude;
+		for (int i = 0; i < vr_weapon_menu_frame.count; ++i)
+		{
+			const vr_weapon_menu_visible_t *visible = &vr_weapon_menu_frame.visible[i];
+			const float dx = visible->center_x - center_x;
+			const float dy = visible->center_y - center_y;
+			const float distance = sqrtf (dx * dx + dy * dy);
+			const float dot = distance > 0.0f ? (stick_x * dx + stick_y * dy) / distance : -FLT_MAX;
+			if (visible->selectable && isfinite (dot) && dot > best_dot)
+			{
+				best_dot = dot;
+				selected = i;
+			}
+		}
+	}
+	if (selected >= 0)
+	{
+		vr_weapon_menu_retained_id = vr_weapon_menu_frame.visible[selected].entry->id;
+		vr_weapon_menu_hover_id = vr_weapon_menu_retained_id;
+		return;
+	}
+	for (int i = 0; i < vr_weapon_menu_frame.count; ++i)
+		if (vr_weapon_menu_frame.visible[i].entry->id == vr_weapon_menu_retained_id &&
+			vr_weapon_menu_frame.visible[i].selectable)
 		{
 			vr_weapon_menu_hover_id = vr_weapon_menu_retained_id;
 			break;
@@ -2781,12 +2999,8 @@ static void VR_WeaponMenu_DrawWorldActions (cb_context_t *cbx,
 	const vr_weapon_menu_frame_t *frame, const vec3_t right, const vec3_t down)
 {
 	const float *m = frame->world_from_ndc;
-	const float pixel_scale = (2.0f / glwidth) *
-		sqrtf (m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
-	const float menu_scale = CLAMP (0.85f,
-		q_min (glwidth, glheight) / 720.0f, 1.5f);
-	const float glyph_size = CHARACTER_SIZE * menu_scale * pixel_scale;
-	const float outline = glyph_size / CHARACTER_SIZE;
+	const float glyph_size = VR_WEAPON_MENU_PLAYSPACE_ACTION_GLYPH;
+	const float outline = VR_WEAPON_MENU_PLAYSPACE_ACTION_OUTLINE;
 	const vec3_t black = {0.0f, 0.0f, 0.0f};
 	vec3_t up;
 	if (!isfinite (glyph_size) || glyph_size <= 0.0f)
@@ -2796,6 +3010,7 @@ static void VR_WeaponMenu_DrawWorldActions (cb_context_t *cbx,
 	{
 		const vr_weapon_menu_action_t *action = &frame->actions[i];
 		vec3_t origin, shifted;
+		char label[sizeof (action->label)];
 		float x, y;
 		if (action->width <= 0.0f || action->height <= 0.0f || !action->label[0])
 			continue;
@@ -2805,15 +3020,17 @@ static void VR_WeaponMenu_DrawWorldActions (cb_context_t *cbx,
 			origin[axis] = m[12 + axis] + m[axis] * x + m[4 + axis] * y;
 		if (!isfinite (origin[0]) || !isfinite (origin[1]) || !isfinite (origin[2]))
 			continue;
+		q_strlcpy (label, action->label, sizeof (label));
+		label[0] = action->id == vr_weapon_menu_hover_id ? '>' : ' ';
 		VectorMA (origin, -outline, right, shifted);
-		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, action->label, black);
+		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, label, black);
 		VectorMA (origin, outline, right, shifted);
-		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, action->label, black);
+		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, label, black);
 		VectorMA (origin, -outline, up, shifted);
-		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, action->label, black);
+		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, label, black);
 		VectorMA (origin, outline, up, shifted);
-		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, action->label, black);
-		Draw_String_3DDepth (cbx, origin, right, up, glyph_size, action->label,
+		Draw_String_3DDepth (cbx, shifted, right, up, glyph_size, label, black);
+		Draw_String_3DDepth (cbx, origin, right, up, glyph_size, label,
 			action->color[action->id == vr_weapon_menu_hover_id ? 1 : 0]);
 	}
 }
@@ -2843,26 +3060,25 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 			entry->model_scale > 0.0f ? entry->model_scale : 1.0f;
 		const qboolean selected = entry->id == vr_weapon_menu_hover_id;
 		const float entity_scale = (selected ? 0.40f : 0.25f) * schema_scale;
-		const float layout_scale = (frame->playspace ? 0.25f :
-			(selected ? 0.40f : 0.25f)) * schema_scale * mesh_scale;
-		vec3_t tint;
+		vec3_t tint, slot_center, model_center;
 		entity_t entity;
 
 		if (!model || !frame->geometry[i] || !isfinite (entity_scale) ||
-			entity_scale <= 0.0f || !isfinite (layout_scale))
+			entity_scale <= 0.0f)
 			continue;
 		memset (&entity, 0, sizeof (entity));
 		VR_WeaponMenu_SlotWorldOrigin (&frame->visible[i], m, right, down,
-			forward, mesh_scale, entity.origin);
-		VectorMA (entity.origin, 0.5f * (model->mins[2] + model->maxs[2]) *
-			layout_scale, down, entity.origin);
-		if (!isfinite (entity.origin[0]) || !isfinite (entity.origin[1]) ||
-			!isfinite (entity.origin[2]))
+			forward, mesh_scale, slot_center);
+		/* Saturate before the encode macro's integer conversion, including
+		 * unusually large authored scales. Decode once for every visual offset. */
+		entity.netstate.scale = ENTSCALE_ENCODE (q_min (entity_scale, 255.0f / ENTSCALE_DEFAULT));
+		const float visual_scale = ENTSCALE_DECODE (entity.netstate.scale) * mesh_scale;
+		if (!VR_WeaponMenu_CenteredModelOrigin (model, frame->model_yaw,
+			visual_scale, slot_center, model_center, entity.origin))
 			continue;
 		entity.angles[YAW] = frame->model_yaw;
 		entity.model = (qmodel_t *)model;
 		entity.colormap = vid.colormap;
-		entity.netstate.scale = ENTSCALE_ENCODE (entity_scale);
 		entity.alpha = ENTALPHA_ENCODE (1.0f);
 		if (selected)
 		{
@@ -2889,9 +3105,7 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 			char ammo_text[32];
 			vec3_t text_origin, up, color = {1.0f, 1.0f, 1.0f};
 			const float text_scale = (selected ? 0.20f : 0.15f) * 0.60f;
-			const float model_center = 0.5f * (model->mins[2] + model->maxs[2]);
-			const float model_top = (model->maxs[2] - model_center) *
-				entity_scale * mesh_scale;
+			const float model_top = (model->maxs[2] - model_center[2]) * visual_scale;
 			if (frame->visible[i].ammo_max > 0)
 				q_snprintf (ammo_text, sizeof (ammo_text), "%d/%d",
 					frame->visible[i].ammo, frame->visible[i].ammo_max);
@@ -2901,7 +3115,7 @@ int VR_WeaponMenu_DrawModels (struct cb_context_s *context)
 			if (frame->visible[i].ammo == 0)
 				color[1] = color[2] = 0.0f;
 			VectorScale (down, -1.0f, up);
-			VectorCopy (entity.origin, text_origin);
+			VectorCopy (slot_center, text_origin);
 			VectorMA (text_origin, -2.0f * 0.60f, forward, text_origin);
 			VectorMA (text_origin, model_top + 1.5f * 0.60f, up, text_origin);
 			Draw_String_3DDepth (cbx, text_origin, right, up,
@@ -2926,14 +3140,72 @@ void VR_WeaponMenu_SetDesktopPointer (qboolean pointer_valid,
 		VR_WeaponMenu_ClearSession ();
 		return;
 	}
+	/* A sampled stationary cursor is not mouse input. Only an absolute SDL
+	 * motion event may take ownership back from the wheel stick. */
+	if (!vr_weapon_menu_desktop_pointer_seen &&
+		vr_weapon_menu_desktop_owner != VR_WEAPON_MENU_DESKTOP_STICK)
+		vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
+	vr_weapon_menu_desktop_pointer_seen = true;
 	vr_weapon_menu_pointer_valid = pointer_valid;
 	vr_weapon_menu_pointer_x = pointer_valid ? pointer_x : -1;
 	vr_weapon_menu_pointer_y = pointer_valid ? pointer_y : -1;
 	VR_WeaponMenu_PrepareFrame (VR_WeaponMenu_CurrentCatalog (), radius, scale,
 		NULL, false);
-	VR_WeaponMenu_ResolvePreparedSelection (pointer_valid,
-		vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y,
-		NULL, NULL, NULL, false);
+	if (vr_weapon_menu_desktop_owner == VR_WEAPON_MENU_DESKTOP_STICK)
+		VR_WeaponMenu_ResolveDesktopStickSelection ();
+	else
+		VR_WeaponMenu_ResolvePreparedSelection (pointer_valid,
+			vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y,
+			NULL, NULL, NULL, false);
+}
+
+void VR_WeaponMenu_DesktopMouseMotion (int pointer_x, int pointer_y)
+{
+	if (!vr_weapon_menu_open || vr_weapon_menu_open_vr || pointer_x < 0 || pointer_y < 0)
+		return;
+	if (!vr_weapon_menu_desktop_pointer_seen ||
+		pointer_x != vr_weapon_menu_pointer_x || pointer_y != vr_weapon_menu_pointer_y)
+	{
+		if (++vr_weapon_menu_desktop_mouse_serial == 0)
+			++vr_weapon_menu_desktop_mouse_serial;
+		vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
+	}
+}
+
+void VR_WeaponMenu_SetDesktopStick (float x, float y, float deadzone)
+{
+	const qboolean changed = !vr_weapon_menu_desktop_stick_seen ||
+		x != vr_weapon_menu_desktop_stick_x || y != vr_weapon_menu_desktop_stick_y ||
+		deadzone != vr_weapon_menu_desktop_stick_deadzone;
+	const float radius = q_min (glwidth, glheight) * 0.32f;
+	const float scale = CLAMP (0.85f,
+		q_min (glwidth, glheight) / 720.0f, 1.5f);
+
+	vr_weapon_menu_desktop_stick_seen = true;
+	vr_weapon_menu_desktop_stick_x = x;
+	vr_weapon_menu_desktop_stick_y = y;
+	vr_weapon_menu_desktop_stick_deadzone = deadzone;
+	if (!vr_weapon_menu_open || vr_weapon_menu_open_vr)
+		return;
+	if (!VR_WeaponMenu_SessionValid ())
+	{
+		VR_WeaponMenu_ClearSession ();
+		return;
+	}
+	/* Consume mouse activity each poll. Only a deliberate deflection acquires
+	 * stick ownership; neutral/deadzone noise cannot dismiss mouse actions. */
+	const qboolean mouse_changed = vr_weapon_menu_desktop_stick_mouse_serial !=
+		vr_weapon_menu_desktop_mouse_serial;
+	vr_weapon_menu_desktop_stick_mouse_serial = vr_weapon_menu_desktop_mouse_serial;
+	const float magnitude = sqrtf (x * x + y * y);
+	if (changed && !mouse_changed && isfinite (magnitude) &&
+		magnitude > CLAMP (0.0f, deadzone, 1.0f))
+		vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_STICK;
+	if (vr_weapon_menu_desktop_owner != VR_WEAPON_MENU_DESKTOP_STICK)
+		return;
+	VR_WeaponMenu_PrepareFrame (VR_WeaponMenu_CurrentCatalog (), radius, scale,
+		NULL, false);
+	VR_WeaponMenu_ResolveDesktopStickSelection ();
 }
 
 void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid,
@@ -2951,6 +3223,36 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	{
 		VR_WeaponMenu_ClearSession ();
 		return;
+	}
+	if (playspace)
+	{
+		vec3_t right, down, forward, point, delta;
+		pointer_valid = false;
+		/* Source-sized labels can extend beyond the nominal canvas. Project
+		 * without clipping here, keeping the world trace and release-valid flag. */
+		if (world_from_ndc && glwidth > 0 && glheight > 0 &&
+			VR_WeaponMenu_PanelBasis (world_from_ndc, right, down, forward) &&
+			VR_WeaponMenu_WorldRayPoint (world_from_ndc, ray_origin, ray_direction, forward, point))
+		{
+			const float pixel_scale = sqrtf (world_from_ndc[8] * world_from_ndc[8] +
+				world_from_ndc[9] * world_from_ndc[9] + world_from_ndc[10] * world_from_ndc[10]);
+			for (int axis = 0; axis < 3; ++axis)
+				delta[axis] = point[axis] - world_from_ndc[12 + axis];
+			if (isfinite (pixel_scale) && pixel_scale > 0.0f)
+			{
+				const float x = glwidth * 0.5f + DotProduct (delta, right) / pixel_scale;
+				const float y = glheight * 0.5f + DotProduct (delta, down) / pixel_scale;
+				if (isfinite (x) && isfinite (y) &&
+					(double)x > INT_MIN && (double)x < INT_MAX &&
+					(double)y > INT_MIN && (double)y < INT_MAX &&
+					VR_WeaponMenu_WorldContactVisible (ray_origin, point))
+				{
+					pointer_x = (int)x;
+					pointer_y = (int)y;
+					pointer_valid = true;
+				}
+			}
+		}
 	}
 	vr_weapon_menu_tracking_valid = true;
 	vr_weapon_menu_pointer_valid = pointer_valid;
@@ -3176,13 +3478,13 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 
 	for (int i = 0; i < count; ++i)
 	{
-		const vr_weapon_menu_entry_t *entry = visible[i].entry;
 		const qboolean is_selected = i == selected;
 		const float icon_scale = scale * 1.25f;
 		const float icon_width = 30.0f * icon_scale;
 		const float icon_height = 18.0f * icon_scale;
-		qpic_t *icon = Sbar_WeaponMenuIcon (entry->selector);
-		float label_width = entry->label ? strlen (entry->label) * CHARACTER_SIZE * scale : 0.0f;
+		qpic_t *icon = visible[i].icon;
+		const char *label = visible[i].label;
+		float label_width = label ? strlen (label) * CHARACTER_SIZE * scale : 0.0f;
 		const qboolean has_vr_model = vr_weapon_menu_open_vr &&
 			vr_weapon_menu_frame_valid && visible == vr_weapon_menu_frame.visible &&
 			vr_weapon_menu_frame.model[i] && vr_weapon_menu_frame.geometry[i];
@@ -3201,10 +3503,10 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 			(visible[i].selectable ? 1.0f : 0.55f),
 			is_selected ? (has_vr_model ? 0.55f : 0.10f) :
 			(visible[i].selectable ? 1.0f : 0.55f), 1.0f);
-		if (entry->label && (!vr_weapon_menu_open_vr || !has_vr_model))
+		if (label && (!vr_weapon_menu_open_vr || !has_vr_model))
 			Draw_String_Scaled (cbx, visible[i].center_x - label_width * 0.5f,
 				has_vr_model ? visible[i].center_y + 24.0f * scale :
-				visible[i].top + 22.0f * scale, entry->label, scale);
+				visible[i].top + 22.0f * scale, label, scale);
 		GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 	}
 	selected_action = VR_WeaponMenu_Actions (
@@ -3224,8 +3526,8 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 			vr_weapon_menu_frame_valid && vr_weapon_menu_frame.playspace;
 		char playspace_info[MAX_QPATH];
 		const char *info = selected_action >= 0 ? actions[selected_action].label :
-			(selected >= 0 && visible[selected].entry->label ?
-			 visible[selected].entry->label : "WEAPON");
+			(selected >= 0 && visible[selected].label ?
+			 visible[selected].label : "WEAPON");
 		float info_y;
 		float info_width;
 		float info_x;

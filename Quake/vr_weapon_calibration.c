@@ -94,10 +94,12 @@ typedef struct
 	int poseverttype;
 	int slot;
 	qmodel_t *model;
+	const aliashdr_t *geometry;
 	char model_name[MAX_QPATH];
 	float world_scale;
 	float gunmodelscale;
 	float gunmodelpitch;
+	float model_offset_scale;
 	vec3_t frozen_origin;
 	vec3_t frozen_hand_angles;
 	vec3_t frozen_model_angles;
@@ -553,6 +555,35 @@ static const vr_weapon_preset_muzzle_row_t vr_snack_weapon_fallbacks[] = {
 	{"progs/v_rock2.mdl", {10.0f, 7.0f, 19.0f}, 0.5f, {0.0f, 0.0f, 19.0f}},
 	{"progs/v_light.mdl", {3.0f, 4.0f, 13.0f}, 0.5f, {0.0f, 0.0f, 13.0f}},
 	{"progs/v_shot3.mdl", {-3.5f, 0.4f, 8.5f}, 0.5333333f, {0.0f, 0.0f, 8.5f}},
+};
+
+/* Peril 3.0 pak0 ready-pose landmarks, not the generic installed profile.
+ * R_AliasModelMatrix translates by origin + held, then scales vertices:
+ * held = -scale*grip - (1-scale)*origin. Muzzles use right/up/forward
+ * coordinates at the default world scale (the renderer multiplies by 1/.75).
+ * Pair anchors retain decoded source coordinates and use the draw matrix.
+ * Includes dormant viewmodels; see docs/peril-vr-weapons-2.0-plan.md. */
+static const vr_weapon_preset_muzzle_row_t vr_peril_weapon_fallbacks[] = {
+	{"progs/v_shadaxe0.mdl", {-2.875082f, 42.074010f, 37.998579f}, 0.25f, {0.000000f, 0.000000f, 0.000000f}},
+	{"progs/v_shadaxe3.mdl", {26.605468f, 74.755644f, 42.675916f}, 0.25f, {0.000000f, 0.000000f, 0.000000f}},
+	{"progs/v_ghook.mdl", {0.398149f, 3.974375f, 20.716595f}, 0.5f, {0.000000f, 0.466667f, 9.333333f}},
+	{"progs/v_shot.mdl", {-5.473787f, 1.827324f, 16.828860f}, 0.5f, {0.666667f, 0.000000f, 5.266667f}},
+	{"progs/v_shot2.mdl", {-1.245300f, 5.547600f, 18.678106f}, 0.5f, {2.833333f, 2.200000f, 7.666667f}},
+	{"progs/v_shot3.mdl", {-3.576900f, 7.645268f, 20.651891f}, 0.5f, {2.800000f, -0.133333f, 10.266667f}},
+	{"progs/v_nail.mdl", {-10.759785f, 16.344555f, 22.411512f}, 0.5f, {-1.992039f, 6.550682f, 11.076865f}},
+	{"progs/v_nail2.mdl", {-2.792916f, 12.398437f, 17.963036f}, 0.5f, {-5.573333f, 1.466667f, 8.266667f}},
+	{"progs/v_rock.mdl", {12.130318f, 4.749184f, 14.611477f}, 0.5f, {0.000000f, 1.066667f, 8.000000f}},
+	{"progs/v_rock2.mdl", {-8.031301f, 10.252375f, 13.595063f}, 0.5f, {-4.666667f, 0.733333f, 6.333333f}},
+	{"progs/v_light.mdl", {-12.000000f, 9.519683f, 20.873978f}, 0.5f, {-1.666667f, 6.666667f, 8.666667f}},
+	{"progs/v_plasma.mdl", {-11.000000f, 3.594348f, 18.724479f}, 0.5f, {0.000000f, 2.333333f, 11.333333f}},
+	{"progs/v_axe.mdl", {13.807513f, 17.004711f, 45.156413f}, 0.33f, {0.000000f, 0.000000f, 0.000000f}},
+	{"progs/v_nail3.mdl", {-10.800000f, 13.374923f, 20.290589f}, 0.4f, {-2.666667f, 3.200000f, 17.066667f}},
+	{"progs/v_rock3.mdl", {-4.330201f, 4.048523f, 17.036097f}, 0.5f, {0.000000f, 2.000000f, 7.333333f}},
+	{"progs/v_zershot.mdl", {2.352700f, 2.125000f, 17.102712f}, 0.5f, {-0.666667f, 4.000000f, 4.666667f}},
+	{"progs/v_shadaxe1.mdl", {26.605468f, 74.755644f, 42.675916f}, 0.25f, {0.000000f, 0.000000f, 0.000000f}},
+	{"progs/v_shadaxe2.mdl", {26.605468f, 74.755644f, 42.675916f}, 0.25f, {0.000000f, 0.000000f, 0.000000f}},
+	{"progs/v_shadaxe4.mdl", {26.605468f, 74.755644f, 42.675916f}, 0.25f, {0.000000f, 0.000000f, 0.000000f}},
+	{"progs/v_shadaxe5.mdl", {26.605468f, 74.755644f, 42.675916f}, 0.25f, {0.000000f, 0.000000f, 0.000000f}},
 };
 
 static const vr_weapon_preset_muzzle_row_t vr_qbj3_weapon_fallbacks[] = {
@@ -1910,7 +1941,7 @@ static qboolean VR_CalibrationAdjustGameplayContext(int *hand_out)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame();
 	const vrxr_device_t *head;
-	const vrxr_device_t *hand;
+	vrxr_device_t hand;
 	int dominant;
 
 	if (hand_out)
@@ -1937,9 +1968,8 @@ static qboolean VR_CalibrationAdjustGameplayContext(int *hand_out)
 	dominant = VR_InputDominantPhysicalHand();
 	if (dominant < 0 || dominant > 1)
 		return false;
-	hand = &frame->devices[dominant + 1];
-	if (!hand->valid || !hand->tracked || !hand->connected ||
-		hand->kind != VRXR_DEVICE_HAND || hand->hand != dominant)
+	if (!VR_LocomotionControllerDevice(frame, dominant, &hand) ||
+		!hand.tracked || !hand.connected)
 		return false;
 
 	if (hand_out)
@@ -2017,6 +2047,9 @@ static qboolean VR_CalibrationAdjustStateValid(
 			adjustment->model_name) ||
 		VR_FindCalibrationSlot(adjustment->model_name) != adjustment->slot ||
 		alias_header->poseverttype != adjustment->poseverttype ||
+		alias_header != adjustment->geometry ||
+		(!adjustment->muzzle_mode &&
+		 VR_WeaponCalibrationModelOffsetScale(model, alias_header) != adjustment->model_offset_scale) ||
 		!VR_CalibrationPoseTypeIsSupported(alias_header->poseverttype))
 	{
 		if (reason_out)
@@ -2218,6 +2251,8 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 	adjustment->slot = slot;
 	adjustment->created_slot = created_slot;
 	adjustment->model = model;
+	adjustment->geometry = alias_header;
+	adjustment->model_offset_scale = VR_WeaponCalibrationModelOffsetScale(model, alias_header);
 	q_strlcpy(adjustment->model_name, model->name,
 		sizeof(adjustment->model_name));
 	adjustment->world_scale = vr_world_scale.value;
@@ -2382,7 +2417,7 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 
 	VectorSubtract(adjustment->frozen_origin, live_origin, world_delta);
 	inverse_scale = (adjustment->world_scale / 0.75f) *
-		adjustment->gunmodelscale;
+		adjustment->gunmodelscale * adjustment->model_offset_scale;
 	if (!isfinite(inverse_scale) || inverse_scale <= 0.0f ||
 		!VR_LocomotionWorldToModelOffsetChecked(world_delta,
 			adjustment->frozen_model_angles, inverse_scale,
@@ -2976,6 +3011,9 @@ static qboolean VR_WeaponCalibrationBuildPreset(
 {
 	*inherits_ad = false;
 	*count = 0;
+	if (VR_WeaponCalibrationGameIs("peril3.0"))
+		return VR_WeaponCalibrationPresetAppendMuzzleRows(entries, count,
+			vr_peril_weapon_fallbacks, countof(vr_peril_weapon_fallbacks));
 	if (VR_WeaponCalibrationGameIs("qbj3"))
 		return VR_WeaponCalibrationPresetAppendQBJ3(entries, count);
 	if (VR_WeaponCalibrationGameIs("snack") ||
@@ -3073,25 +3111,35 @@ static qboolean VR_WeaponCalibrationApplyBuiltinFallbacks(void)
 }
 
 /* Suppress only a complete exact copied generic classic triple on an asset
- * receiving identified AD defaults. Changed/partial triples and every other
+ * receiving identified AD defaults or explicit Peril presets. Changed/partial
+ * triples and every other
  * schema field stay authored; special profiles retain their existing behavior.
  * An intentional saved triple equal to generic defaults is indistinguishable. */
-static void VR_WeaponCalibrationFilterLegacyADGenericDefaults(
+static void VR_WeaponCalibrationFilterLegacyGenericDefaults(
 	vr_weapon_schema_entry_t *entries, size_t count)
 {
-	if (!vr_weapon_calibration_inherits_ad)
+	const qboolean peril = VR_WeaponCalibrationGameIs("peril3.0");
+	if (!vr_weapon_calibration_inherits_ad && !peril)
 		return;
 	for (size_t i = 0; i < count; ++i)
 	{
 		vr_weapon_schema_entry_t *entry = &entries[i];
-		const vr_weapon_schema_entry_t *profile =
+		const vr_weapon_schema_entry_t *profile = peril ? NULL :
 			VR_WeaponCalibrationIdentifiedADProfile(entry->viewmodel_path);
-		if (!profile)
+		const char *profile_path = profile ? profile->viewmodel_path : NULL;
+		if (peril)
+			for (size_t j = 0; j < countof(vr_peril_weapon_fallbacks); ++j)
+				if (!strcmp(entry->viewmodel_path, vr_peril_weapon_fallbacks[j].path))
+				{
+					profile_path = vr_peril_weapon_fallbacks[j].path;
+					break;
+				}
+		if (!profile_path)
 			continue;
 		for (size_t j = 0; j < countof(vr_stock_classic_fallbacks); ++j)
 		{
 			const vr_weapon_schema_entry_t *generic = &vr_stock_classic_fallbacks[j];
-			if (strcmp(profile->viewmodel_path, generic->viewmodel_path))
+			if (strcmp(profile_path, generic->viewmodel_path))
 				continue;
 			if (!entry->has_held_offset || !entry->has_held_scale ||
 				!entry->has_muzzle_offset ||
@@ -3135,7 +3183,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 	Mem_Free(file);
 	if (!parsed)
 		return false;
-	VR_WeaponCalibrationFilterLegacyADGenericDefaults(entries, count);
+	VR_WeaponCalibrationFilterLegacyGenericDefaults(entries, count);
 
 	applied = VR_WeaponCalibrationApplySchema(entries, count);
 	if (!applied)
@@ -3186,7 +3234,7 @@ qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 	const mod_held_melee_recipe_t *recipe = Mod_GetHeldMeleeRecipe (model_name);
 	if (recipe && recipe->contact_profile == VR_WEAPON_CONTACT_PROFILE_BONK)
 		out->enabled = true; // Input additionally requires the exact Bonk/head offer.
-	out->speed = 1.25f;
+	out->speed = 1.5f;
 	out->ready_frame = 0;
 	slot = VR_FindCalibrationSlot(model_name);
 	if (slot >= 0)
@@ -3204,6 +3252,16 @@ qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 		out->has_ready_frame = profile->has_ready_frame;
 	}
 	return out->enabled;
+}
+
+float VR_WeaponCalibrationModelOffsetScale(const qmodel_t *model,
+	const aliashdr_t *geometry)
+{
+	if (!model || !geometry || !Mod_IsRereleaseReplacementGeometry(model, geometry))
+		return 1.0f;
+	if (!q_strcasecmp(model->name, "progs/v_axe.mdl"))
+		return 1.0f / 3.0f;
+	return !q_strcasecmp(model->name, "progs/v_shot2.mdl") ? 1.0f : 0.5f;
 }
 
 qboolean VR_WeaponCalibrationLookupHeld(const char *model_name,

@@ -224,6 +224,8 @@ static void FixturePrependModel(const char *name, const byte *data, size_t size,
 	com_searchpaths = node;
 }
 
+#include "peril_weapon_landmarks_fixture.h"
+
 static void FixtureAssertNoLookupIO(void)
 {
 	vec3_t held, muzzle;
@@ -292,7 +294,7 @@ static const struct
 	{"mg3", 0, 0},
 	{"mjolnir", 0, 0x7ffd},
 	{"nyarlathotep", 0, 0},
-	{"peril3.0", 0x0200, 0},
+	{"peril3.0", 0, 0},
 	{"q30a1024", 0x7fff, 0},
 	{"qbj3", 0, 0},
 	{"qdoom", 0, 0},
@@ -345,8 +347,20 @@ static void FixtureAssertInstalledSchema(size_t mod,
 	{
 		const vr_weapon_schema_entry_t *e = &entries[j];
 		qboolean filtered = false;
+		qboolean peril = !strcmp(fixture_installed_audit[mod].game, "peril3.0");
 		vec3_t held, muzzle;
 		float scale;
+		/* Stock axe is outside the AD identity list but is also a copied
+		 * complete triple in Peril's installed profile. */
+		if (peril && !strcmp(e->viewmodel_path, "progs/v_axe.mdl") &&
+			e->has_held_offset && e->has_held_scale && e->has_muzzle_offset &&
+			VectorCompare(e->held_offset, ((vec3_t){-4, 24, 37})) &&
+			e->held_scale == 0.33f &&
+			VectorCompare(e->muzzle_offset, ((vec3_t){0, 0, 37})))
+		{
+			filtered = true;
+			FixtureAssertPerilProfile(e->viewmodel_path);
+		}
 		for (size_t k = 0; k < countof(fixture_ad_profiles); ++k)
 		{
 			char path[MAX_QPATH], alias[MAX_QPATH];
@@ -356,14 +370,19 @@ static void FixtureAssertInstalledSchema(size_t mod,
 				(fixture_installed_audit[mod].canonical & (1u << k))) ||
 				(!strcmp(alias, e->viewmodel_path) &&
 				(fixture_installed_audit[mod].aliases & (1u << k)));
-			if (!special && identified && stock[k].held_present &&
+			qboolean peril_profile = peril && !strcmp(path, e->viewmodel_path) &&
+				FixturePerilLandmarkIndex(e->viewmodel_path) >= 0;
+			if (!special && (identified || peril_profile) && stock[k].held_present &&
 				e->has_held_offset && e->has_held_scale && e->has_muzzle_offset &&
 				VectorCompare(e->held_offset, stock[k].held) &&
 				e->held_scale == stock[k].scale &&
 				VectorCompare(e->muzzle_offset, stock[k].muzzle))
 			{
 				filtered = true;
-				FixtureAssertADProfile(e->viewmodel_path, k);
+				if (peril)
+					FixtureAssertPerilProfile(e->viewmodel_path);
+				else
+					FixtureAssertADProfile(e->viewmodel_path, k);
 			}
 		}
 		if (!filtered && (e->has_held_offset || e->has_held_scale))
@@ -415,6 +434,10 @@ static void FixtureAuditInstalled(const char *base)
 	{
 		printf("Installed calibration audit: %s\n", fixture_installed_audit[mod].game);
 		FixtureMountMod(base, fixture_installed_audit[mod].game);
+		/* Peril is an explicit mod preset; AD's other identity audits keep
+		 * their deliberately concealed game name. */
+		if (!strcmp(fixture_installed_audit[mod].game, "peril3.0"))
+			strcpy(com_gamedir, "/fixtures/peril3.0");
 		assert(VR_WeaponCalibrationReloadGame());
 		for (size_t k = 0; k < countof(fixture_ad_profiles); ++k)
 			for (int alias = 0; alias < 2; ++alias)
@@ -426,7 +449,10 @@ static void FixtureAuditInstalled(const char *base)
 					fixture_installed_audit[mod].canonical;
 				snprintf(path, sizeof(path), "progs/%s%s.mdl", alias ? "ad171/" : "",
 					fixture_ad_profiles[k].name);
-				if (mask & (1u << k))
+				if (!strcmp(fixture_installed_audit[mod].game, "peril3.0") &&
+					FixturePerilLandmarkIndex(path) >= 0)
+					FixtureAssertPerilProfile(path);
+				else if (mask & (1u << k))
 					FixtureAssertADProfile(path, k);
 				else
 				{
@@ -451,6 +477,8 @@ static void FixtureAuditInstalled(const char *base)
 		native_profile_load = true;
 		assert(VR_WeaponCalibrationReloadGame());
 		FixtureAssertInstalledSchema(mod, stock);
+		if (!strcmp(fixture_installed_audit[mod].game, "peril3.0"))
+			FixtureAssertAllPerilProfiles();
 		native_profile_load = false;
 	}
 }
@@ -515,6 +543,7 @@ static void FixtureAssertReskinAuthorship(const char *base)
 	fixture_file_contents = NULL;
 }
 
+#ifndef PERIL_WEAPON_CALIBRATION_FIXTURE
 int main(int argc, char **argv)
 {
 	const char *base;
@@ -680,3 +709,5 @@ int main(int argc, char **argv)
 	puts("Generic AD calibration/native filesystem fixture passed");
 	return 0;
 }
+
+#endif /* PERIL_WEAPON_CALIBRATION_FIXTURE */
