@@ -1,253 +1,84 @@
-# Quakespasm VR 2.0
+# Quakespasm VR
 
-Quakespasm VR 2.0 is based on [vkQuake](https://github.com/Novum/vkQuake), with OpenXR VR, Vulkan rendering, desktop play and modern predictive co-op networking. The vkQuake commit history is retained so upstream updates can be merged into the maintained engine.
+Quakespasm VR is a [vkQuake](https://github.com/Novum/vkQuake) fork focused on VR
+play, mod compatibility, and co-op. Version 2.0 brings the project to Vulkan and
+OpenXR, continuing gameflorist's QuakeSpasm-OpenVR controls and VR features.
+Desktop and VR players can play together.
 
-- `main` is the maintained 2.0 engine. `2.0` remains an alias for existing release tooling and launcher updates.
-- `legacy1.0` preserves the former Quakespasm/OpenVR engine and its history.
-- Supported release targets are Windows x64, Linux x86-64 and Linux ARM64, including Steam Frame native play. PC streaming uses the PC build and its installed OpenXR runtime.
-- Start VR with `-openxr`; the packaged `quakespasm-openvr` wrapper also accepts legacy launchers' `-vr`. Start desktop play with `-novr`.
-- The headset runtime owns VR render resolution. The graphics menu exposes vkQuake's supported lighting, SSAO, filtering, MSAA, effects and advanced controls. SSAO uses its desktop or VR implementation automatically.
-- Eye tracking is optional and selected through the foveation mode. Fixed foveation is an explicit option, never an automatic fallback. Unsupported features remain disabled without preventing ordinary VR.
+<p>
+  <img src="docs/media/vr-gameplay.gif" width="360" height="360" alt="VR gameplay with tracked weapons">
+  <img src="docs/media/vr-coop.gif" width="360" height="360" alt="VR co-op with tracked player models">
+</p>
 
-The updater channel is [2.0](https://quack.shrubdragon.studio/2.0/release.json); matching platform runtimes, source access and license notices are listed in that release record. Keep the mod launcher and your own game/mod data. Quake data is required and is not included in engine releases.
+## Features
 
-For builds and release packaging see [portable Linux builds](Packaging/Linux/README.md) and the platform build files. The upstream vkQuake documentation below is retained as a reference; its release links point to upstream's desktop builds.
-
-## Upstream vkQuake documentation
-
-# 🌋 vkQuake
-[![Windows CI](https://github.com/Novum/vkQuake/actions/workflows/build-windows.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-windows.yml) [![Windows CI](https://github.com/Novum/vkQuake/actions/workflows/build-mingw.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-mingw.yml) [![Windows CI](https://github.com/Novum/vkQuake/actions/workflows/build-msys2-clangarm64.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-msys2-clangarm64.yml) [![Linux CI](https://github.com/Novum/vkQuake/actions/workflows/build-linux.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-linux.yml) [![macOS CI](https://github.com/Novum/vkQuake/actions/workflows/build-mac.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/build-mac.yml) [![Formatting](https://github.com/Novum/vkQuake/actions/workflows/clang-format-check.yml/badge.svg)](https://github.com/Novum/vkQuake/actions/workflows/clang-format-check.yml)
-
-vkQuake is a port of id Software's [Quake](https://en.wikipedia.org/wiki/Quake_(video_game)) using Vulkan instead of OpenGL for rendering. It is based on the popular [QuakeSpasm](http://quakespasm.sourceforge.net/) and [QuakeSpasm-Spiked](https://triptohell.info/moodles/qss/) ports and runs all mods compatible with QuakeSpasm like [Arcane Dimensions](http://www.moddb.com/mods/arcane-dimensions). 
-
-Improvements over QuakeSpasm include:
-* Much better performance with multithreaded rendering and loading
-* The game can run at higher frame rates than 72Hz without breaking physics
-* A software Quake like underwater effect
-* Support for Classic (original Quake) and Enhanced models (either MD5 format like the 2021 re-Release, or MD3 like Quake3)
-* When both Classic and Enhanced versions of models exist, display one or other kind using the Models menu option.
-* True color skins support (`.png`, `.tga`, `.jpg`) for MD3/MD5 models, including fullbrights (from QSS)
-* Dynamic shadows (requires a GPU with ray tracing support)
-* Dynamic lights, using 2021 rerelease `dynamiclight` entities (requires a GPU with ray tracing support and "Dynamic Shadows" set to medium or higher)
-* Better color precision reducing banding in dark areas
-* Native support for anti aliasing and anisotropic filtering
-* 8-bit color emulation
-* Scaling for pixelated look
-* Mods menu for easy mod loading
-* More modern protocol to avoid certain movement issues (from QSS)
-* Support for custom mod HUDs (from QSS)
-* Support for scriptable particles (from QSS)
-* True color support for level textures and static models (`.png`, `.tga`, `.jpg`)
-* External WAD support ([more info](https://github.com/Novum/vkQuake/pull/753))
-* WAD3 format support, allowing per-texture palettes for more colorful levels ([more info](https://github.com/Novum/vkQuake/pull/753))
+- OpenXR head and controller tracking with Vulkan single-pass stereo rendering.
+- vkQuake graphics and multithreaded rendering/loading, with configurable
+  lighting, shadows, ambient occlusion, MSAA, and texture filtering.
+- Mod compatibility, including Arcane Dimensions, Alkaline, Quake Brutalist
+  Jam 3, Dwell, and the official campaigns; an installed-mod browser and
+  downloadable add-on catalogue.
+- Predictive multiplayer movement, VR-synchronized networking, and CSQC support.
+- A weapon wheel for VR, mouse, and gamepad play, with co-op respawn and teleport
+  options. Player outlines appear through walls while the scoreboard is shown.
+- Built-in VR weapon calibration for popular mods, including shared profiles
+  for compatible AD weapons.
+- Networked player models and VRIK, cosmetic model packages, and support for
+  the 2021 rerelease models.
+- Voice chat, with open mic enabled by default in VR and optional push-to-talk.
+- Windows x64, Linux x86-64, and Linux ARM64 support, including Steam Frame.
+  Optional foveation uses eye tracking where available; fixed foveation is
+  opt-in and never an automatic fallback.
 
 ## Installation
 
-Windows and Linux binaries can be found in [Releases](https://github.com/Novum/vkQuake/releases).
-MacOS (both Apple Silicon and 64-bit Intel) binaries are at [Mac Source Ports](https://www.macsourceports.com/game/quake).
-
-### Windows
-It is recommended to use the installer on Windows. This sets up start menu entries for the classic and remastered Quake versions. The engine finds Steam, GOG and Epic Games Store installs automatically; otherwise it asks for the game folder once and remembers it. Save data and config files will be written to the user folder (`%APPDATA%\vkQuake`) instead of the Quake data folder.
-
-Otherwise copy all files inside the `vkquake-<version>_windows_x64.zip` (Intel) or `vkquake-<version>_windows_arm64.zip` (Arm64) folder in the zip to the Quake base directory. Overwrite any existing files. Afterward to run the game just execute `vkQuake.exe`.
-
-### Linux
-Download the Linux AppImage from [Releases](https://github.com/Novum/vkQuake/releases). Make it executable and run it:
-
-```sh
-chmod +x vkQuake-*.AppImage
-./vkQuake-*.AppImage
-```
-
-> **Note**\
-> Make sure all data files are lowercase, e.g. "id1", not "ID1" and "pak0.pak", not "PAK0.PAK". Some distributions of the game have upper case file names, e.g. from GOG.com.
-
-### OpenBSD
-
-[OpenBSD](https://openbsd.org) includes vkQuake in the standard package repositories since version [6.6](https://www.openbsd.org/66.html).
-
-If you're running `OpenBSD 6.6` or greater, you can install the package with:
-
-```console
-$ pkg_add vkquake
-```
-
-### FreeBSD
-
-[FreeBSD](https://freebsd.org) includes vkQuake in the standard port/package repoistories since version [11.3](https://www.freebsd.org/releases/11.3R/announce).
-
-If you're running `FreeBSD 11.3` or greater, you can install the package with:
-
-```console
-# pkg install vkquake
-```
-
-Alternatvely, you can build vkQuake with FreeBSD's port collection:
-```console
-$ cd /usr/ports/games/vkquake
-# make install
-```
-
-### Quake '2021 re-release'
-
-vkQuake has support for playing the 2021 re-release content. Follow installation instructions as above but copy the files into the rerelease folder.
-
-## Vulkan
-vkQuake shows basic usage of the API. For example it demonstrates render passes & sub passes, pipeline barriers & synchronization, compute shaders, push & specialization constants, CPU/GPU parallelism and memory pooling.
-
-## Endianness
-vkQuake only supports **little-endian** systems. 
-The reason is, all known existing Vulkan-capable systems in the wild are little-endian. Consequently, all big-endian support from QuakeSpasm has been effectively removed. 
-vkQuake wouldn't even start on an big-endian system, outputing a fatal error.
-
-## Building
-> **Note**\
-> For Windows, you will need at least Vulkan SDK version 1.4.321.1 or newer.
-> 
-> For Linux, you will need at least Vulkan SDK version 1.2.162 or newer. When building for Linux this is not always the case for the SDK provided by the distribution. Install the latest LunarG SDK if necessary.
-
-### Windows
-
-Clone the vkQuake repo from `https://github.com/Novum/vkQuake.git`
-
-Prerequisites:
-
-* [Git for Windows](https://github.com/git-for-windows/git/releases)
-* A [Vulkan-capable GPU](https://en.wikipedia.org/wiki/Vulkan_(API)#Compatibility) with the appropriate drivers installed
-* Install the latest [Vulkan SDK](https://vulkan.lunarg.com/sdk/home). Log out and back in after installation to make sure environment variables are set.
-
-#### Visual Studio
-
-* Install [Visual Studio Community](https://www.visualstudio.com/products/free-developer-offers-vs) with Visual C++ component.
-
-Open the Visual Studio solution, `Windows\VisualStudio\vkquake.sln`, select the desired configuration and platform, then
-build the solution.
-
-#### MinGW
-
-Setup your [MinGW-w64](https://sourceforge.net/projects/mingw-w64/) environment, e.g. using [w64devkit](https://github.com/skeeto/w64devkit) or [MSYS2](https://www.msys2.org/).
-
-
-Build 64 bit Intel vkQuake:
-
-~~~
-cd vkQuake/Quake
-make -f Makefile.w64
-~~~
-
-Build 64 bit Arm vkQuake:
-
-~~~
-cd vkQuake/Quake
-make -f Makefile.w64a
-~~~
-
-If you are on Linux and want to cross-compile for Windows, see the `build_cross_win??.sh` scripts.
-
-#### Meson
-
-With [Meson](https://mesonbuild.com/), [Ninja](https://ninja-build.org/) and a compiler installed (LLVM/Clang on PATH, or run `meson setup --vsenv build` for MSVC):
-
-~~~
-cd vkQuake
-meson setup build && ninja -C build
-~~~
-
-### Linux
-
-Make sure that both your GPU and your GPU driver support [Vulkan](https://en.wikipedia.org/wiki/Vulkan#Support_across_vendors).
-
-To compile vkQuake, first install the build dependencies:
-
-Ubuntu:
-~~~
-apt-get install git meson gcc glslang-tools spirv-tools libsdl3-dev libvulkan-dev libvorbis-dev libmpg123-dev libx11-xcb-dev
-~~~
-
-Arch Linux:
-~~~
-pacman -S git meson flac glibc libgl mpg123 libvorbis libx11 sdl3 vulkan-headers glslang spirv-tools
-~~~
-
-Fedora:
-~~~
-dnf install git meson gcc glslang spirv-tools vulkan-loader-devel SDL3-devel mpg123-devel libvorbis-devel flac-devel opusfile-devel
-~~~
-
-On distributions that do not ship SDL3 yet, install the SDL2 development package instead (e.g. `libsdl2-dev`); the build falls back to SDL2 automatically.
-
-Then clone the vkQuake repo:
-
-~~~
-git clone https://github.com/Novum/vkQuake.git
-~~~
-
-Now go to the Quake directory and compile the executable:
-
-~~~
-cd vkQuake
-meson build -Ddebug=true -Dstrip=false && ninja -C build
-~~~
-
-Meson prefers SDL3 and falls back to SDL2 if it is not installed; add `-Duse_sdl3=disabled` to force SDL2 (or `enabled` to require SDL3).
-
-> **Note**\
-> The Meson version needs to be 1.3.0 or newer. For older distributions you can use make:
-> ~~~
-> cd vkQuake/Quake
-> make -j
-> ~~~
-> Meson is the preferred way to build vkQuake because it automatically checks for out of date file depenencies, is faster and has better error reporting for missing dependencies.
-
-> **Note**\
-> vkQuake requires **SDL3** or, as a fallback for older distributions, at least **SDL2 2.0.6 with enabled Vulkan support**.
-
-### MacOS
-
-To compile vkQuake, first install the build dependencies with Homebrew:
-
-~~~
-brew install molten-vk vulkan-headers glslang spirv-tools sdl3 libvorbis flac opus opusfile flac mpg123 meson pkgconfig
-~~~
-
-Then clone the vkQuake repo:
-
-~~~
-git clone https://github.com/Novum/vkQuake.git
-~~~
-
-Now go to the Quake directory and compile the executable:
-
-~~~
-cd vkQuake
-meson build -Ddebug=true -Dstrip=false && ninja -C build
-~~~
-
-Meson prefers SDL3 and falls back to SDL2 if it is not installed; add `-Duse_sdl3=disabled` to force SDL2 (or `enabled` to require SDL3).
-
-> **Note**\
-> The Meson version needs to be 1.3.0 or newer.
-
-## Error reporting
-
-`vkQuake` is not garanteed to be free of runtime errors. In those rare cases, the game is either quit brutally with a `Quake Error` dialog, 
-or by an `Host_Error` console message that only terminates the currently played level. 
-
-In both cases some error context is provided that can be useful for developers. See [Error reporting](error_reporting_howto.md) for details.      
-
-## Optional - Music / Soundtrack
-
-> **Note**\
-> This section only applies to older releases. For the 2021 re-release music will work out of the box.
-
-The original Quake had a great soundtrack by Nine Inch Nails. Unfortunately, the Steam version does not come with the soundtrack files. The GOG-provided files need to be converted before they are ready for use. In general, you'll just need to move a "music" folder to the correct location within your vkQuake installation (.e.g `/usr/share/quake/id1/music`). Most Quake engines play nicest with soundtracks placed in the `id1/music` subfolder vs. `sound\cdtracks`
-
-QuakeSpasm, the engine vkQuake is derived from, supports OGG, MP3, FLAC, and WAV audio formats. The Linux version of QuakeSpasm/VkQuake requires external libraries: libogg or libvorbis for OGG support, libmad or libmpg123 for MP3, and libflac for FLAC. If you already have a setup that works for the engine you're currently using, then you don't necessarily have to change it. 
-
-Generally, the below setup works for multiple engines, including Quakespasm/vkQuake:
-
-* The music files are loose files, NOT inside a pak or pk3 archive.
-* The files are placed inside a "music" subfolder of the "id1" folder. For missionpack or mod soundtracks, the files are placed in a "music" subfolder of the appropriate game folder. So the original Quake soundtrack files go inside "id1\music", Mission Pack 1 soundtrack files go inside "hipnotic\music", and Mission Pack 2 soundtrack files go inside "rogue\music".
-* The files are named in the pattern "tracknn", where "nn" is the CD track number that the file was ripped from. Since the soundtrack starts at the second CD track, MP3 soundtrack files are named "track02.mp3", "track03.mp3", etc. OGG soundtrack files are named "track02.ogg", "track03.ogg", etc. FLAC soundtrack files are named "track02.flac", "track03.flac", etc. WAV soundtrack files are named "track02.wav", "track03.wav", etc.
-
-**See more:** [Quake Soundtrack Solutions (Steam Community)](http://steamcommunity.com/sharedfiles/filedetails/?id=119489135)
+Download your platform's archive from [Releases](https://github.com/ObeseCatLord/Quakespasm-VR/releases)
+and extract the complete runtime. Supply your own legally obtained Quake `id1`
+directory; game data is not included. Keep your existing mods, saves, and settings.
+
+VR requires a Vulkan-capable GPU and a working OpenXR runtime. Start with
+`-openxr` for VR or `-novr` for desktop play. The packaged `quakespasm-openvr`
+wrapper also accepts `-vr`. Headset resolution is controlled by the OpenXR
+runtime, and eye tracking is optional.
+
+For source builds, see [Building from source](docs/building.md).
+The previous Quakespasm/OpenVR engine is preserved on
+[`legacy1.0`](https://github.com/ObeseCatLord/Quakespasm-VR/tree/legacy1.0).
+
+## Classic co-op
+
+Streamlined co-op is enabled by default. Set `sv_coop_classic 1` on the server
+for traditional Quake co-op. Regular co-op shares compatible AD jump boots;
+classic co-op leaves them with the player who collected them.
+
+## Default controls
+
+Change bindings under **Options > Customize Controls** or with the console
+`bind` command. Mods can add actions through `bindlist.lst`.
+Always run is enabled by default.
+
+### Desktop
+
+Hold **Q** for the weapon wheel, select with the mouse, then release Q. The wheel
+captures the mouse so selection does not turn the camera. With a gamepad, hold
+**right stick click** and select with the right stick; the selection stick is
+configurable. Gyro is off by default.
+
+### VR controllers
+
+| Input | Action |
+| --- | --- |
+| Left stick | Move |
+| Right stick left/right | Snap or smooth turn |
+| Right stick click; Index right touchpad touch | Weapon wheel |
+| Left trigger | Jump |
+| Right trigger | Attack; point and select in menus |
+| Left stick click | Run/walk modifier |
+| Left application/menu button | Main menu |
+| Right application/menu button | Next weapon |
+| Left A button; left grip | Show scores |
+| Right A button | Previous weapon |
+| Right grip; Index right stick click | Use / alternate fire |
+
+Controller profiles and handedness can change physical button labels; the
+bindings menu displays the active VR controls.
