@@ -1278,7 +1278,10 @@ static void MSG_WriteSize16 (sizebuf_t *msg, unsigned int solid)
 		int x = solid & 255;
 		int zd = (solid >> 8) & 255;
 		int zu = ((solid >> 16) & 65535) - 32768;
-		MSG_WriteShort (msg, ((x >> 3) << 0) | (zd >> 3) << 5 | (((zu + 32) >> 3) << 10));
+		/* Public compact hulls cannot represent oversized map actors. Saturate
+		 * the upper extent rather than wrapping it into adjacent wire fields. */
+		zu = CLAMP (-32, zu, 472);
+		MSG_WriteShort (msg, (x >> 3) | ((zd >> 3) << 5) | (((zu + 32) >> 3) << 10));
 	}
 	else
 		MSG_WriteShort (msg, 0);
@@ -1286,7 +1289,10 @@ static void MSG_WriteSize16 (sizebuf_t *msg, unsigned int solid)
 
 static qboolean MSG_SolidSizeHasExtraBits (unsigned int solid)
 {
-	return (solid & 0x0707) || (((solid >> 16) - 32768 + 32) & 7);
+	const int zu = (int)(solid >> 16) - 32768;
+	/* The private profile already supports lossless 32-bit hulls. Multiples
+	 * of eight still need that variant if the six-bit upper extent overflows. */
+	return (solid & 0x0707) || ((zu + 32) & 7) || zu < -32 || zu > 472;
 }
 
 static void MSGFTE_WriteEntityUpdate (unsigned int bits, entity_state_t *state, sizebuf_t *msg, unsigned int pext2, unsigned int protocolflags, qboolean private_qsvr)
@@ -5257,7 +5263,8 @@ static void SV_AppendAkimboProtocol (client_t *client)
 
 	/* Bits follow the four client command arguments. QBJ3's native paired
 	 * animation remains available even if immersive contact is disabled. */
-	offer_mask = SV_QBJ3TwinNailgunProgramLoaded () ?
+	offer_mask = (SV_QBJ3TwinNailgunProgramLoaded () ||
+		SV_PerilAkimboProgramLoaded ()) ?
 		AKIMBO_OFFER_TWIN : 0;
 	if (SV_VRQBJ3MeleeContactProfile () == VR_WEAPON_CONTACT_PROFILE_QBJ3)
 		offer_mask |= AKIMBO_OFFER_QBJ3_BERSERK;

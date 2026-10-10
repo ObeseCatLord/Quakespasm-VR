@@ -57,6 +57,11 @@ qboolean V_TrackedMovementAngles (int mode, int physical_offhand, vec3_t angles)
 qboolean V_TrackedMappingYaw (float *yaw);
 qboolean V_TrackedPresentationYaw (float *yaw);
 qboolean V_TrackedHandBodyOffset (int physical_hand, vec3_t out);
+/* Raw XR grip owners (VRIK/gorilla) share the same body mapping, without the
+ * held-controller compatibility transform. */
+qboolean V_TrackedRawGripBodyOffset (int physical_hand, vec3_t out);
+qboolean V_TrackedPresentationRawGripBodyOffset (int physical_hand, vec3_t out);
+qboolean V_TrackedPresentationRawGripAngles (int physical_hand, vec3_t angles);
 qboolean V_TrackedPresentationHandAngles (int physical_hand, vec3_t angles);
 qboolean V_TrackedPresentationHandBodyOffset (int physical_hand, vec3_t out);
 /* Collision-free grip in the same presentation space as cl.viewent, plus

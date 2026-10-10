@@ -479,21 +479,22 @@ static qboolean r_plooksdirty; // a particle effect was changed, reevaluate shar
 static void FinishParticleType (part_type_t *ptype);
 
 static void	  R_ParticleDesc_Callback (struct cvar_s *var);
+static void	  R_ParticleLooks_Callback (struct cvar_s *var);
 static cvar_t r_bouncysparks = {"r_bouncysparks", "1"};
-static cvar_t r_part_rain = {"r_part_rain", "1"};
+static cvar_t r_part_rain = {"r_part_rain", "1", CVAR_ARCHIVE};
 static cvar_t r_decal_noperpendicular = {"r_decal_noperpendicular", "1"};
-cvar_t		  r_particledesc = {"r_particledesc", "classic"};
-static cvar_t r_part_rain_quantity = {"r_part_rain_quantity", "1"};
+cvar_t		  r_particledesc = {"r_particledesc", "classic", CVAR_ARCHIVE};
+static cvar_t r_part_rain_quantity = {"r_part_rain_quantity", "1", CVAR_ARCHIVE};
 static cvar_t r_particle_tracelimit = {"r_particle_tracelimit", "16777216"};
-static cvar_t r_part_sparks = {"r_part_sparks", "1"};
+static cvar_t r_part_sparks = {"r_part_sparks", "1", CVAR_ARCHIVE};
 static cvar_t r_part_sparks_trifan = {"r_part_sparks_trifan", "1"};
 static cvar_t r_part_sparks_textured = {"r_part_sparks_textured", "1"};
-static cvar_t r_part_beams = {"r_part_beams", "1"};
+static cvar_t r_part_beams = {"r_part_beams", "1", CVAR_ARCHIVE};
 static cvar_t r_part_contentswitch = {"r_part_contentswitch", "1"};
 cvar_t		  r_softparticles = {"r_softparticles", "1", CVAR_ARCHIVE};
 // Billboard intersection fade distance in view-space units.
 static cvar_t r_softparticledistance = {"r_softparticledistance", "4", CVAR_ARCHIVE};
-static cvar_t r_part_density = {"r_part_density", "1"};
+static cvar_t r_part_density = {"r_part_density", "1", CVAR_ARCHIVE};
 static cvar_t r_part_maxparticles = {"r_part_maxparticles", "65536"};
 static cvar_t r_part_maxdecals = {"r_part_maxdecals", "8192"};
 static cvar_t r_lightflicker = {"r_lightflicker", "1"};
@@ -3323,9 +3324,11 @@ void PScript_InitParticles (void)
 	Cvar_RegisterVariable (&r_part_rain_quantity);
 	Cvar_RegisterVariable (&r_particle_tracelimit);
 	Cvar_RegisterVariable (&r_part_sparks);
+	Cvar_SetCallback (&r_part_sparks, R_ParticleLooks_Callback);
 	Cvar_RegisterVariable (&r_part_sparks_trifan);
 	Cvar_RegisterVariable (&r_part_sparks_textured);
 	Cvar_RegisterVariable (&r_part_beams);
+	Cvar_SetCallback (&r_part_beams, R_ParticleLooks_Callback);
 	Cvar_RegisterVariable (&r_part_contentswitch);
 	Cvar_RegisterVariable (&r_part_density);
 	Cvar_RegisterVariable (&r_part_maxparticles);
@@ -3669,6 +3672,16 @@ static void R_Particles_KillAllEffects (void)
 		loadedconfigs = cfg->next;
 		Mem_Free (cfg);
 	}
+}
+
+static void R_ParticleLooks_Callback (struct cvar_s *var)
+{
+	(void)var;
+	// Startup installs the preset callback; shutdown clears it before freeing types.
+	if (!r_particledesc.callback)
+		return;
+	GL_SynchronizeEndRenderingTask ();
+	r_particledesc.callback (&r_particledesc);
 }
 
 static void R_ParticleDesc_Callback (struct cvar_s *var)

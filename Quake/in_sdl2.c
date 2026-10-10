@@ -121,6 +121,8 @@ void IN_StartupJoystick (void)
 
 void IN_ShutdownJoystick (void)
 {
+	if (joy_active_controller)
+		IN_ReleaseNativeGamepadInputs ();
 	IN_Rumble (0, 0, 0);
 	IN_SetGyroAvailable (false);
 	IN_SetGamepadInputActive (false);
@@ -228,6 +230,7 @@ void IN_SendKeyEvents (void)
 			break;
 
 		case SDL_MOUSEMOTION:
+			IN_DesktopMouseMotion ((float)event.motion.x, (float)event.motion.y);
 			IN_SetGamepadInputActive (false);
 			IN_MouseMotion (event.motion.xrel, event.motion.yrel);
 			break;
@@ -259,6 +262,7 @@ void IN_SendKeyEvents (void)
 		case SDL_CONTROLLERDEVICEREMOVED:
 			if (joy_active_instaceid != -1 && event.cdevice.which == joy_active_instaceid)
 			{
+				IN_ReleaseNativeGamepadInputs ();
 				IN_Rumble (0, 0, 0);
 				IN_SetGyroAvailable (false);
 				IN_SetGamepadInputActive (false);
@@ -295,6 +299,7 @@ static int SDLCALL IN_FilterMouseEvents (const SDL_Event *event)
 	switch (event->type)
 	{
 	case SDL_MOUSEMOTION:
+		IN_DesktopMouseMotion ((float)event->motion.x, (float)event->motion.y);
 		// case SDL_MOUSEBUTTONDOWN:
 		// case SDL_MOUSEBUTTONUP:
 		if (key_dest == key_console)

@@ -360,6 +360,13 @@ typedef struct stockaxe_edge_s
 	vec3_t tip;
 } stockaxe_edge_t;
 
+/* Kept separately so loading the classic companion cannot replace MD5 points. */
+typedef struct md5stockaxe_edge_s
+{
+	stockaxe_edge_t edge;
+	poseverttype_t poseverttype;
+} md5stockaxe_edge_t;
+
 #define MAX_FRAMEGROUPS 4
 
 typedef struct aliashdr_s
@@ -829,6 +836,8 @@ typedef struct qmodel_s
 	// additional model data
 	//
 	byte *extradata[PV_SIZE]; // only access through Mod_Extradata
+	qboolean rerelease_md5_companion; // selected companion's winning verified pack
+	qboolean rerelease_md5_weapon_payload; // exact loaded mesh AND animation pins
 	md5_skeleton_data_t *md5_skeleton; // retained CPU data for MD5 models
 	md5_avatar_bind_surface_t *avatar_bind_surfaces; // optional private avatar bind geometry
 	md5_avatar_prop_t avatar_props[MD5_AVATAR_PROP_COUNT]; // verified Ranger only
@@ -837,6 +846,7 @@ typedef struct qmodel_s
 	int avatar_custom_id; // fixed local package ID, -1 unless admitted
 	byte *avatar_custom_rgba[2]; // stable in-memory texture reload sources
 	stockaxe_edge_t stockaxe_edge; // two copied points; source poses are not retained
+	md5stockaxe_edge_t md5_stockaxe_edge; // selected official MD5 ready pose only
 	/* Exact QBJ3 berserk source only: two eight-vertex palm means per pose.
 	 * The complete CPU pose mesh is discarded after alias upload. */
 	vec3_t *qbj3_palm_centroids;
@@ -896,6 +906,9 @@ qboolean  Mod_GetAkimboPairPaths (const char *source, const char *half_paths[2])
 /* Main-thread admission for contact anchors tied to the built-in splitter. */
 qboolean  Mod_AkimboPairUsesGeneratedHalves (const char *source);
 qboolean  Mod_GetMD5Skeleton (const qmodel_t *mod, md5_skeleton_view_t *out);
+/* Pure query of retained provenance and the caller's selected root geometry;
+ * never loads models or searches the filesystem (safe for render workers). */
+qboolean Mod_IsRereleaseReplacementGeometry (const qmodel_t *mod, const aliashdr_t *geometry);
 /* Fixed profile ID only; NULL when the built-in rerelease MD5 is unavailable or invalid. */
 qmodel_t *Mod_GetAvatarBuiltinModel (int id);
 qmodel_t *Mod_GetAvatarCustomModel (int id);
@@ -904,6 +917,11 @@ qboolean Mod_IsAdmittedAvatarModel (const qmodel_t *mod);
 /* Returns frame 0's pinned stock-axe edge in scaled model-local coordinates.
  * The per-skin selected model must be the original MDL, not an MD5/MD3 replacement. */
 qboolean  Mod_GetStockAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
+/* Pure cached query: pass the currently selected header and both effective
+ * skeletal pose indices. Both must be ready pose 0. Points are scaled model-local;
+ * false clears out. No model loading, file access or per-frame CPU skinning. */
+qboolean Mod_GetMD5StockAxeEdge (const qmodel_t *mod, const aliashdr_t *selected,
+	int pose0, int pose1, stockaxe_edge_t *out);
 /* Exact Alkaline/LimJam v_alkaxe20fps.mdl, frame 0; original MDL only. */
 qboolean  Mod_GetAlkalineAxeEdge (qmodel_t *mod, int skinnum, stockaxe_edge_t *out);
 /* Exact Copper ready-pose MDL under v_axe.mdl or v_axe2.mdl. */

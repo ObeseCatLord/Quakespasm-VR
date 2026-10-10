@@ -1,0 +1,22 @@
+{
+  "output_base": "/path/to/release-work",
+  "arm": {
+    "ssh_host": "foundry"
+  },
+  "windows": {
+    "baseline_release": "/path/to/accepted-windows-release",
+    "winboat_tools": "~/.codex/skills/winboat-ssh/scripts"
+  },
+  "straight": {
+    "directory": "/path/to/quakespasm_straight",
+    "runtime_base": "~/.local/share/quakespasmvr/2.0"
+  },
+  "r2": {
+    "remote": "r2:quack/2.0",
+    "public": "https://private-distribution.example.invalid/2.0"
+  },
+  "github": {
+    "repository": "ObeseCatLord/Quakespasm-VR",
+    "tag": "v2.0.0"
+  }
+}

@@ -2537,7 +2537,7 @@ have `should_render == false`: focused actions remain usable independently of
 visibility. The key sink does not qualify native binding
 execution or a physical controller.
 
-Initialization checks all 17 current input cvars and all 14 registered input
+Initialization checks all 17 current input cvars and all 13 registered input
 commands, including the `vr_turn180` handler. Unavailable FBT storage/profile,
 calibration adjustment, native weapon menu, tracked presentation and paired
 weapon/model owners use fail-closed typed fixture seams. Those seams provide no
@@ -2584,8 +2584,8 @@ ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-default-bindings-fixture
 ```
 
 `vr_input_keys_fixture.c` links the production key-name converters and checks
-that existing gamepad/alternate key codes remain unchanged and the three VR
-names round-trip within the native table capacity:
+that existing gamepad/alternate key codes remain unchanged and the dedicated VR
+names round-trip within the expanded native table capacity:
 
 ```sh
 for source in keys common; do
@@ -4121,3 +4121,181 @@ SDK returned-buffer NaN/infinities/finite overflow; they do not establish
 recovery from corrupted internal SDK histories or the original late gameplay
 mute. See the follow-up qualification document for native renderer/audio proof
 and limits.
+
+## Uphill support and compact collision bounds
+
+`run_slope_reconciliation_native.py` reuses actual QC/BSP, negotiated command
+receipt, snapshots and committed client replay from a prepared Debug graph.
+Honey checks flat/uphill/downhill no-jump equality at the same completed
+sequence and separately checks authored jump acceptance, stationary and running
+uphill landing/rejump, and swimming. Generic-QC jump trajectory differences
+are reported separately. Commands and transport delivery are prepared/captured;
+these checks do not prove physical OpenXR input or UDP pacing.
+
+```sh
+python3 tests/run_slope_reconciliation_native.py --build-dir /path/to/prepared-debug \
+  --assets /path/to/licensed/game-root --game honey --map start --client-msec 4 8 16
+python3 tests/run_slope_reconciliation_native.py --build-dir /path/to/prepared-debug \
+  --assets /path/to/licensed/game-root --game honey --map start --vr-command
+python3 tests/run_slope_reconciliation_native.py --build-dir /path/to/prepared-debug \
+  --assets /path/to/licensed/game-root --game honey --map honey --swim-only
+python3 tests/run_solid_size_native.py --build-dir /path/to/prepared-debug
+```
+
+The slope fixture deliberately requires the generic shared-QC owner; installed
+exact-q30/AD programs use their existing q30 fixtures or initialized local probes.
+Exit77 indicates missing required real geometry, not a passing test.
+`solid_size_roundtrip_native_fixture.c` exercises the real entity writer and
+delta decoder at compact height boundaries and beyond, unaligned dimensions,
+maximum byte extents and reserved sentinels. Ordinary public compact bytes stay
+unchanged; out-of-range public upper extents saturate, while private packets
+use their already-supported32-bit packed hull format. Neither runner builds or
+modifies the prepared graph or installed game assets/configuration.
+
+## Peril original weapon calibration and native akimbo
+
+`run_peril_weapons_native.py` reads licensed installed Peril assets without
+changing their configuration. It checks all20 calibration rows and override
+precedence, compares both split SMGs with an independent byte-copy oracle under
+ASan/UBSan, and runs the original QC through the production scoped weapon
+thinker. The native firing check covers all eight paired animation frames with
+autoaim on/off, body/basis restoration, ammo/cadence, stale/invalid/nested/
+relocated pose rejection, BSP muzzle clamping, target correction and desktop
+NG/SNG fallback. It requires a Debug binary with symbols and GDB.
+
+```sh
+python3 tests/run_peril_weapons_native.py --base /path/to/licensed/game-root \
+  --binary /path/to/debug/vkquake --output-dir /tmp/peril-weapons-results
+```
+
+This qualifies native alternating controller-separated NG/SMG firing; it does
+not invent independently scheduled triggers or a second single SNG. Ready-pose
+numeric calibration does not establish physical headset comfort or animation
+appearance. No mod payload is committed.
+
+## Numbered-pack filename case
+
+`run_numbered_pack_case_native.py --build-dir /path/to/prepared-debug` runs
+the production pack resolver with the native platform enumerator against
+synthetic filenames. It verifies uppercase/mixed case, exact lowercase priority,
+deterministic duplicates, directories, absent numbering and bounded outputs.
+The resolver policy is ported from the inherited OpenVR implementation;
+case-sensitive loose-file and pack-member lookup remain unchanged.
+
+## VR presentation, Index pose and deliberate melee
+
+Run the focused checks after implementation and a strict assertion-enabled native
+build. The coordinator reuses that graph's diagnostics and libraries, compiling
+this checkout's sources and headers without modifying shared build outputs:
+
+```sh
+python3 -B tests/run_vr_presentation_native.py \
+  --build-dir /path/to/strict-debug-graph \
+  --pak /path/to/licensed/official/id1/pak0.pak
+python3 -B tests/run_anisotropy_native.py \
+  --build-dir /path/to/strict-debug-graph
+```
+
+Coverage includes the immutable Index grip inverse and origin velocity; real
+recognizer/merge behavior with angular blade motion, coherent translation,
+wiggle rejection, source changes and partial authored endpoints; wheel centering,
+slot picking and action dimensions; CPU dynamic-light cleanup and alias lighting;
+particle reload and menu state; winning-VFS provenance; all eight actual official
+weapon payload pairs, altered equal-length payloads, animation overrides and the
+two-point packed MD5 skinning cache. Provenance/cache and wheel fixtures use
+ASan/UBSan. The existing frame-recorder fixture covers desktop/stereo
+MSAA/OIT/SSAO routing and view masks with Vulkan command spies.
+
+The anisotropy check additionally runs actual Vulkan sampler/descriptor readback
+for nearest/linear and desktop/stereo parity. Exit 77 is unavailable GPU evidence,
+not a pass. Geometry/policy seams in the other fixtures are explicitly documented;
+they do not qualify complete decoding, native QC outcomes, rendered blade
+alignment, settings-file round trips or headset comfort. Use isolated native
+gameplay/render checks for those software integration boundaries; physical
+headset and performance checks remain separate.
+
+`vr_honey_gesture_native.gdb` adds initialized gameplay proof using a disposable
+Honey profile and the isolated simulated Monado setup described above. Set
+`QSVR_HONEY_RESULT` to a private output JSON path, supply matching runtime
+libraries, use `-openxr -nomouse -nosound -nosteamapi -window +r_tasks 0`,
+and select `-game honey +map start`. Disable window activation
+through the SDL hints used by the other probes. The basedir must contain the
+external official rerelease `id1/pak0.pak` and all required Honey assets;
+configuration, saves and logs must remain in a disposable userdir/XDG profile.
+
+The probe injects head/controller samples at the completed OpenXR frame boundary,
+checks actual loader vertices against the shader's packed skinning calculation,
+and observes normal final usercmds, loopback server think and Honey's native
+QuakeC. Small wrist wiggles with trigger held must produce no attack. A deliberate
+translation must produce one final intent and normal damage to a disposable
+target placed on the actual native axe trace. No game code or packets are
+replaced. Require `HONEY_NATIVE_GESTURE_ATTACK_PASSED` and the result assertions.
+The probe intentionally kills its owned inferior instead of saving a test config;
+GDB's child-result status can therefore be 255. That status alone is never a pass.
+
+The same native probe observes ordinary surface-pointer draws and resolves the
+existing depth-tested world-glyph pipeline, including render-pass alternatives.
+`vr_crosshair_surface_fixture.py` covers world and moving/rotated brush traces,
+finite-range dots, miss hiding, two-ray compaction and the separate calibration
+cue. The presentation coordinator includes this fixture; it does not claim
+physical headset alignment from synthetic input or command spies.
+
+## Publisher connection recovery
+
+`python3 -B -W error::ResourceWarning tests/publisher_transport_retry_fixture.py`
+checks public-download retries without network access. It covers fresh hashing
+following partial reads, bounded exhaustion, request settings, and fatal
+certificate/HTTP/hash failures. The existing release coordinator and public
+archive checks remain in `release_automation_test.py` and `release_public_test.py`.
+
+
+## Reusable custom mod controls
+
+`custom_mod_bindings_fixture.py` extracts the production keys menu, parser and
+registry lookups into a strict ASan/UBSan fixture. It checks authored labels and
+exact saved-row dedup, new-draft grammar, overflow, cancellation, capture call
+ordering, long payloads and menu lifecycle gates. Native key execution,
+configuration, rendering and XR routing are explicitly stubbed boundaries.
+
+```sh
+python3 -B tests/custom_mod_bindings_fixture.py
+```
+
+`run_custom_mod_bindings_native.py` separately launches the Debug engine under
+GDB in private profiles with locally owned id1/Sacrilege assets. It exercises
+real aliases (hook impulses 24/25), logical VR key dispatch, capture cancellation,
+interruption/reopening, 255-byte assignment and save/restart/mod-switch behavior,
+with normal configuration and postcfg write-back. It never modifies installed
+settings or sends external input/focus. Deliberate inferior kill status 255 is
+accepted only with a typed completion receipt. Optional screenshots capture the
+native menu through its own renderer. This does not certify physical XR input.
+
+```sh
+python3 -B tests/run_custom_mod_bindings_native.py \
+  --engine /path/to/debug/vkquake --assets /path/to/owned/quake \
+  --library-path /path/to/matching/runtime --screenshots
+```
+
+The broad input adapter fixture also needs typed fail-closed seams for cached
+MD5 edges, held-melee presentation, raw grip offsets and menu cancellation.
+Its profile-change scenario now respects the existing pose-history reset and
+neutral rearm gates; this fixture update changes no production locomotion.
+
+
+### Desktop gamepad wheel and independent XR bindings
+
+`desktop_gamepad_input.gdb` uses SDL3's virtual gamepad and sensor APIs in an
+initialized desktop game. Run it only on a private Xvfb display, with
+`SDL_VIDEODRIVER=x11`, `SDL_JOYSTICK_HIDAPI=0`,
+`QSVR_GAMEPAD_PRIVATE_DISPLAY=1`, `QSVR_GAMEPAD_BASEDIR` pointing to private
+licensed id1 assets, `QSVR_GAMEPAD_USERDIR` pointing to a fresh private profile
+with an id1 directory, and `QSVR_GAMEPAD_RESULT` naming a JSON result file. Wrap
+GDB in a 120-second timeout. Require its typed successful receipt; no physical
+controller or Steam Input hardware certification is implied.
+
+Desktop SDL controls and gameplay/capture XR controls use independent native
+keycodes. The custom-binding native probe now retains every existing assignment
+when adding another, and checks mouse, SDL trigger, and XR trigger coexistence
+through capture, press/release, save/reload and post-config overrides. Explicit
+clear-all remains available. The XR lifecycle probe retains physical SDL ALT
+ownership checks separately from XR gameplay and binding capture.

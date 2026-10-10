@@ -669,7 +669,7 @@ goes for Copper to avoid naming every Copper-based mod "Underdark
 Overbright" when it ships Copper's mapdb.json unmodified.
 ==================
 */
-static void Modlist_SetNameFromMapDB (modinfo_t *info, const char *mapdb, const char *name, qboolean is_base)
+static void Modlist_SetNameFromMapDB (modinfo_t *info, const char *mapdb, const char *name, qboolean allow_renamed)
 {
 	json_t *json = JSON_Parse (mapdb);
 	if (!json)
@@ -685,7 +685,7 @@ static void Modlist_SetNameFromMapDB (modinfo_t *info, const char *mapdb, const 
 			const char *mod_dir = JSON_FindString (entry, "dir");
 			if (!mod_name || !mod_dir)
 				continue;
-			if ((is_base || !q_strcasecmp (mod_dir, "copper")) && q_strcasecmp (mod_dir, name) != 0)
+			if ((!allow_renamed || !q_strcasecmp (mod_dir, "copper")) && q_strcasecmp (mod_dir, name) != 0)
 				continue;
 			q_strlcpy (info->full_name, mod_name, sizeof (info->full_name));
 			break;
@@ -745,7 +745,7 @@ static void Modlist_Add (const char *base, const char *name)
 		char *mapdb = (char *)COM_LoadMallocFile_TextMode_OSPath (path, NULL);
 		if (mapdb)
 		{
-			Modlist_SetNameFromMapDB (info, mapdb, name, false);
+			Modlist_SetNameFromMapDB (info, mapdb, name, true);
 			Mem_Free (mapdb);
 		}
 	}
@@ -837,14 +837,17 @@ void Modlist_Init (void)
 	mapdb = (char *)COM_LoadFile ("mapdb.json", &path_id);
 	if (mapdb)
 	{
-		// base = the id1 group; only a mapdb.json from an active mod on top of it
-		// may name entries without a dir match (e.g. a renamed mod dir)
+		// Only the metadata's owning non-base directory may use a renamed-dir fallback.
 		qboolean is_base = !com_base_searchpaths || path_id <= com_base_searchpaths->path_id;
+		searchpath_t *search;
+		for (search = com_searchpaths; search; search = search->next)
+			if (search->path_id == path_id)
+				break;
 		for (item = modlist; item; item = item->next)
 		{
 			modinfo_t *info = (modinfo_t *)(item + 1);
 			if (!info->full_name[0])
-				Modlist_SetNameFromMapDB (info, mapdb, item->name, is_base);
+				Modlist_SetNameFromMapDB (info, mapdb, item->name, !is_base && search && !q_strcasecmp (search->dir, item->name));
 		}
 		Mem_Free (mapdb);
 	}

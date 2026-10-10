@@ -717,6 +717,9 @@ qboolean SV_VRStockLightningBeamCoord (float authored, float *translated);
 void SV_VRWeaponPoseLinked (edict_t *ent);
 qboolean SV_QBJ3AkimboAim (edict_t *ent, vec3_t muzzle);
 qboolean SV_QBJ3TwinNailgunProgramLoaded (void);
+qboolean SV_PerilAkimboProgramLoaded (void);
+qboolean SV_PerilAkimboMakevectors (void);
+qboolean SV_PerilAkimboAim (edict_t *ent, vec3_t muzzle);
 qboolean SV_VRWeaponShotBasis (const vec3_t angles);
 qboolean SV_EnyoAkimboProgramLoaded (void);
 qboolean SV_DwellBerserkAkimboProgramLoaded (void);
@@ -729,6 +732,7 @@ unsigned int SV_VRQBJ3MeleeContactProfile (void);
 unsigned int SV_VREnyoMeleeContactProfile (void);
 /* Exact native Bonk identity and first-outcome readiness. */
 qboolean SV_BonkHammerProgramLoaded (void);
+void SV_BonkHammerCacheProgram (void);
 qboolean SV_BonkHammerWeaponSelected (edict_t *ent);
 qboolean SV_BonkHammerAttackReady (edict_t *ent);
 int SV_VRStockAxeTraceStatement (void);

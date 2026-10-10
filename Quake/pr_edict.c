@@ -1921,6 +1921,8 @@ void		  PR_SwitchQCVM (qcvm_t *nvm)
 void PR_ClearProgs (qcvm_t *vm)
 {
 	qcvm_t *oldvm = qcvm;
+	PR_BonkSkinAbort (vm);
+	vm->bonk_hammer_program = false;
 	if (vm == &sv.qcvm)
 		SV_CoopRespawnCancelBorrowedPolicy (NULL, NULL);
 	if (vm == &cl.qcvm)
@@ -2397,6 +2399,7 @@ qboolean PR_LoadProgs (const char *filename, qboolean fatal, unsigned int needcr
 	PR_FindSupportedEffects ();
 
 	qcvm->progsstrings = qcvm->numknownstrings;
+	SV_BonkHammerCacheProgram ();
 	return true;
 }
 
