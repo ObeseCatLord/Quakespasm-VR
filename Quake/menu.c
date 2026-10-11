@@ -2516,7 +2516,7 @@ static qboolean M_GraphicsAdjust (int dir, qboolean mouse)
 	switch (option)
 	{
 	case GFX_GAMMA: changed = M_GraphicsSetSlider ("gamma", .5f, 1, .05f, true, mouse, clamped_mouse, dir); break;
-	case GFX_CONTRAST: changed = M_GraphicsSetSlider ("contrast", 1, 2, .1f, false, mouse, clamped_mouse, dir); break;
+	case GFX_CONTRAST: changed = M_GraphicsSetSlider ("contrast", 1, 2, .05f, false, mouse, clamped_mouse, dir); break;
 	case GFX_FOV:
 		if (!vulkan_globals.stereo_active)
 			changed = M_GraphicsSetSlider ("fov", 80, 130, 5, false, mouse, clamped_mouse, dir);
@@ -2869,7 +2869,7 @@ static void M_GraphicsDrawRow (cb_context_t *cbx, graphics_option_t option, int 
 	switch (option)
 	{
 	case GFX_GAMMA: name="Gamma"; slider=(1-vid_gamma.value)/.5f; value=va("%.2f",vid_gamma.value); is_slider=true; break;
-	case GFX_CONTRAST: name="Contrast"; slider=vid_contrast.value-1; value=va("%.1f",vid_contrast.value); is_slider=true; break;
+	case GFX_CONTRAST: name="Contrast"; slider=vid_contrast.value-1; value=va("%.2f",vid_contrast.value); is_slider=true; break;
 	case GFX_FOV:
 		name="Field of View";
 		if (vulkan_globals.stereo_active)
