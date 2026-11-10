@@ -193,6 +193,16 @@ int main (void)
 	Datagram_DropQueuedPackets (&b);
 	assert (Datagram_GetMessage (&b) == 0);
 
+	/* While A's current port still delivers, a same-IP packet from another
+	 * port is a different host behind the NAT and must not take A's session. */
+	{
+		struct qsockaddr intruder = ipv4 (0x7f000001, 5001);
+		a.lastMessageTime = net_time;
+		push (intruder, NETFLAG_UNRELIABLE, a.unreliableReceiveSequence, 1);
+		assert (Datagram_GetMessage (&a) == 0 && compare_addr (&a.addr, &a_new) == 0);
+		a.lastMessageTime = 0;
+	}
+
 #ifdef IPPROTO_IPV6
 	{
 		struct qsockaddr first = {0}, second = {0};

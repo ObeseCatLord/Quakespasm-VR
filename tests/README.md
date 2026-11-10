@@ -2081,7 +2081,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
 
 `datagram_rebind_fixture.c` drives the real virtual-client `Datagram_GetMessage`
 path with a scripted UDP boundary. It covers two clients behind one IP,
-cross-client packet deferral, a uniquely identified source-port change, outgoing
+cross-client packet deferral, a uniquely identified source-port change, refusal
+to rebind while the current port is still delivering, outgoing
 destination, old-port stragglers, reliable retransmit ACK routing, ambiguous
 new ports, oversized packets and server-side reliable-fragment retirement,
 bounded inbox eviction, socket-owner cleanup, and IPv6 scope separation. It
