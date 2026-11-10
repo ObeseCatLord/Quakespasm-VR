@@ -37,6 +37,16 @@ callback, so plain UDP controls and a second competing DTLS listener cannot
 claim the port. Empty `sv_port_rtc` disables registration, not local direct
 connections.
 
+DTLS on the game port is anonymous, so a completed handshake does not identify
+the broker. Broker control is accepted only while `sv_port_rtc` is set and the
+decrypted packet's source IP equals the resolved `net_ice_broker` host (any
+port); control from any other DTLS peer is dropped. This bounds offer-driven ICE
+state, STUN reflection and srflx-cache poisoning to the configured broker host.
+It is an address check, not cryptographic broker authentication: a peer that
+can complete DTLS from the broker's IP (shared host or NAT) is still trusted,
+and a broker whose packets arrive from a different IP than its DNS address is
+rejected. Pinning the broker's certificate fingerprint would close that gap.
+
 ## Required core integration
 
 These changes are owned by the main integration work, not this vendor

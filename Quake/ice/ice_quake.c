@@ -3090,6 +3090,31 @@ static qboolean QICE_IsBrokerControlPacket(const void *data, size_t datasize)
 		(text[9] == ' ' || text[9] == '\n'));
 }
 
+/* DTLS on the game port is anonymous: any peer can complete a handshake.
+ * Broker control is therefore accepted only from the host address of the
+ * broker this server registered with (resolved from net_ice_broker while
+ * sv_port_rtc is set). The port is ignored because the broker may use an
+ * ephemeral socket. This is an address check, not cryptographic broker
+ * authentication; an attacker able to spoof or share the broker's IP and
+ * finish DTLS from it is not stopped by it. */
+static qboolean QICE_IsConfiguredBrokerHost(const netadr_t *peer)
+{
+	netadr_t broker;
+	unsigned short port;
+
+	if (!qice_hostcon || !*sv_port_rtc.string || !qice_hostcon->brokeraddr_valid)
+		return false;
+	broker = qice_hostcon->brokeraddr;
+	port = (peer->sa.sa_family == AF_INET6) ? peer->in6.sin6_port : peer->in.sin_port;
+	if (broker.sa.sa_family == AF_INET6)
+		broker.in6.sin6_port = port;
+	else if (broker.sa.sa_family == AF_INET)
+		broker.in.sin_port = port;
+	else
+		return false;
+	return NET_CompareAdr(peer, &broker);
+}
+
 static qboolean QICE_DispatchBrokerControl(struct icestate_s *ice, const void *data, size_t datasize)
 {
 	struct qsockaddr address;
@@ -3100,6 +3125,11 @@ static qboolean QICE_DispatchBrokerControl(struct icestate_s *ice, const void *d
 	if (!ICE_IsDecryptedCallback(ice) || !QICE_IsBrokerControlPacket(data, datasize) ||
 		!ICE_GetPeerAddress(ice, &peer))
 		return false;
+	if (!QICE_IsConfiguredBrokerHost(&peer))
+	{
+		Con_DPrintf("ICE: broker control from %s ignored - not the configured broker\n", ICE_GetConnName(ice));
+		return true;	//consume it; never treat an anonymous DTLS peer as the broker.
+	}
 
 	memset(&address, 0, sizeof(address));
 	if (peer.type == NA_IP)
