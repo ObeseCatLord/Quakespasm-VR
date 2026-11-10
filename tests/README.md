@@ -2140,7 +2140,8 @@ and a second pause or pre-marker relocation fences that generation. Arrival
 coverage adds exact-one-second versus greater threshold, unchanged physical
 state/timers/completion, idempotence, duplicate markers that cannot renew the
 stall clock, terminal/alive transitions, malformed fenced moves and full
-sequence/ushort epoch wrap. Terminal classification and living-state validation
+sequence/ushort epoch wrap. A queue-overflow burst must publish the gap fence
+and accept the resumed stream instead of disconnecting. Terminal classification and living-state validation
 are fixture seams. It does not
 execute QuakeC physics callbacks or a live network connection.
 
