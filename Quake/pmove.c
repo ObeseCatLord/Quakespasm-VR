@@ -45,6 +45,7 @@ static qboolean	clmovevars_valid;
 #define PM_VR_SWIM_JUMP_UPMOVE 200.0f
 #define PM_MAX_SUBSTEP_SECONDS 0.025f
 #define PM_VR_ROOMSCALE_MAX_DELTA 16.0f
+#define PM_VR_ROOMSCALE_MAX_SPEED 500.0f // units/s; bounds timed samples by their msec
 
 // Axis vectors come from AngleVectors; this mirrors QSS-M's transform convention.
 #define QAxisTransform(a, v, c) \
@@ -1930,6 +1931,9 @@ static void PM_ApplyVRRoomScaleMove (float command_seconds)
 	}
 	if (horizontal_length == 0)
 		return;
+	/* The per-sample limit alone lets msec=1 commands carry 16 units each. */
+	if (pmove.cmd.msec && horizontal_length > PM_VR_ROOMSCALE_MAX_SPEED * sweep_seconds)
+		VectorScale (move, PM_VR_ROOMSCALE_MAX_SPEED * sweep_seconds / horizontal_length, move);
 	move[2] = 0;
 
 	VectorCopy (pmove.velocity, velocity);

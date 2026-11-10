@@ -3800,6 +3800,11 @@ static void SV_Physics_ClientWalk (edict_t *ent, sv_client_move_frame_t *move_fr
 	SV_WalkMove (ent, move_frame, move_velocity, true);
 }
 
+/* Samples are bounded individually on receipt; also bound their sum per unit
+ * of applied time so packet floods or tiny msec cannot outrun a real head.
+ * Matches PM_VR_ROOMSCALE_MAX_SPEED. */
+#define SV_VR_ROOMSCALE_MAX_SPEED 500.0f
+
 /* Physical head movement is an auxiliary translation, not a second player
  * think. Use the same collision/step solver, but let the normal physics pass
  * own velocity, ground state and QuakeC callbacks. */
@@ -3807,7 +3812,7 @@ static void SV_ApplyPrivateRoomScaleMove (edict_t *ent, client_t *client)
 {
 	sv_client_move_frame_t auxiliary_frame;
 	vec3_t move, sweep_velocity, saved_velocity;
-	float saved_flags;
+	float saved_flags, horizontal, limit;
 	int saved_groundentity;
 
 	VectorCopy (client->cmd.vr_roomscalemove, move);
@@ -3818,6 +3823,12 @@ static void SV_ApplyPrivateRoomScaleMove (edict_t *ent, client_t *client)
 	move[2] = 0; // head height does not raise the player's collision hull
 	if (!move[0] && !move[1])
 		return;
+	horizontal = sqrtf (move[0] * move[0] + move[1] * move[1]);
+	limit = SV_VR_ROOMSCALE_MAX_SPEED * host_frametime;
+	if (!isfinite (horizontal))
+		return;
+	if (horizontal > limit)
+		VectorScale (move, limit / horizontal, move);
 
 	VectorCopy (ent->v.velocity, saved_velocity);
 	saved_flags = ent->v.flags;
