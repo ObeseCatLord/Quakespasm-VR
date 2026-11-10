@@ -3795,6 +3795,14 @@ static void SV_DecodeUserInfo (client_t *client)
 
 	// pick out a name and try to clean it up a little.
 	Info_GetKey (client->userinfo, "name", tmp, sizeof (tmp));
+	{
+		/* Quotes and line breaks would corrupt saves and console/log output. */
+		char *in, *out;
+		for (in = out = tmp; *in; in++)
+			if (*in != '"' && *in != '\n' && *in != '\r')
+				*out++ = *in;
+		*out = 0;
+	}
 
 	if (!*tmp)
 		q_strlcpy (tmp, "unnamed", sizeof (tmp));
