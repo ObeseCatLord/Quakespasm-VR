@@ -3953,10 +3953,13 @@ static struct
 	qboolean active, dwell_force_miss, dwell_has_contact, dwell_invalidated;
 } sv_vr_axe_trace_scope;
 
+static void SV_ClearQCPMoveContext (void);
+
 void SV_ClearVRWeaponPoseScope (void)
 {
 	/* Host_Error/EndGame can unwind a QC callback past its normal restore. */
 	sv_vr_weapon_pose_scope = NULL;
+	SV_ClearQCPMoveContext ();
 }
 
 void SV_VRWeaponPoseSetOrigin (edict_t *ent)
@@ -9706,6 +9709,13 @@ typedef struct
 	qboolean vr_active;
 } sv_qc_pmove_context_t;
 static sv_qc_pmove_context_t *sv_qc_pmove_context;
+
+/* The context lives on SV_Physics_Client's stack; a QC error longjmp skips
+ * its restore, so error/endgame/clear paths must drop it with the pose scope. */
+static void SV_ClearQCPMoveContext (void)
+{
+	sv_qc_pmove_context = NULL;
+}
 
 typedef struct
 {
