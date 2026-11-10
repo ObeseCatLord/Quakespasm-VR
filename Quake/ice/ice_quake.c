@@ -2369,6 +2369,8 @@ static qboolean QICE_GotS2CMessage (struct icestate_s *ice, const void *data, si
 	}
 	if (datasize < 4)
 		return false;	//truncated somehow. don't try.
+	if (datasize > (size_t)net_message.maxsize)
+		return true;	//oversized SCTP message; drop it rather than Host_Error in SZ_Write.
 
 	header = BigLong(((const int*)data)[0]);
 	if (header == -1)
@@ -2689,6 +2691,8 @@ gotgetchallenge:
 	if (header == (datasize | NETFLAG_CTL))
 	{
 		int req;
+		if (datasize > (size_t)net_message.maxsize)
+			return;	//SCTP can reassemble more than NET_MAXMESSAGE; SZ_Write would Host_Error.
 		SZ_Clear(&net_message);
 		SZ_Write(&net_message, data, datasize);
 		MSG_BeginReading();
