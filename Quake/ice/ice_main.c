@@ -3952,8 +3952,8 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 			return true;
 		}
 #endif
-			if (stun->msgtype == BigShort(STUN_BINDING|STUN_REQUEST) && msg_size == stunlen + sizeof(*stun) && stun->magiccookie == BigLong(STUN_MAGIC_COOKIE))
-		{
+			if (stun->msgtype == BigShort(STUN_BINDING|STUN_REQUEST) && msg_size == stunlen + sizeof(*stun) && !(stunlen & 3) && stun->magiccookie == BigLong(STUN_MAGIC_COOKIE))
+		{	//STUN lengths are 4-byte multiples, so the padded attribute walk below cannot take stunlen negative.
 			char username[256];
 			qbyte integrity[20];
 #ifdef SUPPORT_ICE
@@ -3980,7 +3980,7 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 			while(stunlen)
 			{
 				alen = (unsigned short)BigShort(attr->attrlen);
-				if (alen+sizeof(*attr) > stunlen)
+				if (stunlen < (int)sizeof(*attr) || alen > stunlen - (int)sizeof(*attr))
 					return false;
 				switch((unsigned short)BigShort(attr->attrtype))
 				{				case 0xc057: /*'network cost'*/ break;
@@ -3999,12 +3999,16 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 					}
 					break;
 				case STUNATTR_MSGINTEGRITIY_SHA1:
+					if (alen != sizeof(integrity))
+						return false;
 					memcpy(integrity, attr+1, sizeof(integrity));
 					integritypos = (char*)(attr+1);
 					break;
 #ifdef SUPPORT_ICE
 				case STUNATTR_ICE_PRIORITY:
 //					Con_Printf("priority = \"%i\"\n", priority);
+					if (alen < 4)
+						return false;
 					priority = BigLong(*(int*)(attr+1));
 					break;
 				case STUNATTR_ICE_USE_CANDIDATE:
@@ -4017,6 +4021,8 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 #ifdef SUPPORT_ICE
 				case STUNATTR_ICE_CONTROLLED:
 				case STUNATTR_ICE_CONTROLLING:
+					if (alen < 8)
+						return false;
 					role = (unsigned short)BigShort(attr->attrtype);
 					tiehigh = BigLong(((int*)(attr+1))[0]);
 					tielow = BigLong(((int*)(attr+1))[1]);
@@ -4057,7 +4063,16 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 					if (con->modeflags & ICEF_VERBOSE_PROBE)
 						Con_Printf(S_COLOR_GRAY"[%s]: got binding request on %s from %s\n", con->friendlyname, ICE_NetworkToName(con, from->connum), NET_AdrToString(username,sizeof(username), from));
 
-					if (integritypos)
+					/* A matched connectivity check must prove the ufrag's password
+					 * (RFC 8445 7.2.2); otherwise anyone who learns the cleartext
+					 * ufrags could add candidates, flip roles or nominate a pair. */
+					if (!integritypos)
+					{
+						if (con->modeflags & ICEF_VERBOSE_PROBE)
+							Con_Printf(S_COLOR_GRAY"[%s]: binding request without MESSAGE-INTEGRITY ignored\n", con->friendlyname);
+						return true;
+					}
+					else
 					{
 						qbyte key[20];
 						//the hmac is a bit weird. the header length includes the integrity attribute's length, but the checksum doesn't even consider the attribute header.
