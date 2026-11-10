@@ -471,8 +471,8 @@ static void SCTP_ErrorChunk(sctp_t *sctp, const char *errortype, const struct sc
 			return;	//that's an error in its own right
 		cc = BigShort(s->cause);
 		cl = BigShort(s->length);
-		if (totallen < cl)
-			return;	//err..
+		if (cl < sizeof(*s) || totallen < cl)
+			return;	//err.. (a cause shorter than its own header would never advance)
 
 		if (sctp->modeflags & ICEF_VERBOSE) switch(cc)
 		{
@@ -488,13 +488,15 @@ static void SCTP_ErrorChunk(sctp_t *sctp, const char *errortype, const struct sc
         case 10:	Con_Printf(S_COLOR_GRAY"[%s]: SCTP %s: Cookie Received While Shutting Down\n",			sctp->friendlyname, errortype);	break;
         case 11:	Con_Printf(S_COLOR_GRAY"[%s]: SCTP %s: Restart of an Association with New Addresses\n",	sctp->friendlyname, errortype);	break;
         case 12:	Con_Printf(S_COLOR_GRAY"[%s]: SCTP %s: User Initiated Abort\n",			sctp->friendlyname, errortype);	break;
-        case 13:	Con_Printf(S_COLOR_GRAY"[%s]: SCTP %s: Protocol Violation [%s]\n",		sctp->friendlyname, errortype, (const char*)(s+1));	break;
+        case 13:	Con_Printf(S_COLOR_GRAY"[%s]: SCTP %s: Protocol Violation [%.*s]\n",		sctp->friendlyname, errortype, (int)(cl - sizeof(*s)), (const char*)(s+1));	break;
         default:	Con_Printf(S_COLOR_GRAY"[%s]: SCTP %s: Unknown Reason\n",				sctp->friendlyname, errortype);	break;
 		}
 
+		cl = (cl+3)&~3;	//causes are padded to 4 bytes; the final one may omit its padding.
+		if (totallen <= cl)
+			break;
 		totallen -= cl;
-		totallen &= ~3;
-		s = (const struct sctp_errorcause_s*)((const qbyte*)s + ((cl+3)&~3));
+		s = (const struct sctp_errorcause_s*)((const qbyte*)s + cl);
 	}
 }
 
