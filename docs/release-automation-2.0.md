@@ -98,10 +98,12 @@ translation units are reused. Without the cache mount, ccache is not used.
 On `foundry` (4 shared cores) a full ARM64 build took about 28 minutes. With a
 dependency-prefix hit it takes about 14, and every bundled library is
 byte-identical to a full rebuild. Recipe changes to `build-native.sh` or the
-builder image rebuild the prefix once. Of the remaining time, about 6 minutes
-is package staging and licence verification (`package.py`), about 2 is
-re-verifying cached apt archives, and about 3.5 is image and transfer
-overhead. The engine compile itself is about a minute.
+builder image rebuild the prefix once. `package.py stage` prefetches apt
+policy and checksums in three batched calls and reuses closure `.deb`/source
+archives from the same cache, but only after matching them against the apt
+index. That cut staging from about 6 minutes to well under 1. A fully cached
+ARM64 build now takes about 9.5 minutes end to end. Most of what remains is
+re-verifying the build-time apt archives, image checks and transfers.
 
 Engine objects are reused only through ccache. `receipts/cache.txt` records each hit and
 miss. Delete the cache directory to force a full cold build; nothing else

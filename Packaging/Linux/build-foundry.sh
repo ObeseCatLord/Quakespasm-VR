@@ -53,6 +53,7 @@ docker run --rm --platform linux/arm64 \
     "$image" "/input/$archive_name" "$revision" /output
 docker run --rm --platform linux/arm64 --entrypoint python3 \
     -v "$work/native:/output:ro" -v "$work/package:/package" \
+    -v "$cache:/cache" -e QSVR_BUILD_CACHE=/cache \
     "$image" /usr/local/bin/package.py stage /output /package
 docker run --rm --platform linux/arm64 --network none --entrypoint python3 \
     -v "$work/package:/package:ro" \

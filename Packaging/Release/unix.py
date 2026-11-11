@@ -323,7 +323,8 @@ def build(root, name, config, recipe_root):
                       '-v', str(output / 'native') + ':/output', image,
                       '/input/product.tar', entry['production_revision'], '/output'], output / 'native.log')
         package = docker + ['--entrypoint', 'python3', '-v', str(output / 'package-final') + ':/package']
-        run(package + ['-v', str(output / 'native') + ':/output:ro', image,
+        run(package + ['-v', str(output / 'native') + ':/output:ro',
+                       '-v', str(cache) + ':/cache', '-e', 'QSVR_BUILD_CACHE=/cache', image,
                        '/usr/local/bin/package.py', 'stage', '/output', '/package'], output / 'stage.log')
         run(package + ['--network', 'none', image, '/usr/local/bin/package.py', 'verify', '/package'],
             output / 'verify.log')
