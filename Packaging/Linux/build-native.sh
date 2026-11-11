@@ -61,6 +61,25 @@ export CMAKE_PREFIX_PATH="$DEPS" PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/shar
 export PATH="$DEPS/bin:$PATH"
 JOBS=$(nproc)
 
+# Optional persistent cache (QSVR_BUILD_CACHE). Every reused object is checked:
+# git archives and the dependency prefix against their stored SHA-256, apt
+# archives against this image's apt index checksums. The dependency prefix
+# key covers every input that can change it, so any change rebuilds.
+CACHE=${QSVR_BUILD_CACHE:-}
+if [[ -n "$CACHE" ]]; then
+    [[ -d "$CACHE" && -w "$CACHE" ]] || fail 'QSVR_BUILD_CACHE must be a writable directory'
+    CACHE=$(realpath -e -- "$CACHE")
+    mkdir -p "$CACHE/git" "$CACHE/deb" "$CACHE/src" "$CACHE/deps"
+    : > "$OUT/receipts/cache.txt"
+fi
+cache_note() { [[ -z "$CACHE" ]] || printf '%s\n' "$*" >> "$OUT/receipts/cache.txt"; }
+# Copy into the cache through a temporary name so readers never see partial files.
+cache_put() {
+    local from=$1 to=$2 temporary
+    temporary=$(mktemp "$(dirname -- "$to")/.put.XXXXXX")
+    cp -- "$from" "$temporary" && chmod 0644 -- "$temporary" && mv -f -- "$temporary" "$to"
+}
+
 mapfile -t COMPONENTS < <(python3 - "$PINS" <<'PY'
 import json, sys
 for item in json.load(open(sys.argv[1]))["git_sources"]:
@@ -74,11 +93,24 @@ for row in "${COMPONENTS[@]}"; do
     repo="$WORK/git/$name"; source="$WORK/src/$name"
     archive="$OUT/sources/dependencies/$name-$commit.tar"
     mkdir -p "$repo" "$source"
-    git -C "$repo" init --quiet
-    git -C "$repo" fetch --quiet --depth=1 "$url" "$commit"
-    git -C "$repo" cat-file -e "$commit^{commit}" || fail "pinned commit missing: $name"
-    [[ "$(git -C "$repo" rev-parse FETCH_HEAD^{commit})" == "$commit" ]] || fail "fetched commit mismatch: $name"
-    git -C "$repo" archive --format=tar --prefix="$name/" "$commit" > "$archive"
+    cached="${CACHE:+$CACHE/git/$name-$commit.tar}"
+    if [[ -n "$cached" && -s "$cached" && -s "$cached.sha256" ]] &&
+        [[ "$(sha256sum "$cached" | awk '{print $1}')" == "$(cat "$cached.sha256")" ]]; then
+        install -m 0644 -- "$cached" "$archive"
+        cache_note "git hit $name $commit"
+    else
+        git -C "$repo" init --quiet
+        git -C "$repo" fetch --quiet --depth=1 "$url" "$commit"
+        git -C "$repo" cat-file -e "$commit^{commit}" || fail "pinned commit missing: $name"
+        [[ "$(git -C "$repo" rev-parse FETCH_HEAD^{commit})" == "$commit" ]] || fail "fetched commit mismatch: $name"
+        git -C "$repo" archive --format=tar --prefix="$name/" "$commit" > "$archive"
+        if [[ -n "$cached" ]]; then
+            sha256sum "$archive" | awk '{print $1}' > "$archive.sha256.tmp"
+            cache_put "$archive" "$cached"
+            mv -f -- "$archive.sha256.tmp" "$cached.sha256"
+            cache_note "git miss $name $commit"
+        fi
+    fi
     [[ "$(git get-tar-commit-id < "$archive")" == "$commit" ]] || fail "archive commit mismatch: $name"
     tar -xf "$archive" -C "$source"
     for notice in ${notices//|/ }; do
@@ -112,6 +144,35 @@ package.py, host-policy.json, and all other production packaging inputs to its
 source-access artifact.
 EOF
 
+# Verify that DIR holds exactly the files of SOURCE=VERSION with the apt
+# index's SHA-256 checksums.
+apt_source_verify() {
+    apt-cache showsrc "$1" | python3 -c '
+import hashlib, os, sys
+version, directory = sys.argv[1], sys.argv[2]
+for record in sys.stdin.read().split("\n\n"):
+    fields, current = {}, None
+    for line in record.splitlines():
+        if line[:1] in (" ", "\t") and current:
+            fields[current].append(line.split())
+        elif ":" in line:
+            current, value = line.split(":", 1)
+            fields[current] = [value.strip()]
+    if fields.get("Version", [""])[0] != version:
+        continue
+    expected = {row[2]: row[0] for row in fields.get("Checksums-Sha256", [])[1:] if len(row) == 3}
+    present = {name for name in os.listdir(directory) if not name.startswith(".")}
+    if not expected or set(expected) != present:
+        sys.exit(1)
+    for name, digest in expected.items():
+        with open(os.path.join(directory, name), "rb") as stream:
+            if hashlib.sha256(stream.read()).hexdigest() != digest:
+                sys.exit(1)
+    sys.exit(0)
+sys.exit(1)
+' "$2" "$3"
+}
+
 mapfile -t PACKAGES < <(python3 - "$PINS" <<'PY'
 import json, sys
 print("\n".join(json.load(open(sys.argv[1]))["apt_packages"]))
@@ -129,8 +190,26 @@ for package in "${PACKAGES[@]}"; do
     [[ -n "$repository" ]] || fail "repository receipt missing for $package"
     package_work="$WORK/package-$package"
     mkdir -p "$package_work"
-    (cd "$package_work" && apt-get download "$package=$binary_version")
+    deb_cache="${CACHE:+$CACHE/deb/$package/${binary_version//[^A-Za-z0-9.+~-]/_}}"
+    expected=$(apt-cache show "$package=$binary_version" | awk '/^SHA256: / {print $2; exit}')
+    [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || fail "apt index checksum missing for $package"
+    cached_deb=$( [[ -n "$deb_cache" && -d "$deb_cache" ]] && find "$deb_cache" -maxdepth 1 -type f -name '*.deb' -print -quit || true)
+    if [[ -n "$cached_deb" && "$(sha256sum "$cached_deb" | awk '{print $1}')" == "$expected" ]]; then
+        install -m 0644 -- "$cached_deb" "$package_work/$(basename -- "$cached_deb")"
+        cache_note "deb hit $package $binary_version"
+    else
+        (cd "$package_work" && apt-get download "$package=$binary_version")
+        if [[ -n "$deb_cache" ]]; then
+            fetched=$(find "$package_work" -maxdepth 1 -type f -name '*.deb' -print -quit)
+            [[ -n "$fetched" ]] || fail "matching deb archive missing for $package"
+            mkdir -p "$deb_cache"
+            find "$deb_cache" -maxdepth 1 -type f -name '*.deb' -delete
+            cache_put "$fetched" "$deb_cache/$(basename -- "$fetched")"
+            cache_note "deb miss $package $binary_version"
+        fi
+    fi
     deb=$(find "$package_work" -maxdepth 1 -type f -name '*.deb' -print -quit)
+    [[ "$(sha256sum "$deb" | awk '{print $1}')" == "$expected" ]] || fail "deb checksum differs from apt index: $package"
     [[ -n "$deb" ]] || fail "matching deb archive missing for $package"
     deb_hash=$(sha256sum "$deb" | awk '{print $1}')
     mv -- "$deb" "$OUT/sources/ubuntu/packages/$(basename "$deb")"
@@ -140,7 +219,22 @@ for package in "${PACKAGES[@]}"; do
         safe_key=${source_key//[^A-Za-z0-9.+~-]/_}
         source_dir="$OUT/sources/ubuntu/source/$safe_key"
         mkdir -p "$source_dir"
-        (cd "$source_dir" && apt-get source --download-only "$source_package=$source_version")
+        src_cache="${CACHE:+$CACHE/src/$safe_key}"
+        if [[ -n "$src_cache" && -d "$src_cache" ]] &&
+            apt_source_verify "$source_package" "$source_version" "$src_cache"; then
+            install -m 0644 -- "$src_cache"/* "$source_dir/"
+            cache_note "source hit $source_key"
+        else
+            (cd "$source_dir" && apt-get source --download-only "$source_package=$source_version")
+            if [[ -n "$src_cache" ]]; then
+                apt_source_verify "$source_package" "$source_version" "$source_dir" ||
+                    fail "downloaded source differs from apt index: $source_key"
+                rm -rf -- "$src_cache.tmp"; mkdir -p "$src_cache.tmp"
+                cp -- "$source_dir"/* "$src_cache.tmp/"
+                rm -rf -- "$src_cache"; mv -- "$src_cache.tmp" "$src_cache"
+                cache_note "source miss $source_key"
+            fi
+        fi
         SOURCES_SAVED[$source_key]=1
     fi
 done
@@ -166,6 +260,7 @@ cmake_native() {
     cmake --install "$build"
 }
 
+build_dependencies() {
 C="$WORK/src/vulkan-headers/vulkan-headers"
 cmake_native "$C" "$WORK/build/vulkan-headers" -DVULKAN_HEADERS_ENABLE_TESTS=OFF -DVULKAN_HEADERS_ENABLE_INSTALL=ON -DVULKAN_HEADERS_ENABLE_MODULE=OFF
 cmake_native "$WORK/src/vulkan-loader/vulkan-loader" "$WORK/build/vulkan-loader" \
@@ -233,6 +328,43 @@ cmake_native "$STEAM/core" "$WORK/build/steam-audio" \
 install -Dm755 "$WORK/build/steam-audio/src/core/libphonon.so" "$DEPS/lib/libphonon.so"
 install -Dm644 "$STEAM/core/src/core/phonon.h" "$DEPS/include/phonon.h"
 install -Dm644 "$WORK/build/steam-audio/src/core/phonon_version.h" "$DEPS/include/phonon_version.h"
+}
+
+# The prefix is relocated nowhere: DEPS is the same absolute path in every
+# container, and it is part of the key along with every build input.
+deps_key() {
+    {
+        printf 'deps-cache-v1\n%s\n%s\n%s\n' "$ARCH" "$BASE_FLAGS" "$DEPS"
+        sha256sum "$PINS" "$SCRIPT_DIR/build-native.sh" "$SCRIPT_DIR/Dockerfile" \
+            "$PRODUCT_ROOT/nix/steamaudio-unaligned-accumulate.patch" | awk '{print $1}'
+        dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort
+    } | sha256sum | awk '{print $1}'
+}
+DEPS_CACHE_HIT=false
+if [[ -n "$CACHE" ]]; then
+    DEPS_KEY=$(deps_key)
+    entry="$CACHE/deps/$DEPS_KEY"
+    if [[ -s "$entry.tar" && -s "$entry.sha256" && -f "$entry.options" ]] &&
+        [[ "$(sha256sum "$entry.tar" | awk '{print $1}')" == "$(cat "$entry.sha256")" ]]; then
+        tar -xpf "$entry.tar" -C "$DEPS"
+        cat -- "$entry.options" >> "$OUT/receipts/options.txt"
+        DEPS_CACHE_HIT=true
+        cache_note "deps hit $DEPS_KEY"
+    fi
+fi
+if [[ "$DEPS_CACHE_HIT" != true ]]; then
+    options_start=$(wc -c < "$OUT/receipts/options.txt")
+    build_dependencies
+    if [[ -n "$CACHE" ]]; then
+        tar -cpf "$WORK/deps.tar" -C "$DEPS" .
+        tail -c +"$((options_start + 1))" "$OUT/receipts/options.txt" > "$WORK/deps.options"
+        sha256sum "$WORK/deps.tar" | awk '{print $1}' > "$WORK/deps.sha256"
+        cache_put "$WORK/deps.options" "$entry.options"
+        cache_put "$WORK/deps.tar" "$entry.tar"
+        cache_put "$WORK/deps.sha256" "$entry.sha256"
+        cache_note "deps miss $DEPS_KEY"
+    fi
+fi
 
 pkg-config --exists libcurl || fail 'libcurl pkg-config dependency is required'
 curl_version=$(pkg-config --modversion libcurl)

@@ -73,6 +73,40 @@ native Release MSBuild. Native process exit status and independent source,
 compile/output hashes must pass before its files can enter publication. Neither
 build success nor dedicated startup certifies Windows/Frame/headset graphics.
 
+## Native build cache
+
+Linux x64 and ARM64 builds mount a persistent cache at
+`~/.cache/qsvr-native-build` on the building host (the release host for x64,
+`foundry` for ARM64). `build-native.sh` uses it only when `QSVR_BUILD_CACHE` is
+set, and checks everything it reuses:
+
+- Pinned git source archives are reused only if they match their stored SHA-256.
+- Ubuntu `.deb` and source packages are reused only if they match this image's
+  apt index checksums. A freshly downloaded `.deb` is checked against the same
+  index.
+- The built dependency prefix (Vulkan loader, SPIRV, glslang, OpenXR, SDL3,
+  flatbuffers, pffft, Steam Audio) is keyed by `sources.json`,
+  `build-native.sh`, the Dockerfile, the Steam Audio patch, the image's full
+  installed package set, the architecture, compiler flags and install prefix.
+  A hit restores the identical files and the same `options.txt` receipt lines.
+  Any input change rebuilds.
+
+On `foundry` (4 shared cores) a full ARM64 build took about 28 minutes. With a
+dependency-prefix hit it takes about 14, and every bundled library is
+byte-identical to a full rebuild. Recipe changes to `build-native.sh` rebuild
+the prefix once.
+
+Engine objects are never reused. `receipts/cache.txt` records each hit and
+miss. Delete the cache directory to force a full cold build; nothing else
+needs it. Cached apt archives also let a build finish after Ubuntu drops a
+superseded package version from its pool, as long as the image's index still
+names that version.
+
+If a mirror replaces a package version and the cached builder image still pins
+the old one, rebuild the builder image without cache and remove the stale
+local `qsvr-local-2.0:*` (or remote `vkquake-2.0-arm64:*`) images, so the
+legacy Docker builder stops reusing the old apt layer.
+
 ## Resume and existing packages
 
 Use the same cohort directory to resume. Every accepted target must still match

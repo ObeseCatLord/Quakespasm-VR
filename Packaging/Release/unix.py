@@ -312,9 +312,14 @@ def build(root, name, config, recipe_root):
         identity = subprocess.check_output(['docker', 'image', 'inspect', image, '--format',
                                             '{{.Id}} {{.Os}}/{{.Architecture}}'], text=True).strip()
         require(identity.endswith(' linux/amd64'), 'Builder architecture mismatch')
-        save(output / 'image.json', {'identity': identity, 'dependency_reuse': False})
+        # Engine objects are never reused. Verified source archives and the
+        # dependency prefix come from a content-keyed cache (build-native.sh).
+        cache = Path.home() / '.cache' / 'qsvr-native-build'
+        cache.mkdir(parents=True, exist_ok=True)
+        save(output / 'image.json', {'identity': identity, 'dependency_reuse': 'verified-cache'})
         docker = ['docker', 'run', '--rm', '--platform', 'linux/amd64']
         run(docker + ['-v', str(root / 'archives') + ':/input:ro',
+                      '-v', str(cache) + ':/cache', '-e', 'QSVR_BUILD_CACHE=/cache',
                       '-v', str(output / 'native') + ':/output', image,
                       '/input/product.tar', entry['production_revision'], '/output'], output / 'native.log')
         package = docker + ['--entrypoint', 'python3', '-v', str(output / 'package-final') + ':/package']
