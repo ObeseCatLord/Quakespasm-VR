@@ -2801,7 +2801,12 @@ static void Mod_LoadFaces (qmodel_t *mod, byte *mod_base, lump_t *l, qboolean bs
 			out->numedges > mod->numsurfedges - out->firstedge ||
 			planenum < 0 || planenum >= mod->numplanes ||
 			texinfon < 0 || texinfon >= mod->numtexinfo)
+		{
+			/* Surfaces past this one are uninitialized (Mem_AllocNonZero);
+			 * Mod_FreeModelMemory must not free their polys pointers. */
+			mod->numsurfaces = surfnum;
 			Host_Error ("Mod_LoadFaces: bad face %d in %s", surfnum, mod->name);
+		}
 
 		if (side)
 			out->flags |= SURF_PLANEBACK;

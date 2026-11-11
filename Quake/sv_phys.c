@@ -3800,6 +3800,11 @@ static void SV_Physics_ClientWalk (edict_t *ent, sv_client_move_frame_t *move_fr
 	SV_WalkMove (ent, move_frame, move_velocity, true);
 }
 
+/* Samples are bounded individually on receipt; also bound their sum per unit
+ * of applied time so packet floods or tiny msec cannot outrun a real head.
+ * Matches PM_VR_ROOMSCALE_MAX_SPEED. */
+#define SV_VR_ROOMSCALE_MAX_SPEED 500.0f
+
 /* Physical head movement is an auxiliary translation, not a second player
  * think. Use the same collision/step solver, but let the normal physics pass
  * own velocity, ground state and QuakeC callbacks. */
@@ -3807,7 +3812,7 @@ static void SV_ApplyPrivateRoomScaleMove (edict_t *ent, client_t *client)
 {
 	sv_client_move_frame_t auxiliary_frame;
 	vec3_t move, sweep_velocity, saved_velocity;
-	float saved_flags;
+	float saved_flags, horizontal, limit;
 	int saved_groundentity;
 
 	VectorCopy (client->cmd.vr_roomscalemove, move);
@@ -3821,6 +3826,12 @@ static void SV_ApplyPrivateRoomScaleMove (edict_t *ent, client_t *client)
 	move[2] = 0; // head height does not raise the player's collision hull
 	if (!move[0] && !move[1])
 		return;
+	horizontal = sqrtf (move[0] * move[0] + move[1] * move[1]);
+	limit = SV_VR_ROOMSCALE_MAX_SPEED * host_frametime;
+	if (!isfinite (horizontal))
+		return;
+	if (horizontal > limit)
+		VectorScale (move, limit / horizontal, move);
 
 	VectorCopy (ent->v.velocity, saved_velocity);
 	saved_flags = ent->v.flags;
@@ -3945,10 +3956,13 @@ static struct
 	qboolean active, dwell_force_miss, dwell_has_contact, dwell_invalidated;
 } sv_vr_axe_trace_scope;
 
+static void SV_ClearQCPMoveContext (void);
+
 void SV_ClearVRWeaponPoseScope (void)
 {
 	/* Host_Error/EndGame can unwind a QC callback past its normal restore. */
 	sv_vr_weapon_pose_scope = NULL;
+	SV_ClearQCPMoveContext ();
 }
 
 void SV_VRWeaponPoseSetOrigin (edict_t *ent)
@@ -3978,6 +3992,10 @@ void SV_VRWeaponPoseLinked (edict_t *ent)
 			scope->linked = true;
 }
 
+/* Client hand/muzzle offsets from the body origin, shared with the akimbo
+ * and contact limits. Callers clamp with ent->v.origin at the body origin. */
+#define SV_VR_MAX_MUZZLE_OFFSET 96.0f
+
 static void SV_ClampVRMuzzleToWorld (edict_t *ent, vec3_t muzzle)
 {
 	vec3_t start, delta;
@@ -3991,13 +4009,15 @@ static void SV_ClampVRMuzzleToWorld (edict_t *ent, vec3_t muzzle)
 			return;
 		}
 	VectorSubtract (muzzle, start, delta);
-	if (VectorLength (delta) > 512.0f)
+	/* Any point within the body offset limit is within this of the eye. */
+	if (VectorLength (delta) > SV_VR_MAX_MUZZLE_OFFSET + VectorLength (ent->v.view_ofs))
 	{
 		VectorCopy (start, muzzle);
 		return;
 	}
+	/* Monsters and players block the hand, so it cannot reach through them. */
 	trace = SV_Move (start, vec3_origin, vec3_origin, muzzle,
-		MOVE_NOMONSTERS, ent);
+		MOVE_NORMAL, ent);
 	if (trace.startsolid || trace.allsolid)
 		VectorCopy (start, muzzle);
 	else if (trace.fraction < 1.0f)
@@ -4675,6 +4695,8 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	}
 
 	VectorAdd (scope->origin, cmd->vr_handpos, muzzle);
+	if (VectorLength (cmd->vr_handpos) > SV_VR_MAX_MUZZLE_OFFSET)
+		VectorAdd (scope->origin, ent->v.view_ofs, muzzle);	/* beyond arm reach: use the eye */
 	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
 	/* QuakeC sees zero roll as camera tilt, but its matching gun-shot
 	 * makevectors call needs the full tracked basis for lateral spread. */
@@ -4692,7 +4714,11 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	 * paths consume them without another makevectors call.  Keep QuakeC's
 	 * zero-roll v_angle, but use the captured physical lateral axes. */
 	SV_VRWeaponSetScopedBasis (scope, ent);
+	/* Clamp from the saved body eye, like the akimbo paths; a nested scope's
+	 * origin may already be a temporary hand-derived source. */
+	VectorCopy (scope->body_origin, ent->v.origin);
 	SV_ClampVRMuzzleToWorld (ent, muzzle);
+	VectorCopy (scope->origin, ent->v.origin);
 	/* A nested same-player scope starts from its parent's temporary source.
 	 * Do not cache that as a new authoritative body-relative muzzle. */
 	if (!previous)
@@ -9684,6 +9710,13 @@ typedef struct
 	qboolean vr_active;
 } sv_qc_pmove_context_t;
 static sv_qc_pmove_context_t *sv_qc_pmove_context;
+
+/* The context lives on SV_Physics_Client's stack; a QC error longjmp skips
+ * its restore, so error/endgame/clear paths must drop it with the pose scope. */
+static void SV_ClearQCPMoveContext (void)
+{
+	sv_qc_pmove_context = NULL;
+}
 
 typedef struct
 {

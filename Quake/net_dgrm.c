@@ -157,6 +157,11 @@ static qboolean Datagram_RebindPacketPlausible (qsocket_t *sock, unsigned int wi
 	return false;
 }
 
+/* A NAT rebind silences the old port. While the session's current endpoint is
+ * still delivering messages, a same-IP packet from another port is a different
+ * host behind the same NAT, not a rebind, and must not take the session. */
+#define DATAGRAM_REBIND_MIN_SILENCE 1.0
+
 static qsocket_t *Datagram_FindVirtualSocketForPacket (int driver, int landriver, sys_socket_t socket,
 	struct qsockaddr *addr, unsigned int wire_length, qboolean *rebind)
 {
@@ -180,6 +185,7 @@ static qsocket_t *Datagram_FindVirtualSocketForPacket (int driver, int landriver
 			candidate = net_time - sock->previous_addr_time <= 3.0 ? 2 : 0;
 		}
 		else if (Datagram_SameHost (landriver, addr, &sock->addr) &&
+			net_time - sock->lastMessageTime > DATAGRAM_REBIND_MIN_SILENCE &&
 			Datagram_RebindPacketPlausible (sock, wire_length))
 			candidate = 1;
 		if (!candidate || candidate < priority)

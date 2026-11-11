@@ -158,7 +158,7 @@ static void check_roomscale_wall_duration (int msec, float seconds,
 	pmove.cmd.msec = msec;
 	pmove.cmd.seconds = seconds;
 	pmove.cmd.vr_active = true;
-	VectorSet (pmove.cmd.vr_roomscalemove, 15, .006f, 0);
+	VectorSet (pmove.cmd.vr_roomscalemove, 12, .006f, 0); // under 500 u/s at 25 ms
 
 	PM_PlayerMove (1);
 	near_value (pmove.origin[0], 8, .2f);
@@ -638,6 +638,16 @@ int main (void)
 		check_roomscale_wall_duration (25, .025f, .006f);
 		check_roomscale_invalid_duration (0);
 		check_roomscale_invalid_duration (NAN);
+
+		// Displacement is bounded per unit time: a 1 ms command cannot carry 16 units.
+		prepare ();
+		pmove.cmd.msec = 1;
+		pmove.cmd.seconds = .001f;
+		pmove.cmd.vr_active = true;
+		pmove.cmd.vr_roomscalemove[0] = 16;
+		PM_PlayerMove (1);
+		near_value (pmove.origin[0], .5f, .01f);
+		near_value (pmove.origin[1], 0, .01f);
 
 		// An outlier is rejected rather than clamped into artificial movement.
 		prepare ();
