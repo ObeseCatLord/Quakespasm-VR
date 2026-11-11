@@ -952,6 +952,22 @@ static qboolean ED_SavegameSinkWrite (savegame_sink_t *sink, const char *data,
 	return sink && sink->write && sink->write (sink->context, data, length);
 }
 
+/* The save format quotes values but has no escape for '"'. A string such as a
+ * remote player's netname must not be able to close the value and inject
+ * fields or break the save, so replace quotes in saved strings. */
+static const char *ED_SaveValueString (int type, eval_t *val)
+{
+	static char line[1024];
+	char	   *c;
+
+	q_strlcpy (line, PR_UglyValueString (type, val), sizeof (line));
+	if ((type & ~DEF_SAVEGLOBAL) == ev_string)
+		for (c = line; *c; c++)
+			if (*c == '"')
+				*c = '\'';
+	return line;
+}
+
 static qboolean ED_SavegameSinkPrintf (savegame_sink_t *sink, const char *format, ...)
 {
 	char stack[512];
@@ -1032,7 +1048,7 @@ static qboolean ED_WriteToSinkInternal (savegame_sink_t *sink, edict_t *ed)
 			continue;
 
 		if (!ED_SavegameSinkPrintf (sink, "\"%s\" \"%s\"\n", name,
-			PR_UglyValueString (d->type, (eval_t *)v)))
+			ED_SaveValueString (d->type, (eval_t *)v)))
 			return false;
 	}
 
@@ -1281,7 +1297,7 @@ static qboolean ED_WriteGlobalsToSinkInternal (savegame_sink_t *sink)
 
 		name = PR_GetString (def->s_name);
 		if (!ED_SavegameSinkPrintf (sink, "\"%s\" \"%s\"\n", name,
-			PR_UglyValueString (type, (eval_t *)&qcvm->globals[def->ofs])))
+			ED_SaveValueString (type, (eval_t *)&qcvm->globals[def->ofs])))
 			return false;
 	}
 	return ED_SavegameSinkPrintf (sink, "}\n");

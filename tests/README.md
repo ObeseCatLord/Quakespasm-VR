@@ -2081,7 +2081,8 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
 
 `datagram_rebind_fixture.c` drives the real virtual-client `Datagram_GetMessage`
 path with a scripted UDP boundary. It covers two clients behind one IP,
-cross-client packet deferral, a uniquely identified source-port change, outgoing
+cross-client packet deferral, a uniquely identified source-port change, refusal
+to rebind while the current port is still delivering, outgoing
 destination, old-port stragglers, reliable retransmit ACK routing, ambiguous
 new ports, oversized packets and server-side reliable-fragment retirement,
 bounded inbox eviction, socket-owner cleanup, and IPv6 scope separation. It
@@ -2139,7 +2140,8 @@ and a second pause or pre-marker relocation fences that generation. Arrival
 coverage adds exact-one-second versus greater threshold, unchanged physical
 state/timers/completion, idempotence, duplicate markers that cannot renew the
 stall clock, terminal/alive transitions, malformed fenced moves and full
-sequence/ushort epoch wrap. Terminal classification and living-state validation
+sequence/ushort epoch wrap. A queue-overflow burst must publish the gap fence
+and accept the resumed stream instead of disconnecting. Terminal classification and living-state validation
 are fixture seams. It does not
 execute QuakeC physics callbacks or a live network connection.
 

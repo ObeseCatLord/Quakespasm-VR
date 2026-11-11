@@ -15,7 +15,9 @@ cvar_t sv_gameplayfix_elevators;
 static int contact_resets;
 static qboolean terminal_owner;
 
-void Sys_Printf (const char *format, ...) { assert (0); }
+static qboolean allow_sys_printf;
+static int sys_prints;
+void Sys_Printf (const char *format, ...) { assert (allow_sys_printf); sys_prints++; }
 void Sys_Error (const char *format, ...) { assert (0); }
 void Host_Error (const char *format, ...) { assert (0); }
 void Con_Printf (const char *format, ...) { assert (0); }
@@ -175,6 +177,48 @@ static void test_arrival_gap (void)
 	puts ("Private selected arrival gap: threshold, stale input, lost first command, terminal recovery and epoch/sequence wrap passed");
 }
 
+/* A burst that overflows the trial queue resynchronises through the gap fence
+ * instead of disconnecting the client. */
+static void test_queue_overflow (void)
+{
+	client_t client = {0};
+	edict_t owner = {0};
+	unsigned int sequence;
+	memset (&sv, 0, sizeof (sv));
+	memset (&svs, 0, sizeof (svs));
+	qcvm = &sv.qcvm;
+	host_client = &client;
+	client.edict = &owner;
+	client.active = client.private_pmove_walk_selected = true;
+	client.protocol_qsvr = QSVR_PROTOCOL_PINNED;
+	client.private_completed_move = 100;
+	client.lastmovemessage = 100;
+	owner.v.movetype = MOVETYPE_WALK;
+	svs.maxclients = 2;
+	key_dest = key_game;
+	terminal_owner = false;
+	realtime = 20;
+	client.lastmovetime = realtime;
+	/* 15 ms commands: sixteen fit in the 250 ms window. */
+	for (sequence = 101; sequence <= 116; ++sequence)
+		assert (send_move (sequence, 0, 0));
+	assert (client.private_cmd_queue_count == 16 &&
+		client.private_input_phase == PRIVATE_INPUT_RUNNING);
+	allow_sys_printf = true;
+	sys_prints = 0;
+	assert (send_move (117, 1, 7));
+	allow_sys_printf = false;
+	assert (sys_prints == 1 && client.private_input_phase == PRIVATE_INPUT_AWAIT_MARKER &&
+		client.private_move_discontinuity_epoch == 1 &&
+		client.private_move_discontinuity_reason == MOVEACK_DISCONTINUITY_GAP &&
+		!client.private_cmd_queue_count && !client.private_cmd_queue_msec &&
+		client.lastmovemessage == 117 && client.private_completed_move == 100);
+	assert (SV_HandlePrivateResumeMarker ("qsvr_resume 1 118") &&
+		client.private_input_phase == PRIVATE_INPUT_AWAIT_COMPLETION);
+	assert (send_move (118, 0, 0) && client.private_cmd_queue_count == 1);
+	puts ("Private selected queue overflow: fence instead of disconnect passed");
+}
+
 int main (void)
 {
 	client_t client = {0};
@@ -298,5 +342,6 @@ int main (void)
 		client.lastmovemessage == 108 && client.private_discarded_move == 108);
 	puts ("Private selected pause: discard, marker, repeat and ACK cursor checks passed");
 	test_arrival_gap ();
+	test_queue_overflow ();
 	return 0;
 }

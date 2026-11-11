@@ -1237,6 +1237,9 @@ void SV_PrivatePlayerTeleported (edict_t *ent, qboolean preserve_deadline)
 	}
 }
 
+static void SV_PrivateClearTransientInput (client_t *client);
+static void SV_PrivatePublishRecoveryFence (client_t *client);
+
 static qboolean SV_QueuePrivateCommand (client_t *client, const usercmd_t *command,
 	double received_at)
 {
@@ -1250,9 +1253,19 @@ static qboolean SV_QueuePrivateCommand (client_t *client, const usercmd_t *comma
 	{
 		if (SV_PrivateWalkTrialSelected (client))
 		{
-			Sys_Printf ("%s: private WALK trial command queue overflow/discontinuity\n",
+			if (duration < 1 || duration > 125)
+			{
+				Sys_Printf ("%s: private WALK trial command queue overflow/discontinuity\n",
+					client->name);
+				return false;
+			}
+			/* A burst after a network or server stall is recoverable: drop the
+			 * stale queue and resynchronise through the pause/gap fence. */
+			Sys_Printf ("%s: private WALK trial command queue overflow; resynchronising\n",
 				client->name);
-			return false;
+			SV_PrivateClearTransientInput (client);
+			SV_PrivatePublishRecoveryFence (client);
+			return true;
 		}
 		/* A queue gap is safer than replaying stale input after falling behind. */
 		SV_DiscardPrivateCommandQueue (client, command->sequence);
