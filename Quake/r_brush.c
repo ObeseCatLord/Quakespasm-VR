@@ -503,6 +503,21 @@ const char *R_ClusteredLightingStatus (void)
 	return reasons[Atomic_LoadUInt32 (&clustered_lighting_status)];
 }
 
+static qmodel_t *bmodel_blas_models[MAX_MODELS];
+static int		 bmodel_num_blas;
+
+// A model may occupy more than one precache slot; build its shared surfaces only once.
+static qmodel_t *GL_UniqueBrushModel (int index)
+{
+	qmodel_t *model = cl.model_precache[index];
+	if (!model || model->type != mod_brush)
+		return NULL;
+	for (int i = 1; i < index; i++)
+		if (cl.model_precache[i] == model)
+			return NULL;
+	return model;
+}
+
 /*
 ================
 SizeToBin
@@ -1834,9 +1849,16 @@ static void BuildSurfaceDisplayList (const qmodel_t *model, msurface_t *fa)
 		Sys_Error ("Brush polygon allocation exceeds address space");
 	/* Same donor allocation size, including triangles, without signed or
 	 * header-plus-payload overflow on smaller address spaces. */
-	glpoly_t *poly = (glpoly_t *)Mem_Alloc (polygon_header + (size_t)lnumverts * vertex_stride);
-	poly->next = fa->polys;
-	fa->polys = poly;
+	// A late brush precache rebuilds every surface; reuse the polygon it already has.
+	glpoly_t *poly = fa->polys;
+	if (!poly || poly->numverts != lnumverts)
+	{
+		if (poly)
+			Mem_Free (poly);
+		poly = (glpoly_t *)Mem_Alloc (polygon_header + (size_t)lnumverts * vertex_stride);
+		poly->next = NULL;
+		fa->polys = poly;
+	}
 	poly->numverts = lnumverts;
 	if (!GL_FillBrushSurfaceVertices (model, fa, &poly->verts[0][0]))
 		Sys_Error ("Invalid brush surface vertex indices");
@@ -2109,10 +2131,8 @@ static void GL_SortSurfaces (void)
 	int	  current_submodel = 0;
 	for (j = 1; j < MAX_MODELS; j++)
 	{
-		qmodel_t *m = cl.model_precache[j];
-		if (!m)
-			break;
-		if (m->name[0] == '*')
+		qmodel_t *m = GL_UniqueBrushModel (j);
+		if (!m || m->name[0] == '*')
 			continue;
 		for (i = 0; i < m->numsurfaces; i++)
 		{
@@ -2188,7 +2208,7 @@ static void GL_SortSurfaces (void)
 
 /*
 ==================
-GL_BuildLightmaps -- called at level load time
+GL_BuildLightmaps
 
 Builds the lightmap texture
 with all the surfaces from all brush models
@@ -2203,9 +2223,7 @@ void GL_BuildLightmaps (void)
 
 	GL_WaitForDeviceIdle ();
 
-	r_framecount = 1; // no dlightcache
-
-	// Spike -- wipe out all the lightmap data (johnfitz -- the gltexture objects were already freed by Mod_ClearAll)
+	// Texture objects have already been freed by the caller or Mod_ClearAll.
 	for (i = 0; i < lightmap_count; i++)
 	{
 		GL_FreeLightmapInputs (&lightmaps[i]);
@@ -2233,9 +2251,9 @@ void GL_BuildLightmaps (void)
 
 	for (i = 1; i < MAX_MODELS; ++i)
 	{
-		qmodel_t *m = cl.model_precache[i];
+		qmodel_t *m = GL_UniqueBrushModel (i);
 		if (!m)
-			break;
+			continue;
 		if (m->name[0] == '*')
 		{
 			indirect_bmodel_start = q_min (indirect_bmodel_start, m->firstmodelsurface);
@@ -2257,10 +2275,8 @@ void GL_BuildLightmaps (void)
 	int			 current_submodel = 0;
 	for (j = 1; j < MAX_MODELS; j++)
 	{
-		qmodel_t *m = cl.model_precache[j];
-		if (!m)
-			break;
-		if (m->name[0] == '*')
+		qmodel_t *m = GL_UniqueBrushModel (j);
+		if (!m || m->name[0] == '*')
 			continue;
 		for (i = 0; i < m->numsurfaces; i++)
 		{
@@ -2430,9 +2446,9 @@ void GL_SetupIndirectDraws ()
 
 	for (int j = 2; j < MAX_MODELS; j++)
 	{
-		qmodel_t *m = cl.model_precache[j];
+		qmodel_t *m = GL_UniqueBrushModel (j);
 		if (!m)
-			break;
+			continue;
 		if (m->name[0] == '*')
 			R_CalcDeps (m, NULL);
 	}
@@ -2731,14 +2747,12 @@ void GL_DeleteBModelAccelerationStructures (void)
 	TEMP_ALLOC (VkBuffer, buffers, 1 + MAX_MODELS);
 	int num_buffers = 0;
 	buffers[num_buffers++] = bmodel_indices_buffer;
-	for (int i = 0; i < MAX_MODELS; ++i)
+	for (int i = 0; i < bmodel_num_blas; ++i)
 	{
-		qmodel_t *m = cl.model_precache[i];
-		if (!m)
-			continue;
+		qmodel_t *m = bmodel_blas_models[i];
 		if (m->blas != VK_NULL_HANDLE)
 		{
-			vulkan_globals.vk_destroy_acceleration_structure (vulkan_globals.device, cl.model_precache[i]->blas, NULL);
+			vulkan_globals.vk_destroy_acceleration_structure (vulkan_globals.device, m->blas, NULL);
 			buffers[num_buffers++] = m->buffer;
 			m->blas = VK_NULL_HANDLE;
 			m->buffer = VK_NULL_HANDLE;
@@ -2758,6 +2772,7 @@ void GL_DeleteBModelAccelerationStructures (void)
 	bmodel_tlas_size = 0;
 	bmodel_indices_buffer = VK_NULL_HANDLE;
 	bmodel_indices_device_address = 0;
+	bmodel_num_blas = 0;
 	TEMP_FREE (buffers);
 }
 
@@ -2787,8 +2802,8 @@ static qboolean GL_ValidateBModelVertexSources (uint32_t *vertex_count)
 	/* Count first so every destination span is checked against the same bound. */
 	for (int j = 1; j < MAX_MODELS; ++j)
 	{
-		const qmodel_t *m = cl.model_precache[j];
-		if (!m || m->name[0] == '*' || m->type != mod_brush)
+		const qmodel_t *m = GL_UniqueBrushModel (j);
+		if (!m || m->name[0] == '*')
 			continue;
 		if (m->numsurfaces < 0 || (m->numsurfaces && !m->surfaces))
 			return false;
@@ -2804,8 +2819,8 @@ static qboolean GL_ValidateBModelVertexSources (uint32_t *vertex_count)
 		return false;
 	for (int j = 1; j < MAX_MODELS; ++j)
 	{
-		const qmodel_t *m = cl.model_precache[j];
-		if (!m || m->name[0] == '*' || m->type != mod_brush)
+		const qmodel_t *m = GL_UniqueBrushModel (j);
+		if (!m || m->name[0] == '*')
 			continue;
 		for (int i = 0; i < m->numsurfaces; ++i)
 		{
@@ -2850,8 +2865,8 @@ void GL_BuildBModelVertexBuffer (void)
 	int current_submodel = 0;
 	for (j = 1; j < MAX_MODELS; j++)
 	{
-		m = cl.model_precache[j];
-		if (!m || m->name[0] == '*' || m->type != mod_brush)
+		m = GL_UniqueBrushModel (j);
+		if (!m || m->name[0] == '*')
 			continue;
 
 		for (i = 0; i < m->numsurfaces; i++)
@@ -2985,8 +3000,8 @@ void GL_BuildBModelAccelerationStructures (void)
 	int	   num_blas = 0;
 	for (int j = 1; j < MAX_MODELS; j++)
 	{
-		qmodel_t *m = cl.model_precache[j];
-		if (!m || m->type != mod_brush)
+		qmodel_t *m = GL_UniqueBrushModel (j);
+		if (!m)
 			continue;
 		if (m->flags & MF_HOLEY)
 			continue;
@@ -3177,6 +3192,8 @@ void GL_BuildBModelAccelerationStructures (void)
 	TEMP_FREE (blas_geometries);
 	TEMP_FREE (blas_geometry_infos);
 	TEMP_FREE (blas_sizes_infos);
+	bmodel_num_blas = num_blas;
+	memcpy (bmodel_blas_models, blas_models, num_blas * sizeof (*blas_models));
 	TEMP_FREE (blas_models);
 	TEMP_FREE (buffer_create_infos);
 
@@ -3186,8 +3203,8 @@ void GL_BuildBModelAccelerationStructures (void)
 
 	for (int j = 1; j < MAX_MODELS; j++)
 	{
-		qmodel_t *m = cl.model_precache[j];
-		if (!m || m->type != mod_brush)
+		qmodel_t *m = GL_UniqueBrushModel (j);
+		if (!m)
 			continue;
 		if (m->flags & MF_HOLEY)
 			continue;
@@ -3207,6 +3224,33 @@ void GL_BuildBModelAccelerationStructures (void)
 		}
 	}
 	R_StagingEndCopy ();
+}
+
+void R_RebuildBrushModels (qboolean newmap)
+{
+	GL_WaitForDeviceIdle ();
+	GL_DeleteBModelAccelerationStructures ();
+	GL_DeleteBModelVertexBuffer ();
+
+	// Mod_ClearAll already freed these textures on a map change, but not on a late precache.
+	if (!newmap)
+	{
+		for (int i = 0; i < lightmap_count; i++)
+		{
+			TexMgr_FreeTexture (lightmaps[i].texture);
+			TexMgr_FreeTexture (lightmaps[i].surface_indices_texture);
+			for (int j = 0; j < MAXLIGHTMAPS * 3 / 4; j++)
+				if (lightmaps[i].lightstyle_textures[j] != nulltexture)
+					TexMgr_FreeTexture (lightmaps[i].lightstyle_textures[j]);
+		}
+	}
+
+	GL_BuildLightmaps ();
+	GL_BuildBModelVertexBuffer ();
+	GL_BuildBModelAccelerationStructures ();
+	GL_SetupIndirectDraws ();
+	GL_SetupLightmapCompute ();
+	GL_UpdateLightmapDescriptorSets ();
 }
 
 /*

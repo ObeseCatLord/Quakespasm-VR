@@ -2929,7 +2929,7 @@ static void Host_SingleplayerAutosaveFrame (void)
 	edict_t *autosave_player = svs.clients[0].edict;
 
 	if (!autosave_player || autosave_player->free || !svs.clients[0].active || !svs.clients[0].spawned ||
-		sv.paused || sv.nomonsters || deathmatch.value || realtime < sv.autosave.retry_realtime || !sv_autosave.value || sv_autosave_interval.value <= 0.f || svs.maxclients != 1 || autosave_player->v.health <= 0.f || cl.intermission )
+		sv.paused || sv.nomonsters || deathmatch.value || realtime < sv.autosave.retry_realtime || sv_autosave.value <= 0.0f || sv_autosave_interval.value <= 0.f || svs.maxclients != 1 || autosave_player->v.health <= 0.f || cl.intermission )
 		return;
 
 	if (Host_IsSaving ())

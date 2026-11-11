@@ -153,6 +153,11 @@ endif
 SYSOBJ_SND := snd_sdl.o snd_sdl3.o
 SYSOBJ_CDA := cd_sdl.o
 SYSOBJ_INPUT := in_sdl.o in_sdl2.o in_sdl3.o
+ifeq ($(HOST_OS),darwin)
+ifeq ($(USE_SDL3),1)
+SYSOBJ_INPUT += in_mac.o
+endif
+endif
 SYSOBJ_GL_VID:= gl_vidsdl.o
 SYSOBJ_MAIN:= main_sdl.o
 
@@ -392,6 +397,11 @@ $(BINTOC_EXE): ../Shaders/bintoc.c
 
 %.o: %.c
 	$(CC) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -o $@ $<
+
+ifeq ($(USE_SDL3),1)
+%.o: %.m
+	$(CC) $(DFLAGS) -c $(CFLAGS) $(SDL_CFLAGS) -fblocks -o $@ $<
+endif
 
 # mem.c includes mimalloc which has warnings that don't apply to MinGW/GCC
 mem.o: mem.c

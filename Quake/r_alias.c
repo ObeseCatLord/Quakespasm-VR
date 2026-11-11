@@ -62,7 +62,11 @@ typedef struct
 	float	 entalpha;
 	uint32_t flags;
 	uint32_t joints_offsets[2];
+	uint32_t joints_bind_offset; // inverse bind pose, after the frames' poses (MD5_SkinFrames)
 } md5ubo_t;
+
+// Tracked VR palettes carry no inverse bind block; the shader then keeps the bind-space normal.
+#define MD5_NO_BIND_OFFSET 0xFFFFFFFFu
 
 /*
 =============
@@ -443,6 +447,7 @@ static void GL_DrawAliasFrame (
 		ubo->entalpha = entity_alpha;
 		ubo->joints_offsets[0] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose1 * paliashdr->numjoints;
 		ubo->joints_offsets[1] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose2 * paliashdr->numjoints;
+		ubo->joints_bind_offset = tracked_palette ? MD5_NO_BIND_OFFSET : paliashdr->numframes * paliashdr->numjoints;
 
 		VkDescriptorSet descriptor_sets[4] = {
 			tx->descriptor_set, (fb != NULL) ? fb->descriptor_set : tx->descriptor_set, ubo_set,
@@ -1606,6 +1611,7 @@ void R_DrawAliasModel_ShowSkel (cb_context_t *cbx, entity_t *e)
 	ubo->flags = 0;
 	ubo->joints_offsets[0] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose1 * paliashdr->numjoints;
 	ubo->joints_offsets[1] = tracked_palette ? tracked_palette->joint_offset : lerpdata.pose2 * paliashdr->numjoints;
+	ubo->joints_bind_offset = tracked_palette ? MD5_NO_BIND_OFFSET : paliashdr->numframes * paliashdr->numjoints;
 
 	vulkan_pipeline_t pipeline = vulkan_globals.md5_debug_pipeline[cbx->pipeline_variant];
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);

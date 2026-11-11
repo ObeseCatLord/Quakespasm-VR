@@ -323,6 +323,7 @@ typedef struct
 
 	// refresh related state
 	struct qmodel_s *worldmodel; // cl_entitites[0].model
+	qboolean		 brushmodels_changed;
 	struct efrag_s	*free_efrags;
 	int				 num_efrags;
 	struct efrag_s **efrag_allocs;
@@ -605,6 +606,7 @@ typedef struct
 } cl_server_protocol_t;
 const char *CL_ReadServerProtocol (qboolean playback, unsigned int offered,
 	unsigned int legacy, cl_server_protocol_t *result);
+void CL_UpdateBrushModels (void);
 void CL_RegisterParticles (void);
 void CL_NewTranslation (int slot);
 
