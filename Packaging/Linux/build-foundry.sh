@@ -44,8 +44,12 @@ mkdir "$work/src" "$work/native" "$work/package"
 tar -xf "$work/source.tar" -C "$work/src"
 image="vkquake-2.0-arm64:${revision:0:12}-${work##*.}"
 docker build --platform linux/arm64 -t "$image" "$work/src/Packaging/Linux"
+# Persistent, verified source/dependency cache (see build-native.sh).
+cache="$HOME/.cache/qsvr-native-build"
+mkdir -p "$cache"
 docker run --rm --platform linux/arm64 \
     -v "$work:/input:ro" -v "$work/native:/output" \
+    -v "$cache:/cache" -e QSVR_BUILD_CACHE=/cache \
     "$image" "/input/$archive_name" "$revision" /output
 docker run --rm --platform linux/arm64 --entrypoint python3 \
     -v "$work/native:/output:ro" -v "$work/package:/package" \
