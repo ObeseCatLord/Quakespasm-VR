@@ -382,8 +382,20 @@ MESON_OPTIONS=(--prefix=/ --libdir=lib --buildtype=release --auto-features=enabl
         printf '%s\n' "$option"
     done
 } >> "$OUT/receipts/options.txt"
+# ccache reuses engine compiles only from the persistent cache. Entries are
+# keyed by preprocessed source, flags and compiler; the random work directory
+# is rewritten relative to CCACHE_BASEDIR. Meson does not wrap an explicit CC.
+if [[ -n "$CACHE" ]]; then
+    export CCACHE_DIR="$CACHE/ccache" CCACHE_BASEDIR="$WORK" CCACHE_NOHASHDIR=1 \
+        CCACHE_MAXSIZE=5G CCACHE_COMPRESS=1 CC="ccache gcc" CXX="ccache g++"
+    mkdir -p "$CCACHE_DIR"
+    ccache --zero-stats >/dev/null
+fi
 meson setup "$ENGINE" "$PRODUCT_ROOT" "${MESON_OPTIONS[@]}"
 meson compile -C "$ENGINE" --jobs "$JOBS"
+if [[ -n "$CACHE" ]]; then
+    cache_note "ccache $(ccache --print-stats | awk -F '\t' '$1 == "direct_cache_hit" || $1 == "preprocessed_cache_hit" {hit += $2} $1 == "cache_miss" {miss = $2} END {printf "hits=%d misses=%d", hit, miss}')"
+fi
 DESTDIR="$OUT/install" meson install -C "$ENGINE"
 [[ -x "$OUT/install/bin/vkquake" ]] || fail 'Meson install did not produce install/bin/vkquake'
 
@@ -403,7 +415,7 @@ EOF
     printf 'architecture\t%s\nproduct_revision\t%s\nproduct_archive_sha256\t%s\n' "$ARCH" "$REVISION" "$PRODUCT_HASH"
     printf 'libcurl_pkg_config_version\t%s\n' "$curl_version"
     printf '\n[os-release]\n'; cat /etc/os-release
-    for tool in gcc g++ cmake ninja meson python3 pkg-config git patch patchelf; do
+    for tool in gcc g++ cmake ninja meson python3 pkg-config git patch patchelf ccache; do
         printf '\n[%s]\n' "$tool"; "$tool" --version | awk 'NR == 1'
     done
 } > "$OUT/receipts/environment.txt"

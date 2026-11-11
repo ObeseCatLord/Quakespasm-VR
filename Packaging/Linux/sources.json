@@ -5,7 +5,7 @@
     "package.py": "Slice 2 owns final staging and closure-derived distro attribution. Run it in this pinned image and consume install/, deps/, sources/, the installed package/file-owner maps, and enabled deb-src indexes. Resolve every shipped ELF runtime provider and installed *-dev header/static contributor; for each resolved Ubuntu package capture the exact matching .deb and source archives, identities, hashes, and installed copyright notice. Missing or ambiguous ownership/source/notice is a hard failure. The direct apt_packages list alone is not a complete contributor inventory. Slice 1 recipes currently contain sources.json, Dockerfile, build-native.sh, and the reused Steam Audio patch only; final staging must add package.py, host-policy.json, and any other production packaging inputs to its source-access artifact."
   },
   "apt_packages": [
-    "build-essential", "cmake", "ninja-build", "meson", "python3", "pkg-config", "git", "ca-certificates", "patch", "binutils", "patchelf", "dpkg-dev", "xz-utils",
+    "build-essential", "cmake", "ninja-build", "meson", "python3", "pkg-config", "git", "ca-certificates", "patch", "binutils", "patchelf", "ccache", "dpkg-dev", "xz-utils",
     "libx11-dev", "libx11-xcb-dev", "libxcb1-dev", "libxcb-randr0-dev", "libxext-dev", "libxcursor-dev", "libxrandr-dev", "libxfixes-dev", "libxi-dev", "libxss-dev", "libxrender-dev", "libxinerama-dev", "libxtst-dev",
     "libwayland-dev", "libwayland-bin", "wayland-protocols", "libxkbcommon-dev", "libdecor-0-dev",
     "libegl-dev", "libgl-dev", "libgles-dev", "libdrm-dev", "libgbm-dev", "libudev-dev", "libdbus-1-dev", "libsystemd-dev", "libusb-1.0-0-dev",

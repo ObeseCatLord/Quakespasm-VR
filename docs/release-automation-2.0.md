@@ -91,12 +91,19 @@ set, and checks everything it reuses:
   A hit restores the identical files and the same `options.txt` receipt lines.
   Any input change rebuilds.
 
+Engine compiles go through `ccache` in the same cache (`ccache/`). Entries are
+keyed by preprocessed source, flags and compiler, so only unchanged
+translation units are reused. Without the cache mount, ccache is not used.
+
 On `foundry` (4 shared cores) a full ARM64 build took about 28 minutes. With a
 dependency-prefix hit it takes about 14, and every bundled library is
-byte-identical to a full rebuild. Recipe changes to `build-native.sh` rebuild
-the prefix once.
+byte-identical to a full rebuild. Recipe changes to `build-native.sh` or the
+builder image rebuild the prefix once. Of the remaining time, about 6 minutes
+is package staging and licence verification (`package.py`), about 2 is
+re-verifying cached apt archives, and about 3.5 is image and transfer
+overhead. The engine compile itself is about a minute.
 
-Engine objects are never reused. `receipts/cache.txt` records each hit and
+Engine objects are reused only through ccache. `receipts/cache.txt` records each hit and
 miss. Delete the cache directory to force a full cold build; nothing else
 needs it. Cached apt archives also let a build finish after Ubuntu drops a
 superseded package version from its pool, as long as the image's index still
