@@ -465,9 +465,129 @@ def dsc_index(root):
     return result
 
 
+# Batched apt metadata, filled once by prefetch_apt(). One apt-cache call per
+# package cost about 1 s each on the ARM builder; these maps hold the same
+# index facts for every installed package.
+APT_POLICY = {}      # package -> apt-cache policy section text
+APT_DEB_SHA = {}     # (package, version) -> SHA256 from the apt index
+APT_SOURCE_SHA = {}  # (source, version) -> {file name: SHA256}
+CACHE = Path(os.environ["QSVR_BUILD_CACHE"]) if os.environ.get("QSVR_BUILD_CACHE") else None
+
+
+def apt_records(text):
+    for record in text.split("\n\n"):
+        fields, current = {}, None
+        for line in record.splitlines():
+            if line[:1] in (" ", "\t") and current:
+                fields[current].append(line.strip())
+            elif ":" in line:
+                current, value = line.split(":", 1)
+                fields[current] = [value.strip()]
+        if fields:
+            yield fields
+
+
+def prefetch_apt(installed):
+    names = sorted({row["binary_package"].split(":", 1)[0] for row in installed.values()})
+    exact = sorted({f'{row["binary_package"].split(":", 1)[0]}={row["binary_version"]}'
+                    for row in installed.values()})
+    sources = sorted({installed_identity(row, row["binary_package"].split(":", 1)[0],
+                                         row["binary_version"])[0] for row in installed.values()})
+    section = None
+    for line in run(["apt-cache", "policy", *names]).splitlines():
+        header = re.fullmatch(r"(\S+?)(?::\S+)?:", line)
+        if header and not line[:1].isspace():
+            section = header.group(1)
+            APT_POLICY[section] = ""
+        elif section:
+            APT_POLICY[section] += line + "\n"
+    # Packages absent from the index (local-only) simply have no entry here.
+    shown = subprocess.run(["apt-cache", "show", *exact], text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+    for fields in apt_records(shown):
+        package, version = fields.get("Package", [""])[0], fields.get("Version", [""])[0]
+        sha = fields.get("SHA256", [""])[0]
+        if package and version and re.fullmatch(r"[0-9a-f]{64}", sha):
+            APT_DEB_SHA[(package, version)] = sha
+    shown = subprocess.run(["apt-cache", "showsrc", *sources], text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+    for fields in apt_records(shown):
+        source, version = fields.get("Package", [""])[0], fields.get("Version", [""])[0]
+        files = {}
+        for row in fields.get("Checksums-Sha256", [])[1:]:
+            parts = row.split()
+            if len(parts) == 3 and re.fullmatch(r"[0-9a-f]{64}", parts[0]):
+                files[parts[2]] = parts[0]
+        if source and version and files:
+            APT_SOURCE_SHA[(source, version)] = files
+
+
+def cache_safe(text):
+    return re.sub(r"[^A-Za-z0-9.+~-]", "_", text)
+
+
+def cache_store_file(path, directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = directory / f".put.{os.getpid()}.{path.name}"
+    shutil.copyfile(path, temporary)
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, directory / path.name)
+
+
+def cached_deb(base, version, destination):
+    expected = APT_DEB_SHA.get((base, version))
+    if not CACHE or not expected:
+        return False
+    directory = CACHE / "deb" / base / cache_safe(version)
+    for path in sorted(directory.glob("*.deb")) if directory.is_dir() else ():
+        if digest(path) == expected:
+            target = destination / path.name
+            shutil.copyfile(path, target)
+            os.chmod(target, 0o644)
+            return True
+    return False
+
+
+def source_dir_matches(directory, expected):
+    present = {p.name for p in directory.iterdir() if not p.name.startswith(".")}
+    return bool(expected) and present == set(expected) and all(
+        digest(directory / name) == sha for name, sha in expected.items())
+
+
+def cached_source(source, version, destination):
+    expected = APT_SOURCE_SHA.get((source, version))
+    if not CACHE or not expected:
+        return False
+    directory = CACHE / "src" / cache_safe(f"{source}:{version}")
+    if not directory.is_dir() or not source_dir_matches(directory, expected):
+        return False
+    for name in expected:
+        shutil.copyfile(directory / name, destination / name)
+        os.chmod(destination / name, 0o644)
+    return True
+
+
+def store_source(source, version, directory):
+    expected = APT_SOURCE_SHA.get((source, version))
+    if not CACHE or not expected or not source_dir_matches(directory, expected):
+        return
+    target = CACHE / "src" / cache_safe(f"{source}:{version}")
+    temporary = target.with_name(f".put.{os.getpid()}.{target.name}")
+    shutil.rmtree(temporary, ignore_errors=True)
+    temporary.mkdir(parents=True)
+    for name in expected:
+        shutil.copyfile(directory / name, temporary / name)
+        os.chmod(temporary / name, 0o644)
+    shutil.rmtree(target, ignore_errors=True)
+    os.replace(temporary, target)
+
+
 def repository_for(package, version):
     selected = False
-    for line in run(["apt-cache", "policy", package]).splitlines():
+    policy = APT_POLICY.get(package)
+    if policy is None:
+        policy = run(["apt-cache", "policy", package])
+    for line in policy.splitlines():
         match = re.match(r"\s*(?:\*\*\*\s+)?(\S+)\s+\d+", line)
         if match:
             selected = match.group(1) == version
@@ -546,7 +666,12 @@ def stage_ubuntu(package, installed, owners, debs, dscs, root, owner_set):
         cache = root / "sources/ubuntu/closure/packages"
         cache.mkdir(parents=True, exist_ok=True)
         existing = set(cache.glob("*.deb"))
-        run(["apt-get", "download", f"{base}={version}"], cwd=cache)
+        if not cached_deb(base, version, cache):
+            run(["apt-get", "download", f"{base}={version}"], cwd=cache)
+            expected = APT_DEB_SHA.get((base, version))
+            for path in set(cache.glob("*.deb")) - existing:
+                if CACHE and expected and digest(path) == expected:
+                    cache_store_file(path, CACHE / "deb" / base / cache_safe(version))
         for path in cache.glob("*.deb"):
             if path not in existing:
                 index_deb(path, debs)
@@ -559,7 +684,9 @@ def stage_ubuntu(package, installed, owners, debs, dscs, root, owner_set):
         safe = re.sub(r"[^A-Za-z0-9.+~-]", "_", f"{source}:{source_version}")
         source_dir = root / "sources/ubuntu/closure/source" / safe
         source_dir.mkdir(parents=True, exist_ok=True)
-        run(["apt-get", "source", "--download-only", f"{source}={source_version}"], cwd=source_dir)
+        if not cached_source(source, source_version, source_dir):
+            run(["apt-get", "source", "--download-only", f"{source}={source_version}"], cwd=source_dir)
+            store_source(source, source_version, source_dir)
         for path in sorted(source_dir.glob("*.dsc")):
             if dsc_record(path) == key:
                 dscs[key] = (path, digest(path))
@@ -855,6 +982,7 @@ def stage(build_arg, package_arg):
     owners = owner_map(root / "receipts")
     installed = installed_map(root / "receipts")
     debs, dscs = deb_index(root), dsc_index(root)
+    prefetch_apt(installed)
     source_owners = selected_contributors(pins, installed, owners)
     initial = elf_facts(build, build_tree, policy, arch, "install/")
     elf_by_path = dict(initial)
