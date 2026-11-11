@@ -82,6 +82,10 @@ cvar_t r_viewmodel_quake = {"r_viewmodel_quake", "0", CVAR_ARCHIVE_GAME};
 // Inherited Quakespasm VR scale/floor/comfort settings; keep their names and flags.
 cvar_t vr_world_scale = {"vr_world_scale", "1.0", CVAR_ARCHIVE};
 cvar_t vr_floor_offset = {"vr_floor_offset", "-16", CVAR_ARCHIVE};
+/* Gorilla (monke) posture: lower the whole tracked rig by this many metres
+ * while hand movement is active, so relaxed standing palms reach the floor
+ * (Ancient Dungeon VR lowers its rig to a 0.58m head height). */
+static cvar_t vr_gorilla_drop = {"vr_gorilla_drop", "1.0", CVAR_ARCHIVE};
 cvar_t vr_hud_scale = {"vr_hud_scale", "0.025", CVAR_ARCHIVE};
 /* Request eye mode on capable runtimes; policy keeps full-rate shading until
  * gaze is valid and stable. Fixed foveation remains an explicit menu choice. */
@@ -1731,7 +1735,10 @@ float V_VRUnitsPerMetre (void)
 
 float V_VRFloorOffset (void)
 {
-	return isfinite (vr_floor_offset.value) ? vr_floor_offset.value : -16.f;
+	float offset = isfinite (vr_floor_offset.value) ? vr_floor_offset.value : -16.f;
+	if (VR_GorillaActive () && isfinite (vr_gorilla_drop.value))
+		offset -= CLAMP (0.f, vr_gorilla_drop.value, 2.f) * V_VRUnitsPerMetre ();
+	return offset;
 }
 
 qboolean V_TrackedPlayerBase (float *viewheight)
@@ -2674,6 +2681,7 @@ void V_Init (void)
 {
 	Cvar_RegisterVariable (&vr_world_scale);
 	Cvar_RegisterVariable (&vr_floor_offset);
+	Cvar_RegisterVariable (&vr_gorilla_drop);
 	Cvar_RegisterVariable (&vr_hud_scale);
 	Cvar_RegisterVariable (&vr_foveation);
 	Cvar_RegisterVariable (&vr_mirror);

@@ -530,6 +530,7 @@ void CL_ResetVRIKPoseCaches (void);
 void CL_ResetVRIKState (void);
 void CL_ResetWeaponContactState (void);
 void CL_QueueGorillaCapability (void);
+void CL_MonkeOwnerAuthor (usercmd_t *cmd);
 void CL_QueueInstantStopCapability (void);
 void CL_ExpireStaleVRIKPoses (void);
 void CL_NextDemo (void);

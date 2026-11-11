@@ -287,6 +287,11 @@ typedef struct client_s
 	qboolean vr_gorilla_ladder_frame;
 	int vr_gorilla_button[2];
 	int vr_gorilla_last_advertised; // -1 means the current policy has not been queued
+	/* Owner-authoritative monke movement (see vr_gorilla_types.h). */
+	qboolean vr_gorilla_owner_capable;
+	unsigned int vr_gorilla_owner_generation;
+	qboolean vr_gorilla_owner_applied;
+	vec3_t vr_gorilla_owner_origin, vr_gorilla_owner_velocity;
 	int weapon_contact_last_mode; // last mode appended to the reliable stream; -1 means not queued
 	int weapon_contact_last_profile; // profile paired with weapon_contact_last_mode
 	signed char akimbo_last_advertised_mask; // -1 unsent; bits 0..3 are the queued offer tuple
@@ -663,6 +668,9 @@ void SV_ResetGorillaClient (client_t *client);
 void SV_GorillaInvalidateAccepted (client_t *client);
 void SV_GorillaInvalidateSurface (edict_t *surface);
 qboolean SV_GorillaEligible (client_t *client);
+qboolean SV_GorillaOwnerEligible (client_t *client);
+qboolean SV_GorillaOwnerCommand (client_t *client);
+void SV_GorillaOwnerResync (client_t *client);
 qboolean SV_GorillaNativeLadder (edict_t *ent);
 qboolean SV_ClientInstantStopEnabled (const client_t *client);
 void SV_GorillaLatchLadder (client_t *client, qboolean begin_frame);
@@ -672,6 +680,7 @@ void SV_PrivatePlayerTeleported (edict_t *ent, qboolean preserve_deadline);
 void SV_ResetPrivateVRContactState (client_t *client);
 void SV_VRContactPlayerSetOrigin (edict_t *ent, const vec3_t origin);
 void SV_VRContactPlayerRelocated (edict_t *ent);
+qboolean SV_GorillaAllowed (void);
 qboolean SV_VRWeaponCollisionEnabled (void);
 qboolean SV_VRStockAxeMeleeEnabled (void);
 qboolean SV_VRDwellBerserkMeleeEnabled (void);

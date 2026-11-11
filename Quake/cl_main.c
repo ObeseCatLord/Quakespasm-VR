@@ -2088,14 +2088,6 @@ static qboolean CL_ReplayHistoryAvailable (int *startseq, int endseq)
 	return true;
 }
 
-static qboolean CL_ReplayCanTrustGorilla (void)
-{
-	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
-		cl.vr_gorilla_motion_generation_valid && cl.vr_gorilla_trusted_cap_sent &&
-		cl.vr_gorilla_allowed && cl.move_ack_prediction_allowed &&
-		cl.move_ack_authority == MOVE_AUTHORITY_PMOVE_ENGINE_COMPAT;
-}
-
 static qboolean CL_RestoreReplayGorillaSnapshot (void)
 {
 	int hand;
@@ -2127,11 +2119,6 @@ static qboolean CL_SetupReplayGorilla (int startseq)
 	qboolean fresh_reset = false;
 	int seq;
 
-	if (CL_ReplayCanTrustGorilla ())
-	{
-		pmove.gorilla_allowed = true;
-		return true;
-	}
 	if (!cl.vr_gorilla_supported || !cl.vr_gorilla_allowed)
 		return true;
 	/* The pinned client additionally gates raw-state restoration on
@@ -2186,12 +2173,10 @@ static void CL_PrepareReplayCommand (usercmd_t *dst, const usercmd_t *src, qbool
 		return;
 	}
 
-	if (dst->vr_gorilla_motion.flags &&
-		(!CL_ReplayCanTrustGorilla () ||
-		 dst->vr_gorilla_motion.generation != cl.vr_gorilla_motion_generation))
+	if (dst->vr_gorilla_motion.flags)
 	{
-		/* Authored motion is generation-bound; stale authored motion must not
-		 * silently become a raw-palm fallback. */
+		/* Owner body state belongs to the owner's own simulation; it is never
+		 * replayed, and its raw palms were not sent to the server. */
 		memset (&dst->vr_gorilla_motion, 0, sizeof(dst->vr_gorilla_motion));
 		memset (&dst->vr_gorilla, 0, sizeof(dst->vr_gorilla));
 	}
@@ -2876,6 +2861,149 @@ qboolean CL_ReplayPlayerMovement (entity_t *ent, vec3_t origin)
 	return true;
 }
 
+/*
+==================
+Owner-authoritative monke movement
+
+Ancient Dungeon VR gives each player state authority over its own body, so
+hand pushes never wait for the network.  When the server offers it, an
+opted-in VR client simulates its own body here (PMove plus the shared hand
+solver) once per sent command, renders from that state, and reports it.
+The server validates and applies the report, and starts a new generation
+whenever it moves the body itself; the client then reseeds from the
+server's state.  Everyone else keeps ordinary server movement.
+==================
+*/
+static struct
+{
+	qboolean valid;
+	unsigned int generation;
+	vec3_t origin, velocity;
+	qboolean onground;
+	vr_gorilla_state_t gorilla;
+} cl_monke;
+
+static qboolean CL_MonkeOwnerEligible (const usercmd_t *cmd)
+{
+	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		cls.state == ca_connected && cls.signon == SIGNONS && !cls.demoplayback &&
+		!cl.paused && !cl.intermission && cl.worldmodel && cl.entities &&
+		cl.viewentity > 0 && cl.viewentity < cl.num_entities &&
+		cl.stats[STAT_HEALTH] > 0 &&
+		cl.vr_gorilla_trusted_supported && cl.vr_gorilla_trusted_cap_sent &&
+		cl.vr_gorilla_motion_generation_valid && !cl.move_ack_selected_owner &&
+		VR_GorillaActive () && cmd && cmd->seconds > 0 &&
+		(cmd->vr_gorilla.flags & VR_GORILLA_HANDS) == VR_GORILLA_HANDS;
+}
+
+/* Start from the server's latest state for the current generation. */
+static void CL_MonkeOwnerSeed (const entity_t *ent)
+{
+	int i;
+	memset (&cl_monke, 0, sizeof (cl_monke));
+	VectorCopy (ent->msg_origins[0], cl_monke.origin);
+	for (i = 0; i < 3; i++)
+		cl_monke.velocity[i] = ent->netstate.velocity[i] * (1.0f / 8.0f);
+	cl_monke.onground = (ent->netstate.eflags & EFLAGS_ONGROUND) != 0;
+	cl_monke.generation = cl.vr_gorilla_motion_generation;
+	cl_monke.valid = CL_PredictionVectorFinite (cl_monke.origin) &&
+		CL_PredictionVectorFinite (cl_monke.velocity);
+	Con_DPrintf ("monke owner: seeded generation %u at %.0f %.0f %.0f\n",
+		cl_monke.generation, cl_monke.origin[0], cl_monke.origin[1],
+		cl_monke.origin[2]);
+}
+
+/* Run one sent command on the owner's own body and attach the result. */
+void CL_MonkeOwnerAuthor (usercmd_t *cmd)
+{
+	entity_t *ent;
+	vec3_t bounds[2];
+	unsigned int solidsize;
+	int i;
+
+	if (cmd)
+		memset (&cmd->vr_gorilla_motion, 0, sizeof (cmd->vr_gorilla_motion));
+	if (!CL_MonkeOwnerEligible (cmd))
+	{
+		cl_monke.valid = false;
+		return;
+	}
+	ent = &cl.entities[cl.viewentity];
+	if (!cl_monke.valid || cl_monke.generation != cl.vr_gorilla_motion_generation)
+	{
+		CL_MonkeOwnerSeed (ent);
+		if (!cl_monke.valid)
+			return;
+		cmd->vr_gorilla.flags |= VR_GORILLA_RESET;
+	}
+	if (!PMCL_SetMoveVars ())
+	{
+		cl_monke.valid = false;
+		return;
+	}
+	memset (&pmove, 0, sizeof (pmove));
+	VectorCopy (cl_monke.origin, pmove.origin);
+	VectorCopy (cl_monke.velocity, pmove.velocity);
+	solidsize = ent->netstate.solidsize;
+	if (solidsize && solidsize != ES_SOLID_BSP)
+	{
+		pmove.player_maxs[0] = pmove.player_maxs[1] = solidsize & 255;
+		pmove.player_mins[0] = pmove.player_mins[1] = -pmove.player_maxs[0];
+		pmove.player_mins[2] = -(int)((solidsize >> 8) & 255);
+		pmove.player_maxs[2] = (int)((solidsize >> 16) & 65535) - 32768;
+	}
+	for (i = 0; i < 3; i++)
+	{
+		bounds[0][i] = pmove.origin[i] + pmove.player_mins[i] - 256;
+		bounds[1][i] = pmove.origin[i] + pmove.player_maxs[i] + 256;
+	}
+	VectorClear (pmove.gravitydir);
+	pmove.pm_type = PM_NORMAL;
+	pmove.onground = cl_monke.onground;
+	pmove.jump_held = true; /* QuakeC keeps jumps; the server resyncs us */
+	pmove.skipent = -cl.viewentity;
+	pmove.gorilla_allowed = true;
+	pmove.gorilla = cl_monke.gorilla;
+	pmove.cmd = *cmd;
+	pmove.cmd.buttons &= ~2;
+	PMCL_AddEntities (bounds);
+	if (!CL_ReplayEnsureCommandPhysents (bounds, &pmove.cmd, true))
+	{
+		cl_monke.valid = false;
+		return;
+	}
+	PM_PlayerMove (1);
+	if (!CL_PredictionVectorFinite (pmove.origin) ||
+		!CL_PredictionVectorFinite (pmove.velocity))
+	{
+		cl_monke.valid = false;
+		return;
+	}
+	VectorCopy (pmove.origin, cl_monke.origin);
+	VectorCopy (pmove.velocity, cl_monke.velocity);
+	cl_monke.onground = pmove.onground;
+	cl_monke.gorilla = pmove.gorilla;
+
+	cmd->vr_gorilla_motion.flags = VR_GORILLA_OWNER_ACTIVE |
+		(cl_monke.onground ? VR_GORILLA_OWNER_ONGROUND : 0);
+	cmd->vr_gorilla_motion.generation = cl_monke.generation;
+	VectorCopy (cl_monke.origin, cmd->vr_gorilla_motion.origin);
+	VectorCopy (cl_monke.velocity, cmd->vr_gorilla_motion.velocity);
+}
+
+/* The owner's own body drives its view while owner movement is active. */
+static qboolean CL_MonkeOwnerView (vec3_t origin)
+{
+	if (!cl_monke.valid || !cl.vr_gorilla_motion_generation_valid ||
+		cl_monke.generation != cl.vr_gorilla_motion_generation ||
+		cl.move_ack_selected_owner || !VR_GorillaActive ())
+		return false;
+	VectorCopy (cl_monke.origin, origin);
+	VectorCopy (cl_monke.velocity, cl.velocity);
+	cl.onground = cl_monke.onground;
+	return true;
+}
+
 static qboolean CL_LerpEntity (entity_t *ent, vec3_t org, vec3_t ang, float frac)
 {
 	float	 f, d, a;
@@ -2957,6 +3085,13 @@ static void CL_PrepareRelinkViewPose (cl_relink_frame_t *frame, float frac)
 	discontinuity = frame->viewpose_teleported || viewent->forcelink;
 	if (discontinuity)
 		CL_ResetPredictionSmoothing ();
+	if (CL_MonkeOwnerView (frame->vieworigin))
+	{
+		CL_ResetPredictionSmoothing ();
+		cl_prediction_replay_valid = false;
+		cl_prediction_replay_frame_valid = false;
+		return;
+	}
 	if (!CL_ReplayPlayerMovement (viewent, frame->vieworigin) || discontinuity)
 	{
 		cl_prediction_replay_valid = false;
@@ -3936,7 +4071,7 @@ static qboolean CL_ServerNumericOfferSyntaxValid (const char *raw, int fields)
 
 void CL_QueueGorillaCapability (void)
 {
-	const size_t required = 1 + sizeof ("vr_gorilla_cap 1");
+	const size_t required = 1 + sizeof ("vr_gorilla_cap 2");
 
 	if (!cl.vr_gorilla_supported || cl.vr_gorilla_cap_sent ||
 		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED || cls.state != ca_connected ||
@@ -3947,8 +4082,11 @@ void CL_QueueGorillaCapability (void)
 		required > (size_t)(cls.message.maxsize - cls.message.cursize))
 		return;
 	MSG_WriteByte (&cls.message, clc_stringcmd);
-	MSG_WriteString (&cls.message, "vr_gorilla_cap 1");
+	/* 2: raw hands plus owner-authoritative body state. */
+	MSG_WriteString (&cls.message, cl.vr_gorilla_trusted_supported ?
+		"vr_gorilla_cap 2" : "vr_gorilla_cap 1");
 	cl.vr_gorilla_cap_sent = true;
+	cl.vr_gorilla_trusted_cap_sent = cl.vr_gorilla_trusted_supported;
 }
 
 void CL_QueueInstantStopCapability (void)
@@ -4027,7 +4165,7 @@ static void CL_ServerExtension_GorillaProtocol_f (void)
 	if (Cmd_Argc () != 3 ||
 		!CL_ServerNumericOfferSyntaxValid (Cmd_Args (), 2) ||
 		!CL_ParseBoundedDecimal (Cmd_Argv (1), 1, &version) || version != 1 ||
-		!CL_ParseBoundedDecimal (Cmd_Argv (2), 1, &allowed) ||
+		!CL_ParseBoundedDecimal (Cmd_Argv (2), 2, &allowed) ||
 		cl.protocol_qsvr != QSVR_PROTOCOL_PINNED)
 	{
 		cl.vr_gorilla_supported = false;
@@ -4042,15 +4180,28 @@ static void CL_ServerExtension_GorillaProtocol_f (void)
 		Con_DPrintf2 ("Ignoring malformed Gorilla capability offer.\n");
 		return;
 	}
-	if (!cl.vr_gorilla_supported || cl.vr_gorilla_allowed != (qboolean)allowed)
+	/* 2 additionally lets this client own its body state (Ancient Dungeon
+	 * style). A changed owner offer needs a fresh capability reply. */
+	if (cl.vr_gorilla_trusted_supported != (allowed == 2))
+	{
+		cl.vr_gorilla_trusted_supported = allowed == 2;
+		cl.vr_gorilla_trusted_cap_sent = false;
+		cl.vr_gorilla_cap_sent = false;
+		cl.vr_gorilla_motion_generation_valid = false;
+	}
+	if (!cl.vr_gorilla_supported || cl.vr_gorilla_allowed != (allowed != 0))
 	{
 		cl.vr_gorilla_state_valid = false;
 		cl.vr_gorilla_state_sequence = -1;
 		cl.vr_gorilla_motion_generation_valid = false;
 		memset (&cl.vr_gorilla_state, 0, sizeof (cl.vr_gorilla_state));
 	}
+	if (vr_gorilla.value && V_TrackedSessionActive () &&
+		(!cl.vr_gorilla_supported || cl.vr_gorilla_allowed != (allowed != 0)))
+		Con_Printf (allowed ? "Gorilla movement enabled by this server.\n" :
+			"Gorilla movement is off on this server; using normal movement.\n");
 	cl.vr_gorilla_supported = true;
-	cl.vr_gorilla_allowed = (qboolean)allowed;
+	cl.vr_gorilla_allowed = allowed != 0;
 	CL_QueueGorillaCapability ();
 }
 
