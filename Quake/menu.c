@@ -4655,7 +4655,12 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_VOICE_CHAT, "Open");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_GORILLA, "Gorilla Movement");
-	M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_GORILLA, vr_gorilla.value != 0);
+	/* Opted in, but this server keeps players on ordinary movement. */
+	if (vr_gorilla.value != 0 && cls.state == ca_connected && cls.signon == SIGNONS &&
+		(!cl.vr_gorilla_supported || !cl.vr_gorilla_allowed))
+		M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_GORILLA, "server off");
+	else
+		M_DrawCheckbox (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_GORILLA, vr_gorilla.value != 0);
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MENU_SCALE, "Menu Scale");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MENU_SCALE, va ("%.2f", vr_menu_scale.value));

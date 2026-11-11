@@ -183,7 +183,10 @@ static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "1", CVAR_SERVER
 extern cvar_t sv_gameplayfix_elevators;
 static void SV_AddSkyRoomPVS (const vec3_t org, qmodel_t *worldmodel);
 
-cvar_t sv_gorilla = {"sv_gorilla", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
+/* -1 (default): allowed only in a local single-player game, off on
+ * multiplayer servers; 0: always off; 1: allowed. Off makes opted-in VR
+ * players fall back to ordinary movement. */
+cvar_t sv_gorilla = {"sv_gorilla", "-1", CVAR_NOTIFY | CVAR_SERVERINFO};
 cvar_t sv_gorilla_trustclient = {"sv_gorilla_trustclient", "1", CVAR_NOTIFY | CVAR_SERVERINFO};
 static cvar_t sv_weapon_collision = {"sv_weapon_collision", "-1", CVAR_NOTIFY | CVAR_SERVERINFO};
 /* Keep the first stock-axe adapter explicitly enabled until physical swing
@@ -203,6 +206,13 @@ static void SV_GorillaPolicyChanged (cvar_t *var)
 	Host_Callback_Notify (var);
 	for (i = 0; svs.clients && i < svs.maxclients; i++)
 		svs.clients[i].vr_gorilla_last_advertised = -1;
+}
+
+qboolean SV_GorillaAllowed (void)
+{
+	return sv_gorilla.value < 0.0f ?
+		(cls.state != ca_dedicated && svs.maxclients == 1) :
+		(sv_gorilla.value > 0.0f);
 }
 
 qboolean SV_VRWeaponCollisionEnabled (void)
@@ -2046,7 +2056,7 @@ static qboolean SV_GorillaAckOriginMatchesOwner (const client_t *client)
 static qboolean SV_PrivateMoveHasPusherPalm (const client_t *client)
 {
 	const vr_gorilla_state_t *state = &client->vr_gorilla_state;
-	if (!sv_gorilla.value || !client->vr_gorilla_capable || !state->initialized)
+	if (!SV_GorillaAllowed () || !client->vr_gorilla_capable || !state->initialized)
 		return false;
 	for (int hand = 0; hand < 2; ++hand)
 	{
@@ -2159,7 +2169,7 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			client->private_move_mode_epoch++;
 			client->private_move_published_authority = authority;
 		}
-		gorilla_ack = selected_engine && sv_gorilla.value && client->vr_gorilla_capable &&
+		gorilla_ack = selected_engine && SV_GorillaAllowed () && client->vr_gorilla_capable &&
 			client->vr_gorilla_state.initialized &&
 			client->vr_gorilla_cursor_valid && client->vr_gorilla_last_sequence >= 0 &&
 			client->vr_gorilla_last_sequence == client->private_completed_move &&
@@ -2200,12 +2210,16 @@ static qboolean SVFTE_WriteEntitiesToClient (client_t *client, sizebuf_t *msg,
 			ack_flags |= MOVEACK_FLAG_DISCONTINUITY;
 		if (gorilla_ack)
 			ack_flags |= MOVEACK_FLAG_VR_GORILLA;
+		if (SV_GorillaOwnerEligible (client))
+			ack_flags |= MOVEACK_FLAG_GORILLA_TRUSTED;
 		MSG_WriteShort (msg, (client->private_completed_move & 0xffff));
 		MSG_WriteByte (msg, ack_flags);
 		MSG_WriteByte (msg, authority);
 		MSG_WriteShort (msg, client->private_move_mode_epoch);
 		MSG_WriteShort (msg, client->private_move_discontinuity_epoch);
 		MSG_WriteByte (msg, client->private_move_discontinuity_reason);
+		if (ack_flags & MOVEACK_FLAG_GORILLA_TRUSTED)
+			MSG_WriteLong (msg, (int)client->vr_gorilla_owner_generation);
 		if (gorilla_ack)
 			SV_WriteGorillaAckState (client, msg);
 	}
@@ -3417,6 +3431,8 @@ void SV_SendServerinfo (client_t *client)
 
 	SV_ResetPrivateVRContactState (client);
 	client->vr_gorilla_capable = false;
+	client->vr_gorilla_owner_capable = false;
+	client->vr_gorilla_owner_applied = false;
 	client->vr_gorilla_last_advertised = -1;
 	client->vr_instant_stop_offered = false;
 	client->vr_instant_stop_capable = false;
@@ -4813,6 +4829,10 @@ qboolean SV_SendClientDatagram (client_t *client)
 				SV_DropClient (false);
 				return false;
 			}
+			/* A monke owner simulates its own body with the same constants;
+			 * a missing update only pauses its owner movement. */
+			if (!SV_PrivateWalkTrialSelected (client) && SV_GorillaOwnerEligible (client))
+				SVFTE_WritePrivateMoveStats (client, &msg);
 			if (!SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf), false, frame))
 			{
 				Con_Printf ("%s: dropping selected private WALK client: mandatory owner snapshot cannot fit\n", client->name);
@@ -4850,6 +4870,8 @@ qboolean SV_SendClientDatagram (client_t *client)
 					SV_DropClient (false);
 					return false;
 				}
+				if (!SV_PrivateWalkTrialSelected (client) && SV_GorillaOwnerEligible (client))
+					SVFTE_WritePrivateMoveStats (client, &msg);
 				if (!SVFTE_WriteEntitiesToClient (client, &msg, sizeof (buf), true, frame))
 				{
 					Con_Printf ("%s: dropping selected private WALK client: mandatory owner snapshot cannot fit or optional update cannot advance\n", client->name);
@@ -5311,7 +5333,7 @@ static void SV_AppendGorillaProtocol (client_t *client)
 
 	/* The default owner consumes raw hands in the native frame; the opt-in
 	 * stock WALK trial consumes them through its command-time PMove owner. */
-	enabled = sv_gorilla.value != 0.0f;
+	enabled = !SV_GorillaAllowed () ? 0 : sv_gorilla_trustclient.value ? 2 : 1;
 	if (client->vr_gorilla_last_advertised == enabled ||
 		client->message.overflowed || client->message.cursize < 0 ||
 		client->message.maxsize <= 0 ||
@@ -6304,6 +6326,8 @@ void SV_SpawnServer (const char *server)
 		SV_ResetPrivateCommandQueue (&svs.clients[i]);
 		SV_ResetPrivateVRContactState (&svs.clients[i]);
 		svs.clients[i].vr_gorilla_capable = false;
+		svs.clients[i].vr_gorilla_owner_capable = false;
+		svs.clients[i].vr_gorilla_owner_applied = false;
 		svs.clients[i].vr_gorilla_last_advertised = -1;
 		svs.clients[i].vr_instant_stop_offered = false;
 		svs.clients[i].vr_instant_stop_capable = false;

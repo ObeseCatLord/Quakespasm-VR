@@ -3812,6 +3812,9 @@ static void SV_ApplyPrivateRoomScaleMove (edict_t *ent, client_t *client)
 
 	VectorCopy (client->cmd.vr_roomscalemove, move);
 	VectorCopy (vec3_origin, client->cmd.vr_roomscalemove);
+	/* A monke owner's own simulation already includes its head movement. */
+	if (SV_GorillaOwnerCommand (client))
+		return;
 	if (!client->cmd.vr_active || ent->v.movetype == MOVETYPE_NONE ||
 		host_frametime <= 0)
 		return;
@@ -3881,9 +3884,9 @@ static void SV_PrivateInstantStopBeforeQC (edict_t *ent, client_t *client,
 		!PM_VRInstantStopNeutralInput (command,
 			qcvm->time < ent->v.teleport_time))
 		return;
-	if (client->vr_gorilla_capable && sv_gorilla.value &&
+	if (client->vr_gorilla_capable && SV_GorillaAllowed () &&
 		(((command->vr_gorilla.flags & VR_GORILLA_HANDS) == VR_GORILLA_HANDS) ||
-		 (command->vr_gorilla_motion.flags & VR_GORILLA_MOTION_ACTIVE)))
+		 (command->vr_gorilla_motion.flags & VR_GORILLA_OWNER_ACTIVE)))
 		return;
 	if (!SV_PrivateInstantStopHasGround (ent))
 		return;
@@ -9365,8 +9368,6 @@ static const char *SV_PrivateWalkTrialOwnerStateError (edict_t *ent, client_t *c
 		 (ent->v.nextthink > 0 &&
 		  (ent->v.think <= 0 || ent->v.think >= (func_t)qcvm->progs->numfunctions))))
 		return "invalid scheduled Think";
-	if (cmd && cmd->vr_gorilla_motion.flags)
-		return "trusted Gorilla motion is outside the raw trial";
 	if (cmd && cmd->vr_gorilla.flags &&
 		!VRG_InputValid (&cmd->vr_gorilla))
 		return "invalid raw Gorilla input";
@@ -10391,7 +10392,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		memset (&command, 0, sizeof (command));
 		VectorCopy (ent->v.v_angle, command.viewangles);
 	}
-	if (!client->vr_gorilla_capable || !sv_gorilla.value)
+	if (!client->vr_gorilla_capable || !SV_GorillaAllowed ())
 		SV_ResetGorillaClient (client);
 	if (run_command && client->vr_gorilla_cursor_valid &&
 		(int)command.sequence > client->vr_gorilla_last_sequence + 1)
@@ -10406,7 +10407,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		goto cleanup;
 	if (!cooperative_qc && run_command && (!SV_PrivateWalkTrialBuildMoveVars (client, &trial_movevars) ||
 		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
-			client->vr_gorilla_capable && sv_gorilla.value ?
+			client->vr_gorilla_capable && SV_GorillaAllowed () ?
 				&command : NULL, bounds)))
 	{
 		failure = "PMove preflight failed";
@@ -10834,7 +10835,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		goto cleanup;
 	if (!SV_PrivateWalkTrialBuildMoveVars (client, &trial_movevars) ||
 		!SV_PrivateWalkTrialCollect (ent, &trial_movevars, seconds,
-			client->vr_gorilla_capable && sv_gorilla.value ?
+			client->vr_gorilla_capable && SV_GorillaAllowed () ?
 				&command : NULL, bounds))
 	{
 		failure = "post-QC physent collection failed";
@@ -10861,7 +10862,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	pmove.cmd.msec = command.msec;
 	pmove.cmd.impulse = command.impulse;
 	if (gorilla_command_cutoff || !client->vr_gorilla_capable ||
-		!sv_gorilla.value)
+		!SV_GorillaAllowed ())
 		memset (&pmove.cmd.vr_gorilla, 0, sizeof (pmove.cmd.vr_gorilla));
 	VectorClear (pmove.cmd.vr_roomscalemove);
 	VectorCopy (ent->v.origin, pmove.origin);
@@ -10882,9 +10883,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	pmove.onladder = false;
 	pmove.safeorigin_known = false;
 	pmove.gorilla_allowed = client->vr_gorilla_capable &&
-		sv_gorilla.value != 0.0f && !gorilla_command_cutoff;
+		SV_GorillaAllowed () && !gorilla_command_cutoff;
 	pmove.gorilla_prepared = false;
-	pmove.gorilla_authoring = false;
 	pmove.gorilla = client->vr_gorilla_state;
 	pmove.numtouch = 0;
 	pmove.onground = false;
@@ -11205,7 +11205,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	 * result as the baseline for a later replay command. */
 	if (!native_boundary_completed && !gorilla_command_cutoff &&
 		client->vr_gorilla_capable &&
-		sv_gorilla.value &&
+		SV_GorillaAllowed () &&
 		client->vr_gorilla_reset_generation == gorilla_reset_generation)
 	{
 		vec3_t callback_delta;
@@ -11426,6 +11426,106 @@ static qboolean SV_GorillaTouchButtons (client_t *client, const int contacts[2])
 	return true;
 }
 
+/* Accept the monke owner's reported body state in place of the native move.
+ * The report must descend from the current resync epoch, stay within the
+ * server's velocity limit, and be reachable by the unchanged hull; QuakeC,
+ * triggers and damage remain server-owned.  Anything the server does to the
+ * body itself (teleporters, knockback, QC jumps, pushers) is detected here
+ * and starts a new epoch, so the client reseeds from the server's state.
+ * Returns true when the report replaced the native move this frame. */
+static qboolean SV_GorillaOwnerApply (edict_t *ent, client_t *client)
+{
+	const vr_gorilla_motion_t *report = &client->cmd.vr_gorilla_motion;
+	vec3_t delta, target, below;
+	trace_t trace;
+	float allowed;
+	const char *reason = "";
+
+	if (!SV_GorillaOwnerEligible (client))
+	{
+		if (client->vr_gorilla_owner_applied)
+			SV_GorillaOwnerResync (client);
+		return false;
+	}
+	if (!SV_GorillaOwnerCommand (client))
+	{
+		client->vr_gorilla_owner_applied = false;
+		return false;
+	}
+	if (client->vr_gorilla_owner_applied)
+	{
+		VectorSubtract (ent->v.origin, client->vr_gorilla_owner_origin, delta);
+		if (VectorLength (delta) > 0.5f)
+		{
+			reason = "server moved the body";
+			goto resync;
+		}
+		VectorSubtract (ent->v.velocity, client->vr_gorilla_owner_velocity, delta);
+		if (VectorLength (delta) > 1.0f)
+		{
+			reason = "server changed velocity";
+			goto resync;
+		}
+	}
+	VectorCopy (report->origin, target);
+	VectorSubtract (target, ent->v.origin, delta);
+	allowed = fmaxf (sv_maxvelocity.value, VR_GORILLA_OWNER_MAX_SPEED * 0.25f) *
+		fmaxf ((float)host_frametime, 0.05f) + 32.0f;
+	if (VectorLength (delta) > allowed)
+	{
+		reason = "report too far";
+		goto resync;
+	}
+	trace = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, target,
+		MOVE_NORMAL, ent);
+	if (trace.allsolid)
+	{
+		reason = "body stuck";
+		goto resync;
+	}
+	if (trace.fraction < 1)
+	{
+		/* Small mismatches (sliding into a corner) settle at the contact;
+		 * anything larger is a disagreement the server resolves. */
+		VectorSubtract (target, trace.endpos, delta);
+		VectorCopy (trace.endpos, ent->v.origin);
+		if (VectorLength (delta) > 2.0f)
+		{
+			reason = "report blocked by collision";
+			goto resync;
+		}
+	}
+	else
+		VectorCopy (target, ent->v.origin);
+	VectorCopy (report->velocity, ent->v.velocity);
+	SV_CheckVelocity (ent);
+
+	ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+	if (report->flags & VR_GORILLA_OWNER_ONGROUND)
+	{
+		VectorCopy (ent->v.origin, below);
+		below[2] -= 2.0f;
+		trace = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, below,
+			MOVE_NORMAL, ent);
+		if (trace.fraction < 1 && trace.plane.normal[2] > 0.7f && trace.ent)
+		{
+			ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
+			ent->v.groundentity = EDICT_TO_PROG (trace.ent);
+		}
+	}
+	SV_CheckWater (ent);
+	VectorCopy (ent->v.origin, client->vr_gorilla_owner_origin);
+	VectorCopy (ent->v.velocity, client->vr_gorilla_owner_velocity);
+	client->vr_gorilla_owner_applied = true;
+	return true;
+
+resync:
+	Con_DPrintf ("%s: monke owner resync %u: %s\n", client->name,
+		client->vr_gorilla_owner_generation + 1, reason);
+	SV_GorillaOwnerResync (client);
+	return false;
+}
+
 /* Drain the existing private command FIFO before the one native WALK/FLY
  * physics pass. The hand solver only adds constraints/impulses; it does not
  * take over the server frame, QuakeC lifecycle, or movement clock. */
@@ -11443,7 +11543,7 @@ static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
 		(gravity_field && gravity_field->_float ? gravity_field->_float : 1);
 
 	if (!client->vr_gorilla_capable || client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
-		!sv_gorilla.value || ent->free || ent->v.health <= 0)
+		!SV_GorillaAllowed () || ent->free || ent->v.health <= 0)
 	{
 		SV_ResetGorillaClient (client);
 		*swim_intent = false;
@@ -11634,7 +11734,7 @@ static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
 		 * dispatch retains that pre-Think type unless Gorilla reselects. */
 		movetype = dispatch_movetype = MOVETYPE_WALK;
 		gorilla_dispatch = client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
-			client->vr_gorilla_capable && sv_gorilla.value;
+			client->vr_gorilla_capable && SV_GorillaAllowed ();
 		VectorCopy (ent->v.origin, callback_origin);
 		goto after_weapon_think;
 	}
@@ -11699,7 +11799,7 @@ after_prethink:
 	movetype = (int)ent->v.movetype;
 	dispatch_movetype = movetype;
 	gorilla_dispatch = client->protocol_qsvr == QSVR_PROTOCOL_PINNED &&
-		client->vr_gorilla_capable && sv_gorilla.value;
+		client->vr_gorilla_capable && SV_GorillaAllowed ();
 	SV_VRMeleeRefreshTriggerSuppression (client, ent,
 		&client->cmd, &suppress_trigger);
 	VectorCopy (ent->v.origin, callback_origin);
@@ -11772,6 +11872,11 @@ after_weapon_think:
 	VectorSubtract (ent->v.origin, callback_origin, callback_delta);
 	if (VectorLength (callback_delta) > .01f)
 		SV_GorillaInvalidateAccepted (client);
+	if (SV_GorillaOwnerApply (ent, client))
+	{
+		SV_ResetGorillaClient (client);
+		goto after_native_move;
+	}
 	if ((int)ent->v.movetype == MOVETYPE_WALK ||
 		(int)ent->v.movetype == MOVETYPE_FLY)
 	{

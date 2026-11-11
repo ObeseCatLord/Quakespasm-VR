@@ -8,6 +8,9 @@
 #define VR_GORILLA_MAX_REACH 112.0f
 #define VR_GORILLA_MAX_HAND_SPEED 600.0f
 #define VR_GORILLA_RADIUS 3.0f
+/* Stick walking keeps working at 20% speed while hand movement is active
+ * (Ancient Dungeon VR monke mode).  Shared by server and prediction. */
+#define VR_GORILLA_STICK_SCALE 0.2f
 #define VR_GORILLA_EYE_HEIGHT 28.0f /* above unchanged hull feet at activation */
 
 typedef struct {
@@ -31,19 +34,20 @@ typedef struct {
   float origin[3];           /* last processed body baseline; reset on warp */
 } vr_gorilla_state_t;
 
-/* Command-owned result of local hand locomotion. This is deliberately not
- * total body velocity/position: native forces and collision remain native. */
-#define VR_GORILLA_MOTION_ACTIVE 1
-#define VR_GORILLA_MOTION_BRACED 2
-#define VR_GORILLA_MOTION_SWIM 4
-#define VR_GORILLA_MOTION_LAUNCHED 8
-#define VR_GORILLA_MOTION_FLAGS 15
+/* Owner-authoritative ("monke owner") body state, as Ancient Dungeon VR does
+ * with its per-player state authority: the opted-in client simulates its own
+ * body and reports the result; the server validates, applies it, and keeps
+ * QuakeC/triggers.  generation is the server resync epoch the state descends
+ * from; reports from an older epoch are ignored. */
+#define VR_GORILLA_OWNER_ACTIVE 1
+#define VR_GORILLA_OWNER_ONGROUND 2
+#define VR_GORILLA_OWNER_FLAGS 3
+#define VR_GORILLA_OWNER_MAX_SPEED 4096.0f
+#define VR_GORILLA_OWNER_MAX_COORD 262144.0f
 typedef struct {
   unsigned int generation;
   unsigned char flags;
-  float displacement[3], impulse[3];
-  int contact[2];
-  unsigned int contact_model[2];
+  float origin[3], velocity[3];
 } vr_gorilla_motion_t;
 
 #endif

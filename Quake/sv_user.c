@@ -499,7 +499,7 @@ qboolean SV_GorillaEligible (client_t *client)
 	if (!client || !client->active || !client->spawned ||
 		(SV_PrivateWalkTrialSelected (client) && !client->private_move_native_frame) ||
 		client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
-		!client->vr_gorilla_capable || !sv_gorilla.value || sv.paused ||
+		!client->vr_gorilla_capable || !SV_GorillaAllowed () || sv.paused ||
 		(client->cmd.vr_gorilla.flags & VR_GORILLA_HANDS) != VR_GORILLA_HANDS)
 		return false;
 	ent = client->edict;
@@ -513,6 +513,46 @@ qboolean SV_GorillaEligible (client_t *client)
 		((int)ent->v.movetype == MOVETYPE_WALK ||
 		 (int)ent->v.movetype == MOVETYPE_FLY) &&
 		!client->vr_gorilla_ladder_frame && !SV_GorillaNativeLadder (ent);
+}
+
+/* Owner-authoritative monke movement: the opted-in client simulates its own
+ * body (Ancient Dungeon gives each player state authority over themselves).
+ * Only an alive WALK body outside the predicted PMove trial qualifies. */
+qboolean SV_GorillaOwnerEligible (client_t *client)
+{
+	edict_t *ent;
+	eval_t *customphysics;
+	if (!client || !client->active || !client->spawned ||
+		client->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!client->vr_gorilla_capable || !client->vr_gorilla_owner_capable ||
+		!SV_GorillaAllowed () || !sv_gorilla_trustclient.value || sv.paused ||
+		SV_PrivateWalkTrialSelected (client) || qcvm->extfuncs.SV_RunClientCommand)
+		return false;
+	ent = client->edict;
+	if (!ent || ent->free || ent->v.health <= 0 || ent->v.deadflag ||
+		(int)ent->v.movetype != MOVETYPE_WALK)
+		return false;
+	customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
+	return !(customphysics && customphysics->function);
+}
+
+/* The latest command carries owner state for the current resync epoch. */
+qboolean SV_GorillaOwnerCommand (client_t *client)
+{
+	return SV_GorillaOwnerEligible (client) &&
+		(client->cmd.vr_gorilla_motion.flags & VR_GORILLA_OWNER_ACTIVE) &&
+		client->cmd.vr_gorilla_motion.generation == client->vr_gorilla_owner_generation &&
+		realtime - client->lastmovetime <= 0.25;
+}
+
+/* The server moved the body itself (or rejected a report): reports from the
+ * old epoch are ignored until the client reseeds from the server's state. */
+void SV_GorillaOwnerResync (client_t *client)
+{
+	if (!client)
+		return;
+	client->vr_gorilla_owner_generation++;
+	client->vr_gorilla_owner_applied = false;
 }
 
 static void SV_ConsumeClientMove (void)
@@ -573,7 +613,11 @@ static void SV_GorillaConsumeDeferredMove (client_t *client,
 	sv_player = client->edict;
 	cmd = client->cmd;
 	if (gorilla)
-		cmd.forwardmove = cmd.sidemove = cmd.upmove = 0;
+	{
+		cmd.forwardmove *= VR_GORILLA_STICK_SCALE;
+		cmd.sidemove *= VR_GORILLA_STICK_SCALE;
+		cmd.upmove = 0;
+	}
 	sv_gorilla_swim_intent = gorilla && swim_intent;
 	onground = (int)sv_player->v.flags & FL_ONGROUND;
 	origin = sv_player->v.origin;
@@ -631,6 +675,9 @@ void SV_ClientThink (void)
 	if (qcvm->extfuncs.SV_RunClientCommand)
 		return;
 	cmd = host_client->cmd;
+	/* The owner client already integrated its own stick input. */
+	if (SV_GorillaOwnerCommand (host_client))
+		return;
 	if (SV_GorillaEligible (host_client))
 	{
 		host_client->vr_gorilla_move_deferred = true;
@@ -710,16 +757,6 @@ qboolean SV_ReadPrivateUsercmd (usercmd_t *readcmd, unsigned int sequence,
 		msg_badread = true;
 		return false;
 	}
-	/* Raw palms carry their own body-relative head and hand positions. They
-	 * need no weapon pose, unlike authored trusted motion for now. */
-	if ((extbits & MOVEEXT_GORILLA_TRUSTED) != 0 &&
-		(extbits & (MOVEEXT_VR | MOVEEXT_VR_RELATIVE)) !=
-			(MOVEEXT_VR | MOVEEXT_VR_RELATIVE))
-	{
-		msg_badread = true;
-		return false;
-	}
-
 	if ((extbits & MOVEEXT_GORILLA_TRUSTED) &&
 		((extbits & MOVEEXT_VR_GORILLA) ||
 		 !(capabilities & QSVR_MOVE_CAP_GORILLA_TRUSTED)))
@@ -973,41 +1010,24 @@ qboolean SV_ReadPrivateUsercmd (usercmd_t *readcmd, unsigned int sequence,
 		vr_gorilla_motion_t *motion = &readcmd->vr_gorilla_motion;
 		int flags;
 
-		if (net_message.cursize - msg_readcount < 13)
+		if (net_message.cursize - msg_readcount < 29)
 		{
 			msg_badread = true;
 			return false;
 		}
 		flags = MSG_ReadByte ();
-		motion->flags = flags & VR_GORILLA_MOTION_FLAGS;
+		motion->flags = (unsigned char)flags;
 		motion->generation = (unsigned int)MSG_ReadLong ();
-		for (i = 0; i < 2; ++i)
-		{
-			motion->contact[i] = (MSG_ReadShort () & 0xffff) - 1;
-			motion->contact_model[i] = MSG_ReadShort () & 0xffff;
-			if (motion->contact[i] >= MAX_EDICTS ||
-				motion->contact_model[i] >= QSVR_MODEL_LIMIT ||
-				(motion->contact[i] < 0 && motion->contact_model[i]))
-				msg_badread = true;
-		}
-		if ((flags & ~63) || !(flags & VR_GORILLA_MOTION_ACTIVE) ||
-			net_message.cursize - msg_readcount <
-				((flags & 16) ? 12 : 0) + ((flags & 32) ? 12 : 0))
-		{
-			msg_badread = true;
-			return false;
-		}
-		if (flags & 16)
-			for (i = 0; i < 3; ++i)
-				motion->displacement[i] = MSG_ReadFloat ();
-		if (flags & 32)
-			for (i = 0; i < 3; ++i)
-				motion->impulse[i] = MSG_ReadFloat ();
 		for (i = 0; i < 3; ++i)
-			if (!isfinite (motion->displacement[i]) ||
-				!isfinite (motion->impulse[i]) ||
-				fabsf (motion->displacement[i]) > 64 ||
-				fabsf (motion->impulse[i]) > 1024)
+			motion->origin[i] = MSG_ReadFloat ();
+		for (i = 0; i < 3; ++i)
+			motion->velocity[i] = MSG_ReadFloat ();
+		if ((flags & ~VR_GORILLA_OWNER_FLAGS) || !(flags & VR_GORILLA_OWNER_ACTIVE))
+			msg_badread = true;
+		for (i = 0; i < 3; ++i)
+			if (!isfinite (motion->origin[i]) || !isfinite (motion->velocity[i]) ||
+				fabsf (motion->origin[i]) > VR_GORILLA_OWNER_MAX_COORD ||
+				fabsf (motion->velocity[i]) > VR_GORILLA_OWNER_MAX_SPEED)
 				msg_badread = true;
 	}
 	return !msg_badread;
@@ -1474,7 +1494,11 @@ static qboolean SV_ReadPrivateClientMove (void)
 		sequence -= 0x10000;
 	else if (last - sequence > 0x8000)
 		sequence += 0x10000;
-	if (!SV_ReadPrivateUsercmd (&readcmd, sequence, sv.protocolflags, 0))
+	/* Owner reports parse for any Gorilla-negotiated peer; applying them is
+	 * separately gated (SV_GorillaOwnerCommand), so a report in flight across
+	 * a policy change is ignored rather than treated as a malformed packet. */
+	if (!SV_ReadPrivateUsercmd (&readcmd, sequence, sv.protocolflags,
+		host_client->vr_gorilla_capable ? QSVR_MOVE_CAP_GORILLA_TRUSTED : 0))
 		return false;
 	if (sequence <= last)
 		return true;
@@ -1493,9 +1517,9 @@ static qboolean SV_ReadPrivateClientMove (void)
 		if (!SV_PrivateWalkTrialTerminalState (host_client) &&
 			!SV_PrivateWalkTrialStateValid (host_client))
 			return false;
-		if (readcmd.vr_gorilla_motion.flags)
-			return SV_PrivateWalkTrialFail (host_client,
-				"trusted Gorilla motion is outside the raw trial");
+		/* The selected PMove owner predicts raw hands itself. A late owner
+		 * report from before selection reached the client is just dropped. */
+		memset (&readcmd.vr_gorilla_motion, 0, sizeof (readcmd.vr_gorilla_motion));
 	}
 
 	/* A long arrival gap starts a new queue epoch, then this fresh command may
@@ -1783,6 +1807,7 @@ static qboolean SV_HandleGorillaCapability (const char *s)
 {
 	static const char command[] = "vr_gorilla_cap";
 	const char *value = s;
+	qboolean owner;
 
 	while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
 		value++;
@@ -1797,8 +1822,9 @@ static qboolean SV_HandleGorillaCapability (const char *s)
 	value += sizeof (command) - 1;
 	while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
 		value++;
-	if (*value != '1')
+	if (*value != '1' && *value != '2')
 		return true;
+	owner = *value == '2';
 	value++;
 	while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
 		value++;
@@ -1807,6 +1833,9 @@ static qboolean SV_HandleGorillaCapability (const char *s)
 		return true;
 
 	host_client->vr_gorilla_capable = true;
+	if (owner && !host_client->vr_gorilla_owner_capable)
+		SV_GorillaOwnerResync (host_client);
+	host_client->vr_gorilla_owner_capable = owner;
 	return true;
 }
 

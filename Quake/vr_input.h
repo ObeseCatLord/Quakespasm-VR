@@ -83,6 +83,9 @@ int VR_InputDominantPhysicalHand (void);
 /* The input owner's identity/profile/neutral gate for a physical XR hand. */
 qboolean VR_InputPhysicalHandAccepted (const vrxr_frame_t *frame, int physical_hand);
 extern cvar_t vr_weapon_collision;
+extern cvar_t vr_gorilla;
+qboolean VR_GorillaActive (void);
+void VR_InputTestGorillaHands (usercmd_t *cmd);
 qboolean VR_WeaponCollisionAuthorized (void);
 /* Selected gesture-mode melee policy; independent of current hand tracking. */
 qboolean VR_InputGestureMeleeActive (void);

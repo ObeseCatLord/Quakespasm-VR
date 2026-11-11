@@ -80,6 +80,10 @@ static cvar_t vr_joystick_axis_exponent = {"vr_joystick_axis_exponent", "1", CVA
 static cvar_t vr_joystick_deadzone_trunc = {"vr_joystick_deadzone_trunc", "1", CVAR_ARCHIVE};
 static cvar_t vr_movement_mode = {"vr_movement_mode", "0", CVAR_ARCHIVE};
 cvar_t vr_gorilla = {"vr_gorilla", "0", CVAR_ARCHIVE};
+/* Developer test aid (needs "developer 1"): without a headset, 1 supplies idle
+ * hands at the body's sides, 2 a scripted knuckle-walk, so monke networking
+ * can be exercised on desktop. Never archived. */
+static cvar_t vr_gorilla_test_hands = {"vr_gorilla_test_hands", "0", CVAR_NONE};
 static cvar_t vr_movement_speed = {"vr_movement_speed", "1", CVAR_ARCHIVE};
 static cvar_t vr_snap_turn = {"vr_snap_turn", "0", CVAR_ARCHIVE};
 static cvar_t vr_180_snap_turn = {"vr_180_snap_turn", "1", CVAR_ARCHIVE};
@@ -96,9 +100,23 @@ qboolean VR_InputVRIKAllowed (void)
 	return vr_vrik.value != 0.0f && (!game || q_strcasecmp (game, "enyo"));
 }
 
+/* A VR player opted into hand (monke) movement and this server permits it.
+ * The option does nothing outside a live VR session: desktop play, and VR
+ * players on refusing servers, keep ordinary movement and weapon behavior.
+ * (The developer test aid stands in for a headset on desktop.) */
+qboolean VR_GorillaActive (void)
+{
+	return vr_gorilla.value != 0.0f && cl.vr_gorilla_supported &&
+		cl.vr_gorilla_allowed && cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+		(V_TrackedSessionActive () ||
+		 (developer.value && vr_gorilla_test_hands.value));
+}
+
+/* Hand movement plants palms on floors and walls; retracting the held
+ * weapon/hand away from geometry would fight that, so it is off meanwhile. */
 qboolean VR_WeaponCollisionAuthorized (void)
 {
-	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED &&
+	return cl.protocol_qsvr == QSVR_PROTOCOL_PINNED && !VR_GorillaActive () &&
 		(cl.vr_weapon_contact_mode & VR_WEAPON_CONTACT_CAP_COLLISION) != 0 &&
 		vr_weapon_collision.value != 0.0f &&
 		!VR_WeaponMenu_IsOpenVR () &&
@@ -4236,6 +4254,7 @@ void VR_InputInit (void)
 	Cvar_RegisterVariable (&vr_joystick_deadzone_trunc);
 	Cvar_RegisterVariable (&vr_movement_mode);
 	Cvar_RegisterVariable (&vr_gorilla);
+	Cvar_RegisterVariable (&vr_gorilla_test_hands);
 	Cvar_RegisterVariable (&vr_movement_speed);
 	Cvar_RegisterVariable (&vr_snap_turn);
 	Cvar_RegisterVariable (&vr_180_snap_turn);
@@ -5457,6 +5476,42 @@ qboolean VR_InputSuppressUncalibratedAttack (const usercmd_t *cmd)
 		V_TrackedSessionActive () && VR_InputControllerAim () &&
 		cl.stats[STAT_HEALTH] > 0 &&
 		(!cmd->vr_active || !cmd->vr_handpos_relative);
+}
+
+void VR_InputTestGorillaHands (usercmd_t *cmd)
+{
+	if (!cmd || !vr_gorilla_test_hands.value || !developer.value ||
+		cmd->vr_gorilla.flags || !VR_GorillaActive ())
+		return;
+	memset (&cmd->vr_gorilla, 0, sizeof (cmd->vr_gorilla));
+	cmd->vr_gorilla.flags = VR_GORILLA_HANDS;
+	cmd->vr_gorilla.hand[0][1] = 10.0f;
+	cmd->vr_gorilla.hand[1][1] = -10.0f;
+	if (vr_gorilla_test_hands.value >= 2)
+	{
+		/* Knuckle-walk along +x: palms planted on the floor sweep back for
+		 * 0.6s, then lift and swing forward for 0.4s. */
+		const float t = (float)fmod (realtime, 1.0);
+		float x, z, vx;
+		if (t < 0.6f)
+		{
+			x = 20.0f - 40.0f * (t / 0.6f);
+			z = -22.5f;
+			vx = -40.0f / 0.6f;
+		}
+		else
+		{
+			x = -20.0f + 40.0f * ((t - 0.6f) / 0.4f);
+			z = -10.0f;
+			vx = 40.0f / 0.4f;
+		}
+		cmd->vr_gorilla.hand[0][0] = cmd->vr_gorilla.hand[1][0] = x;
+		cmd->vr_gorilla.hand[0][2] = cmd->vr_gorilla.hand[1][2] = z;
+		cmd->vr_gorilla.velocity[0][0] = cmd->vr_gorilla.velocity[1][0] = vx;
+		return;
+	}
+	cmd->vr_gorilla.head[2] = 20.0f;
+	cmd->vr_gorilla.hand[0][2] = cmd->vr_gorilla.hand[1][2] = -4.0f;
 }
 
 void VR_InputCommitGorillaCommand (const usercmd_t *cmd)
