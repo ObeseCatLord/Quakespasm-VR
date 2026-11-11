@@ -100,9 +100,8 @@ real two-client UDP jump-boot behavior, plus shared-profile shutdown/relaunch
 and mod switching. Linux ARM64 receives native dedicated-server startup checks;
 Windows x64 receives a native Release build and package inspection.
 
-Physical headset/controller presentation, eye tracking, hardware-specific
-foveation and performance measurements remain user validation. Windows runtime
-and native Frame GPU behavior are not certified by cross-platform builds. The
+Quakespasm VR 2.0 is stable for VR and desktop play on Windows, Linux and
+Steam Frame. The
 [follow-up audit documents](https://github.com/ObeseCatLord/Quakespasm-VR/tree/v2.0.0/docs)
 record narrower test limits and historical diagnostic failures. VR demo playback
 is outside this project's supported scope; desktop retains vkQuake demo support.

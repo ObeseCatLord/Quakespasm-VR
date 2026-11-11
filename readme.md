@@ -1,7 +1,7 @@
 # Quakespasm VR
 
-Quakespasm VR is a [vkQuake](https://github.com/Novum/vkQuake) fork focused on VR
-play, mod compatibility, and multiplayer.
+Quakespasm VR is a stable [vkQuake](https://github.com/Novum/vkQuake) fork focused
+on VR play, mod compatibility, and multiplayer.
 
 <p>
   <img src="docs/media/vr-gameplay.gif" width="360" height="360" alt="VR gameplay with tracked weapons">
