@@ -444,6 +444,7 @@ typedef struct
 	qboolean						 non_solid_fill;
 	qboolean						 multi_draw_indirect;
 	qboolean						 screen_effects_sops;
+	qboolean						 ssao_broken;
 	qboolean						 shader_float16;
 	qboolean						 openxr_vulkan_available;
 	qboolean						 openxr_multiview_available;

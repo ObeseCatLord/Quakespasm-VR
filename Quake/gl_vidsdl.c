@@ -3643,7 +3643,8 @@ static qboolean GL_CreateSwapChain (qboolean mirror)
 
 #if defined(VK_KHR_present_wait2)
 	swapchain_present_wait = false;
-	if (vulkan_globals.present_wait && !mirror)
+	// Present IDs and waits are only needed for frame pacing with vsync enabled.
+	if (vulkan_globals.present_wait && !mirror && (vid_vsync.value > 0))
 	{
 		ZEROED_STRUCT (VkSurfaceCapabilitiesPresentId2KHR, present_id_2_capabilities);
 		present_id_2_capabilities.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_PRESENT_ID_2_KHR;
@@ -5840,9 +5841,11 @@ static void GL_EndRenderingTask (end_rendering_parms_t *parms)
 	frame_submitted[cb_index] = true;
 	openxr_frame_submitted = vulkan_globals.stereo_active;
 
+	// Keep the request pending if this frame skipped readback.
 	if (take_screenshot && (readback.buffer != VK_NULL_HANDLE))
 	{
 		WriteScreenshot (readback.buffer, readback.memory);
+		take_screenshot = false;
 	}
 	// A failed acquire has no readable presentation image. Keep the request for
 	// the next acquired frame, including across a swapchain restart.
@@ -7340,6 +7343,9 @@ SCR_ScreenShot_f -- johnfitz
 */
 void SCR_ScreenShot_f (void)
 {
+	// The previous frame may still be reading or clearing the screenshot request.
+	GL_SynchronizeEndRenderingTask ();
+
 	if ((vulkan_globals.swap_chain_format != VK_FORMAT_B8G8R8A8_UNORM) && (vulkan_globals.swap_chain_format != VK_FORMAT_B8G8R8A8_SRGB) &&
 		(vulkan_globals.swap_chain_format != VK_FORMAT_R8G8B8A8_UNORM) && (vulkan_globals.swap_chain_format != VK_FORMAT_R8G8B8A8_SRGB))
 	{

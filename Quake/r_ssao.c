@@ -84,12 +84,12 @@ void R_InitSSAO (void)
 
 qboolean R_SSAOEnabled (void)
 {
-	return r_ssao.value > 0;
+	return r_ssao.value > 0 && !vulkan_globals.ssao_broken;
 }
 
 qboolean R_SSAOSupported (void)
 {
-	return vulkan_globals.device_features.shaderStorageImageExtendedFormats;
+	return vulkan_globals.device_features.shaderStorageImageExtendedFormats && !vulkan_globals.ssao_broken;
 }
 
 // The spatial noise repeats every 64 pixels; build its index once per resource creation.
@@ -492,11 +492,11 @@ void R_ComputeSSAO (cb_context_t *cbx)
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.image = scene_depth,
 		.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, ssao_stereo ? 2 : 1}};
-	// The following render pass expects read-only depth even when there is no view to shade.
+	// The following render pass expects read-only depth even if SSAO failed or there is no view to shade.
 	vulkan_globals.vk_cmd_pipeline_barrier (
 		cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0, NULL, 1,
 		&depth_barrier);
-	if (!r_scene_vrect.width || !r_scene_vrect.height)
+	if (vulkan_globals.ssao_broken || !r_scene_vrect.width || !r_scene_vrect.height)
 		return;
 	for (int eye = 0; eye < (ssao_stereo ? 2 : 1); ++eye)
 	{

@@ -11,3 +11,4 @@ option('use_steam_audio', type: 'feature', value : 'auto', description: 'Build o
 option('steam_audio_include_dir', type: 'string', value : '', description: 'Steam Audio SDK directory containing phonon.h')
 option('steam_audio_library_dir', type: 'string', value : '', description: 'Native Steam Audio SDK directory containing phonon library')
 option('use_ice', type : 'feature', value : 'auto', description : 'Build QSS-M ICE/WebRTC transport when a TLS provider is available')
+option('use_vulkan_loader', type : 'feature', value : 'disabled', description : 'macOS: link the Vulkan loader instead of MoltenVK (auto: loader if found)')

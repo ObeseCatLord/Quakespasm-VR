@@ -848,18 +848,19 @@ void GLMesh_UploadBuffers (
 		Sys_Error ("GLMesh_UploadBuffers: %s has an invalid pose vertex type", mod->name);
 	}
 
+	// MD5: the frames' poses and one block with the inverse bind pose (Mod_LoadMD5MeshModel)
 	if (joints)
 	{
 		size_t joint_pose_count;
 		if (hdr->numframes <= 0 || hdr->numjoints <= 0 ||
-			!GLMesh_CheckedSizeMul ((size_t)hdr->numframes, (size_t)hdr->numjoints, &joint_pose_count) ||
+			!GLMesh_CheckedSizeMul ((size_t)hdr->numframes + 1, (size_t)hdr->numjoints, &joint_pose_count) ||
 			!GLMesh_CheckedSizeMul (joint_pose_count, sizeof (jointpose_t), &totaljointssize))
 			Sys_Error ("GLMesh_UploadBuffers: %s joint buffer is too large", mod->name);
 	}
 	else if (hdr->numframes > 0 && hdr->numjoints > 0)
 	{
 		size_t joint_pose_count;
-		if (!GLMesh_CheckedSizeMul ((size_t)hdr->numframes, (size_t)hdr->numjoints, &joint_pose_count) ||
+		if (!GLMesh_CheckedSizeMul ((size_t)hdr->numframes + 1, (size_t)hdr->numjoints, &joint_pose_count) ||
 			!GLMesh_CheckedSizeMul (joint_pose_count, sizeof (jointpose_t), &totaljointssize))
 			Sys_Error ("GLMesh_UploadBuffers: %s joint data is too large", mod->name);
 	}

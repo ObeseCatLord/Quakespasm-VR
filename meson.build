@@ -109,6 +109,12 @@ else
     message('Info: Using SDL2.')
 endif
 
+if host_machine.system() == 'darwin' and use_sdl3
+    add_languages('objc', required : true, native : false)
+    add_project_arguments('-fblocks', language : 'objc')
+    add_project_arguments('-DUSE_SDL3', language : 'objc')
+endif
+
 glslang = find_program('glslangValidator')
 spirv_opt = find_program('spirv-opt')
 run_test_canonicalize_ids_spirv_opt = run_command(spirv_opt, '-h', check : false)
@@ -370,7 +376,7 @@ if host_machine.system() == 'windows'
         # the \xA9 copyright escape is Windows-1252; llvm-rc refuses 8 bit
         # codepoints without an explicit codepage. gcc builds use windres,
         # which takes no /C option
-        args : cc.get_id() == 'gcc' ? [] : ['/C', '1252'],
+        args : cc.get_id() == 'gcc' ? [] : ['-c', '1252'],
         include_directories : include_directories('Windows', 'Quake'),
         depend_files : ['Windows/vkQuake.ico'])
 else
@@ -465,6 +471,11 @@ if steam_audio_opt.enabled() or (steam_audio_opt.auto() and steam_audio_paths_se
     ]
 endif
 
+if host_machine.system() == 'darwin' and use_sdl3
+    srcs += 'Quake/in_mac.m'
+    deps += dependency('appleframeworks', modules : ['Foundation', 'GameController'])
+endif
+
 if host_machine.system() == 'windows'
     foreach syslib : ['ws2_32', 'winmm', 'dbghelp', 'ole32', 'uuid']
         deps += cc.find_library(syslib)
@@ -473,13 +484,20 @@ if host_machine.system() == 'windows'
 endif
 
 if build_machine.system() == 'darwin'
+    # MoltenVK is linked directly by default. -Duse_vulkan_loader=enabled links the
+    # Vulkan loader instead, so the driver can be chosen with VK_DRIVER_FILES.
+    vulkan_dep = dependency('vulkan', version: '>=1.4.341', required : get_option('use_vulkan_loader'))
+else
+    vulkan_dep = dependency('vulkan', version: '>=1.4.341')
+endif
+if vulkan_dep.found()
+    deps += vulkan_dep
+else
     molten_dirs = []
     if import('fs').exists('/opt/homebrew/lib/libMoltenVK.dylib')
         molten_dirs += '/opt/homebrew/lib'
     endif
     deps += cc.find_library('MoltenVK', required : true, dirs : molten_dirs)
-else
-    deps += dependency('vulkan', version: '>=1.4.341')
 endif
 
 if get_option('use_codec_wave').enabled()

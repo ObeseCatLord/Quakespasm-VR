@@ -3506,7 +3506,7 @@ The pipeline layout must already be stored in pipeline->layout.
 */
 static void R_CreateComputePipeline (
 	vulkan_pipeline_t *pipeline, VkShaderModule module, VkPipelineShaderStageCreateFlags stage_flags, const VkSpecializationInfo *specialization_info,
-	const char *name)
+	const char *name, bool fail_on_error)
 {
 	assert (pipeline->handle == VK_NULL_HANDLE);
 	assert (pipeline->layout.handle != VK_NULL_HANDLE);
@@ -3523,7 +3523,13 @@ static void R_CreateComputePipeline (
 
 	const VkResult err = vkCreateComputePipelines (vulkan_globals.device, pipeline_cache, 1, &create_info, NULL, &pipeline->handle);
 	if (err != VK_SUCCESS)
-		Sys_Error ("vkCreateComputePipelines failed (%s) with code %i", name, (int)err);
+	{
+		pipeline->handle = VK_NULL_HANDLE;
+		if (fail_on_error)
+			Sys_Error ("vkCreateComputePipelines failed (%s) with code %i", name, (int)err);
+		Sys_Printf ("vkCreateComputePipelines failed (%s) with code %i\n", name, (int)err);
+		return;
+	}
 	GL_SetObjectName ((uint64_t)pipeline->handle, VK_OBJECT_TYPE_PIPELINE, name);
 }
 
@@ -3730,7 +3736,7 @@ static void R_CreateWarpPipelines ()
 
 	R_CreateGraphicsPipeline (&vulkan_globals.raster_tex_warp_pipeline, &infos, vulkan_globals.basic_pipeline_layout, "warp");
 
-	R_CreateComputePipeline (&vulkan_globals.cs_tex_warp_pipeline, cs_tex_warp_comp_module, 0, NULL, "cs_tex_warp");
+	R_CreateComputePipeline (&vulkan_globals.cs_tex_warp_pipeline, cs_tex_warp_comp_module, 0, NULL, "cs_tex_warp", true);
 }
 
 /*
@@ -3793,7 +3799,7 @@ static void R_CreateRayDebugPipelines ()
 	if (!vulkan_globals.ray_query)
 		return;
 
-	R_CreateComputePipeline (&vulkan_globals.ray_debug_pipeline, ray_debug_comp_module, 0, NULL, "ray_debug_pipeline");
+	R_CreateComputePipeline (&vulkan_globals.ray_debug_pipeline, ray_debug_comp_module, 0, NULL, "ray_debug_pipeline", true);
 #endif
 }
 
@@ -3807,9 +3813,9 @@ static void R_CreateAnimComputePipelines ()
 	if (!vulkan_globals.ray_query)
 		return;
 
-	R_CreateComputePipeline (&vulkan_globals.mesh_interpolate_pipeline, mesh_interpolate_comp_module, 0, NULL, "mesh_interpolate_pipeline");
-	R_CreateComputePipeline (&vulkan_globals.skinning_pipeline, skinning_comp_module, 0, NULL, "skinning_pipeline");
-	R_CreateComputePipeline (&vulkan_globals.skinning_8_pipeline, skinning_8_comp_module, 0, NULL, "skinning_8_pipeline");
+	R_CreateComputePipeline (&vulkan_globals.mesh_interpolate_pipeline, mesh_interpolate_comp_module, 0, NULL, "mesh_interpolate_pipeline", true);
+	R_CreateComputePipeline (&vulkan_globals.skinning_pipeline, skinning_comp_module, 0, NULL, "skinning_pipeline", true);
+	R_CreateComputePipeline (&vulkan_globals.skinning_8_pipeline, skinning_8_comp_module, 0, NULL, "skinning_8_pipeline", true);
 }
 
 /*
@@ -4678,7 +4684,7 @@ static void R_CreatePostprocessPipelines ()
 		pipeline_create_infos_t ssao;
 		R_CreateComputePipeline (
 			&ssao_prepare_pipeline, vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? ssao_prepare_comp_module : ssao_prepare_msaa_comp_module, 0, NULL,
-			"ssao_prepare");
+			"ssao_prepare", false);
 		const VkSpecializationMapEntry quality_entry = {.constantID = 0, .offset = 0, .size = sizeof (uint32_t)};
 		for (uint32_t quality = 1; quality <= countof (ssao_evaluate_pipelines); ++quality)
 		{
@@ -4687,7 +4693,7 @@ static void R_CreatePostprocessPipelines ()
 				&ssao_evaluate_pipelines[quality - 1], vulkan_globals.stereo_active
 					? (vulkan_globals.shader_float16 ? ssao_evaluate_fp16_stereo_comp_module : ssao_evaluate_stereo_comp_module)
 					: (vulkan_globals.shader_float16 ? ssao_evaluate_fp16_comp_module : ssao_evaluate_comp_module), 0,
-				&specialization, "ssao_evaluate");
+				&specialization, "ssao_evaluate", false);
 		}
 		R_CreateComputePipeline (
 			&ssao_mip_pipeline,
@@ -4698,9 +4704,17 @@ static void R_CreatePostprocessPipelines ()
 					: (vulkan_globals.shader_float16 ? ssao_mip_shared_msaa_fp16_comp_module : ssao_mip_shared_msaa_comp_module)),
 			vulkan_globals.screen_effects_sops ?
 				(VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE_BIT_EXT | VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT_EXT) : 0, NULL,
-			"ssao_mip");
+			"ssao_mip", false);
 		R_CreateComputePipeline (
-			&ssao_filter_pipeline, vulkan_globals.shader_float16 ? ssao_filter_fp16_comp_module : ssao_filter_comp_module, 0, NULL, "ssao_filter");
+			&ssao_filter_pipeline, vulkan_globals.shader_float16 ? ssao_filter_fp16_comp_module : ssao_filter_comp_module, 0, NULL, "ssao_filter", false);
+		vulkan_globals.ssao_broken = !ssao_prepare_pipeline.handle || !ssao_mip_pipeline.handle || !ssao_filter_pipeline.handle;
+		for (int i = 0; i < countof (ssao_evaluate_pipelines); ++i)
+			vulkan_globals.ssao_broken |= !ssao_evaluate_pipelines[i].handle;
+		if (vulkan_globals.ssao_broken)
+		{
+			Cvar_SetValueQuick (&r_ssao, 0);
+			Con_Warning ("Disabling SSAO due to pipeline creation failure\n");
+		}
 		R_CopyPipelineCreateInfos (&ssao, &base);
 		ssao.depth_stencil_state.depthTestEnable = VK_FALSE;
 		ssao.depth_stencil_state.depthWriteEnable = VK_FALSE;
@@ -4711,7 +4725,7 @@ static void R_CreatePostprocessPipelines ()
 		ssao.shader_stages[1].module = vulkan_globals.stereo_active
 			? (vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? ssao_composite_stereo_frag_module : ssao_composite_msaa_stereo_frag_module)
 			: (vulkan_globals.sample_count == VK_SAMPLE_COUNT_1_BIT ? ssao_composite_frag_module : ssao_composite_msaa_frag_module);
-		for (int variant = 0; variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
+		for (int variant = 0; !vulkan_globals.ssao_broken && variant < MAIN_RENDER_PASS_VARIANT_COUNT; ++variant)
 		{
 			R_SetPipelineRenderPassVariant (&ssao, SUBPASS_ENTITY_SSAO, variant);
 			R_CreateGraphicsPipeline (&ssao_pipelines[variant], &ssao, ssao_layout, "ssao");
@@ -4814,7 +4828,7 @@ static void R_CreateScreenEffectsPipelines ()
 		? (ten_bit ? screen_effects_stereo_10bit_comp_module : screen_effects_stereo_8bit_comp_module)
 		: (ten_bit ? screen_effects_10bit_comp_module : screen_effects_8bit_comp_module);
 
-	R_CreateComputePipeline (&vulkan_globals.screen_effects_pipeline, module, 0, NULL, "screen_effects");
+	R_CreateComputePipeline (&vulkan_globals.screen_effects_pipeline, module, 0, NULL, "screen_effects", true);
 }
 
 /*
@@ -4839,12 +4853,12 @@ static void R_CreateUpdateLightmapPipelines ()
 
 	R_CreateComputePipeline (
 		&vulkan_globals.update_lightmap_pipeline, ten_bit ? update_lightmap_10bit_comp_module : update_lightmap_8bit_comp_module, 0, &specialization_info,
-		"update_lightmap");
+		"update_lightmap", true);
 
 	if (vulkan_globals.ray_query)
 		R_CreateComputePipeline (
 			&vulkan_globals.update_lightmap_rt_pipeline, ten_bit ? update_lightmap_10bit_rt_comp_module : update_lightmap_8bit_rt_comp_module, 0,
-			&specialization_info, "update_lightmap_rt");
+			&specialization_info, "update_lightmap_rt", true);
 }
 
 /*
@@ -4854,15 +4868,15 @@ R_CreateIndirectComputePipelines
 */
 static void R_CreateIndirectComputePipelines ()
 {
-	R_CreateComputePipeline (&vulkan_globals.indirect_draw_pipeline, indirect_comp_module, 0, NULL, "indirect_draw");
-	R_CreateComputePipeline (&vulkan_globals.indirect_clear_pipeline, indirect_clear_comp_module, 0, NULL, "indirect_clear");
+	R_CreateComputePipeline (&vulkan_globals.indirect_draw_pipeline, indirect_comp_module, 0, NULL, "indirect_draw", true);
+	R_CreateComputePipeline (&vulkan_globals.indirect_clear_pipeline, indirect_clear_comp_module, 0, NULL, "indirect_clear", true);
 }
 
 /* Shader module registration is owned by the build/shader integration. */
 void R_CreateClusteredLightingPipeline (VkShaderModule module)
 {
 	if (module != VK_NULL_HANDLE)
-		R_CreateComputePipeline (&vulkan_globals.cluster_lights_pipeline, module, 0, NULL, "cluster_lights");
+		R_CreateComputePipeline (&vulkan_globals.cluster_lights_pipeline, module, 0, NULL, "cluster_lights", true);
 }
 
 /*
@@ -5776,22 +5790,16 @@ void R_NewMap (void)
 		d_lightstylevalue[i] = 264; // normal light value
 
 	// clear out efrags in case the level hasn't been reloaded
-	// FIXME: is this one short?
-	for (i = 0; i < cl.worldmodel->numleafs; i++)
+	// numleafs excludes the solid leaf at index 0.
+	for (i = 0; i <= cl.worldmodel->numleafs; i++)
 		cl.worldmodel->leafs[i].efrags = NULL;
 
 	r_viewleaf = NULL;
 	R_ClearParticles ();
 	PScript_ClearParticles (true);
-	GL_DeleteBModelVertexBuffer ();
-
-	GL_BuildLightmaps ();
-	GL_BuildBModelVertexBuffer ();
-	GL_BuildBModelAccelerationStructures ();
+	r_framecount = 1;
+	R_RebuildBrushModels (true);
 	GL_PrepareSIMDAndParallelData ();
-	GL_SetupIndirectDraws ();
-	GL_SetupLightmapCompute ();
-	GL_UpdateLightmapDescriptorSets ();
 	// ericw -- no longer load alias models into a VBO here, it's done in Mod_LoadAliasModel
 
 	r_framecount = 0;	 // johnfitz -- paranoid?

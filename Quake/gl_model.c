@@ -6168,8 +6168,10 @@ static qboolean MD5_UploadAvatarPropViews (
 	const md5_avatar_prop_t props[MD5_AVATAR_PROP_COUNT],
 	aliashdr_t *views[MD5_AVATAR_PROP_COUNT])
 {
-	jointpose_t identity = {{0}};
-	identity.mat[0] = identity.mat[5] = identity.mat[10] = 1.0f;
+	// The pose block, then the inverse bind pose block (both identity).
+	jointpose_t identity[2] = {{{0}}};
+	identity[0].mat[0] = identity[0].mat[5] = identity[0].mat[10] = 1.0f;
+	identity[1] = identity[0];
 	for (int prop = 0; prop < MD5_AVATAR_PROP_COUNT; ++prop)
 	{
 		aliashdr_t **tail = &views[prop];
@@ -6239,7 +6241,7 @@ static qboolean MD5_UploadAvatarPropViews (
 				output->joint_position_z[0] = input->xyz[2];
 			}
 			GLMesh_UploadBuffers (mod, hdr, piece->indexes, (byte *)vertices,
-				NULL, &identity, NULL, 0);
+				NULL, identity, NULL, 0);
 			Mem_Free (vertices);
 		}
 	}
@@ -7436,7 +7438,7 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	if (anim.numposes && numjoints > SIZE_MAX / anim.numposes)
 		MD5ERROR ("%s: MD5 pose matrix count overflows\n", fname);
 	retained_matrix_count = numjoints * anim.numposes;
-	if (retained_matrix_count > SIZE_MAX / sizeof (jointpose_t))
+	if (retained_matrix_count > SIZE_MAX / sizeof (jointpose_t) - numjoints)
 		MD5ERROR ("%s: MD5 pose matrices are too large\n", fname);
 	retained_pose_bytes = retained_matrix_count * sizeof (jointpose_t);
 	retained_joints_offset = offsetof (md5_skeleton_data_t, joints);
@@ -7454,7 +7456,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 
 	TEMP_ALLOC_ASSIGN_ZEROED (joint_infos, numjoints);
 	TEMP_ALLOC_ASSIGN_ZEROED (joint_poses, numjoints);
-	TEMP_ALLOC_ASSIGN_ZEROED (skinning_joints, retained_matrix_count);
+	// the animation poses, then one block with the inverse bind pose (see MD5_SkinFrames)
+	TEMP_ALLOC_ASSIGN_ZEROED (skinning_joints, retained_matrix_count + numjoints);
 	TEMP_ALLOC_ASSIGN_ZEROED (concat_joints, numjoints);
 
 	for (size_t j = 0; j < 3; j++)
@@ -7613,6 +7616,13 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		}
 	}
 	SAFE_FREE (anim.posedata);
+	// The weights' positions are joint-local and the poses absolute (bind space -> model space),
+	// but MD5_ComputeNormals makes the normals from the bind pose mesh, in model space: the
+	// shader takes them into each joint's space with the inverse bind pose before the pose turns
+	// them back. Without it a normal is turned by the joint's whole bind orientation and points
+	// anywhere, which shows as wrongly lit limbs and bodies.
+	for (size_t joint_index = 0; joint_index < numjoints; ++joint_index)
+		memcpy (skinning_joints[anim.numposes * numjoints + joint_index].mat, joint_infos[joint_index].inverse.mat, sizeof (jointpose_t));
 
 	// 3. each mesh has its own aliashdr_t : load vertices, triangles, textures...etc. and upload to GPU each surface:
 

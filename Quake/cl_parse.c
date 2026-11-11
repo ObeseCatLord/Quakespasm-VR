@@ -1226,11 +1226,37 @@ static void CL_EntityLerpUpdated (entity_t *ent, int oldframe, qboolean forcelin
 	}
 }
 
+static qboolean CL_UpdateEntityModel (entity_t *ent, int entnum)
+{
+	qmodel_t *model = cl.model_precache[ent->netstate.modelindex];
+	if (model == ent->model)
+		return false;
+
+	R_FreeEntityBLAS (ent); // Free old BLAS before model change
+	ent->model = model;
+	InvalidateTraceLineCache ();
+
+	// automatic animation (torches, etc) can be either all together
+	// or randomized
+	if (model)
+	{
+		if (model->synctype == ST_FRAMETIME)
+			ent->syncbase = -cl.time;
+		else if (model->synctype == ST_RAND)
+			ent->syncbase = (float)COM_Rand () / COM_RAND_MAX;
+		else
+			ent->syncbase = 0.0;
+	}
+	if (entnum > 0 && entnum <= cl.maxclients)
+		R_TranslateNewPlayerSkin (entnum - 1); // johnfitz -- was R_TranslatePlayerSkin
+
+	return true;
+}
+
 // called with both fte+dp deltas
 static void CL_EntitiesDeltaed (void)
 {
 	int		  newnum;
-	qmodel_t *model;
 	qboolean  forcelink;
 	qboolean  snap_anim;
 	entity_t *ent;
@@ -1289,32 +1315,13 @@ static void CL_EntitiesDeltaed (void)
 			ent->lerp.frame_finish_time = ent->msgtime + (ent->netstate.lerp - 1) / 1000.f;
 #endif
 
-		model = cl.model_precache[ent->netstate.modelindex];
-		if (model != ent->model)
+		if (CL_UpdateEntityModel (ent, newnum))
 		{
-			R_FreeEntityBLAS (ent); // Free old BLAS before model change
-			ent->model = model;
-			InvalidateTraceLineCache ();
-
-			// automatic animation (torches, etc) can be either all together
-			// or randomized
-			if (model)
-			{
-				if (model->synctype == ST_FRAMETIME)
-					ent->syncbase = -cl.time;
-				else if (model->synctype == ST_RAND)
-					ent->syncbase = (float)COM_Rand () / COM_RAND_MAX;
-				else
-					ent->syncbase = 0.0;
-			}
-			else
+			if (!ent->model)
 				forcelink = true; // hack to make null model players work
-			if (newnum > 0 && newnum <= cl.maxclients)
-				R_TranslateNewPlayerSkin (newnum - 1); // johnfitz -- was R_TranslatePlayerSkin
-
-			snap_anim = true; // johnfitz -- don't lerp animation across model changes
+			snap_anim = true;	  // johnfitz -- don't lerp animation across model changes
 		}
-		else if (model && model->synctype == ST_FRAMETIME && ent->frame != ent->netstate.frame)
+		else if (ent->model && ent->model->synctype == ST_FRAMETIME && ent->frame != ent->netstate.frame)
 			ent->syncbase = -cl.time;
 		ent->frame = ent->netstate.frame;
 
@@ -1534,6 +1541,35 @@ static void CLFTE_CommitMoveSnapshot (void)
 	cl.move_snapshot_valid = true;
 	cl.move_snapshot_ack = cl_move_snapshot_pending_ack;
 	cl.move_snapshot_owner = cl_move_snapshot_pending_owner;
+}
+
+// Prepare late brush models and reconcile references before rendering.
+void CL_UpdateBrushModels (void)
+{
+	R_RebuildBrushModels (false);
+
+	for (int i = 1; i < cl.num_entities; i++)
+	{
+		entity_t *ent = &cl.entities[i];
+		if (ent->msgtime != cl.mtime[0] || (!ent->model && !ent->update_type))
+			continue;
+		if (CL_UpdateEntityModel (ent, i))
+		{
+			ent->lerp.prev_frame = ent->frame;
+			ent->lerp.frame_change_time = 0;
+			ent->lerp.snap_frames = 0;
+			if (!ent->model)
+				ent->forcelink = true;
+		}
+	}
+
+	qboolean relink_statics = false;
+	for (int i = 0; i < cl.num_statics; i++)
+		if (CL_UpdateEntityModel (cl.static_entities[i], 0))
+			relink_statics = true;
+	if (relink_statics)
+		R_RebuildAllEfrags ();
+	cl.brushmodels_changed = false;
 }
 
 static void CLFTE_ParseEntitiesUpdate (void)
@@ -2650,6 +2686,7 @@ static void CL_ParseUpdate (int bits)
 	// johnfitz
 
 	// johnfitz -- moved here from above
+	ent->netstate.modelindex = modnum;
 	model = cl.model_precache[modnum];
 	if (model != ent->model)
 	{
@@ -2953,9 +2990,13 @@ static void CL_ParsePrecache (void)
 	case 0: // models
 		if (index < MAX_MODELS)
 		{
-			cl.model_precache[index] = Mod_ForName (name, false);
-			// FIXME: if its a bsp model, generate lightmaps.
-			// FIXME: update static entities with that modelindex
+			qmodel_t *oldmodel = cl.model_precache[index];
+			if (index == 1 && cl.worldmodel && strcmp (name, cl.worldmodel->name))
+				Host_Error ("CL_ParsePrecache: cannot replace world model");
+			qmodel_t *model = Mod_ForName (name, false);
+			cl.model_precache[index] = model;
+			if (model != oldmodel && ((model && model->type == mod_brush) || (oldmodel && oldmodel->type == mod_brush)))
+				cl.brushmodels_changed = true;
 		}
 		break;
 	case 1: // particles
