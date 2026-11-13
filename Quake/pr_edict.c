@@ -955,11 +955,42 @@ static qboolean ED_SavegameSinkWrite (savegame_sink_t *sink, const char *data,
 /* The save format quotes values but has no escape for '"'. A string such as a
  * remote player's netname must not be able to close the value and inject
  * fields or break the save, so replace quotes in saved strings. */
+/* Saves run automatically (co-op autosave retries), so a QC value the generic
+ * formatter cannot represent must not Host_Error or dereference a NULL def:
+ * return NULL and the caller omits the field, which loads as zero/world. */
 static const char *ED_SaveValueString (int type, eval_t *val)
 {
 	static char line[1024];
 	char	   *c;
 
+	switch (type & ~DEF_SAVEGLOBAL)
+	{
+	case ev_entity:
+		if (val->edict < 0 || qcvm->edict_size <= 0 || val->edict % qcvm->edict_size ||
+			val->edict / qcvm->edict_size >= qcvm->num_edicts)
+		{
+			Con_DPrintf ("save: omitting out-of-range entity reference %i\n", val->edict);
+			return NULL;
+		}
+		q_snprintf (line, sizeof (line), "%i", val->edict / qcvm->edict_size);
+		return line;
+	case ev_function:
+		if (val->function < 0 || val->function >= qcvm->progs->numfunctions)
+		{
+			Con_DPrintf ("save: omitting out-of-range function %i\n", val->function);
+			return NULL;
+		}
+		break;
+	case ev_field:
+		if (!ED_FieldAtOfs (val->_int))
+		{
+			Con_DPrintf ("save: omitting unknown field offset %i\n", val->_int);
+			return NULL;
+		}
+		break;
+	default:
+		break;
+	}
 	q_strlcpy (line, PR_UglyValueString (type, val), sizeof (line));
 	if ((type & ~DEF_SAVEGLOBAL) == ev_string)
 		for (c = line; *c; c++)
@@ -1047,9 +1078,11 @@ static qboolean ED_WriteToSinkInternal (savegame_sink_t *sink, edict_t *ed)
 		if (type == ev_vector && !v[0] && !v[1] && !v[2])
 			continue;
 
-		if (!ED_SavegameSinkPrintf (sink, "\"%s\" \"%s\"\n", name,
-			ED_SaveValueString (d->type, (eval_t *)v)))
-			return false;
+		{
+			const char *value = ED_SaveValueString (d->type, (eval_t *)v);
+			if (value && !ED_SavegameSinkPrintf (sink, "\"%s\" \"%s\"\n", name, value))
+				return false;
+		}
 	}
 
 	// johnfitz -- save entity alpha manually when progs.dat doesn't know about alpha
@@ -1296,9 +1329,11 @@ static qboolean ED_WriteGlobalsToSinkInternal (savegame_sink_t *sink)
 			continue;
 
 		name = PR_GetString (def->s_name);
-		if (!ED_SavegameSinkPrintf (sink, "\"%s\" \"%s\"\n", name,
-			ED_SaveValueString (type, (eval_t *)&qcvm->globals[def->ofs])))
-			return false;
+		{
+			const char *value = ED_SaveValueString (type, (eval_t *)&qcvm->globals[def->ofs]);
+			if (value && !ED_SavegameSinkPrintf (sink, "\"%s\" \"%s\"\n", name, value))
+				return false;
+		}
 	}
 	return ED_SavegameSinkPrintf (sink, "}\n");
 }
