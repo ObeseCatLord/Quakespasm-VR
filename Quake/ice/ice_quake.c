@@ -2973,6 +2973,19 @@ static void QICE_RequestServerRetirement(qsocket_t *socket, const char *reason)
 	qice_server_retire_count++;
 }
 
+/* A closing socket goes back on the LIFO free list and is likely to be the
+ * next qsocket handed out; a retirement queued for it must not outlive it. */
+static void QICE_CancelServerRetirement(qsocket_t *socket)
+{
+	unsigned int i, kept = 0;
+	for (i = 0; i < qice_server_retire_count; i++)
+		if (qice_server_retires[i].socket != socket)
+			qice_server_retires[kept++] = qice_server_retires[i];
+	for (i = kept; i < qice_server_retire_count; i++)
+		qice_server_retires[i].socket = NULL;
+	qice_server_retire_count = kept;
+}
+
 static void QICE_FlushServerRetirements(qice_connection_t *b)
 {
 	unsigned int i;
@@ -3628,10 +3641,14 @@ void NQICE_Close (qsocket_t *sock)
 	int i;
 
 	QICE_DiscardQueuedServerMessages(sock);
+	QICE_CancelServerRetirement(sock);
 	if (b && b != qice_hostcon)
 		QICE_ResetClientMessageQueue(b);
 	if (ice)
 	{	//kill the connection.
+		/* Detach first: Close can call back into QICE_Closed, which would
+		 * otherwise queue a retirement for this soon-to-be-reused qsocket. */
+		QICE_SetSocketIce(sock, NULL);
 		iceapi.Close(ice, true);
 
 		for (s = net_activeSockets; s; s = s->next)
