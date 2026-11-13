@@ -64,6 +64,17 @@ typedef struct
 	uint32_t joints_offsets[2];
 	uint32_t joints_bind_offset; // inverse bind pose, after the frames' poses (MD5_SkinFrames)
 } md5ubo_t;
+/* std140 offsets of the UBO block in Shaders/md5.vert (md5_debug.vert uses the
+ * same block without joints_bind_offset). Keep both sides in step. */
+COMPILE_TIME_ASSERT (md5ubo_model_matrix, offsetof (md5ubo_t, model_matrix) == 0);
+COMPILE_TIME_ASSERT (md5ubo_shade_vector, offsetof (md5ubo_t, shade_vector) == 64);
+COMPILE_TIME_ASSERT (md5ubo_blend_factor, offsetof (md5ubo_t, blend_factor) == 76);
+COMPILE_TIME_ASSERT (md5ubo_light_color, offsetof (md5ubo_t, light_color) == 80);
+COMPILE_TIME_ASSERT (md5ubo_entalpha, offsetof (md5ubo_t, entalpha) == 92);
+COMPILE_TIME_ASSERT (md5ubo_flags, offsetof (md5ubo_t, flags) == 96);
+COMPILE_TIME_ASSERT (md5ubo_joints_offsets, offsetof (md5ubo_t, joints_offsets) == 100);
+COMPILE_TIME_ASSERT (md5ubo_joints_bind_offset, offsetof (md5ubo_t, joints_bind_offset) == 108);
+COMPILE_TIME_ASSERT (md5ubo_size, sizeof (md5ubo_t) == 112);
 
 // Tracked VR palettes carry no inverse bind block; the shader then keeps the bind-space normal.
 #define MD5_NO_BIND_OFFSET 0xFFFFFFFFu
