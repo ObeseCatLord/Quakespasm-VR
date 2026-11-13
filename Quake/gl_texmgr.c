@@ -1795,7 +1795,8 @@ static void GL_DeleteTexture (gltexture_t *texture)
 	if (texture->image_view == VK_NULL_HANDLE)
 		goto mutex_unlock;
 
-	if (in_update_screen)
+	/* The ring holds at most MAX_GLTEXTURES entries per slot. */
+	if (num_garbage_textures[current_garbage_index] < MAX_GLTEXTURES && GL_DeferredFreeAvailable ())
 	{
 		garbage_index = num_garbage_textures[current_garbage_index]++;
 		garbage = &texture_garbage[garbage_index][current_garbage_index];
