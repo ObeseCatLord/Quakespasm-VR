@@ -975,7 +975,7 @@ static const char *ED_SaveValueString (int type, eval_t *val)
 		q_snprintf (line, sizeof (line), "%i", val->edict / qcvm->edict_size);
 		return line;
 	case ev_function:
-		if (val->function < 0 || val->function >= qcvm->progs->numfunctions)
+		if (qcvm->progs->numfunctions <= 0 || val->function >= (func_t)qcvm->progs->numfunctions)
 		{
 			Con_DPrintf ("save: omitting out-of-range function %i\n", val->function);
 			return NULL;
