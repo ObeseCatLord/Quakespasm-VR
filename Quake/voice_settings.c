@@ -128,11 +128,10 @@ void VoiceSettings_Defaults(voice_settings_t *settings)
 	if (!settings)
 		return;
 	memset(settings, 0, sizeof(*settings));
-	/* Every capture permission is opt-in: a fresh profile never transmits
-	 * the room until the player enables the microphone (VR or desktop).
-	 * Local wet-only monitoring is opt-in as well. */
+	/* VR uses the system microphone unless the player opts out. Desktop
+	 * transmission and local wet-only monitoring remain opt-in. */
 	settings->desktop.transmit = 0;
-	settings->vr.transmit = 0;
+	settings->vr.transmit = 1;
 }
 
 static void VoiceSettings_WriteProfile(unsigned char *wire,

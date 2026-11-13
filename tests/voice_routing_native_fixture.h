@@ -10,7 +10,7 @@ static void Voice_RoutingChecks(void)
 		!strcmp(SDL_GetCurrentAudioDriver(), "dummy"));
 	assert(voice_initialized && !voice_profile_vr && voice_settings_path[0]);
 	assert(VoiceSettings_Load(voice_settings_path, &disk) == 0);
-	assert(!voice_settings.desktop.transmit && !voice_settings.vr.transmit);
+	assert(!voice_settings.desktop.transmit && voice_settings.vr.transmit);
 	assert(!voice_settings.desktop.mode && !voice_settings.vr.mode);
 	assert(!voice_settings.desktop.device[0] && !voice_settings.vr.device[0]);
 	assert(!voice_capture_device && !Voice_CaptureReady());
