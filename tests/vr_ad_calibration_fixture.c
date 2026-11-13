@@ -144,6 +144,13 @@ static void FixtureMountDirectory(const char *base, const char *game,
 			loose->filename, i) < (int)sizeof(path));
 		size = Sys_FileOpenRead(path, &handle);
 		if (size < 0)
+		{
+			/* Old releases (Zerstorer) ship upper-case PAKn.PAK. */
+			assert(snprintf(path, sizeof(path), "%s/PAK%d.PAK",
+				loose->filename, i) < (int)sizeof(path));
+			size = Sys_FileOpenRead(path, &handle);
+		}
+		if (size < 0)
 			break;
 		assert(Sys_FileRead(handle, header, sizeof(header)) == sizeof(header));
 		assert(!memcmp(header, "PACK", 4));

@@ -3586,6 +3586,22 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
 ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-alk-calibration-fixture
 ```
 
+`mod_family_weapon_wheel_fixture.c` mounts installed mods read-only (most under
+unlisted directory names) and checks progs.dat family identification (AD,
+Drake, Quoth, Zerstorer, Sacrilege, QuakeVR, rerelease), the AD roster,
+upgrade labels/models and stat-active highlight for AD forks, AD content-keyed
+held calibration and up-only nail source, the Drake arsenal, Quoth/Zerstorer/
+Sacrilege/QuakeVR extra weapons, Dwell/Snack direct impulses, hipnotic 225-227
+without wwheel.txt, Rogue 65-68 labels and split-pool ammo gating, the single
+mg3 axe/hammer row, duplicate-impulse reporting and the XR tracking grace.
+
+```sh
+python3 tests/run_mod_family_weapon_wheel.py \
+  --base ~/Windows/Games/quakespasm_straight
+```
+
+Require `MOD_FAMILY_WHEEL_PASS`.
+
 
 ## Cooperative standard physics VR identity
 

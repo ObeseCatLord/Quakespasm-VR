@@ -47,4 +47,34 @@ qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 void VR_WeaponCalibrationProjectileSourceOffset(const char *viewmodel,
 	int weapon_bit, const vec3_t angles, float viewheight, vec3_t out);
 
+/* QuakeC program identity shared by calibration and the weapon wheel. It is
+ * derived from the active game's progs.dat content (field/function names and
+ * string markers), so a fork installed under another directory name still
+ * receives its family's weapon policy. Unknown means "use directory rules". */
+typedef enum
+{
+	VR_PROGS_FAMILY_UNKNOWN,
+	VR_PROGS_FAMILY_AD,        /* Arcane Dimensions weapon upgrades (moditems). */
+	VR_PROGS_FAMILY_DRAKE,     /* Drake arsenal/war weapon roster. */
+	VR_PROGS_FAMILY_QUOTH,     /* Quoth plasma gun/bomb (warpspasm, immortal). */
+	VR_PROGS_FAMILY_ZER,       /* Zerstorer chainsaw/chain-lightning/SRE. */
+	VR_PROGS_FAMILY_PD_LASER,  /* progs_dump fork with a 128-bit laser cannon (Sacrilege). */
+	VR_PROGS_FAMILY_QUAKEVR    /* QuakeVR mode-based arsenal. */
+} vr_progs_family_t;
+
+typedef struct
+{
+	vr_progs_family_t family;
+	qboolean valid;     /* A version 6 progs.dat was found and parsed. */
+	qboolean rerelease; /* 2021 rerelease localized QuakeC ($qc_ strings). */
+} vr_progs_identity_t;
+
+qboolean VR_ProgsIdentityParse(const byte *data, size_t size,
+	vr_progs_identity_t *out);
+/* Forced re-read of the active game's progs.dat (calibration game reload). */
+void VR_ProgsIdentityRefresh(void);
+/* Cached identity; re-read only when com_gamedir differs from the cache. */
+const vr_progs_identity_t *VR_ProgsIdentityCurrent(void);
+qboolean VR_ProgsIdentityIsAD(void);
+
 #endif
