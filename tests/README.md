@@ -2562,7 +2562,9 @@ cc -std=gnu11 -DUSE_SDL3 -Wall -Wextra -Werror \
 
 The scoped shot-roll fixture invokes production private-pose begin/end and
 shot-basis helpers. It covers repeated matching calls, nested masking and
-cleanup, body/hand source math, restoration, and relocation invalidation.
+cleanup, body/hand source math (a nested scope builds from the body, not its
+parent's source), restoration, relocation invalidation, absolute setorigin
+destinations kept, and relative setorigin moves carried onto the body.
 Calibration and tracing use typed fixture seams; specialized paired weapons
 and live QuakeC firing remain outside its scope.
 
