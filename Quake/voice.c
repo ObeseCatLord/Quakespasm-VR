@@ -931,6 +931,14 @@ static void Voice_Mode_f(void)
 	Con_Printf("Voice: press physical Y in the console within 15 seconds to set %s mode.\n", mode);
 }
 
+/* NaN passes CLAMP and turns (int)(sample * gain) into full-scale noise. */
+static float Voice_SafeLevel(float value, float fallback)
+{
+	if (!isfinite(value))
+		return fallback;
+	return value < 0.0f ? 0.0f : value;
+}
+
 static voice_name_pref_t *Voice_FindNamePref(const char *name, qboolean create)
 {
 	voice_name_pref_t *pref;
@@ -1037,7 +1045,7 @@ static void Voice_PlayerVolume_f(void)
 	}
 	Voice_SyncSpeakerPrefs(slot);
 	voice_speakers[slot].volume = CLAMP(0.0f,
-		strtof(Cmd_Argv(2), NULL), 2.0f);
+		Voice_SafeLevel(strtof(Cmd_Argv(2), NULL), 1.0f), 2.0f);
 	{
 		voice_name_pref_t *pref = Voice_FindNamePref(Voice_SlotName(slot), true);
 		if (pref)
@@ -1145,7 +1153,7 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 	voice_vad_result_t result;
 	qboolean gate;
 	unsigned int i;
-	float gain = CLAMP(0.0f, voice_input_gain.value, 4.0f);
+	float gain = CLAMP(0.0f, Voice_SafeLevel(voice_input_gain.value, 1.0f), 4.0f);
 
 	for (i = 0; i < VOICE_FRAME_SAMPLES; ++i)
 	{
@@ -1259,7 +1267,8 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 	read = Voice_AtomicGet(&speaker->pcm_read);
 	write = Voice_AtomicGet(&speaker->pcm_write);
 	outframes = frames * shm->speed / VOICE_SAMPLE_RATE;
-	left = right = voice_radio_volume.value;
+	const float radio_volume = Voice_SafeLevel(voice_radio_volume.value, 0.45f);
+	left = right = radio_volume;
 	if (slot >= 0 && slot + 1 < cl.num_entities &&
 		cl.entities[slot + 1].model && cl.entities[slot + 1].msgtime == cl.mtime[0])
 	{
@@ -1272,12 +1281,12 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 		blend = CLAMP(0.0f, distance / q_max(1.0f, voice_spatial_distance.value), 1.0f);
 		positional = 1.0f / (1.0f + distance / 512.0f);
 		left = (1.0f - blend) * positional * (1.0f - 0.5f * pan) +
-			blend * voice_radio_volume.value;
+			blend * radio_volume;
 		right = (1.0f - blend) * positional * (1.0f + 0.5f * pan) +
-			blend * voice_radio_volume.value;
+			blend * radio_volume;
 	}
-	left *= VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
-	right *= VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
+	left *= VOICE_PLAYBACK_GAIN * speaker->volume * Voice_SafeLevel(voice_volume.value, 1.0f);
+	right *= VOICE_PLAYBACK_GAIN * speaker->volume * Voice_SafeLevel(voice_volume.value, 1.0f);
 	for (i = 0; i < outframes; ++i)
 	{
 		int next = (write + 1) % VOICE_PCM_RING_FRAMES;
@@ -1309,7 +1318,7 @@ static void Voice_PublishSpatialVoiceSource(int slot)
 	active = voice_initialized && voice_receive.value != 0 &&
 		slot < cl.maxclients && cl.scores && cl.scores[slot].name[0] &&
 		speaker->have_generation && !speaker->muted;
-	gain = VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
+	gain = VOICE_PLAYBACK_GAIN * speaker->volume * Voice_SafeLevel(voice_volume.value, 1.0f);
 
 	if (cl.entities && slot + 1 < cl.num_entities)
 	{
