@@ -1991,6 +1991,9 @@ skipwhite:
 	return data;
 
 parseerror:
+	// An overflowing token was partly copied: never leave it unterminated.
+	if (token && token_size)
+		token[0] = 0;
 	if (parse_error)
 		*parse_error = true;
 	return NULL;

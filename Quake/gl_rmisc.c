@@ -5838,12 +5838,22 @@ void R_TimeRefresh_f (void)
 		return;
 	}
 
+	/* The OpenXR frame lifecycle (wait/begin/end per eye pair) is owned by
+	 * SCR_UpdateScreen; this desktop benchmark cannot drive it. */
+	if (vulkan_globals.stereo_active)
+	{
+		Con_Printf ("timerefresh is not available in VR\n");
+		return;
+	}
+
 	GL_SynchronizeEndRenderingTask ();
 
 	start = Sys_DoubleTime ();
 	for (i = 0; i < 128; i++)
 	{
-		GL_BeginRendering (false, NULL, &glwidth, &glheight);
+		// Never record into or end a command buffer that was not begun.
+		if (!GL_BeginRendering (false, NULL, &glwidth, &glheight))
+			break;
 		r_refdef.viewangles[1] = i / 128.0 * 360.0;
 		R_RenderView (false, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE, INVALID_TASK_HANDLE);
 		GL_EndRendering (false, false);
@@ -5852,7 +5862,10 @@ void R_TimeRefresh_f (void)
 	// glFinish ();
 	stop = Sys_DoubleTime ();
 	time = stop - start;
-	Con_Printf ("%f seconds (%f fps)\n", time, 128 / time);
+	if (i < 128)
+		Con_Printf ("timerefresh: rendering unavailable after %d frames\n", i);
+	else
+		Con_Printf ("%f seconds (%f fps)\n", time, 128 / time);
 }
 
 /*
