@@ -10,29 +10,46 @@ static int VoiceVADMeanAbs(const int16_t *samples)
 	return (int)(sum / VOICE_FRAME_SAMPLES);
 
 }
+/* A datagram now carries every queued frame the server accepts (up to
+ * VOICE_SERVER_MAX_PACKETS_PER_DATAGRAM). Send once, verify each delivered
+ * frame, then hand them back one per call so the checks stay per frame. */
+static voice_packet_t vad_sent[VOICE_SERVER_MAX_PACKETS_PER_DATAGRAM];
+static unsigned int vad_sent_count, vad_sent_next;
 static voice_packet_t VoiceVADSendOne(client_t *source, client_state_t *state)
 {
-	voice_packet_t packet;
 	uint64_t serial = source->voice_next_serial;
+	unsigned int before, sent;
+	if (vad_sent_next < vad_sent_count)
+		return vad_sent[vad_sent_next++];
 	cl = *state;
 	cls.netcon = source->netconnection;
 	assert(cl.voice_outgoing_count);
-	packet = cl.voice_outgoing[cl.voice_outgoing_head];
+	before = cl.voice_outgoing_count;
+	for (unsigned int i = 0; i < before && i < VOICE_SERVER_MAX_PACKETS_PER_DATAGRAM; ++i)
+		vad_sent[i] = cl.voice_outgoing[(cl.voice_outgoing_head + i) % VOICE_CLIENT_QUEUE_CAPACITY];
 	captured_length = captured_sends = 0;
 	CL_SendMove(NULL);
-	assert(captured_sends == 1 && captured_length > 0 &&
-		cl.voice_outgoing_count + 1 == state->voice_outgoing_count);
+	sent = before - cl.voice_outgoing_count;
+	assert(captured_sends == 1 && captured_length > 0 && sent >= 1 &&
+		sent <= VOICE_SERVER_MAX_PACKETS_PER_DATAGRAM &&
+		cl.voice_outgoing_count + sent == state->voice_outgoing_count);
 	*state = cl;
 	GapDeliver(source, captured, captured_length);
-	assert(source->voice_next_serial == serial + 1);
-	const server_voice_packet_t *received = SV_VoicePacketForSerial(source, serial + 1);
-	assert(received && received->packet.sequence == packet.sequence &&
-		received->packet.timestamp == packet.timestamp &&
-		received->packet.talkspurt == packet.talkspurt &&
-		received->packet.flags == packet.flags &&
-		received->packet.payload_bytes == packet.payload_bytes &&
-		!memcmp(received->packet.payload, packet.payload, packet.payload_bytes));
-	return packet;
+	assert(source->voice_next_serial == serial + sent);
+	for (unsigned int i = 0; i < sent; ++i)
+	{
+		const voice_packet_t *packet = &vad_sent[i];
+		const server_voice_packet_t *received = SV_VoicePacketForSerial(source, serial + 1 + i);
+		assert(received && received->packet.sequence == packet->sequence &&
+			received->packet.timestamp == packet->timestamp &&
+			received->packet.talkspurt == packet->talkspurt &&
+			received->packet.flags == packet->flags &&
+			received->packet.payload_bytes == packet->payload_bytes &&
+			!memcmp(received->packet.payload, packet->payload, packet->payload_bytes));
+	}
+	vad_sent_count = sent;
+	vad_sent_next = 1;
+	return vad_sent[0];
 
 }
 static void VoiceVADRetireRelay(client_t *source, client_state_t *state, client_t *receiver, client_state_t *receiver_state)
