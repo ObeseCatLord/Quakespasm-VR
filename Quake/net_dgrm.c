@@ -184,12 +184,15 @@ static qboolean Datagram_RebindSessionSpawned (qsocket_t *sock)
 
 #if defined(USE_ICE) && defined(_WIN32)
 qboolean Sys_RandomBytes (unsigned char *out, int len);
+#elif defined(_WIN32)
+/* Declared by <stdlib.h> only under _CRT_RAND_S; always exported by the CRT. */
+int __cdecl rand_s (unsigned int *value);
 #endif
 
 static void Datagram_NewRebindNonce (qsocket_t *sock)
 {
 	static uint64_t mix = 0x9e3779b97f4a7c15ull;
-	byte			bytes[8];
+	byte			bytes[8] = {0};
 	qboolean		ok = false;
 	uint64_t		value = 0;
 
@@ -202,6 +205,13 @@ static void Datagram_NewRebindNonce (qsocket_t *sock)
 	}
 #elif defined(USE_ICE)
 	ok = Sys_RandomBytes (bytes, sizeof (bytes));
+#else
+	{
+		unsigned int words[2];
+		ok = rand_s (&words[0]) == 0 && rand_s (&words[1]) == 0;
+		if (ok)
+			memcpy (bytes, words, sizeof (bytes));
+	}
 #endif
 	if (ok)
 		memcpy (&value, bytes, sizeof (value));
