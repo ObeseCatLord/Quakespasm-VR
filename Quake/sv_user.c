@@ -2079,6 +2079,11 @@ static qboolean SV_ReadQCRequest (void)
 		return true;
 	}
 
+	/* The request is fully consumed above. Never run CSEv_* for a client that
+	 * is not in the game or whose edict was freed (reserved save slots, QC
+	 * remove): self would be a free edict or the previous occupant's body. */
+	if (!requester->spawned || !requester->edict || requester->edict->free)
+		return true;
 	int saved_argc = qcvm->argc;
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->self = EDICT_TO_PROG (requester->edict);
@@ -2151,7 +2156,11 @@ qboolean SV_ReadClientMessage (void)
 				(s[4] == '\0' || s[4] == ' ' || s[4] == '\t');
 			client_t *requester = host_client;
 			struct qsocket_s *socket = requester->netconnection;
-			if (!pext_offer && q_strncasecmp (s, "spawn", 5) && q_strncasecmp (s, "begin", 5) && q_strncasecmp (s, "prespawn", 8) && qcvm->extfuncs.SV_ParseClientCommand)
+			// QC only sees commands from a client it has been told about (spawn
+			// ran ClientConnect) and whose edict is live; earlier ones take the
+			// engine path, as with progs that lack the hook.
+			const qboolean qc_owns_client = requester->knowntoqc && requester->edict && !requester->edict->free;
+			if (!pext_offer && qc_owns_client && q_strncasecmp (s, "spawn", 5) && q_strncasecmp (s, "begin", 5) && q_strncasecmp (s, "prespawn", 8) && qcvm->extfuncs.SV_ParseClientCommand)
 			{ // the spawn/begin/prespawn are because of numerous mods that disobey the rules.
 				// at a minimum, we must be able to join the server, so that we can see any sprints/bprints (because dprint sucks, yes there's proper ways
 				// to deal with this, but moders don't always know them).
