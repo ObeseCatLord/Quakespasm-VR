@@ -104,7 +104,34 @@ typedef struct
 	vec3_t frozen_hand_angles;
 	vec3_t frozen_model_angles;
 	vec3_t frozen_muzzle_world;
+	/* The frozen poses are world-space: the player body must stay put. */
+	vec3_t player_origin;
+	float player_yaw;
+	qboolean player_yaw_valid;
+	double begin_time;
 } vr_weapon_calibration_adjustment_t;
+
+#define VR_CALIBRATION_ADJUST_MAX_BODY_DRIFT 48.0f
+#define VR_CALIBRATION_ADJUST_MAX_YAW_DRIFT 5.0f
+#define VR_CALIBRATION_ADJUST_TIMEOUT 120.0
+
+static float VR_CalibrationAdjustYawDelta(float a, float b)
+{
+	float delta = fmodf(a - b, 360.0f);
+	if (delta > 180.0f)
+		delta -= 360.0f;
+	else if (delta < -180.0f)
+		delta += 360.0f;
+	return delta;
+}
+
+static qboolean VR_CalibrationAdjustPlayerOrigin(vec3_t origin)
+{
+	if (!cl.entities || cl.viewentity <= 0 || cl.viewentity >= cl.num_entities)
+		return false;
+	VectorCopy(cl.entities[cl.viewentity].origin, origin);
+	return true;
+}
 
 static vr_weapon_calibration_adjustment_t vr_weapon_calibration_adjustment;
 
@@ -2033,6 +2060,29 @@ static qboolean VR_CalibrationAdjustStateValid(
 			*reason_out = "active controller hand changed";
 		return false;
 	}
+	{
+		vec3_t origin, delta;
+		float yaw;
+		if (!VR_CalibrationAdjustPlayerOrigin(origin))
+			return false;
+		VectorSubtract(origin, adjustment->player_origin, delta);
+		/* Lifts, pushes and turns would turn the world-space comparison into
+		 * a bogus held offset that is then persisted. */
+		if (VectorLength(delta) > VR_CALIBRATION_ADJUST_MAX_BODY_DRIFT ||
+			(adjustment->player_yaw_valid && (!V_TrackedMappingYaw(&yaw) ||
+			 fabsf(VR_CalibrationAdjustYawDelta(yaw, adjustment->player_yaw)) > VR_CALIBRATION_ADJUST_MAX_YAW_DRIFT)))
+		{
+			if (reason_out)
+				*reason_out = "player moved or turned";
+			return false;
+		}
+	}
+	if (realtime - adjustment->begin_time > VR_CALIBRATION_ADJUST_TIMEOUT)
+	{
+		if (reason_out)
+			*reason_out = "adjustment timed out";
+		return false;
+	}
 	if (vr_world_scale.value != adjustment->world_scale ||
 		vr_gunmodelscale.value != adjustment->gunmodelscale ||
 		vr_gunmodelpitch.value != adjustment->gunmodelpitch)
@@ -2261,6 +2311,10 @@ static void VR_WeaponCalibrationAdjustBegin_f(qboolean muzzle_mode)
 	VectorCopy(raw_origin, adjustment->frozen_origin);
 	VectorCopy(raw_hand_angles, adjustment->frozen_hand_angles);
 	VectorCopy(model_angles, adjustment->frozen_model_angles);
+	if (!VR_CalibrationAdjustPlayerOrigin(adjustment->player_origin))
+		memset(adjustment->player_origin, 0, sizeof(adjustment->player_origin));
+	adjustment->player_yaw_valid = V_TrackedMappingYaw(&adjustment->player_yaw);
+	adjustment->begin_time = realtime;
 	if (muzzle_mode)
 	{
 		VectorCopy(muzzle_world, adjustment->frozen_muzzle_world);
