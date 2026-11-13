@@ -292,6 +292,15 @@ typedef struct client_s
 	unsigned int vr_gorilla_owner_generation;
 	qboolean vr_gorilla_owner_applied;
 	vec3_t vr_gorilla_owner_origin, vr_gorilla_owner_velocity;
+	/* Displacement the owner may still report, accrued from server time. */
+	float vr_gorilla_owner_budget;
+	double vr_gorilla_owner_report_time; // last report that moved the body
+	/* Water or a moving pusher hands the body back to server movement;
+	 * ownership resumes once that has been clear for a moment. */
+	qboolean vr_gorilla_owner_suspended;
+	double vr_gorilla_owner_clear_time;
+	/* Server time credit for raw-hand samples (milliseconds). */
+	double vr_gorilla_credit_msec;
 	int weapon_contact_last_mode; // last mode appended to the reliable stream; -1 means not queued
 	int weapon_contact_last_profile; // profile paired with weapon_contact_last_mode
 	signed char akimbo_last_advertised_mask; // -1 unsent; bits 0..3 are the queued offer tuple
@@ -671,6 +680,7 @@ qboolean SV_GorillaEligible (client_t *client);
 qboolean SV_GorillaOwnerEligible (client_t *client);
 qboolean SV_GorillaOwnerCommand (client_t *client);
 void SV_GorillaOwnerResync (client_t *client);
+float SV_GorillaOwnerSpeed (const client_t *client);
 qboolean SV_GorillaNativeLadder (edict_t *ent);
 qboolean SV_ClientInstantStopEnabled (const client_t *client);
 void SV_GorillaLatchLadder (client_t *client, qboolean begin_frame);

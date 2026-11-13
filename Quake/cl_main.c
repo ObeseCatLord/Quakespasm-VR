@@ -2881,7 +2881,17 @@ static struct
 	vec3_t origin, velocity;
 	qboolean onground;
 	vr_gorilla_state_t gorilla;
+	double time;		 // realtime of the last authored command
+	double hands_time;	 // realtime of the last command with both hands
+	vec3_t view_offset;	 // reseed correction, blended out over CL_MONKE_BLEND
+	double view_offset_time;
+	vec3_t last_view;	 // last rendered owner view origin
+	qboolean last_view_valid;
 } cl_monke;
+
+#define CL_MONKE_BLEND 0.1		  // seconds to blend a reseed into the view
+#define CL_MONKE_HANDS_GAP 0.25	  // keep owning the body through brief tracking loss
+#define CL_MONKE_EXTRAPOLATE 0.05 // longest gap between commands the view bridges
 
 static qboolean CL_MonkeOwnerEligible (const usercmd_t *cmd)
 {
@@ -2893,13 +2903,17 @@ static qboolean CL_MonkeOwnerEligible (const usercmd_t *cmd)
 		cl.vr_gorilla_trusted_supported && cl.vr_gorilla_trusted_cap_sent &&
 		cl.vr_gorilla_motion_generation_valid && !cl.move_ack_selected_owner &&
 		VR_GorillaActive () && cmd && cmd->seconds > 0 &&
-		(cmd->vr_gorilla.flags & VR_GORILLA_HANDS) == VR_GORILLA_HANDS;
+		((cmd->vr_gorilla.flags & VR_GORILLA_HANDS) == VR_GORILLA_HANDS ||
+		 (cl_monke.valid && realtime - cl_monke.hands_time <= CL_MONKE_HANDS_GAP));
 }
 
 /* Start from the server's latest state for the current generation. */
 static void CL_MonkeOwnerSeed (const entity_t *ent)
 {
 	int i;
+	vec3_t last_view, offset;
+	qboolean blend = cl_monke.last_view_valid;
+	VectorCopy (cl_monke.last_view, last_view);
 	memset (&cl_monke, 0, sizeof (cl_monke));
 	VectorCopy (ent->msg_origins[0], cl_monke.origin);
 	for (i = 0; i < 3; i++)
@@ -2908,6 +2922,15 @@ static void CL_MonkeOwnerSeed (const entity_t *ent)
 	cl_monke.generation = cl.vr_gorilla_motion_generation;
 	cl_monke.valid = CL_PredictionVectorFinite (cl_monke.origin) &&
 		CL_PredictionVectorFinite (cl_monke.velocity);
+	cl_monke.time = cl_monke.hands_time = realtime;
+	/* Server corrections (QC jumps, knockback) are usually small: ease the
+	 * view onto the new state instead of snapping.  Teleports still snap. */
+	VectorSubtract (last_view, cl_monke.origin, offset);
+	if (blend && cl_monke.valid && VectorLength (offset) < 64)
+	{
+		VectorCopy (offset, cl_monke.view_offset);
+		cl_monke.view_offset_time = realtime;
+	}
 	Con_DPrintf ("monke owner: seeded generation %u at %.0f %.0f %.0f\n",
 		cl_monke.generation, cl_monke.origin[0], cl_monke.origin[1],
 		cl_monke.origin[2]);
@@ -2926,8 +2949,11 @@ void CL_MonkeOwnerAuthor (usercmd_t *cmd)
 	if (!CL_MonkeOwnerEligible (cmd))
 	{
 		cl_monke.valid = false;
+		cl_monke.last_view_valid = false;
 		return;
 	}
+	if ((cmd->vr_gorilla.flags & VR_GORILLA_HANDS) == VR_GORILLA_HANDS)
+		cl_monke.hands_time = realtime;
 	ent = &cl.entities[cl.viewentity];
 	if (!cl_monke.valid || cl_monke.generation != cl.vr_gorilla_motion_generation)
 	{
@@ -2952,10 +2978,12 @@ void CL_MonkeOwnerAuthor (usercmd_t *cmd)
 		pmove.player_mins[2] = -(int)((solidsize >> 8) & 255);
 		pmove.player_maxs[2] = (int)((solidsize >> 16) & 65535) - 32768;
 	}
+	/* Empty bounds: the helper below gathers physents once, around both the
+	 * body and the hands. */
 	for (i = 0; i < 3; i++)
 	{
-		bounds[0][i] = pmove.origin[i] + pmove.player_mins[i] - 256;
-		bounds[1][i] = pmove.origin[i] + pmove.player_maxs[i] + 256;
+		bounds[0][i] = FLT_MAX;
+		bounds[1][i] = -FLT_MAX;
 	}
 	VectorClear (pmove.gravitydir);
 	pmove.pm_type = PM_NORMAL;
@@ -2966,7 +2994,6 @@ void CL_MonkeOwnerAuthor (usercmd_t *cmd)
 	pmove.gorilla = cl_monke.gorilla;
 	pmove.cmd = *cmd;
 	pmove.cmd.buttons &= ~2;
-	PMCL_AddEntities (bounds);
 	if (!CL_ReplayEnsureCommandPhysents (bounds, &pmove.cmd, true))
 	{
 		cl_monke.valid = false;
@@ -2983,6 +3010,7 @@ void CL_MonkeOwnerAuthor (usercmd_t *cmd)
 	VectorCopy (pmove.velocity, cl_monke.velocity);
 	cl_monke.onground = pmove.onground;
 	cl_monke.gorilla = pmove.gorilla;
+	cl_monke.time = realtime;
 
 	cmd->vr_gorilla_motion.flags = VR_GORILLA_OWNER_ACTIVE |
 		(cl_monke.onground ? VR_GORILLA_OWNER_ONGROUND : 0);
@@ -2994,11 +3022,31 @@ void CL_MonkeOwnerAuthor (usercmd_t *cmd)
 /* The owner's own body drives its view while owner movement is active. */
 static qboolean CL_MonkeOwnerView (vec3_t origin)
 {
+	double ahead, blend;
+	vec3_t end, impact;
 	if (!cl_monke.valid || !cl.vr_gorilla_motion_generation_valid ||
 		cl_monke.generation != cl.vr_gorilla_motion_generation ||
 		cl.move_ack_selected_owner || !VR_GorillaActive ())
+	{
+		cl_monke.last_view_valid = false;
 		return false;
+	}
 	VectorCopy (cl_monke.origin, origin);
+	/* Commands go out at the network rate, which can be below the headset's
+	 * refresh rate: carry the body along its velocity between commands so
+	 * every displayed frame moves, without passing through world geometry. */
+	ahead = CLAMP (0.0, realtime - cl_monke.time, CL_MONKE_EXTRAPOLATE);
+	if (ahead > 0 && cl.worldmodel)
+	{
+		VectorMA (cl_monke.origin, (float)ahead, cl_monke.velocity, end);
+		TraceLine (cl_monke.origin, end, impact);
+		VectorCopy (impact, origin);
+	}
+	blend = 1.0 - (realtime - cl_monke.view_offset_time) / CL_MONKE_BLEND;
+	if (blend > 0 && blend <= 1)
+		VectorMA (origin, (float)blend, cl_monke.view_offset, origin);
+	VectorCopy (origin, cl_monke.last_view);
+	cl_monke.last_view_valid = true;
 	VectorCopy (cl_monke.velocity, cl.velocity);
 	cl.onground = cl_monke.onground;
 	return true;

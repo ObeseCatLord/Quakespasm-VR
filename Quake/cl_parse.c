@@ -3206,13 +3206,16 @@ static qboolean CL_ParseMoveAckPayload (qboolean *ack_accepted, int *source_epoc
 	}
 	if (flags & MOVEACK_FLAG_GORILLA_TRUSTED)
 	{
-		if ((!cls.demoplayback && !cl.vr_gorilla_trusted_cap_sent) ||
-			net_message.cursize - msg_readcount < 4)
+		if (net_message.cursize - msg_readcount < 4)
 		{
 			msg_badread = true;
 			return false;
 		}
 		motion_generation = (unsigned int)MSG_ReadLong ();
+		/* An ACK sent before a trust-policy change can arrive after the
+		 * capability was withdrawn: its generation no longer applies. */
+		if (!cls.demoplayback && !cl.vr_gorilla_trusted_cap_sent)
+			flags &= ~MOVEACK_FLAG_GORILLA_TRUSTED;
 	}
 	memset (&gorilla_state, 0, sizeof (gorilla_state));
 	if (flags & MOVEACK_FLAG_VR_GORILLA)

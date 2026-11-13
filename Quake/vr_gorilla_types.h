@@ -43,6 +43,8 @@ typedef struct {
 #define VR_GORILLA_OWNER_ONGROUND 2
 #define VR_GORILLA_OWNER_FLAGS 3
 #define VR_GORILLA_OWNER_MAX_SPEED 4096.0f
+/* Seconds of owner movement the server lets accumulate (bursts, jitter). */
+#define VR_GORILLA_OWNER_BURST 0.25f
 #define VR_GORILLA_OWNER_MAX_COORD 262144.0f
 typedef struct {
   unsigned int generation;

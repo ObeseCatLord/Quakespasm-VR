@@ -45,7 +45,7 @@ static qboolean	clmovevars_valid;
 #define PM_VR_SWIM_JUMP_UPMOVE 200.0f
 #define PM_MAX_SUBSTEP_SECONDS 0.025f
 #define PM_VR_ROOMSCALE_MAX_DELTA 16.0f
-#define PM_VR_ROOMSCALE_MAX_SPEED 500.0f // units/s; bounds timed samples by their msec
+#define PM_VR_ROOMSCALE_MAX_SPEED 250.0f // units/s; bounds timed samples by their msec
 
 // Axis vectors come from AngleVectors; this mirrors QSS-M's transform convention.
 #define QAxisTransform(a, v, c) \
