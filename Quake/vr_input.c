@@ -5215,6 +5215,13 @@ void VR_InputMove (usercmd_t *pending)
 		vr_input_gorilla_discontinuity = true;
 		return;
 	}
+	/* Weapon calibration compares the hand against a frozen world-space pose.
+	 * Hold stick locomotion and turning while it runs; they rearm at neutral. */
+	if (VR_WeaponCalibrationAdjustActive ())
+	{
+		VR_InputGateMovement (pending);
+		VR_InputGateTurn ();
+	}
 
 	memcpy (&offhand_input, &frame->hands[offhand], sizeof (offhand_input));
 	memcpy (&dominant_input, &frame->hands[dominant], sizeof (dominant_input));
@@ -5249,7 +5256,8 @@ void VR_InputMove (usercmd_t *pending)
 
 	// A fresh native command may come from a keyboard binding; unlike stick
 	// turning it does not require a controller axis to be available.
-	if (turn180 && mapping_valid && VR_InputFiniteCvar (&vr_180_snap_turn, 1.0f) != 0.0f)
+	if (turn180 && mapping_valid && !VR_WeaponCalibrationAdjustActive () &&
+		VR_InputFiniteCvar (&vr_180_snap_turn, 1.0f) != 0.0f)
 	{
 		if (!V_TurnTrackedYaw (-180.0f))
 		{

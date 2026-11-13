@@ -304,7 +304,7 @@ static void GLMesh_FreeAvatarPropBLAS (aliashdr_t *root)
 	if (blas == VK_NULL_HANDLE)
 		return;
 
-	if (in_update_screen)
+	if (GL_DeferredFreeAvailable ())
 		AddBLASGarbage (blas, buffer, allocation);
 	else
 	{
@@ -533,9 +533,10 @@ void GLMesh_DeleteMeshBuffers (aliashdr_t *mainhdr)
 {
 	GLMesh_FreeAvatarPropBLAS (mainhdr);
 	// Delete all surfaces:
+	const qboolean deferred = GL_DeferredFreeAvailable ();
 	for (aliashdr_t *hdr = mainhdr; hdr != NULL; hdr = hdr->nextsurface)
 	{
-		if (in_update_screen)
+		if (deferred)
 		{
 			if (hdr->vertex_buffer != VK_NULL_HANDLE)
 				AddBufferGarbage (hdr->vertex_buffer, VK_NULL_HANDLE, hdr->vertex_allocation, VK_NULL_HANDLE, NULL);

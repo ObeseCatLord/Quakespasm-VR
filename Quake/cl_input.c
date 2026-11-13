@@ -1039,53 +1039,66 @@ static void CL_AppendVRIKPose (sizebuf_t *buf)
 	cl.vrik_last_sent_active = active;
 }
 
-static qboolean CL_AppendVoicePacket (sizebuf_t *buf)
+/* Append as many queued voice frames as the server accepts per datagram
+ * (and the voice byte budget allows). One frame per datagram lost audio
+ * whenever the client sent fewer than 50 packets a second (VR reprojection,
+ * host_maxfps <= 72): the 4-entry queue evicted the oldest, including START
+ * frames. Returns the number of frames written. */
+static int CL_AppendVoicePacket (sizebuf_t *buf)
 {
 	voice_packet_t *packet;
-	size_t required;
-	int start;
+	size_t required, used = 0;
+	int start, appended = 0;
 
 	if (!buf || !buf->data || !CL_VoiceTransportAvailable () ||
 		!cl.voice_outgoing_count || cls.state != ca_connected ||
 		cls.demoplayback || cls.signon != SIGNONS)
-		return false;
-	packet = &cl.voice_outgoing[cl.voice_outgoing_head];
-	if (!Voice_PacketIsValid (packet))
-		return false;
-	required = VOICE_CLC_HEADER_BYTES + packet->payload_bytes;
-	if (required > VOICE_CLIENT_DATAGRAM_BUDGET || buf->overflowed ||
-		buf->cursize < 0 || buf->maxsize < 0 || buf->cursize > buf->maxsize ||
-		required > (size_t)(buf->maxsize - buf->cursize))
-		return false;
-
-	start = buf->cursize;
-	MSG_WriteByte (buf, clc_voice);
-	MSG_WriteShort (buf, packet->sequence);
-	MSG_WriteLong (buf, (int)packet->timestamp);
-	MSG_WriteByte (buf, packet->talkspurt);
-	MSG_WriteByte (buf, packet->flags);
-	MSG_WriteShort (buf, packet->payload_bytes);
-	if (packet->payload_bytes)
-		SZ_Write (buf, packet->payload, packet->payload_bytes);
-	if (buf->overflowed)
+		return 0;
+	while (appended < (int)cl.voice_outgoing_count &&
+		appended < VOICE_SERVER_MAX_PACKETS_PER_DATAGRAM)
 	{
-		buf->cursize = start;
-		return false;
+		packet = &cl.voice_outgoing[(cl.voice_outgoing_head + appended) %
+			VOICE_CLIENT_QUEUE_CAPACITY];
+		if (!Voice_PacketIsValid (packet))
+			break;
+		required = VOICE_CLC_HEADER_BYTES + packet->payload_bytes;
+		if (used + required > VOICE_CLIENT_DATAGRAM_BUDGET || buf->overflowed ||
+			buf->cursize < 0 || buf->maxsize < 0 || buf->cursize > buf->maxsize ||
+			required > (size_t)(buf->maxsize - buf->cursize))
+			break;
+
+		start = buf->cursize;
+		MSG_WriteByte (buf, clc_voice);
+		MSG_WriteShort (buf, packet->sequence);
+		MSG_WriteLong (buf, (int)packet->timestamp);
+		MSG_WriteByte (buf, packet->talkspurt);
+		MSG_WriteByte (buf, packet->flags);
+		MSG_WriteShort (buf, packet->payload_bytes);
+		if (packet->payload_bytes)
+			SZ_Write (buf, packet->payload, packet->payload_bytes);
+		if (buf->overflowed)
+		{
+			buf->cursize = start;
+			break;
+		}
+		used += required;
+		appended++;
 	}
-	return true;
+	return appended;
 }
 
-static void CL_ConsumeSentVoicePacket (void)
+static void CL_ConsumeSentVoicePacket (int count)
 {
 	voice_packet_t *packet;
 
-	if (!cl.voice_outgoing_count)
-		return;
-	packet = &cl.voice_outgoing[cl.voice_outgoing_head];
-	memset (packet, 0, sizeof (*packet));
-	cl.voice_outgoing_head = (cl.voice_outgoing_head + 1) %
-		VOICE_CLIENT_QUEUE_CAPACITY;
-	cl.voice_outgoing_count--;
+	while (count-- > 0 && cl.voice_outgoing_count)
+	{
+		packet = &cl.voice_outgoing[cl.voice_outgoing_head];
+		memset (packet, 0, sizeof (*packet));
+		cl.voice_outgoing_head = (cl.voice_outgoing_head + 1) %
+			VOICE_CLIENT_QUEUE_CAPACITY;
+		cl.voice_outgoing_count--;
+	}
 }
 
 /* Called when a selected server's new resume epoch is parsed, before the
@@ -1147,7 +1160,7 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 	byte data[DATAGRAM_MTU];
 	sizebuf_t buf = {0};
 	usercmd_t sendcmd;
-	qboolean voice_appended;
+	int voice_appended;
 	int send_result;
 	int seq, first_seq, packet_cmds = 0;
 	unsigned capabilities = 0;
@@ -1220,7 +1233,7 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 			CL_Disconnect ();
 		}
 		else if (send_result == 1 && voice_appended)
-			CL_ConsumeSentVoicePacket ();
+			CL_ConsumeSentVoicePacket (voice_appended);
 		return;
 	}
 	if (cl.vr_gorilla_supported && cl.vr_gorilla_allowed)
@@ -1266,7 +1279,7 @@ static void CL_SendPrivateMove (const usercmd_t *cmd)
 		return;
 	}
 	if (send_result == 1 && voice_appended)
-		CL_ConsumeSentVoicePacket ();
+		CL_ConsumeSentVoicePacket (voice_appended);
 	cl.net_move_packets_sent++;
 	cl.net_move_cmds_sent += packet_cmds;
 	cl.net_move_last_packet_cmds = packet_cmds;
@@ -1285,7 +1298,7 @@ void CL_SendMove (const usercmd_t *cmd)
 		return;
 	}
 	unsigned int i;
-	qboolean voice_appended;
+	int voice_appended;
 	int send_result;
 	sizebuf_t	 buf = {0};
 	byte		 data[1024];
@@ -1370,7 +1383,7 @@ void CL_SendMove (const usercmd_t *cmd)
 		return;
 	}
 	if (send_result == 1 && voice_appended)
-		CL_ConsumeSentVoicePacket ();
+		CL_ConsumeSentVoicePacket (voice_appended);
 }
 
 /*

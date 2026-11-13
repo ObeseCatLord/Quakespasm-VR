@@ -3922,6 +3922,8 @@ typedef struct sv_vr_weapon_pose_scope_s
 	qboolean shot_basis_valid;
 	int stock_id1_program; /* 0 unchecked, 1 pinned id1, -1 other */
 	vec3_t origin, body_origin, v_angle, forward, right, up, shot_angles;
+	/* The (temporary) origin QC replaced with its first setorigin. */
+	vec3_t relocation_base;
 	vec3_t stock_id1_muzzle;
 	vec3_t stock_lightning_end;
 	vec3_t stock_lightning_damage_end;
@@ -3973,6 +3975,8 @@ void SV_VRWeaponPoseSetOrigin (edict_t *ent)
 	for (scope = sv_vr_weapon_pose_scope; scope; scope = scope->previous)
 		if (scope->ent == ent)
 		{
+			if (!scope->origin_relocated)
+				VectorCopy (ent->v.origin, scope->relocation_base);
 			scope->origin_relocated = true;
 			scope->akimbo_invalidated = true;
 			scope->akimbo_pose_valid = false;
@@ -4694,9 +4698,11 @@ static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 		}
 	}
 
-	VectorAdd (scope->origin, cmd->vr_handpos, muzzle);
+	/* The hand is relative to the body. A nested scope's origin is already its
+	 * parent's temporary hand-derived source and must not compound it. */
+	VectorAdd (scope->body_origin, cmd->vr_handpos, muzzle);
 	if (VectorLength (cmd->vr_handpos) > SV_VR_MAX_MUZZLE_OFFSET)
-		VectorAdd (scope->origin, ent->v.view_ofs, muzzle);	/* beyond arm reach: use the eye */
+		VectorAdd (scope->body_origin, ent->v.view_ofs, muzzle);	/* beyond arm reach: use the eye */
 	VectorCopy (cmd->vr_handrot, ent->v.v_angle);
 	/* QuakeC sees zero roll as camera tilt, but its matching gun-shot
 	 * makevectors call needs the full tracked basis for lateral spread. */
@@ -5109,6 +5115,27 @@ static void SV_EndPrivateVRWeaponPoseGuarded (edict_t *ent,
 			/* A QC size/model/link operation may have indexed the hand origin. */
 			if (scope->linked)
 				SV_LinkEdict (ent, false);
+		}
+		else
+		{
+			/* QC moved the player while it saw the temporary hand pose. A move
+			 * relative to that pose (setorigin (self, self.origin) relinks,
+			 * small nudges) is carried onto the body; keeping it verbatim would
+			 * leave the player at the hand. A distant destination is an
+			 * absolute teleport and is kept as QC chose it. */
+			vec3_t delta;
+			VectorSubtract (ent->v.origin, scope->relocation_base, delta);
+			if (VectorLength (delta) <= SV_VR_MAX_MUZZLE_OFFSET)
+			{
+				sv_vr_weapon_pose_scope_t *outer;
+				VectorAdd (scope->origin, delta, ent->v.origin);
+				SV_LinkEdict (ent, false);
+				/* An enclosing scope of this player now continues from the
+				 * origin this scope started at. */
+				for (outer = scope->previous; outer; outer = outer->previous)
+					if (outer->ent == ent && outer->origin_relocated)
+						VectorCopy (scope->origin, outer->relocation_base);
+			}
 		}
 		VectorCopy (scope->v_angle, ent->v.v_angle);
 	}
@@ -9563,12 +9590,18 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 	return true;
 }
 
+/* A crowded sweep (hordes, missile-heavy rooms) can exceed MAX_PHYSENTS. That
+ * is not a client fault: the preflight asks the caller to run this frame
+ * through the native owner instead of disconnecting the player. */
+static qboolean sv_private_walk_trial_native_request;
+
 static qboolean SV_PrivateWalkTrialCollect (edict_t *ent,
 	const movevars_t *vars, float seconds, const usercmd_t *command,
 	vec3_t bounds[2])
 {
 	int i;
 
+	sv_pmove_physents_overflowed = false;
 	if (seconds > 0.1251f ||
 		!SV_PrivateWalkTrialBuildBounds (ent, vars, seconds, command, bounds) ||
 		!SV_CollectPMovePhysents (ent, bounds))
@@ -10443,7 +10476,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			client->vr_gorilla_capable && SV_GorillaAllowed () ?
 				&command : NULL, bounds)))
 	{
-		failure = "PMove preflight failed";
+		if (sv_pmove_physents_overflowed)
+			sv_private_walk_trial_native_request = true; // no QC has run yet
+		else
+			failure = "PMove preflight failed";
 		goto cleanup;
 	}
 
@@ -12393,10 +12429,22 @@ static void SV_Physics_Client (edict_t *ent, int num)
 					break;
 				}
 			}
+			sv_private_walk_trial_native_request = false;
 			if (!client->active || !SV_PrivateWalkTrialSelected (client) ||
 				!SV_Physics_ClientPrivateWalkTrial (ent, client,
 					queue_offset, queue_offset == 0, &think_window))
+			{
+				if (sv_private_walk_trial_native_request && client->active)
+				{
+					// Same hand-off as the q30 native path above.
+					if (queue_offset == 0)
+						SV_Physics_ClientSelectedNativeFrame (ent, num, client, false);
+					else
+						SV_PrivateWalkTrialDeferNativeHead (client);
+				}
+				sv_private_walk_trial_native_request = false;
 				break;
+			}
 			if (SV_PrivateWalkTrialTerminalState (client) ||
 				client->private_move_native_frame)
 				break;

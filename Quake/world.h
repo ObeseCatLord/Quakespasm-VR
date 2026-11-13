@@ -87,6 +87,8 @@ qboolean SV_AnyMatchingTriggerOverlaps (const vec3_t mins, const vec3_t maxs,
 /* Collect the world and linked server solids overlapping inclusive world bounds.
  * Returns false for an invalid server world/model or physent overflow. */
 qboolean SV_CollectPMovePhysents (edict_t *ignore, vec3_t boxminmax[2]);
+// Set when the last SV_CollectPMovePhysents failed only because MAX_PHYSENTS filled.
+extern qboolean sv_pmove_physents_overflowed;
 
 void SV_PushGridEntityLinked (edict_t *ent);
 // sv_phys.c: keeps the SV_PushMove spatial grid in sync with entities that move mid-tick

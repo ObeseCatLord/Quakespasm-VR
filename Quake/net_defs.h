@@ -173,6 +173,10 @@ typedef struct qsocket_s
 	struct qsockaddr addr;
 	struct qsockaddr previous_addr; // recent endpoint before a virtual socket's NAT port changed
 	double previous_addr_time;
+	/* A same-IP source-port change is only committed after the new port echoes
+	 * this nonce, delivered there through a stuffed "cmd" probe. */
+	double rebind_probe_time;
+	char   rebind_nonce[24];
 	char             connectaddress[MAX_OSPATH]; // numeric control endpoint, including its port
 	char			 trueaddress[NET_NAMELEN];	 // lazy address string
 	char			 maskedaddress[NET_NAMELEN]; // addresses for this player that may be displayed publically

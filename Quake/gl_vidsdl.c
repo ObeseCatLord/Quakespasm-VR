@@ -195,6 +195,7 @@ static VkSwapchainKHR			vulkan_swapchain;
 
 static uint32_t			num_swap_chain_images;
 static qboolean			render_resources_created = false;
+static double			gl_last_garbage_rotation = -1.0; // realtime of the last garbage-ring rotation
 static uint32_t			current_cb_index;
 typedef struct
 {
@@ -4303,6 +4304,10 @@ static void GL_CreateRenderResources (void)
 	if (sv.active && cls.signon < 1) // server has loaded the map but client hasn't called R_NewMap yet - wait until next frame
 		return;
 
+	/* An SSAO pipeline failure only disables SSAO for one set of render
+	 * resources. Clear it before the SSAO images, render passes and pipelines
+	 * are chosen so every recreation (vid_restart included) tries again. */
+	vulkan_globals.ssao_broken = false;
 	if (!vulkan_globals.stereo_active && !GL_CreateSwapChain (false))
 	{
 		render_resources_created = false;
@@ -4367,6 +4372,32 @@ static void GL_CreateRenderResources (void)
 GL_DestroyMainRenderPasses
 ===============
 */
+
+/*
+===============
+GL_DeferredFreeAvailable
+
+Gameplay-time frees between frames (skin, avatar and model swaps) used to
+idle the whole device. The garbage rings already protect resources the GPU
+may still be using: an entry is destroyed two rotations later, after
+GL_BeginRendering has waited on the fence of the last frame that could
+reference it. That only holds while frames keep rotating the rings and
+nothing is tearing the renderer down, so teardown, loading and stalled
+presentation keep the device-idle path. The CPU side of the last frame (its
+end-rendering task) is joined before the caller retires anything.
+===============
+*/
+qboolean GL_DeferredFreeAvailable (void)
+{
+	if (in_update_screen)
+		return true;
+	if (Tasks_IsWorker () || !render_resources_created || host_clearing_memory ||
+		scr_disabled_for_loading || cls.state != ca_connected || cls.signon != SIGNONS ||
+		gl_last_garbage_rotation < 0.0 || realtime - gl_last_garbage_rotation > 0.25)
+		return false;
+	GL_SynchronizeEndRenderingTask ();
+	return true;
+}
 
 /*
 ===============
@@ -4574,6 +4605,7 @@ void GL_BeginRenderingTask (void *unused)
 	R_CollectMeshBufferGarbage ();
 	R_CollectTLASGarbage ();
 	TexMgr_CollectGarbage ();
+	gl_last_garbage_rotation = realtime;
 
 	for (int pcbx_index = 0; pcbx_index < PCBX_NUM; ++pcbx_index)
 	{

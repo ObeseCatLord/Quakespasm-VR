@@ -90,6 +90,8 @@ int NET_ListAddresses (qhostaddr_t *addresses, int maxaddresses);
 // gets a list of public addresses.
 
 int NET_GetMessage (struct qsocket_s *sock);
+// True for the server-only string command a client echoes to confirm a NAT port change.
+qboolean NET_IsRebindEcho (const char *command);
 // returns data in net_message sizebuf
 // returns 0 if no data is waiting
 // returns 1 if a message was received

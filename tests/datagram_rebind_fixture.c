@@ -11,7 +11,10 @@ static struct {
 } incoming[64];
 static int in_count, in_next, writes;
 static struct qsockaddr last_written;
+static byte last_written_bytes[256];
+static int last_written_length;
 static client_t server_client;
+static client_t session_clients[2];
 static int server_drops;
 
 qsocket_t *net_activeSockets;
@@ -87,6 +90,9 @@ static int write_packet (sys_socket_t socket, byte *data, int length, struct qso
 {
 	assert (socket == 9 && data && length >= NET_HEADERSIZE);
 	last_written = *addr;
+	assert (length <= (int)sizeof last_written_bytes);
+	memcpy (last_written_bytes, data, length);
+	last_written_length = length;
 	writes++;
 	return length;
 }
@@ -102,6 +108,46 @@ static void push (struct qsockaddr addr, unsigned int flags, unsigned int sequen
 	memset (incoming[in_count].bytes + NET_HEADERSIZE, 'x', payload);
 	in_count++;
 }
+/* Queue a reliable fragment carrying the probe's echoed string command. */
+static void push_echo (struct qsockaddr addr, unsigned int sequence, const char *nonce)
+{
+	char text[64];
+	int length = snprintf (text, sizeof text, "%cqsvr_rebind %s", clc_stringcmd, nonce) + 1;
+	unsigned int header = NETFLAG_DATA | NETFLAG_EOM | (NET_HEADERSIZE + length);
+	incoming[in_count].addr = addr;
+	incoming[in_count].length = NET_HEADERSIZE + length;
+	memcpy (incoming[in_count].bytes, &header, 4);
+	memcpy (incoming[in_count].bytes + 4, &sequence, 4);
+	memcpy (incoming[in_count].bytes + NET_HEADERSIZE, text, length);
+	in_count++;
+}
+/* Return the nonce in the last probe, after checking the stuffed command. */
+static const char *probe_nonce (void)
+{
+	static const char prefix[] = "cmd qsvr_rebind ";
+	static char nonce[24];
+	const char *text = (const char *)last_written_bytes + NET_HEADERSIZE + 1;
+	unsigned int header;
+	memcpy (&header, last_written_bytes, 4);
+	assert ((header & ~NETFLAG_LENGTH_MASK) == NETFLAG_UNRELIABLE);
+	assert ((int)(header & NETFLAG_LENGTH_MASK) == last_written_length);
+	assert (last_written_bytes[NET_HEADERSIZE] == svc_stufftext);
+	assert (!strncmp (text, prefix, sizeof prefix - 1));
+	snprintf (nonce, sizeof nonce, "%s", text + sizeof prefix - 1);
+	assert (strlen (nonce) == 17 && nonce[16] == '\n');
+	nonce[16] = 0;
+	return nonce;
+}
+int q_snprintf (char *str, size_t size, const char *format, ...)
+{
+	va_list args;
+	int result;
+	va_start (args, format);
+	result = vsnprintf (str, size, format, args);
+	va_end (args);
+	return result;
+}
+int q_strncasecmp (const char *a, const char *b, size_t n) { return strncasecmp (a, b, n); }
 void Con_Printf (const char *fmt, ...) { (void)fmt; }
 void Con_DPrintf (const char *fmt, ...) { (void)fmt; }
 void SZ_Clear (sizebuf_t *buf) { buf->cursize = 0; }
@@ -140,12 +186,46 @@ int main (void)
 	a.addr = a_old;
 	b.addr = b_old;
 	b.unreliableReceiveSequence = 100;
+	a.rebind_probe_time = b.rebind_probe_time = -1;
+	svs.clients = session_clients;
+	svs.maxclients = 2;
+	session_clients[0].netconnection = &a;
+	session_clients[1].netconnection = &b;
+	session_clients[0].active = session_clients[1].active = true;
+	session_clients[0].spawned = session_clients[1].spawned = true;
 
-	/* A per-client read must defer B's packet, then accept A's new port. */
+	/* A player still in signon (map loading is legitimately silent) never has
+	 * its session moved to another port. */
+	session_clients[0].spawned = false;
+	push (a_new, NETFLAG_UNRELIABLE, 0, 1);
+	{
+		const int old_writes = writes;
+		assert (Datagram_GetMessage (&a) == 0 && compare_addr (&a.addr, &a_old) == 0);
+		assert (writes == old_writes && !a.rebind_nonce[0]);
+	}
+	session_clients[0].spawned = true;
+
+	/* A per-client read must defer B's packet. A's new port is only probed: its
+	 * unreliable is dropped and the session stays put until the port echoes the
+	 * nonce it was sent. A wrong nonce does not count. */
 	push (b_old, NETFLAG_UNRELIABLE, 100, 1);
 	push (a_new, NETFLAG_UNRELIABLE, 0, 1);
-	assert (Datagram_GetMessage (&a) == 2);
+	assert (Datagram_GetMessage (&a) == 0);
+	assert (compare_addr (&a.addr, &a_old) == 0 && a.unreliableReceiveSequence == 0);
+	assert (compare_addr (&last_written, &a_new) == 0 && a.unreliableSendSequence == 1);
+	{
+		char nonce[24];
+		snprintf (nonce, sizeof nonce, "%s", probe_nonce ());
+		push_echo (a_new, 0, "0000000000000000");
+		assert (Datagram_GetMessage (&a) == 0 && compare_addr (&a.addr, &a_old) == 0 && a.receiveSequence == 0);
+		push_echo (a_new, 0, nonce);
+		assert (Datagram_GetMessage (&a) == 1 && a.receiveSequence == 1);
+		assert (NET_IsRebindEcho ((const char *)net_message.data + 1));
+	}
 	assert (compare_addr (&a.addr, &a_new) == 0 && b.unreliableReceiveSequence == 100);
+	assert (!a.rebind_nonce[0]);
+	push (a_new, NETFLAG_UNRELIABLE, 0, 1);
+	assert (Datagram_GetMessage (&a) == 2 && a.unreliableReceiveSequence == 1);
 	assert (Datagram_GetMessage (&b) == 2 && b.unreliableReceiveSequence == 101);
 
 	outgoing.data = &payload;
@@ -161,18 +241,28 @@ int main (void)
 	push (a_old, NETFLAG_UNRELIABLE, 2, 1);
 	assert (Datagram_GetMessage (&a) == 0 && compare_addr (&a.addr, &a_new) == 0);
 
-	/* A retransmitted reliable fragment identifies B's new port and is ACKed
-	 * there without delivering the same application message twice. */
+	/* A retransmitted reliable fragment from B's unproven new port is ACKed
+	 * there without delivering it twice or moving the session, so the client
+	 * can go on to send the echo. */
 	push (b_old, NETFLAG_DATA | NETFLAG_EOM, 0, 1);
 	assert (Datagram_GetMessage (&b) == 1 && b.receiveSequence == 1);
+	b.lastMessageTime = 0;
 	a.receiveSequence = 5;
-	push (b_new, NETFLAG_DATA | NETFLAG_EOM, 0, 1);
-	assert (Datagram_GetMessage (&b) == 0 && b.receiveSequence == 1);
-	assert (compare_addr (&b.addr, &b_new) == 0 && compare_addr (&last_written, &b_new) == 0);
+	{
+		const int old_writes = writes;
+		push (b_new, NETFLAG_DATA | NETFLAG_EOM, 0, 1);
+		assert (Datagram_GetMessage (&b) == 0 && b.receiveSequence == 1);
+		assert (compare_addr (&b.addr, &b_old) == 0 && compare_addr (&last_written, &b_new) == 0);
+		assert (writes == old_writes + 2); // the ACK, then the probe
+		push_echo (b_new, 1, probe_nonce ());
+		assert (Datagram_GetMessage (&b) == 1 && b.receiveSequence == 2);
+		assert (compare_addr (&b.addr, &b_new) == 0);
+	}
 
 	/* Both players could plausibly own this packet. No one gets moved. */
-	a.receiveSequence = 1;
-	push (unknown, NETFLAG_DATA | NETFLAG_EOM, 1, 1);
+	a.receiveSequence = 2;
+	a.lastMessageTime = b.lastMessageTime = 0;
+	push (unknown, NETFLAG_DATA | NETFLAG_EOM, 2, 1);
 	assert (Datagram_GetMessage (&a) == 0);
 	assert (compare_addr (&a.addr, &a_new) == 0 && compare_addr (&b.addr, &b_new) == 0);
 
@@ -213,6 +303,21 @@ int main (void)
 		assert (!Datagram_SameHost (0, &first, &second));
 	}
 #endif
+
+	/* An in-order ACK from the current endpoint keeps the session alive, so a
+	 * client that is only ACKing (signon) never looks silent. */
+	{
+		a.sendSequence = 1;
+		a.ackSequence = 0;
+		a.sendMessageLength = 1;
+		a.max_datagram = 1;
+		a.canSend = false;
+		a.lastMessageTime = 0;
+		packetBuffer.length = NETFLAG_ACK | NET_HEADERSIZE;
+		packetBuffer.sequence = 0;
+		assert (Datagram_ProcessServerPacket (NET_HEADERSIZE, &a, &a_new, false) == 0);
+		assert (a.ackSequence == 1 && a.canSend && a.lastMessageTime == net_time);
+	}
 
 	/* The server poll must retire a peer whose reliable fragment cannot fit,
 	 * without ACKing it or returning stale application data. */
