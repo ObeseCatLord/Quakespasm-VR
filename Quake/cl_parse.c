@@ -3008,8 +3008,20 @@ static void CL_ParsePrecache (void)
 				Host_Error ("CL_ParsePrecache: cannot replace world model");
 			qmodel_t *model = Mod_ForName (name, false);
 			cl.model_precache[index] = model;
-			if (model != oldmodel && ((model && model->type == mod_brush) || (oldmodel && oldmodel->type == mod_brush)))
+			/* A late brush precache costs a device-idle full rebuild. Brush
+			 * data is built once per unique qmodel_t, so a model that already
+			 * occupies another slot is already built. Replacing a brush
+			 * model still rebuilds. */
+			if (model != oldmodel && oldmodel && oldmodel->type == mod_brush)
 				cl.brushmodels_changed = true;
+			else if (model != oldmodel && model && model->type == mod_brush)
+			{
+				qboolean already_built = false;
+				for (unsigned int other = 1; other < MAX_MODELS && !already_built; other++)
+					already_built = other != index && cl.model_precache[other] == model;
+				if (!already_built)
+					cl.brushmodels_changed = true;
+			}
 		}
 		break;
 	case 1: // particles
