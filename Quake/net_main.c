@@ -130,6 +130,8 @@ qsocket_t *NET_NewQSocket (void)
 	sock->unreliableReceiveSequence = 0;
 	sock->receiveMessageLength = 0;
 	sock->previous_addr_time = -1;
+	sock->rebind_probe_time = -1;
+	sock->rebind_nonce[0] = '\0';
 	sock->pending_max_datagram = 1024;
 	sock->proquake_angle_hack = false;
 

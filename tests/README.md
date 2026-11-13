@@ -2081,7 +2081,10 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wno-unused-parameter \
 
 `datagram_rebind_fixture.c` drives the real virtual-client `Datagram_GetMessage`
 path with a scripted UDP boundary. It covers two clients behind one IP,
-cross-client packet deferral, a uniquely identified source-port change, refusal
+cross-client packet deferral, a uniquely identified source-port change that is
+only committed after the new port echoes the stuffed `qsvr_rebind` nonce (a wrong
+nonce is refused, an echo disambiguates two silent sessions), no rebinding during
+signon, ACKs refreshing liveness, refusal
 to rebind while the current port is still delivering, outgoing
 destination, old-port stragglers, reliable retransmit ACK routing, ambiguous
 new ports, oversized packets and server-side reliable-fragment retirement,

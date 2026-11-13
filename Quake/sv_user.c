@@ -2130,6 +2130,8 @@ qboolean SV_ReadClientMessage (void)
 				return false;
 			if (SV_HandlePrivateResumeMarker (s))
 				break;
+			if (NET_IsRebindEcho (s))
+				break; // consumed by the datagram layer's port-change proof
 			if (SV_HandleAvatarCapability (s) ||
 				SV_HandleCustomAvatarCapability (s) ||
 				SV_HandleAvatarSet (s) ||
