@@ -62,11 +62,28 @@ When `sv_gorilla` allows hand movement and `sv_gorilla_trustclient` is on
   carries a 29-byte owner report: flags (active, on ground), generation,
   origin and velocity (`MOVEEXT_GORILLA_TRUSTED`).
 - `SV_GorillaOwnerApply` (`sv_phys.c`) accepts a report only for the current
-  generation. The move must stay within the velocity limit and pass a hull
-  trace from the previous position, so there is no wall clipping or
-  teleporting. Ground contact is re-checked. Native movement, room-scale and
-  `SV_ClientThink` input are skipped for that player. QuakeC Pre/PostThink,
-  triggers, damage and weapons stay server-owned.
+  generation. Each report spends a movement budget that accrues from server
+  time (1.5× the faster of `sv_maxspeed` and the hand solver's fling cap,
+  bursting up to 0.25 s), so sending more or larger reports buys no extra
+  speed. Falling uses what gravity allows on top of that. The path is swept
+  in hull-sized steps: solid entities it reaches are touched (buttons, key
+  doors) and triggers along it fire in order, so thin triggers cannot be
+  skipped. The reported velocity is capped at the same speed and cannot hide
+  a fall from QuakeC fall damage. Ground contact is re-checked. Native
+  movement, room-scale and `SV_ClientThink` input are skipped for that
+  player. QuakeC Pre/PostThink, triggers, damage and weapons stay
+  server-owned.
+- Swimming (`waterlevel` ≥ 2) and standing on a moving pusher hand the body
+  back to server movement with the raw-hand solver; ownership resumes 0.25 s
+  after that ends. Wading slows the body in QuakeC; that damping is accepted
+  instead of forcing a resync.
+- The raw-hand (non-owner) solver spends a server time credit per sample, so
+  extra or short commands cannot speed it up either.
+- On the client, the view is carried along the body's velocity between
+  commands (up to 50 ms, traced against the world), so headsets refreshing
+  faster than the command rate see smooth motion. Reseeds within 64 units
+  blend into the view over 100 ms, and brief hand-tracking loss (up to
+  0.25 s) keeps owner mode instead of falling back.
 - If the server moves the body itself (teleporters, knockback, QuakeC jumps,
   pushers, noclip/death), or a report fails a check, it starts a new
   generation. The generation goes out in every move ACK

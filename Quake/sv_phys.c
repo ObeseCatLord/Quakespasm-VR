@@ -3803,7 +3803,7 @@ static void SV_Physics_ClientWalk (edict_t *ent, sv_client_move_frame_t *move_fr
 /* Samples are bounded individually on receipt; also bound their sum per unit
  * of applied time so packet floods or tiny msec cannot outrun a real head.
  * Matches PM_VR_ROOMSCALE_MAX_SPEED. */
-#define SV_VR_ROOMSCALE_MAX_SPEED 500.0f
+#define SV_VR_ROOMSCALE_MAX_SPEED 250.0f
 
 /* Physical head movement is an auxiliary translation, not a second player
  * think. Use the same collision/step solver, but let the normal physics pass
@@ -11459,20 +11459,81 @@ static qboolean SV_GorillaTouchButtons (client_t *client, const int contacts[2])
 	return true;
 }
 
+static float SV_GorillaGravity (edict_t *ent)
+{
+	eval_t *gravity_field = ent ? GetEdictFieldValue (ent, qcvm->extfields.gravity) : NULL;
+	return sv_gravity.value *
+		(gravity_field && gravity_field->_float ? gravity_field->_float : 1);
+}
+
+/* Fastest sustained speed a legitimate monke body reaches: the hand solver's
+ * fling cap at this gravity, or ordinary running, with headroom. */
+float SV_GorillaOwnerSpeed (const client_t *client)
+{
+	float gravity = SV_GorillaGravity (client ? client->edict : NULL);
+	return fmaxf (sv_maxspeed.value, VRG_MAX_JUMP_SPEED * VRG_GravityScale (gravity)) * 1.5f;
+}
+
+/* Water and moving pushers are resolved by server movement (with the raw-hand
+ * solver), so owner reports do not fight QuakeC damping or lift carry. */
+static void SV_GorillaOwnerUpdateSuspend (edict_t *ent, client_t *client)
+{
+	qboolean busy = false;
+	if (ent && !ent->free)
+	{
+		edict_t *ground = ((int)ent->v.flags & FL_ONGROUND) ? PROG_TO_EDICT (ent->v.groundentity) : NULL;
+		busy = ent->v.waterlevel >= 2 ||
+			(ground && ground != qcvm->edicts && !ground->free &&
+			 (int)ground->v.movetype == MOVETYPE_PUSH &&
+			 (VectorLength (ground->v.velocity) > 0 || VectorLength (ground->v.avelocity) > 0));
+	}
+	if (busy)
+	{
+		if (!client->vr_gorilla_owner_suspended && client->vr_gorilla_owner_applied)
+			SV_GorillaOwnerResync (client);
+		client->vr_gorilla_owner_suspended = true;
+		client->vr_gorilla_owner_clear_time = realtime;
+	}
+	else if (client->vr_gorilla_owner_suspended &&
+		realtime - client->vr_gorilla_owner_clear_time > 0.25)
+		client->vr_gorilla_owner_suspended = false;
+}
+
+/* Wading damps velocity in QuakeC; a slower speed in roughly the same
+ * direction is that, not a server relocation. */
+static qboolean SV_GorillaOwnerDamped (const edict_t *ent, const vec3_t was)
+{
+	float now_speed = VectorLength (ent->v.velocity), was_speed = VectorLength (was);
+	return ent->v.waterlevel >= 1 && now_speed <= was_speed + 1.0f &&
+		DotProduct (ent->v.velocity, was) >= 0.9f * now_speed * was_speed;
+}
+
 /* Accept the monke owner's reported body state in place of the native move.
- * The report must descend from the current resync epoch, stay within the
- * server's velocity limit, and be reachable by the unchanged hull; QuakeC,
- * triggers and damage remain server-owned.  Anything the server does to the
- * body itself (teleporters, knockback, QC jumps, pushers) is detected here
- * and starts a new epoch, so the client reseeds from the server's state.
+ * The report must descend from the current resync epoch and fit the owner's
+ * movement budget, which accrues from server time, so a client cannot move
+ * faster by sending more or larger reports.  The path is swept: solid
+ * entities it reaches are touched, and triggers along it fire in order.
+ * QuakeC, triggers and damage remain server-owned.  Anything the server does
+ * to the body itself (teleporters, knockback, QC jumps, pushers) starts a
+ * new epoch, so the client reseeds from the server's state.
  * Returns true when the report replaced the native move this frame. */
 static qboolean SV_GorillaOwnerApply (edict_t *ent, client_t *client)
 {
 	const vr_gorilla_motion_t *report = &client->cmd.vr_gorilla_motion;
-	vec3_t delta, target, below;
+	vec3_t delta, target, below, start, horizontal, velocity;
 	trace_t trace;
-	float allowed;
+	float speed, burst, spend, fall, length, derived;
+	double elapsed;
+	int steps, step;
 	const char *reason = "";
+
+	speed = SV_GorillaOwnerSpeed (client);
+	burst = speed * VR_GORILLA_OWNER_BURST;
+	if (!isfinite (client->vr_gorilla_owner_budget) || client->vr_gorilla_owner_budget < 0)
+		client->vr_gorilla_owner_budget = 0;
+	client->vr_gorilla_owner_budget = fminf (burst,
+		client->vr_gorilla_owner_budget + speed * (float)host_frametime);
+	SV_GorillaOwnerUpdateSuspend (ent, client);
 
 	if (!SV_GorillaOwnerEligible (client))
 	{
@@ -11494,7 +11555,8 @@ static qboolean SV_GorillaOwnerApply (edict_t *ent, client_t *client)
 			goto resync;
 		}
 		VectorSubtract (ent->v.velocity, client->vr_gorilla_owner_velocity, delta);
-		if (VectorLength (delta) > 1.0f)
+		if (VectorLength (delta) > 1.0f &&
+			!SV_GorillaOwnerDamped (ent, client->vr_gorilla_owner_velocity))
 		{
 			reason = "server changed velocity";
 			goto resync;
@@ -11502,35 +11564,97 @@ static qboolean SV_GorillaOwnerApply (edict_t *ent, client_t *client)
 	}
 	VectorCopy (report->origin, target);
 	VectorSubtract (target, ent->v.origin, delta);
-	allowed = fmaxf (sv_maxvelocity.value, VR_GORILLA_OWNER_MAX_SPEED * 0.25f) *
-		fmaxf ((float)host_frametime, 0.05f) + 32.0f;
-	if (VectorLength (delta) > allowed)
+
+	/* Horizontal and upward travel spend the budget.  Falling may also use
+	 * what gravity and the current speed allow over one server frame. */
+	VectorSet (horizontal, delta[0], delta[1], fmaxf (delta[2], 0.0f));
+	spend = VectorLength (horizontal);
+	fall = delta[2] < 0 ? -delta[2] : 0;
+	if (fall > 0)
+	{
+		float dt = fmaxf ((float)host_frametime, 0.05f);
+		float allowance = (fabsf (ent->v.velocity[2]) + SV_GorillaGravity (ent) * dt) * dt + 2.0f;
+		if (fall > allowance)
+			spend += fall - allowance;
+	}
+	if (spend > client->vr_gorilla_owner_budget)
 	{
 		reason = "report too far";
 		goto resync;
 	}
-	trace = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, target,
-		MOVE_NORMAL, ent);
-	if (trace.allsolid)
+
+	/* Sweep in hull-sized steps so thin triggers on the way are touched. */
+	VectorCopy (ent->v.origin, start);
+	length = VectorLength (delta);
+	steps = (int)ceilf (length / 16.0f);
+	if (steps < 1)
+		steps = 1;
+	for (step = 1; step <= steps; step++)
 	{
-		reason = "body stuck";
-		goto resync;
+		vec3_t from, to;
+		VectorCopy (ent->v.origin, from);
+		VectorMA (start, (float)step / steps, delta, to);
+		trace = SV_Move (from, ent->v.mins, ent->v.maxs, to, MOVE_NORMAL, ent);
+		if (trace.allsolid)
+		{
+			reason = "body stuck";
+			goto resync;
+		}
+		VectorCopy (trace.endpos, ent->v.origin);
+		if (trace.fraction < 1 && trace.ent && !trace.ent->free)
+		{
+			SV_Impact (ent, trace.ent);
+			if (ent->free || !client->active || client->edict != ent)
+				return true;
+			if (!VectorCompare (ent->v.origin, trace.endpos))
+			{
+				reason = "touch moved the body";
+				goto resync;
+			}
+		}
+		if (step < steps || trace.fraction < 1)
+		{
+			SV_LinkEdict (ent, true);
+			if (ent->free || !client->active || client->edict != ent)
+				return true;
+			if (!VectorCompare (ent->v.origin, trace.endpos))
+			{
+				reason = "trigger moved the body";
+				goto resync;
+			}
+		}
+		if (trace.fraction < 1)
+			break;
 	}
-	if (trace.fraction < 1)
+	VectorSubtract (target, ent->v.origin, below);
+	if (VectorLength (below) > 2.0f)
 	{
 		/* Small mismatches (sliding into a corner) settle at the contact;
 		 * anything larger is a disagreement the server resolves. */
-		VectorSubtract (target, trace.endpos, delta);
-		VectorCopy (trace.endpos, ent->v.origin);
-		if (VectorLength (delta) > 2.0f)
-		{
-			reason = "report blocked by collision";
-			goto resync;
-		}
+		reason = "report blocked by collision";
+		goto resync;
 	}
-	else
-		VectorCopy (target, ent->v.origin);
-	VectorCopy (report->velocity, ent->v.velocity);
+	client->vr_gorilla_owner_budget -= fminf (spend, client->vr_gorilla_owner_budget);
+	elapsed = realtime - client->vr_gorilla_owner_report_time;
+	if (length > 0.01f)
+		client->vr_gorilla_owner_report_time = realtime;
+
+	/* The owner reports velocity, but it may not hide a fall from QuakeC
+	 * (fall damage) or carry more than the owner's speed into later native
+	 * movement. */
+	VectorCopy (report->velocity, velocity);
+	length = sqrtf (velocity[0] * velocity[0] + velocity[1] * velocity[1]);
+	if (length > speed)
+	{
+		velocity[0] *= speed / length;
+		velocity[1] *= speed / length;
+	}
+	if (velocity[2] > speed)
+		velocity[2] = speed;
+	derived = -fall / (float)CLAMP (host_frametime, elapsed, 0.25);
+	if (fall > 0 && derived < velocity[2] && !(report->flags & VR_GORILLA_OWNER_ONGROUND))
+		velocity[2] = fmaxf (derived, -sv_maxvelocity.value);
+	VectorCopy (velocity, ent->v.velocity);
 	SV_CheckVelocity (ent);
 
 	ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
@@ -11584,6 +11708,12 @@ static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
 	}
 	*swim_intent = false;
 	SV_CheckWater (ent);
+	/* Hand samples carry client-chosen durations; each may only spend server
+	 * time that has actually passed, so extra commands buy no extra motion. */
+	if (!isfinite (client->vr_gorilla_credit_msec) || client->vr_gorilla_credit_msec < 0)
+		client->vr_gorilla_credit_msec = 0;
+	client->vr_gorilla_credit_msec = fmin (250.0,
+		client->vr_gorilla_credit_msec + host_frametime * 1000.0);
 	for (offset = 0; offset < client->private_cmd_queue_count; offset++)
 	{
 		const usercmd_t *sample = &client->private_cmd_queue[
@@ -11606,6 +11736,17 @@ static qboolean SV_PrepareGorilla (edict_t *ent, client_t *client,
 		client->vr_gorilla_last_sequence = (int)sample->sequence;
 		client->vr_gorilla_cursor_valid = true;
 		client->cmd = *sample;
+		if (sample->seconds * 1000.0 > client->vr_gorilla_credit_msec + 0.5)
+		{
+			/* Out of time: drop this sample's hand motion rather than let it
+			 * accumulate into a later step. */
+			VRG_Reset (&client->vr_gorilla_state);
+			memset (client->vr_gorilla_button, 0, sizeof (client->vr_gorilla_button));
+			braced = false;
+			continue;
+		}
+		client->vr_gorilla_credit_msec = fmax (0.0,
+			client->vr_gorilla_credit_msec - sample->seconds * 1000.0);
 		if ((int)sample->sequence <= client->private_discarded_move ||
 			!SV_GorillaEligible (client))
 		{

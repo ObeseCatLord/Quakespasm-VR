@@ -530,7 +530,7 @@ qboolean SV_GorillaOwnerEligible (client_t *client)
 		return false;
 	ent = client->edict;
 	if (!ent || ent->free || ent->v.health <= 0 || ent->v.deadflag ||
-		(int)ent->v.movetype != MOVETYPE_WALK)
+		(int)ent->v.movetype != MOVETYPE_WALK || client->vr_gorilla_owner_suspended)
 		return false;
 	customphysics = GetEdictFieldValue (ent, qcvm->extfields.customphysics);
 	return !(customphysics && customphysics->function);
@@ -553,6 +553,9 @@ void SV_GorillaOwnerResync (client_t *client)
 		return;
 	client->vr_gorilla_owner_generation++;
 	client->vr_gorilla_owner_applied = false;
+	/* The client reseeds from the server's state and may report up to a
+	 * round trip of movement from there. */
+	client->vr_gorilla_owner_budget = SV_GorillaOwnerSpeed (client) * VR_GORILLA_OWNER_BURST;
 }
 
 static void SV_ConsumeClientMove (void)
@@ -1198,6 +1201,7 @@ void SV_ResetPrivateCommandQueue (client_t *client)
 	client->private_pmove_walk_selected = false;
 	client->private_pmove_pusher_interaction = false;
 	client->private_pmove_credit_msec = 0.0;
+	client->vr_gorilla_credit_msec = 0.0;
 	client->private_pmove_jump_secs = 0.0f;
 	client->private_pmove_waterjump_secs = 0.0f;
 	memset (&client->private_pmove_last_cmd, 0, sizeof (client->private_pmove_last_cmd));
@@ -1332,6 +1336,7 @@ static void SV_PrivateClearTransientInput (client_t *client)
 	memset (&client->private_pmove_last_cmd, 0,
 		sizeof (client->private_pmove_last_cmd));
 	client->private_pmove_credit_msec = 0.0;
+	client->vr_gorilla_credit_msec = 0.0;
 	client->private_latest_buttons = 0;
 	client->private_latched_buttons = 0;
 	client->private_latched_impulse = 0;
