@@ -4712,8 +4712,9 @@ static void R_CreatePostprocessPipelines ()
 			vulkan_globals.ssao_broken |= !ssao_evaluate_pipelines[i].handle;
 		if (vulkan_globals.ssao_broken)
 		{
-			Cvar_SetValueQuick (&r_ssao, 0);
-			Con_Warning ("Disabling SSAO due to pipeline creation failure\n");
+			/* Leave r_ssao alone: it is archived, and a transient driver or
+			 * pipeline failure must not permanently turn the user's choice off. */
+			Con_Warning ("Disabling SSAO until the next video restart due to pipeline creation failure\n");
 		}
 		R_CopyPipelineCreateInfos (&ssao, &base);
 		ssao.depth_stencil_state.depthTestEnable = VK_FALSE;

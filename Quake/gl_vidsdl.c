@@ -4303,6 +4303,10 @@ static void GL_CreateRenderResources (void)
 	if (sv.active && cls.signon < 1) // server has loaded the map but client hasn't called R_NewMap yet - wait until next frame
 		return;
 
+	/* An SSAO pipeline failure only disables SSAO for one set of render
+	 * resources. Clear it before the SSAO images, render passes and pipelines
+	 * are chosen so every recreation (vid_restart included) tries again. */
+	vulkan_globals.ssao_broken = false;
 	if (!vulkan_globals.stereo_active && !GL_CreateSwapChain (false))
 	{
 		render_resources_created = false;
