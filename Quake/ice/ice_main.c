@@ -3405,7 +3405,9 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 					break;
 				case STUNATTR_ERROR_CODE:
 					{
-						unsigned short len = BigShort(attr->attrlen)-4;
+						/* attrlen < 4 used to wrap to ~65k and over-read into the log. */
+						const unsigned short attrlen = (unsigned short)BigShort(attr->attrlen);
+						unsigned short len = attrlen >= 4 ? attrlen - 4 : 0;
 						if (len > sizeof(errmsg)-1)
 							len = sizeof(errmsg)-1;
 						memcpy(errmsg, &((qbyte*)attr)[8], len);
@@ -3660,7 +3662,9 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 					break;
 				case STUNATTR_ERROR_CODE:
 					{
-						unsigned short len = BigShort(attr->attrlen)-4;
+						/* attrlen < 4 used to wrap to ~65k and over-read into the log. */
+						const unsigned short attrlen = (unsigned short)BigShort(attr->attrlen);
+						unsigned short len = attrlen >= 4 ? attrlen - 4 : 0;
 						if (len > sizeof(errmsg)-1)
 							len = sizeof(errmsg)-1;
 						memcpy(errmsg, &((qbyte*)attr)[8], len);
@@ -3716,7 +3720,7 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 								}
 
 								//next attempt will use a different id.
-								Sys_RandomBytes((qbyte*)s->peer[i].stunrnd, sizeof(s->peer[i].stunrnd));
+								Sys_RandomBytes((qbyte*)s->peer[j].stunrnd, sizeof(s->peer[j].stunrnd));
 								return true;
 							}
 						}
@@ -3847,13 +3851,15 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 					break;
 				case STUNATTR_ERROR_CODE:
 					{
-						unsigned short len = BigShort(attr->attrlen)-4;
+						/* attrlen < 4 used to wrap to ~65k and over-read into the log. */
+						const unsigned short attrlen = (unsigned short)BigShort(attr->attrlen);
+						unsigned short len = attrlen >= 4 ? attrlen - 4 : 0;
 						if (len > sizeof(errmsg)-1)
 							len = sizeof(errmsg)-1;
 						memcpy(errmsg, &((qbyte*)attr)[8], len);
 						errmsg[len] = 0;
 						if (!len)
-							q_strlcpy(errmsg, "<no description>", len);
+							q_strlcpy(errmsg, "<no description>", sizeof(errmsg));
 						if (err==0)
 							err = (((qbyte*)attr)[6]*100) + (((qbyte*)attr)[7]%100);
 					}

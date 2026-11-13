@@ -813,7 +813,7 @@ handleerror:
 		Con_Printf("rtc runt (%s)\n", b->brokername);
 	else
 	{
-		cl = (short)(msgbuf[1] | (msgbuf[2]<<8));
+		cl = (short)((qbyte)msgbuf[1] | ((qbyte)msgbuf[2]<<8));	// char may be signed: never sign-extend the low byte
 		data = msgbuf+3;
 
 		switch(msgbuf[0])
@@ -2599,8 +2599,15 @@ static void QCICE_SV_ReadUnsolicitedSPacket (struct icestate_s *ice, const void 
 		extern cvar_t sv_public;
 		if (sv_public.value > 0)
 		{
-			((char*)data)[datasize] = 0;
-			Cmd_TokenizeString((char*)data+4);
+			/* Tokenise a terminated copy: callers' buffers can be exactly
+			 * full (OpenSSL reads, 65536-byte SCTP messages), so writing a
+			 * terminator at data[datasize] overflowed by one byte. */
+			static char query[1024];
+			if (datasize - 4 >= sizeof(query))
+				return;	//no connectionless query is anywhere near this long
+			memcpy(query, (const char*)data+4, datasize-4);
+			query[datasize-4] = 0;
+			Cmd_TokenizeString(query);
 			cmd = Cmd_Argv(0);
 			if (!strcmp(cmd, "getinfo") || !strcmp(cmd, "getstatus"))
 			{	//master, as well as other clients, may send us one of these two packets to get our serverinfo data
