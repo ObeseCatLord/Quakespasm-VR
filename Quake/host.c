@@ -882,6 +882,8 @@ This clears all the memory used by both the client and server, but does
 not reinitialize anything.
 ================
 */
+qboolean host_clearing_memory; // map teardown frees synchronously, never through garbage rings
+
 void Host_ClearMemory (void)
 {
 	Host_SavegameDrain ();
@@ -896,8 +898,10 @@ void Host_ClearMemory (void)
 	}
 
 	Con_DPrintf ("Clearing memory\n");
+	host_clearing_memory = true;
 	Sky_ClearAll ();
 	Mod_ClearAll ();
+	host_clearing_memory = false;
 	if (!isDedicated)
 		S_ClearAll ();
 	cls.signon = 0;
