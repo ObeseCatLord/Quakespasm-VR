@@ -65,9 +65,12 @@ static void Voice_VADThresholds(const voice_vad_t *vad, uint32_t *open_q8,
 	uint32_t open_margin = 960u > sensitivity * 7u ? 960u - sensitivity * 7u : 192u;
 	uint32_t close_margin = open_margin / 2u + 48u;
 
-	*open_q8 = Voice_VADMaxU32((noise_q8 * open_ratio_q10) / 1024u,
+	/* 64-bit products: a loud noise floor overflowed uint32 and lowered the gate. */
+	uint64_t open_scaled = ((uint64_t)noise_q8 * open_ratio_q10) / 1024u;
+	uint64_t close_scaled = ((uint64_t)noise_q8 * close_ratio_q10) / 1024u;
+	*open_q8 = Voice_VADMaxU32(open_scaled > UINT32_MAX ? UINT32_MAX : (uint32_t)open_scaled,
 		noise_q8 + open_margin * VOICE_VAD_Q8);
-	*close_q8 = Voice_VADMaxU32((noise_q8 * close_ratio_q10) / 1024u,
+	*close_q8 = Voice_VADMaxU32(close_scaled > UINT32_MAX ? UINT32_MAX : (uint32_t)close_scaled,
 		noise_q8 + close_margin * VOICE_VAD_Q8);
 }
 

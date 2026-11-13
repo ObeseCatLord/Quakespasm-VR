@@ -6744,6 +6744,15 @@ static qboolean MD5Anim_Load (md5animctx_t *ctx, jointinfo_t *joints, jointpose_
 	if (!buffer)
 	{
 		SAFE_FREE (ctx->animfile);
+		if (ctx->numposes)
+		{
+			/* The header promised poses but the body cannot be tokenised (e.g.
+			 * an oversized first token): never report success without posedata. */
+			Con_Warning ("%s: animation body is unreadable\n", fname);
+			ctx->numposes = ctx->numjoints = 0;
+			return false;
+		}
+		ctx->numjoints = 0;
 		return !ctx->override_required;
 	}
 
@@ -7405,6 +7414,11 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 	}
 	else if (!MD5Anim_Begin (&anim, fname, anim_override, anim_override_size))
 		return false;
+	/* Every non-avatar MD5 needs at least one pose: the upload path has no
+	 * frame-less layout. Fail this load (a replacement falls back to the MDL)
+	 * instead of reaching GLMesh_UploadBuffers' Sys_Error. */
+	if (!mod_custom_avatar && !anim.numposes)
+		MD5ERROR ("%s: no usable md5anim\n", fname);
 	/* Inspect the actual selected animation before MD5Anim_Load frees it. */
 	verified_weapon_payload = Mod_IsVerifiedMD5WeaponAnimation (weapon_pin,
 		anim.fname, anim.animfile, anim.filesize);
@@ -7546,7 +7560,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 				MD5ERROR ("%s: invalid custom avatar hierarchy\n", fname);
 		}
 	}
-	else if (!MD5Anim_Load (&anim, joint_infos, joint_poses, numjoints))
+	else if (!MD5Anim_Load (&anim, joint_infos, joint_poses, numjoints) ||
+		!anim.posedata || anim.numjoints != numjoints)
 		goto error;
 	if (avatar_bind_profile && !MD5_AvatarJointMasks (avatar_bind_profile,
 		joint_infos, numjoints, contact_mask, equipment_mask, gun_mask,
@@ -7678,8 +7693,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 			MD5ERROR ("%s: mesh vertex count is invalid or too large\n", fname);
 		surf->numverts_vbo = surf->numverts = (int)mesh_numverts;
 
-		TEMP_ALLOC_ASSIGN_ZEROED (vinfo, surf->numverts);
-		TEMP_ALLOC_ASSIGN_ZEROED_COND (vert_seen, surf->numverts, mod_custom_avatar != NULL);
+		TEMP_ALLOC_ASSIGN_HEAP_ZEROED (vinfo, surf->numverts);
+		TEMP_ALLOC_ASSIGN_HEAP_ZEROED_COND (vert_seen, surf->numverts, mod_custom_avatar != NULL);
 		unsigned int max_mesh_influences = 0;
 
 		while (MD5CHECK ("vert"))
@@ -7712,7 +7727,7 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 		const size_t md5_vertex_size = (surf->poseverttype == PV_MD5_8) ? sizeof (md5vert8_t) : sizeof (md5vert_t);
 		if ((size_t)surf->numverts > SIZE_MAX / md5_vertex_size)
 			MD5ERROR ("%s: mesh vertex data is too large\n", fname);
-		TEMP_ALLOC_ASSIGN_ZEROED (poutvertexes, surf->numverts * md5_vertex_size);
+		TEMP_ALLOC_ASSIGN_HEAP_ZEROED (poutvertexes, surf->numverts * md5_vertex_size);
 
 		// MD5 violation: the skin is a single material. adding prefixes/postfixes here is the wrong thing to do.
 		// but we do so anyway, because rerelease compat.
@@ -7732,8 +7747,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 			MD5ERROR ("%s: mesh triangle count is invalid or too large\n", fname);
 		surf->numtris = (int)mesh_numtris;
 		surf->numindexes = surf->numtris * 3;
-		TEMP_ALLOC_ASSIGN_ZEROED (poutindexes, surf->numindexes);
-		TEMP_ALLOC_ASSIGN_ZEROED_COND (tri_seen, surf->numtris, mod_custom_avatar != NULL);
+		TEMP_ALLOC_ASSIGN_HEAP_ZEROED (poutindexes, surf->numindexes);
+		TEMP_ALLOC_ASSIGN_HEAP_ZEROED_COND (tri_seen, surf->numtris, mod_custom_avatar != NULL);
 
 		while (MD5CHECK ("tri"))
 		{
@@ -7765,8 +7780,8 @@ static qboolean Mod_LoadMD5MeshModelData (qmodel_t *mod, const void *buffer,
 				CUSTOM_AVATAR_MAX_VERTICES * CUSTOM_AVATAR_MAX_INFLUENCES)) ||
 			numweights > SIZE_MAX / sizeof (*weight))
 			MD5ERROR ("%s: weight count is too large\n", fname);
-		TEMP_ALLOC_ASSIGN_ZEROED (weight, numweights);
-		TEMP_ALLOC_ASSIGN_ZEROED_COND (weight_seen, numweights, mod_custom_avatar != NULL);
+		TEMP_ALLOC_ASSIGN_HEAP_ZEROED (weight, numweights);
+		TEMP_ALLOC_ASSIGN_HEAP_ZEROED_COND (weight_seen, numweights, mod_custom_avatar != NULL);
 
 		while (MD5CHECK ("weight"))
 		{

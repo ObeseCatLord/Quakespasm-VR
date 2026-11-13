@@ -162,12 +162,128 @@ static qboolean Datagram_RebindPacketPlausible (qsocket_t *sock, unsigned int wi
  * host behind the same NAT, not a rebind, and must not take the session. */
 #define DATAGRAM_REBIND_MIN_SILENCE 1.0
 
+static qboolean Datagram_RebindEchoed (qsocket_t *sock, unsigned int wire_length);
+
+/* Signon is a long, legitimately silent period (map loading). A port change is
+ * only considered once the player is in the game; until then the client keeps
+ * ACKing the signon stream from its original port or times out as upstream. */
+static qboolean Datagram_RebindSessionSpawned (qsocket_t *sock)
+{
+	for (int i = 0; i < svs.maxclients; i++)
+		if (svs.clients[i].netconnection == sock)
+			return svs.clients[i].active && svs.clients[i].spawned;
+	return false;
+}
+
+/* The candidate port must prove it can receive server traffic before it takes
+ * the session: the server sends it an unreliable "cmd qsvr_rebind <nonce>"
+ * stufftext, which every NetQuake client forwards back as a reliable string
+ * command. A spoofed source address never sees the nonce. */
+#define DATAGRAM_REBIND_TOKEN		   "qsvr_rebind"
+#define DATAGRAM_REBIND_PROBE_INTERVAL 0.1
+
+#if defined(USE_ICE) && defined(_WIN32)
+qboolean Sys_RandomBytes (unsigned char *out, int len);
+#endif
+
+static void Datagram_NewRebindNonce (qsocket_t *sock)
+{
+	static uint64_t mix = 0x9e3779b97f4a7c15ull;
+	byte			bytes[8];
+	qboolean		ok = false;
+	uint64_t		value = 0;
+
+#if !defined(_WIN32)
+	FILE *random = fopen ("/dev/urandom", "rb");
+	if (random)
+	{
+		ok = fread (bytes, 1, sizeof (bytes), random) == sizeof (bytes);
+		fclose (random);
+	}
+#elif defined(USE_ICE)
+	ok = Sys_RandomBytes (bytes, sizeof (bytes));
+#endif
+	if (ok)
+		memcpy (&value, bytes, sizeof (value));
+	// splitmix64 keeps the nonce unpredictable enough when no OS source exists.
+	mix += 0x9e3779b97f4a7c15ull ^ (uint64_t)(net_time * 1e6) ^ (uint64_t)(uintptr_t)sock;
+	{
+		uint64_t z = mix;
+		z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+		z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+		value ^= z ^ (z >> 31);
+	}
+	q_snprintf (sock->rebind_nonce, sizeof (sock->rebind_nonce), "%08x%08x", (unsigned int)(value >> 32), (unsigned int)value);
+}
+
+qboolean NET_IsRebindEcho (const char *command)
+{
+	const size_t length = sizeof (DATAGRAM_REBIND_TOKEN) - 1;
+	return command && !q_strncasecmp (command, DATAGRAM_REBIND_TOKEN, length) &&
+		(command[length] == '\0' || command[length] == ' ' || command[length] == '\t');
+}
+
+/* packetBuffer holds the candidate packet. Only a reliable fragment can carry the
+ * echoed string command; it is searched as bytes because a client may batch
+ * other reliable commands around it. */
+static qboolean Datagram_RebindEchoed (qsocket_t *sock, unsigned int wire_length)
+{
+	char		   expected[64];
+	size_t		   expected_length;
+	const byte	  *data = packetBuffer.data;
+	unsigned int   header, payload;
+
+	if (!sock->rebind_nonce[0] || wire_length < NET_HEADERSIZE)
+		return false;
+	header = BigLong (packetBuffer.length);
+	if (!(header & NETFLAG_DATA) || (header & NETFLAG_CTL))
+		return false;
+	header &= NETFLAG_LENGTH_MASK;
+	if (header < NET_HEADERSIZE || header > wire_length)
+		return false;
+	payload = header - NET_HEADERSIZE;
+	expected_length = (size_t)q_snprintf (expected, sizeof (expected), DATAGRAM_REBIND_TOKEN " %s", sock->rebind_nonce);
+	if (expected_length >= sizeof (expected) || payload < expected_length)
+		return false;
+	for (unsigned int i = 0; i + expected_length <= payload; i++)
+		if (data[i] == (byte)expected[0] && !memcmp (data + i, expected, expected_length))
+			return true;
+	return false;
+}
+
+static void Datagram_SendRebindProbe (qsocket_t *sock, struct qsockaddr *candidate)
+{
+	struct
+	{
+		unsigned int length;
+		unsigned int sequence;
+		byte		 data[64];
+	} probe;
+	int text_length;
+
+	if (!sock->rebind_nonce[0])
+		Datagram_NewRebindNonce (sock);
+	if (sock->rebind_probe_time >= 0 && net_time - sock->rebind_probe_time < DATAGRAM_REBIND_PROBE_INTERVAL)
+		return;
+	sock->rebind_probe_time = net_time;
+	probe.data[0] = svc_stufftext;
+	text_length = q_snprintf ((char *)probe.data + 1, sizeof (probe.data) - 1, "cmd " DATAGRAM_REBIND_TOKEN " %s\n", sock->rebind_nonce);
+	if (text_length <= 0 || text_length + 2 > (int)sizeof (probe.data))
+		return;
+	probe.length = BigLong (NETFLAG_UNRELIABLE | (NET_HEADERSIZE + 1 + text_length + 1));
+	probe.sequence = BigLong (sock->unreliableSendSequence++);
+	sfunc.Write (sock->socket, (byte *)&probe, NET_HEADERSIZE + 1 + text_length + 1, candidate);
+}
+
 static qsocket_t *Datagram_FindVirtualSocketForPacket (int driver, int landriver, sys_socket_t socket,
 	struct qsockaddr *addr, unsigned int wire_length, qboolean *rebind)
 {
 	qsocket_t *sock, *match = NULL;
 	int priority = 0;
 	qboolean old_endpoint = false;
+
+	/* Priorities: 4 current endpoint, 3 recent previous endpoint, 2 candidate
+	 * port echoing this session's rebind nonce, 1 merely plausible candidate. */
 
 	*rebind = false;
 	for (sock = net_activeSockets; sock; sock = sock->next)
@@ -177,17 +293,18 @@ static qsocket_t *Datagram_FindVirtualSocketForPacket (int driver, int landriver
 			sock->landriver != landriver || sock->socket != socket)
 			continue;
 		if (net_landrivers[landriver].AddrCompare (addr, &sock->addr) == 0)
-			candidate = 3;
+			candidate = 4;
 		else if (sock->previous_addr_time >= 0 &&
 			net_landrivers[landriver].AddrCompare (addr, &sock->previous_addr) == 0)
 		{
 			old_endpoint = true;
-			candidate = net_time - sock->previous_addr_time <= 3.0 ? 2 : 0;
+			candidate = net_time - sock->previous_addr_time <= 3.0 ? 3 : 0;
 		}
 		else if (Datagram_SameHost (landriver, addr, &sock->addr) &&
 			net_time - sock->lastMessageTime > DATAGRAM_REBIND_MIN_SILENCE &&
+			Datagram_RebindSessionSpawned (sock) &&
 			Datagram_RebindPacketPlausible (sock, wire_length))
-			candidate = 1;
+			candidate = Datagram_RebindEchoed (sock, wire_length) ? 2 : 1;
 		if (!candidate || candidate < priority)
 			continue;
 		if (candidate > priority)
@@ -198,9 +315,9 @@ static qsocket_t *Datagram_FindVirtualSocketForPacket (int driver, int landriver
 		else
 			match = NULL; // two equally plausible sockets: do not guess
 	}
-	if (priority == 1 && old_endpoint)
+	if (priority <= 2 && old_endpoint)
 		match = NULL; // never repurpose a known old port for a different session
-	*rebind = priority == 1 && match != NULL;
+	*rebind = priority <= 2 && match != NULL;
 	return match;
 }
 
@@ -633,6 +750,8 @@ static void Datagram_CommitRebind (qsocket_t *sock, struct qsockaddr *source, qb
 		return;
 	sock->previous_addr = sock->addr;
 	sock->previous_addr_time = net_time;
+	sock->rebind_nonce[0] = '\0'; // the next port change needs a fresh echo
+	sock->rebind_probe_time = -1;
 	sock->addr = *source;
 	q_strlcpy (sock->trueaddress, sfunc.AddrToString (source, false), sizeof (sock->trueaddress));
 	q_strlcpy (sock->maskedaddress, sfunc.AddrToString (source, true), sizeof (sock->maskedaddress));
@@ -666,6 +785,22 @@ static int Datagram_ProcessPacket (unsigned int length, qsocket_t *sock, struct 
 
 	sequence = BigLong (packetBuffer.sequence);
 	packetsReceived++;
+
+	if (rebind && !Datagram_RebindEchoed (sock, wire_length))
+	{
+		/* Unproven port: nothing it sends is parsed or committed. A reliable
+		 * retransmission is still ACKed there (no data is delivered) so a client
+		 * whose ACK went to the dead port can send the echo. */
+		if ((flags & NETFLAG_DATA) && sock->receiveSequence != 0 && sequence == sock->receiveSequence - 1)
+		{
+			packetBuffer.length = BigLong (NET_HEADERSIZE | NETFLAG_ACK);
+			packetBuffer.sequence = BigLong (sequence);
+			sfunc.Write (sock->socket, (byte *)&packetBuffer, NET_HEADERSIZE, source);
+			receivedDuplicateCount++;
+		}
+		Datagram_SendRebindProbe (sock, source);
+		return 0;
+	}
 
 	if (flags == NETFLAG_UNRELIABLE)
 	{
@@ -715,6 +850,9 @@ static int Datagram_ProcessPacket (unsigned int length, qsocket_t *sock, struct 
 			return 0;
 		}
 		Datagram_CommitRebind (sock, source, rebind);
+		/* An in-order ACK from the session's endpoint is proof of life. Without it a
+		 * client that only ACKs (map loading) looks silent to the rebind heuristic. */
+		sock->lastMessageTime = net_time;
 		sock->sendMessageLength -= sock->max_datagram;
 		if (sock->sendMessageLength > 0)
 		{

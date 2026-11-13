@@ -260,6 +260,19 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 	return true;
 }
 
+/* Microphone consent, device, mode and capture-sensitivity settings are the
+ * user's alone. Stuffed console text is indistinguishable from typed commands
+ * once it is in the command buffer, so refuse any server text that names a
+ * voice_ command or cvar (directly, or via set/alias/bind). */
+static qboolean CL_StuffTextTouchesVoice (const char *text)
+{
+	static const char needle[] = "voice_";
+	for (; *text; text++)
+		if (!q_strncasecmp (text, needle, sizeof (needle) - 1))
+			return true;
+	return false;
+}
+
 static qboolean CL_OfferVoiceProtocol (const char *command)
 {
 	static const char command_name[] = "voice_protocol";
@@ -2995,8 +3008,20 @@ static void CL_ParsePrecache (void)
 				Host_Error ("CL_ParsePrecache: cannot replace world model");
 			qmodel_t *model = Mod_ForName (name, false);
 			cl.model_precache[index] = model;
-			if (model != oldmodel && ((model && model->type == mod_brush) || (oldmodel && oldmodel->type == mod_brush)))
+			/* A late brush precache costs a device-idle full rebuild. Brush
+			 * data is built once per unique qmodel_t, so a model that already
+			 * occupies another slot is already built. Replacing a brush
+			 * model still rebuilds. */
+			if (model != oldmodel && oldmodel && oldmodel->type == mod_brush)
 				cl.brushmodels_changed = true;
+			else if (model != oldmodel && model && model->type == mod_brush)
+			{
+				qboolean already_built = false;
+				for (unsigned int other = 1; other < MAX_MODELS && !already_built; other++)
+					already_built = other != index && cl.model_precache[other] == model;
+				if (!already_built)
+					cl.brushmodels_changed = true;
+			}
 		}
 		break;
 	case 1: // particles
@@ -3559,6 +3584,8 @@ void CL_ParseServerMessage (void)
 				if (!Cmd_ExecuteString (str + 2, src_server))
 					Con_DPrintf ("Server sent unknown command %s\n", Cmd_Argv (0));
 			}
+			else if (CL_StuffTextTouchesVoice (str))
+				Con_Printf ("Refused a server command that touches voice settings.\n");
 			else
 				Cbuf_AddText (str);
 			break;

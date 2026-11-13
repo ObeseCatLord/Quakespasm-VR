@@ -1068,8 +1068,12 @@ void SV_ReadClientMove (usercmd_t *move)
 
 	// read ping time
 	float timestamp = MSG_ReadFloat ();
-	host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] = qcvm->time - timestamp;
-	host_client->num_pings++;
+	// The private path already refuses non-finite times; never average one in.
+	if (isfinite (timestamp))
+	{
+		host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] = qcvm->time - timestamp;
+		host_client->num_pings++;
+	}
 
 	for (i = 0; i < 3; i++)
 	{
@@ -1862,7 +1866,11 @@ static qboolean SV_HandleInstantStopCapability (const char *s)
 	static const char command[] = "vr_instant_stop_cap";
 	const size_t length = sizeof (command) - 1;
 
-	if (strncmp (s, command, length) ||
+	/* Reserve it like the sibling capability handlers: leading blanks and any
+	 * case, so variants never fall through to QC or the console. */
+	while (*s == ' ' || *s == '\t')
+		s++;
+	if (q_strncasecmp (s, command, length) ||
 		(s[length] && s[length] != ' ' && s[length] != '\t' &&
 		 s[length] != '\r' && s[length] != '\n'))
 		return false;
@@ -2084,6 +2092,11 @@ static qboolean SV_ReadQCRequest (void)
 		return true;
 	}
 
+	/* The request is fully consumed above. Never run CSEv_* for a client that
+	 * is not in the game or whose edict was freed (reserved save slots, QC
+	 * remove): self would be a free edict or the previous occupant's body. */
+	if (!requester->spawned || !requester->edict || requester->edict->free)
+		return true;
 	int saved_argc = qcvm->argc;
 	pr_global_struct->time = qcvm->time;
 	pr_global_struct->self = EDICT_TO_PROG (requester->edict);
@@ -2135,6 +2148,8 @@ qboolean SV_ReadClientMessage (void)
 				return false;
 			if (SV_HandlePrivateResumeMarker (s))
 				break;
+			if (NET_IsRebindEcho (s))
+				break; // consumed by the datagram layer's port-change proof
 			if (SV_HandleAvatarCapability (s) ||
 				SV_HandleCustomAvatarCapability (s) ||
 				SV_HandleAvatarSet (s) ||
@@ -2154,7 +2169,11 @@ qboolean SV_ReadClientMessage (void)
 				(s[4] == '\0' || s[4] == ' ' || s[4] == '\t');
 			client_t *requester = host_client;
 			struct qsocket_s *socket = requester->netconnection;
-			if (!pext_offer && q_strncasecmp (s, "spawn", 5) && q_strncasecmp (s, "begin", 5) && q_strncasecmp (s, "prespawn", 8) && qcvm->extfuncs.SV_ParseClientCommand)
+			// QC only sees commands from a client it has been told about (spawn
+			// ran ClientConnect) and whose edict is live; earlier ones take the
+			// engine path, as with progs that lack the hook.
+			const qboolean qc_owns_client = requester->knowntoqc && requester->edict && !requester->edict->free;
+			if (!pext_offer && qc_owns_client && q_strncasecmp (s, "spawn", 5) && q_strncasecmp (s, "begin", 5) && q_strncasecmp (s, "prespawn", 8) && qcvm->extfuncs.SV_ParseClientCommand)
 			{ // the spawn/begin/prespawn are because of numerous mods that disobey the rules.
 				// at a minimum, we must be able to join the server, so that we can see any sprints/bprints (because dprint sucks, yes there's proper ways
 				// to deal with this, but moders don't always know them).

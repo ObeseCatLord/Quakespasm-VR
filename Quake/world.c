@@ -3187,7 +3187,10 @@ static qboolean SV_AreaAddPMovePhysents (edict_t *ignore, areanode_t *node,
 			continue;
 
 		if (pmove.numphysent >= MAX_PHYSENTS)
+		{
+			sv_pmove_physents_overflowed = true;
 			return false;
+		}
 
 		if (other->v.solid == SOLID_BSP)
 		{
@@ -3231,10 +3234,13 @@ static qboolean SV_AreaAddPMovePhysents (edict_t *ignore, areanode_t *node,
 	return true;
 }
 
+qboolean sv_pmove_physents_overflowed;
+
 qboolean SV_CollectPMovePhysents (edict_t *ignore, vec3_t boxminmax[2])
 {
 	int i, ignore_index = -1;
 
+	sv_pmove_physents_overflowed = false;
 	memset (pmove.physents, 0, sizeof (pmove.physents));
 	pmove.numphysent = 0;
 	pmove.skipent = -1;

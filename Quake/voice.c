@@ -61,7 +61,21 @@ typedef struct voice_speaker_s
 	float volume;
 	qboolean muted;
 	double talking_until;
+	char pref_name[MAX_SCOREBOARDNAME]; // player name the mute/volume were applied for
 } voice_speaker_t;
+
+/* Mutes and per-player volumes follow the player's name, not the scoreboard
+ * slot: they survive map changes (CL_ClearState) and do not transfer to a
+ * different player who later takes a muted player's slot. */
+#define VOICE_NAME_PREFS 64
+typedef struct voice_name_pref_s
+{
+	char name[MAX_SCOREBOARDNAME];
+	qboolean muted;
+	float volume;
+} voice_name_pref_t;
+static voice_name_pref_t voice_name_prefs[VOICE_NAME_PREFS];
+static int voice_name_pref_next;
 
 typedef enum voice_pending_action_e
 {
@@ -917,6 +931,73 @@ static void Voice_Mode_f(void)
 	Con_Printf("Voice: press physical Y in the console within 15 seconds to set %s mode.\n", mode);
 }
 
+/* NaN passes CLAMP and turns (int)(sample * gain) into full-scale noise. */
+static float Voice_SafeLevel(float value, float fallback)
+{
+	if (!isfinite(value))
+		return fallback;
+	return value < 0.0f ? 0.0f : value;
+}
+
+static voice_name_pref_t *Voice_FindNamePref(const char *name, qboolean create)
+{
+	voice_name_pref_t *pref;
+	int i;
+	if (!name || !*name)
+		return NULL;
+	for (i = 0; i < VOICE_NAME_PREFS; ++i)
+		if (voice_name_prefs[i].name[0] && !strcmp(voice_name_prefs[i].name, name))
+			return &voice_name_prefs[i];
+	if (!create)
+		return NULL;
+	for (i = 0; i < VOICE_NAME_PREFS; ++i)
+		if (!voice_name_prefs[i].name[0])
+			break;
+	if (i == VOICE_NAME_PREFS)
+	{
+		i = voice_name_pref_next;
+		voice_name_pref_next = (voice_name_pref_next + 1) % VOICE_NAME_PREFS;
+	}
+	pref = &voice_name_prefs[i];
+	q_strlcpy(pref->name, name, sizeof(pref->name));
+	pref->muted = false;
+	pref->volume = 1.0f;
+	return pref;
+}
+
+static const char *Voice_SlotName(int slot)
+{
+	if (slot < 0 || slot >= MAX_SCOREBOARD || slot >= cl.maxclients || !cl.scores)
+		return "";
+	return cl.scores[slot].name;
+}
+
+static void Voice_ApplySpeakerMute(int slot, qboolean muted)
+{
+	voice_speaker_t *speaker = &voice_speakers[slot];
+	speaker->muted = muted;
+	Voice_AtomicSet(&speaker->muted_audio, muted ? 1 : 0);
+	Voice_AtomicSet(&speaker->talking, !muted && realtime < speaker->talking_until);
+}
+
+/* Re-apply the remembered preferences whenever a slot's occupant (name) changes. */
+static void Voice_SyncSpeakerPrefs(int slot)
+{
+	voice_speaker_t *speaker = &voice_speakers[slot];
+	const char *name = Voice_SlotName(slot);
+	const voice_name_pref_t *pref;
+	if (!strcmp(name, speaker->pref_name))
+		return;
+	q_strlcpy(speaker->pref_name, name, sizeof(speaker->pref_name));
+	pref = Voice_FindNamePref(name, false);
+	speaker->volume = pref ? pref->volume : 1.0f;
+	if ((pref && pref->muted) != speaker->muted)
+	{
+		Voice_ApplySpeakerMute(slot, pref && pref->muted);
+		Spatial_ResetVoice(slot);
+	}
+}
+
 static int Voice_FindSpeaker(const char *value)
 {
 	char *end;
@@ -938,11 +1019,16 @@ static void Voice_Mute_f(void)
 		Con_Printf("usage: voice_mute <player name or slot>\n");
 		return;
 	}
-	voice_speakers[slot].muted = !voice_speakers[slot].muted;
-	Voice_AtomicSet(&voice_speakers[slot].muted_audio,
-		voice_speakers[slot].muted ? 1 : 0);
-	Voice_AtomicSet(&voice_speakers[slot].talking,
-		!voice_speakers[slot].muted && realtime < voice_speakers[slot].talking_until);
+	Voice_SyncSpeakerPrefs(slot);
+	Voice_ApplySpeakerMute(slot, !voice_speakers[slot].muted);
+	{
+		voice_name_pref_t *pref = Voice_FindNamePref(Voice_SlotName(slot), true);
+		if (pref)
+		{
+			pref->muted = voice_speakers[slot].muted;
+			pref->volume = voice_speakers[slot].volume;
+		}
+	}
 	Spatial_ResetVoice(slot);
 	Voice_PublishSpatialVoiceSource(slot);
 	Con_Printf("Voice: %s %s.\n", cl.scores[slot].name,
@@ -957,8 +1043,17 @@ static void Voice_PlayerVolume_f(void)
 		Con_Printf("usage: voice_player_volume <player name or slot> <0..2>\n");
 		return;
 	}
+	Voice_SyncSpeakerPrefs(slot);
 	voice_speakers[slot].volume = CLAMP(0.0f,
-		strtof(Cmd_Argv(2), NULL), 2.0f);
+		Voice_SafeLevel(strtof(Cmd_Argv(2), NULL), 1.0f), 2.0f);
+	{
+		voice_name_pref_t *pref = Voice_FindNamePref(Voice_SlotName(slot), true);
+		if (pref)
+		{
+			pref->muted = voice_speakers[slot].muted;
+			pref->volume = voice_speakers[slot].volume;
+		}
+	}
 	Voice_PublishSpatialVoiceSource(slot);
 	Con_Printf("Voice: %s volume %.2f.\n", cl.scores[slot].name,
 		voice_speakers[slot].volume);
@@ -980,8 +1075,11 @@ qboolean Voice_ConfirmKeyEvent(int key, qboolean down)
 	voice_settings_profile_t *profile;
 
 	profile = Voice_Profile();
+	/* Only a Y typed on an empty console line confirms, so ordinary typing
+	 * ("say hey") can never answer a prompt the user did not notice. */
 	if (!voice_initialized || !down || key_dest != key_console ||
-		(key != 'y' && key != 'Y') || voice_pending_action == VOICE_PENDING_NONE)
+		(key != 'y' && key != 'Y') || voice_pending_action == VOICE_PENDING_NONE ||
+		key_linepos != 1 || key_lines[edit_line][1])
 		return false;
 	if (realtime > voice_pending_deadline)
 	{
@@ -1055,7 +1153,7 @@ static void Voice_EncodeCaptureFrame(int16_t *samples)
 	voice_vad_result_t result;
 	qboolean gate;
 	unsigned int i;
-	float gain = CLAMP(0.0f, voice_input_gain.value, 4.0f);
+	float gain = CLAMP(0.0f, Voice_SafeLevel(voice_input_gain.value, 1.0f), 4.0f);
 
 	for (i = 0; i < VOICE_FRAME_SAMPLES; ++i)
 	{
@@ -1169,7 +1267,8 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 	read = Voice_AtomicGet(&speaker->pcm_read);
 	write = Voice_AtomicGet(&speaker->pcm_write);
 	outframes = frames * shm->speed / VOICE_SAMPLE_RATE;
-	left = right = voice_radio_volume.value;
+	const float radio_volume = Voice_SafeLevel(voice_radio_volume.value, 0.45f);
+	left = right = radio_volume;
 	if (slot >= 0 && slot + 1 < cl.num_entities &&
 		cl.entities[slot + 1].model && cl.entities[slot + 1].msgtime == cl.mtime[0])
 	{
@@ -1182,12 +1281,12 @@ static void Voice_WriteSpeakerPCM(voice_speaker_t *speaker,
 		blend = CLAMP(0.0f, distance / q_max(1.0f, voice_spatial_distance.value), 1.0f);
 		positional = 1.0f / (1.0f + distance / 512.0f);
 		left = (1.0f - blend) * positional * (1.0f - 0.5f * pan) +
-			blend * voice_radio_volume.value;
+			blend * radio_volume;
 		right = (1.0f - blend) * positional * (1.0f + 0.5f * pan) +
-			blend * voice_radio_volume.value;
+			blend * radio_volume;
 	}
-	left *= VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
-	right *= VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
+	left *= VOICE_PLAYBACK_GAIN * speaker->volume * Voice_SafeLevel(voice_volume.value, 1.0f);
+	right *= VOICE_PLAYBACK_GAIN * speaker->volume * Voice_SafeLevel(voice_volume.value, 1.0f);
 	for (i = 0; i < outframes; ++i)
 	{
 		int next = (write + 1) % VOICE_PCM_RING_FRAMES;
@@ -1219,7 +1318,7 @@ static void Voice_PublishSpatialVoiceSource(int slot)
 	active = voice_initialized && voice_receive.value != 0 &&
 		slot < cl.maxclients && cl.scores && cl.scores[slot].name[0] &&
 		speaker->have_generation && !speaker->muted;
-	gain = VOICE_PLAYBACK_GAIN * speaker->volume * voice_volume.value;
+	gain = VOICE_PLAYBACK_GAIN * speaker->volume * Voice_SafeLevel(voice_volume.value, 1.0f);
 
 	if (cl.entities && slot + 1 < cl.num_entities)
 	{
@@ -1404,9 +1503,12 @@ void Voice_ResetConnection(void)
 		voice_speakers[i].generation = 0;
 		voice_speakers[i].talking_until = 0;
 		Voice_AtomicSet(&voice_speakers[i].talking, 0);
+		/* Slot state starts clean; Voice_Frame re-applies name-keyed
+		 * preferences once the new scoreboard names arrive. */
 		voice_speakers[i].muted = false;
 		Voice_AtomicSet(&voice_speakers[i].muted_audio, 0);
 		voice_speakers[i].volume = 1.0f;
+		voice_speakers[i].pref_name[0] = '\0';
 		Voice_RefreshSpeakerRing(&voice_speakers[i]);
 		if (voice_speakers[i].decoder)
 			opus_decoder_ctl(voice_speakers[i].decoder, OPUS_RESET_STATE);
@@ -1435,7 +1537,10 @@ void Voice_Frame(void)
 		q_max(1.0f, voice_spatial_distance.value),
 		voice_positional_only.value != 0);
 	for (slot = 0; slot < MAX_SCOREBOARD; ++slot)
+	{
+		Voice_SyncSpeakerPrefs(slot);
 		Voice_PublishSpatialVoiceSource(slot);
+	}
 	if (!voice_receive.value)
 	{
 		if (voice_receive_was_enabled)

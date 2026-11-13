@@ -78,6 +78,23 @@ extern size_t			   max_thread_stack_alloc_size;
 			var = NULL;                                                 \
 	} while (false)
 
+/* alloca memory is only released when the function returns, so a block that
+ * is TEMP_FREE'd and re-assigned inside a loop still occupies the stack every
+ * iteration. Loops use these heap-only variants (still released by TEMP_FREE). */
+#define TEMP_ALLOC_ASSIGN_HEAP_IMPL(var, size, zeroed, cond)            \
+	do                                                                  \
+	{                                                                   \
+		temp_alloc_##var##_size = sizeof (*var) * (size);               \
+		temp_alloc_##var##_on_heap = (cond);                            \
+		if (cond)                                                       \
+			var = (zeroed) ? Mem_Alloc (temp_alloc_##var##_size) :      \
+				Mem_AllocNonZero (temp_alloc_##var##_size);             \
+		else                                                            \
+			var = NULL;                                                 \
+	} while (false)
+#define TEMP_ALLOC_ASSIGN_HEAP_ZEROED(var, size)            TEMP_ALLOC_ASSIGN_HEAP_IMPL (var, size, true, true)
+#define TEMP_ALLOC_ASSIGN_HEAP_ZEROED_COND(var, size, cond) TEMP_ALLOC_ASSIGN_HEAP_IMPL (var, size, true, cond)
+
 #define TEMP_ALLOC_TEMPLATE(type, var, size, zeroed, cond) \
 	TEMP_ALLOC_DECL (type, var)                            \
 	TEMP_ALLOC_ASSIGN_IMPL (var, size, zeroed, cond)

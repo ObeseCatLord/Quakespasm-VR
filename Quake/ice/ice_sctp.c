@@ -492,11 +492,17 @@ static void SCTP_ErrorChunk(sctp_t *sctp, const char *errortype, const struct sc
         default:	Con_Printf(S_COLOR_GRAY"[%s]: SCTP %s: Unknown Reason\n",				sctp->friendlyname, errortype);	break;
 		}
 
-		cl = (cl+3)&~3;	//causes are padded to 4 bytes; the final one may omit its padding.
-		if (totallen <= cl)
-			break;
-		totallen -= cl;
-		s = (const struct sctp_errorcause_s*)((const qbyte*)s + cl);
+		{
+			/* Causes are padded to 4 bytes; the final one may omit its padding.
+			 * Round up in size_t: a uint16 cl of 65533+ would wrap to 0 and stop
+			 * the walk advancing. padded >= cl >= sizeof(*s) > 0, so every pass
+			 * either consumes bytes or leaves the loop. */
+			const size_t padded = ((size_t)cl + 3) & ~(size_t)3;
+			if (totallen <= padded)
+				break;
+			totallen -= padded;
+			s = (const struct sctp_errorcause_s*)((const qbyte*)s + padded);
+		}
 	}
 }
 

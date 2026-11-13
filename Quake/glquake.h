@@ -664,6 +664,10 @@ extern int		r_framecount;
 extern mplane_t frustum[4];
 extern qboolean render_warp;
 extern qboolean in_update_screen;
+/* True when a GPU resource may be retired through the per-frame garbage rings
+ * instead of idling the device (see GL_DeferredFreeAvailable). */
+qboolean GL_DeferredFreeAvailable (void);
+extern qboolean host_clearing_memory;
 extern qboolean use_simd;
 
 //
