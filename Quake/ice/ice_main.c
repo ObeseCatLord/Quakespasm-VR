@@ -4236,9 +4236,11 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 				ICE_WriteShort(&buf, BigShort(STUNATTR_XOR_MAPPED_ADDRESS));
 				ICE_WriteShort(&buf, BigShort(4+alen));
 				ICE_WriteShort(&buf, BigShort(atype));
-				ICE_WriteShort(&buf, aport ^ *(short*)(data+4));
+				/* RFC 5389 15.2: port XOR the cookie's top 16 bits, address XOR
+				 * cookie||transaction id, both in network byte order. */
+				ICE_WriteShort(&buf, (uint16_t)(BigShort(aport) ^ *(uint16_t*)(data+4)));
 				for (i = 0; i < alen; i++)
-					ICE_WriteByte(&buf, aip[i] & ((qbyte*)data+4)[i]);
+					ICE_WriteByte(&buf, aip[i] ^ ((qbyte*)data+4)[i]);
 			}
 			else
 			{	//non-xor mapped
@@ -4298,54 +4300,60 @@ static qboolean ICE_ProcessPacket (struct icemodule_s *module, struct icesocket_
 #ifdef HAVE_DTLS
 		char buf[8192];
 #endif
-		for (con = icelist; con; con = con->next)
-		{
+		struct icestate_s *owner = NULL;
+		/* Route by the nominated path first: a newer state that merely lists
+		 * another peer's address as a remote candidate must not capture that
+		 * peer's traffic. Unnominated candidates only claim leftovers. */
+		for (con = icelist; con && !owner; con = con->next)
+			if (con->chosenpeer.type != NA_INVALID && NET_CompareAdr(from, &con->chosenpeer))
+				owner = con;
+		for (con = icelist; con && !owner; con = con->next)
 			for (rc = con->rc; rc; rc = rc->next)
-			{
 				if (NET_CompareAdr(from, &rc->peer))
 				{
-				//	if (rc->reachable)
-					{	//found it. fix up its source address to our ICE connection (so we don't have path-switching issues) and keep chugging along.
-						con->icetimeout = Sys_Milliseconds() + (con->icetimeout_ms ? con->icetimeout_ms : 30*1000);
+					owner = con;
+					break;
+				}
+		con = owner;
+		if (con)
+		{	//found it. fix up its source address to our ICE connection (so we don't have path-switching issues) and keep chugging along.
+			con->icetimeout = Sys_Milliseconds() + (con->icetimeout_ms ? con->icetimeout_ms : 30*1000);
 
 #ifdef HAVE_DTLS
-						if (con->dtlsstate)
-						{
-							switch(con->dtlsfuncs->Received(con->dtlsstate, from, msg_data, msg_size, buf,sizeof(buf), &msg_size))
-							{
-							case NETERR_SENT:
-								msg_data = buf;
-								decrypted = true;
-								break;	//
-							case NETERR_NOROUTE:
-								return false;	//not a dtls packet at all. don't de-ICE it when we're meant to be using ICE.
-							case NETERR_DISCONNECTED:	//dtls failure. ICE failed.
-								ICE_SetFailed(con, "DTLS Terminated");
-								return true;
-							default: //some kind of failure decoding the dtls packet. drop it.
-								return true;
-							}
-						}
+			if (con->dtlsstate)
+			{
+				switch(con->dtlsfuncs->Received(con->dtlsstate, from, msg_data, msg_size, buf,sizeof(buf), &msg_size))
+				{
+				case NETERR_SENT:
+					msg_data = buf;
+					decrypted = true;
+					break;	//
+				case NETERR_NOROUTE:
+					return false;	//not a dtls packet at all. don't de-ICE it when we're meant to be using ICE.
+				case NETERR_DISCONNECTED:	//dtls failure. ICE failed.
+					ICE_SetFailed(con, "DTLS Terminated");
+					return true;
+				default: //some kind of failure decoding the dtls packet. drop it.
+					return true;
+				}
+			}
 #endif
 
 #ifdef HAVE_SCTP
-						if (con->sctp)
-							SCTP_Decode(con->sctp, msg_data, msg_size, con->module->ReadGamePacket);
-						else
+			if (con->sctp)
+				SCTP_Decode(con->sctp, msg_data, msg_size, con->module->ReadGamePacket);
+			else
 #endif
-						if (msg_size)
-						{
-							struct icestate_s *saved_decrypted_callback = ice_decrypted_callback;
-							/* Do not let a nested plaintext callback inherit the
-							 * outer peer's authenticated-decryption marker. */
-							ice_decrypted_callback = decrypted ? con : NULL;
-							con->module->ReadGamePacket(con, msg_data, msg_size);
-							ice_decrypted_callback = saved_decrypted_callback;
-						}
-						return true;
-					}
-				}
+			if (msg_size)
+			{
+				struct icestate_s *saved_decrypted_callback = ice_decrypted_callback;
+				/* Do not let a nested plaintext callback inherit the
+				 * outer peer's authenticated-decryption marker. */
+				ice_decrypted_callback = decrypted ? con : NULL;
+				con->module->ReadGamePacket(con, msg_data, msg_size);
+				ice_decrypted_callback = saved_decrypted_callback;
 			}
+			return true;
 		}
 	}
 #endif
