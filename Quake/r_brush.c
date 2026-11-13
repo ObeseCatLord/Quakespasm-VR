@@ -1761,8 +1761,8 @@ static qboolean GL_BrushRegenerationSourceValid (const qmodel_t *model, const ms
 		!surf->texinfo || !surf->texinfo->texture)
 		return false;
 	const texture_t *texture = surf->texinfo->texture;
-	if (!(surf->flags & SURF_DRAWTURB) && (!texture->width || !texture->height))
-		return false;
+	/* A zero-size miptex is malformed content, not a reason to abort the
+	 * process: GL_FillBrushSurfaceVertices maps it with a unit divisor. */
 	return texture->shift <= UINT_MAX / 2 && surf->light_s >= 0 && surf->light_s < LMBLOCK_WIDTH &&
 		surf->light_t >= 0 && surf->light_t < LMBLOCK_HEIGHT;
 }
@@ -1788,8 +1788,8 @@ static qboolean GL_FillBrushSurfaceVertices (const qmodel_t *model, const msurfa
 	{
 		s0 = fa->texinfo->vecs[0][3];
 		t0 = fa->texinfo->vecs[1][3];
-		sdiv = fa->texinfo->texture->width;
-		tdiv = fa->texinfo->texture->height;
+		sdiv = fa->texinfo->texture->width ? fa->texinfo->texture->width : 1;
+		tdiv = fa->texinfo->texture->height ? fa->texinfo->texture->height : 1;
 	}
 
 	for (i = 0; i < lnumverts; i++)
