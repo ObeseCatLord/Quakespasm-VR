@@ -7,6 +7,7 @@
 #include "vr_input.h"
 #include "vr_weapon_menu.h"
 #include "vr_weapon_schema.h"
+#include "vr_weapon_calibration.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -127,18 +128,20 @@ static const vr_weapon_menu_profile_entry_t vr_weapon_menu_peril_profile[] = {
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_snack_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_AXE, 1, "AXE", "progs/g_axe.mdl", "progs/v_axe2.mdl", -1, 0),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SHOTGUN, 2, "SHOTGUN", "progs/g_shotgn.mdl", "progs/v_shot.mdl", STAT_SHELLS, 100),
-	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_SHOTGUN, 3, "DOUBLE SHOTGUN", "progs/g_shot.mdl", "progs/v_shot2.mdl", STAT_SHELLS, 100),
+	/* snack3 W_ChangeWeapon: 3 toggles double/rotary; 23 and 33 are direct. */
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_SHOTGUN, 23, "DOUBLE SHOTGUN", "progs/g_shot.mdl", "progs/v_shot2.mdl", STAT_SHELLS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_NAILGUN, 4, "STAKEGUN", "progs/g_nail.mdl", "progs/v_nail.mdl", STAT_NAILS, 200),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_NAILGUN, 5, "IMPALER", "progs/g_nail2.mdl", "progs/v_nail2.mdl", STAT_NAILS, 200),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_GRENADE_LAUNCHER, 6, "GRENADE", "progs/g_rock.mdl", "progs/v_rock.mdl", STAT_ROCKETS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_ROCKET_LAUNCHER, 7, "ROCKET", "progs/g_rock2.mdl", "progs/v_rock2.mdl", STAT_ROCKETS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_LIGHTNING, 8, "LIGHTNING", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100),
-	{128, 0, 3, "ROTARY SHOTGUN", "progs/g_shot3.mdl", STAT_VR_MODITEMS, 128, STAT_ACTIVEWEAPON, 128, STAT_SHELLS, 100, "progs/v_shot3.mdl"}
+	{128, 0, 33, "ROTARY SHOTGUN", "progs/g_shot3.mdl", STAT_VR_MODITEMS, 128, STAT_ACTIVEWEAPON, 128, STAT_SHELLS, 100, "progs/v_shot3.mdl"}
 };
 
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_dwell_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_AXE, 1, "AXE", "progs/g_axe.mdl", "progs/v_axe2.mdl", -1, 0),
-	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SHOTGUN, 2, "SHOTGUN", "progs/g_shotgn.mdl", "progs/v_shot.mdl", STAT_SHELLS, 100),
+	/* dwellv2p2 W_ChangeWeapon: 2 toggles shotgun/rifle; 22 and 32 are direct. */
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SHOTGUN, 22, "SHOTGUN", "progs/g_shotgn.mdl", "progs/v_shot.mdl", STAT_SHELLS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_SHOTGUN, 23, "DOUBLE SHOTGUN", "progs/g_shot.mdl", "progs/v_shot2.mdl", STAT_SHELLS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_NAILGUN, 4, "NAILGUN", "progs/g_nail.mdl", "progs/v_nail.mdl", STAT_NAILS, 200),
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_NAILGUN, 5, "SUPER NAILGUN", "progs/g_nail2.mdl", "progs/v_nail2.mdl", STAT_NAILS, 200),
@@ -147,7 +150,7 @@ static const vr_weapon_menu_profile_entry_t vr_weapon_menu_dwell_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, IT_LIGHTNING, 28, "LIGHTNING", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100),
 	{128, 0, 33, "ROTARY SHOTGUN", "progs/g_shot3.mdl", STAT_VR_MODITEMS, 4, STAT_ACTIVEWEAPON, 128, STAT_SHELLS, 100, "progs/v_shot3.mdl"},
 	{256, 0, 38, "CRYSTAL LANCE", "progs/g_rail.mdl", STAT_VR_MODITEMS, 8, STAT_ACTIVEWEAPON, 256, STAT_CELLS, 100, "progs/v_rail.mdl"},
-	{512, 0, 2, "RIFLE", "progs/g_rifle.mdl", STAT_VR_MODITEMS, 32, STAT_ACTIVEWEAPON, 512, STAT_SHELLS, 100, "progs/v_rifle.mdl"}
+	{512, 0, 32, "RIFLE", "progs/g_rifle.mdl", STAT_VR_MODITEMS, 32, STAT_ACTIVEWEAPON, 512, STAT_SHELLS, 100, "progs/v_rifle.mdl"}
 };
 
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_alkaline_profile[] = {
@@ -196,15 +199,26 @@ static const vr_weapon_menu_profile_entry_t vr_weapon_menu_mjolnir_profile[] = {
 	{4194304, 0, 79, "WAND", "progs/drake/g_wand.mdl", 42, 4194304, STAT_ACTIVEWEAPON, 4194304, -1, 0}
 };
 
+/* mg3 W_ChangeWeapon: impulse 1 selects the hammer (items 128) when owned,
+ * otherwise the axe, so the hammer is an upgrade of the axe slot (see the
+ * slot alias table) rather than a second row sharing impulse 1. */
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_mg3_profile[] = {
-	{128, 0, 1, "HAMMER", "progs/g_hammer.mdl", STAT_ITEMS, 128, STAT_ACTIVEWEAPON, 128, -1, 0},
 	VR_PROFILE(8388608, 225, "LASER", "progs/g_laserg.mdl", STAT_CELLS, 100)
 };
 
+/* 1997 hipnotic QuakeC only has the toggle impulses (1 axe/Mjolnir, 6
+ * grenade/proximity, 8 lightning/laser). The 2021 rerelease W_ChangeWeapon
+ * adds direct 225 laser cannon, 226 Mjolnir and 227 proximity gun. */
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_hipnotic_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, HIT_MJOLNIR, 1, "MJOLNIR", "progs/g_hammer.mdl", "progs/v_hammer.mdl", -1, 0),
 	VR_NATIVE_PROFILE(STAT_ITEMS, HIT_LASER_CANNON, 8, "LASER CANNON", "progs/g_laserg.mdl", "progs/v_laserg.mdl", STAT_CELLS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, HIT_PROXIMITY_GUN, 6, "PROXIMITY", "progs/g_prox.mdl", "progs/v_prox.mdl", STAT_ROCKETS, 100)
+};
+
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_hipnotic_rerelease_profile[] = {
+	VR_NATIVE_PROFILE(STAT_ITEMS, HIT_MJOLNIR, 226, "MJOLNIR", "progs/g_hammer.mdl", "progs/v_hammer.mdl", -1, 0),
+	VR_NATIVE_PROFILE(STAT_ITEMS, HIT_LASER_CANNON, 225, "LASER CANNON", "progs/g_laserg.mdl", "progs/v_laserg.mdl", STAT_CELLS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, HIT_PROXIMITY_GUN, 227, "PROXIMITY", "progs/g_prox.mdl", "progs/v_prox.mdl", STAT_ROCKETS, 100)
 };
 
 static const vr_weapon_menu_profile_entry_t vr_weapon_menu_rogue_profile[] = {
@@ -214,6 +228,72 @@ static const vr_weapon_menu_profile_entry_t vr_weapon_menu_rogue_profile[] = {
 	VR_NATIVE_PROFILE(STAT_ITEMS, RIT_MULTI_GRENADE, 62, "MULTI GRENADE", "progs/v_multi.mdl", "progs/v_multi.mdl", STAT_ROCKETS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, RIT_MULTI_ROCKET, 63, "MULTI ROCKET", "progs/v_multi2.mdl", "progs/v_multi2.mdl", STAT_ROCKETS, 100),
 	VR_NATIVE_PROFILE(STAT_ITEMS, RIT_PLASMA_GUN, 64, "PLASMA", "progs/v_plasma.mdl", "progs/v_plasma.mdl", STAT_CELLS, 100)
+};
+
+/* Drake (nyarlathotep, something_wicked, Tershibboleth; identical progs).
+ * Weapons live in the QC-only .arsenal/.war fields; clients only see the HUD
+ * class each one maps to (War_UpdateItems -> .items, War_UpdateWeapon ->
+ * .weapon). Ownership is therefore per class, and the held model tells the
+ * class members apart. Selectors are the arsenal bits (stable identities).
+ * Impulses from W_ChangeWeapon: 21 best melee (chainsaw, else axe),
+ * 22..28/31/32/35..38/41/48 direct. Labels follow QC weapon_name. Melee
+ * ownership is unknowable (no HUD bit), so those rows use the always-true
+ * health stat and QC refuses an unowned choice with its own message. */
+#define VR_DRAKE(bit, hud, impulse, label, pickup, held, ammo, max) \
+	{bit, 0, impulse, label, pickup, STAT_ITEMS, hud, STAT_ACTIVEWEAPON, hud, ammo, max, held}
+#define VR_DRAKE_MELEE(bit, impulse, label, pickup, held) \
+	{bit, 0, impulse, label, pickup, STAT_HEALTH, 0, STAT_ACTIVEWEAPON, IT_AXE, -1, 0, held}
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_drake_profile[] = {
+	VR_DRAKE_MELEE(2, 21, "AXE", "progs/g_axe.mdl", "progs/v_axe.mdl"),
+	VR_DRAKE_MELEE(131072, 31, "MJOLNIR", "progs/g_hammer.mdl", "progs/v_hammer.mdl"),
+	VR_DRAKE_MELEE(1, 41, "GRAPPLER", "progs/g_grpple.mdl", "progs/v_grpple.mdl"),
+	VR_DRAKE(8, IT_SHOTGUN, 22, "SHOTGUN", "progs/v_shot.mdl", "progs/v_shot.mdl", STAT_SHELLS, 100),
+	VR_DRAKE(16, IT_SHOTGUN, 32, "RUBY WAND", "progs/g_wand.mdl", "progs/v_wand.mdl", -1, 0),
+	VR_DRAKE(64, IT_SUPER_SHOTGUN, 23, "DOUBLE SHOTGUN", "progs/g_shot.mdl", "progs/v_shot2.mdl", STAT_SHELLS, 100),
+	VR_DRAKE(32, IT_NAILGUN, 24, "NAILGUN", "progs/g_nail.mdl", "progs/v_nail.mdl", STAT_NAILS, 200),
+	VR_DRAKE(512, IT_SUPER_NAILGUN, 25, "SUPER NAILGUN", "progs/g_nail2.mdl", "progs/v_nail2.mdl", STAT_NAILS, 200),
+	VR_DRAKE(4096, IT_SUPER_NAILGUN, 35, "HYPERBLASTER", "progs/g_laserg.mdl", "progs/v_laserg.mdl", STAT_CELLS, 100),
+	VR_DRAKE(256, IT_GRENADE_LAUNCHER, 26, "GRENADE LAUNCHER", "progs/g_rock.mdl", "progs/v_rock.mdl", STAT_ROCKETS, 100),
+	VR_DRAKE(1024, IT_GRENADE_LAUNCHER, 36, "SIDEWINDER", "progs/g_rocks.mdl", "progs/v_rocks.mdl", STAT_ROCKETS, 100),
+	VR_DRAKE(2048, IT_ROCKET_LAUNCHER, 27, "ROCKET LAUNCHER", "progs/g_rock2.mdl", "progs/v_rock2.mdl", STAT_ROCKETS, 100),
+	VR_DRAKE(65536, IT_ROCKET_LAUNCHER, 37, "MIRV LAUNCHER", "progs/g_mirv.mdl", "progs/v_mirv.mdl", STAT_ROCKETS, 100),
+	VR_DRAKE(16384, IT_LIGHTNING, 28, "THUNDERBOLT", "progs/g_light.mdl", "progs/v_light.mdl", STAT_CELLS, 100),
+	VR_DRAKE(8192, IT_LIGHTNING, 38, "PLASMA GUN", "progs/v_plasma.mdl", "progs/v_plasma.mdl", STAT_CELLS, 100),
+	VR_DRAKE(262144, IT_LIGHTNING, 48, "BURIZA-DO KYANON", "progs/g_xbow.mdl", "progs/v_xbow.mdl", -1, 0)
+};
+#undef VR_DRAKE_MELEE
+#undef VR_DRAKE
+
+/* Quoth-based warpspasm/immortal: W_ChangeWeapon 250 plasma gun (items
+ * 8388608, cells), 251 bomb (items 65536, no ammo check). */
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_quoth_profile[] = {
+	VR_NATIVE_PROFILE(STAT_ITEMS, 8388608, 250, "PLASMA GUN", "progs/g_lance.mdl", "progs/v_lance.mdl", STAT_CELLS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, 65536, 251, "BOMB", "progs/g_bomb.mdl", "progs/v_bomb.mdl", -1, 0)
+};
+
+/* Zerstorer W_ChangeWeapon: 252 chainsaw (items 8388608), 253 chain-lightning
+ * (IT_SPEAR 128, cells), 254 ScREw cannon (items2 256, rockets). Stock slots
+ * keep their impulses but use the mod's own names and models. */
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_zer_profile[] = {
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_SUPER_SHOTGUN, 3, "RIOT CONTROLLER", "progs/g_dshot.mdl", "progs/v_dshot.mdl", STAT_SHELLS, 100),
+	VR_NATIVE_PROFILE(STAT_ITEMS, IT_NAILGUN, 4, "CHAINGUN", "progs/g_cgun.mdl", "progs/v_cgun.mdl", STAT_NAILS, 200),
+	VR_NATIVE_PROFILE(STAT_ITEMS, 8388608, 252, "CHAINSAW", "progs/g_saw.mdl", "progs/v_saw.mdl", -1, 0),
+	VR_NATIVE_PROFILE(STAT_ITEMS, 128, 253, "CHAIN-LIGHTNING", "progs/g_light2.mdl", "progs/v_light2.mdl", STAT_CELLS, 100),
+	{256, 0, 254, "SCREW CANNON", "progs/g_stun.mdl", STAT_VR_ITEMS2, 256, STAT_ACTIVEWEAPON, 256, STAT_ROCKETS, 100, "progs/v_stun.mdl"}
+};
+
+/* Sacrilege (progs_dump fork): W_ChangeWeapon 225 -> IT_LASER_CANNON 128. */
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_pd_laser_profile[] = {
+	VR_NATIVE_PROFILE(STAT_ITEMS, 128, 225, "LASER CANNON", "progs/g_laserg.mdl", "progs/v_laserg.mdl", STAT_CELLS, 100)
+};
+
+/* QuakeVR progs (the `vr` mod): 225 starts the laser-cannon mode logic
+ * (items 8388608), 226 Mjolnir (items 128). 902-909 are internal mode
+ * results assigned by QC itself and cannot be sent as a byte impulse;
+ * 22 grapple and 227 mode cycling share the axe/current slot. */
+static const vr_weapon_menu_profile_entry_t vr_weapon_menu_quakevr_profile[] = {
+	VR_NATIVE_PROFILE(STAT_ITEMS, 128, 226, "MJOLNIR", "progs/g_hammer.mdl", "progs/v_hammer.mdl", -1, 0),
+	VR_NATIVE_PROFILE(STAT_ITEMS, 8388608, 225, "LASER CANNON", "progs/g_laserg.mdl", "progs/v_laserg.mdl", -1, 0)
 };
 
 #undef VR_NATIVE_PROFILE
@@ -232,6 +312,11 @@ static qboolean vr_weapon_menu_has_wwheel;
 static qboolean vr_weapon_menu_has_schema;
 static qboolean vr_weapon_menu_has_profile;
 static qboolean vr_weapon_menu_has_discoveries;
+/* Bumped whenever catalog rows or their model paths change (game reload,
+ * runtime discovery/learning). Keys the wheel's model cache and preload. */
+static unsigned int vr_weapon_menu_catalog_serial;
+static const qmodel_t *vr_weapon_menu_preloaded_world;
+static unsigned int vr_weapon_menu_preloaded_serial;
 
 static qboolean vr_weapon_menu_open;
 static qboolean vr_weapon_menu_open_vr;
@@ -255,6 +340,15 @@ static int vr_weapon_menu_retained_id = -1;
 static int vr_weapon_menu_hover_action_slot = -1;
 static char vr_weapon_menu_hover_action_name[MAX_SCOREBOARDNAME];
 static qboolean vr_weapon_menu_frame_valid;
+/* M10: brief XR tracking/focus loss keeps the session and its last hover.
+ * Grace applies to a continuous invalid run; release may use the last valid
+ * hover while it is recent. Times are Sys_DoubleTime seconds, -1 = none. */
+#define VR_WEAPON_MENU_TRACKING_GRACE 0.25
+#define VR_WEAPON_MENU_RELEASE_HOVER_AGE 0.2
+static double vr_weapon_menu_xr_invalid_since = -1.0;
+static double vr_weapon_menu_tracking_lost_since = -1.0;
+static double vr_weapon_menu_last_tracked_time = -1.0;
+static double vr_weapon_menu_hover_time = -1.0;
 static unsigned int vr_weapon_menu_session_generation;
 static qmodel_t *vr_weapon_menu_worldmodel;
 static int vr_weapon_menu_viewentity;
@@ -340,10 +434,25 @@ static int VR_WeaponMenu_FindStockSelector (int weaponnum, int impulse)
 		if (vr_weapon_menu_stock_entries[i].selector == weaponnum &&
 			vr_weapon_menu_stock_entries[i].impulse == impulse)
 			return (int)i;
+	/* The rerelease Rogue wwheel selects stock nailgun/rockets through 65-68
+	 * while keeping the stock item bits; the bit alone names the weapon.
+	 * Rogue reuses 4096 (stock axe) for its lava nailgun, so never infer that. */
+	for (size_t i = 0; i < sizeof (vr_weapon_menu_stock_entries) /
+		sizeof (vr_weapon_menu_stock_entries[0]); ++i)
+		if (vr_weapon_menu_stock_entries[i].selector == weaponnum &&
+			!(rogue && weaponnum == IT_AXE))
+			return (int)i;
 	return -1;
 }
 
 static int VR_WeaponMenu_ProfileAmmoMaxStat (int ammo_stat);
+
+/* Rogue's split ammo pools: the Rogue mission pack progs (no other known
+ * family; a mod merely launched with -rogue keeps ordinary pools). */
+static qboolean VR_WeaponMenu_RoguePools (void)
+{
+	return rogue && VR_ProgsIdentityCurrent ()->family == VR_PROGS_FAMILY_UNKNOWN;
+}
 
 static qboolean VR_WeaponMenu_WheelAmmo (int entvaroffs, int *ammo_stat,
 	int *ammo_max)
@@ -367,8 +476,51 @@ static qboolean VR_WeaponMenu_WheelAmmo (int entvaroffs, int *ammo_stat,
 		*ammo_max = 100;
 		return true;
 	default:
+		break;
+	}
+	/* Rogue's split pools (defs.qc ammo_nails1..ammo_plasma). QC copies the
+	 * pool of the held weapon's family into ammo_nails/rockets/cells, so the
+	 * stat is only meaningful while that family is held; see
+	 * VR_WeaponMenu_AmmoStatKnown. */
+	if (!VR_WeaponMenu_RoguePools ())
+		return false;
+	switch (entvaroffs)
+	{
+	case 428: case 440:
+		*ammo_stat = STAT_NAILS;
+		*ammo_max = 200;
+		return true;
+	case 432: case 444:
+		*ammo_stat = STAT_ROCKETS;
+		*ammo_max = 100;
+		return true;
+	case 436: case 448:
+		*ammo_stat = STAT_CELLS;
+		*ammo_max = 100;
+		return true;
+	default:
 		return false;
 	}
+}
+
+/* Rogue UpdateAmmoCounts: holding a Rogue weapon (.weapon >= 4096) loads the
+ * lava nail, multi rocket and plasma pools into the nails/rockets/cells
+ * stats; any other weapon loads the ordinary pools. Shells are not split.
+ * A row's count is trustworthy only when its pool family is the loaded one. */
+static qboolean VR_WeaponMenu_AmmoStatKnown (const vr_weapon_menu_entry_t *entry,
+	const int *stats, size_t num_stats)
+{
+	int active;
+	qboolean rogue_row;
+	if (!VR_WeaponMenu_RoguePools () || (entry->ammo_stat != STAT_NAILS &&
+		entry->ammo_stat != STAT_ROCKETS && entry->ammo_stat != STAT_CELLS))
+		return true;
+	if (!stats || (size_t)STAT_ACTIVEWEAPON >= num_stats)
+		return false;
+	active = stats[STAT_ACTIVEWEAPON];
+	rogue_row = entry->selector >= RIT_LAVA_NAILGUN &&
+		entry->selector <= RIT_PLASMA_GUN;
+	return rogue_row == (active >= RIT_LAVA_NAILGUN);
 }
 
 static qboolean VR_WeaponMenu_GameDirIs (const char *name);
@@ -753,10 +905,27 @@ static qboolean VR_WeaponMenu_IsSnackGame (void)
 		VR_WeaponMenu_GameDirIs ("snack3");
 }
 
+static qboolean VR_WeaponMenu_IsMjolnirGame (void)
+{
+	return VR_WeaponMenu_GameDirIs ("mjolnir") ||
+		VR_WeaponMenu_GameDirIs ("mjolnir1.0");
+}
+
+static vr_progs_family_t VR_WeaponMenu_Family (void)
+{
+	return VR_ProgsIdentityCurrent ()->family;
+}
+
+/* AD by directory, or any AD-derived progs (gibtropolis, hwjam4, q30a1024,
+ * quake_rooftop_jam_v2, tcj, ravenkeep, ...). Peril shares AD's progs.dat
+ * byte-for-byte but owns its own replacement roster and profile. */
 static qboolean VR_WeaponMenu_IsADWeaponGame (void)
 {
+	if (VR_WeaponMenu_GameDirIs ("peril3.0") || VR_WeaponMenu_IsMjolnirGame ())
+		return false;
 	return VR_WeaponMenu_GameDirIs ("ad") ||
-		VR_WeaponMenu_GameDirIs ("hwjam2");
+		VR_WeaponMenu_GameDirIs ("hwjam2") ||
+		VR_WeaponMenu_Family () == VR_PROGS_FAMILY_AD;
 }
 
 static qboolean VR_WeaponMenu_UsesADWeaponUpgrades (void)
@@ -952,8 +1121,7 @@ static void VR_WeaponMenu_LoadBuiltinProfiles (void)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_qbj3_profile,
 			sizeof (vr_weapon_menu_qbj3_profile) /
 			sizeof (vr_weapon_menu_qbj3_profile[0]));
-	if (VR_WeaponMenu_GameDirIs ("mjolnir") ||
-		VR_WeaponMenu_GameDirIs ("mjolnir1.0"))
+	if (VR_WeaponMenu_IsMjolnirGame ())
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_mjolnir_profile,
 			sizeof (vr_weapon_menu_mjolnir_profile) /
 			sizeof (vr_weapon_menu_mjolnir_profile[0]));
@@ -961,16 +1129,54 @@ static void VR_WeaponMenu_LoadBuiltinProfiles (void)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_mg3_profile,
 			sizeof (vr_weapon_menu_mg3_profile) /
 			sizeof (vr_weapon_menu_mg3_profile[0]));
-	if (hipnotic && !peril)
-		VR_WeaponMenu_AddProfile (vr_weapon_menu_hipnotic_profile,
-			sizeof (vr_weapon_menu_hipnotic_profile) /
-			sizeof (vr_weapon_menu_hipnotic_profile[0]));
+	/* -quoth also raises the hipnotic HUD flag; Quoth's 65536/8388608 bits are
+	 * its bomb and plasma gun, not hipnotic's proximity gun/laser cannon. */
+	if (hipnotic && !peril && VR_WeaponMenu_Family () != VR_PROGS_FAMILY_QUOTH)
+	{
+		/* Without a wwheel.txt the profile supplies the command; only the
+		 * rerelease progs understands the direct 225-227 impulses. */
+		if (VR_ProgsIdentityCurrent ()->rerelease)
+			VR_WeaponMenu_AddProfile (vr_weapon_menu_hipnotic_rerelease_profile,
+				countof (vr_weapon_menu_hipnotic_rerelease_profile));
+		else
+			VR_WeaponMenu_AddProfile (vr_weapon_menu_hipnotic_profile,
+				countof (vr_weapon_menu_hipnotic_profile));
+	}
 	if (rogue && !peril)
 		VR_WeaponMenu_AddProfile (vr_weapon_menu_rogue_profile,
 			sizeof (vr_weapon_menu_rogue_profile) /
 			sizeof (vr_weapon_menu_rogue_profile[0]));
-	/* Only the primary's verified complete families suppress stock guesses. */
+	/* Progs-identified families. Directory-specific profiles above win. */
+	if (!peril && !VR_WeaponMenu_IsMjolnirGame ())
+		switch (VR_WeaponMenu_Family ())
+		{
+		case VR_PROGS_FAMILY_DRAKE:
+			VR_WeaponMenu_AddProfile (vr_weapon_menu_drake_profile,
+				countof (vr_weapon_menu_drake_profile));
+			break;
+		case VR_PROGS_FAMILY_QUOTH:
+			VR_WeaponMenu_AddProfile (vr_weapon_menu_quoth_profile,
+				countof (vr_weapon_menu_quoth_profile));
+			break;
+		case VR_PROGS_FAMILY_ZER:
+			VR_WeaponMenu_AddProfile (vr_weapon_menu_zer_profile,
+				countof (vr_weapon_menu_zer_profile));
+			break;
+		case VR_PROGS_FAMILY_PD_LASER:
+			VR_WeaponMenu_AddProfile (vr_weapon_menu_pd_laser_profile,
+				countof (vr_weapon_menu_pd_laser_profile));
+			break;
+		case VR_PROGS_FAMILY_QUAKEVR:
+			VR_WeaponMenu_AddProfile (vr_weapon_menu_quakevr_profile,
+				countof (vr_weapon_menu_quakevr_profile));
+			break;
+		default:
+			break;
+		}
+	/* Only the primary's verified complete families suppress stock guesses.
+	 * Drake's arsenal replaces every stock slot (its HUD bits are classes). */
 	if (peril || VR_WeaponMenu_IsADWeaponGame () || VR_WeaponMenu_IsSnackGame () ||
+		(VR_WeaponMenu_Family () == VR_PROGS_FAMILY_DRAKE && !VR_WeaponMenu_IsMjolnirGame ()) ||
 		VR_WeaponMenu_GameDirIs ("alk") ||
 		VR_WeaponMenu_GameDirIs ("limjam") || VR_WeaponMenu_GameDirIs ("enyo") ||
 		VR_WeaponMenu_GameDirIs ("qbj3") || VR_WeaponMenu_GameDirIs ("dwell") ||
@@ -1134,6 +1340,7 @@ void VR_WeaponMenu_ReloadGame (void)
 			vr_weapon_menu_wwheel_catalog.authoritative_schema = 1;
 		}
 	}
+	++vr_weapon_menu_catalog_serial;
 }
 
 static qboolean VR_WeaponMenu_GameContextValid (void)
@@ -1158,10 +1365,27 @@ static qboolean VR_WeaponMenu_XRContextValid (void)
 		hand->valid && hand->tracked && hand->kind == VRXR_DEVICE_HAND && hand->hand == dominant;
 }
 
+/* Valid XR context, or an invalid run no longer than the grace period. */
+static qboolean VR_WeaponMenu_XRContextTolerated (void)
+{
+	double now;
+	if (VR_WeaponMenu_XRContextValid ())
+	{
+		vr_weapon_menu_xr_invalid_since = -1.0;
+		return true;
+	}
+	if (!vulkan_globals.stereo_active)
+		return false; /* XR left entirely: not a tracking blip. */
+	now = Sys_DoubleTime ();
+	if (vr_weapon_menu_xr_invalid_since < 0.0)
+		vr_weapon_menu_xr_invalid_since = now;
+	return now - vr_weapon_menu_xr_invalid_since <= VR_WEAPON_MENU_TRACKING_GRACE;
+}
+
 static qboolean VR_WeaponMenu_SessionValid (void)
 {
 	if (!VR_WeaponMenu_GameContextValid () ||
-		(vr_weapon_menu_open_vr ? !VR_WeaponMenu_XRContextValid () : vulkan_globals.stereo_active))
+		(vr_weapon_menu_open_vr ? !VR_WeaponMenu_XRContextTolerated () : vulkan_globals.stereo_active))
 		return false;
 	return vr_weapon_menu_worldmodel == cl.worldmodel &&
 		vr_weapon_menu_viewentity == cl.viewentity &&
@@ -1187,6 +1411,10 @@ static void VR_WeaponMenu_ClearSession (void)
 	vr_weapon_menu_hover_action_slot = -1;
 	vr_weapon_menu_hover_action_name[0] = '\0';
 	vr_weapon_menu_frame_valid = false;
+	vr_weapon_menu_xr_invalid_since = -1.0;
+	vr_weapon_menu_tracking_lost_since = -1.0;
+	vr_weapon_menu_last_tracked_time = -1.0;
+	vr_weapon_menu_hover_time = -1.0;
 	vr_weapon_menu_worldmodel = NULL;
 	vr_weapon_menu_viewentity = 0;
 	vr_weapon_menu_mapname[0] = '\0';
@@ -1272,27 +1500,142 @@ static qboolean VR_WeaponMenu_ProfileUsesItemOwnership (int selector)
 	return false;
 }
 
+/* Slot upgrades/variants: one wheel row whose held weapon, preview and name
+ * change with inventory (AD, mg3, Quoth) or with which class member QC chose
+ * for a shared "best of" impulse (Drake). The parent row keeps its command.
+ * stat >= 0: the variant applies when stats[stat] & mask.
+ * stat <  0: the variant applies only while the parent is stat-active and the
+ *            server's current viewmodel is the variant's held model.
+ * active_value, when nonzero, is the .weapon value QC uses while the variant
+ * is held (mg3 hammer 128 replaces the 4096 axe slot). */
+typedef struct
+{
+	int selector;
+	int stat, mask;
+	const char *held, *preview, *label;
+	int active_value;
+} vr_weapon_menu_alias_t;
+
+/* AD W_SetCurrentAmmo: moditems 128 grapple hook, 4096 shadow axe, 2
+ * Widowmaker, 64 plasma gun, each replacing its parent's viewmodel. */
+static const vr_weapon_menu_alias_t vr_weapon_menu_ad_aliases[] = {
+	{IT_AXE, STAT_VR_MODITEMS, 128, "progs/v_ghook.mdl", "progs/g_ghook.mdl", "GRAPPLE HOOK", 0},
+	{IT_AXE, STAT_VR_MODITEMS, 4096, "progs/v_shadaxe3.mdl", "progs/g_shadaxe.mdl", "SHADOW AXE", 0},
+	{IT_SUPER_SHOTGUN, STAT_VR_MODITEMS, 2, "progs/v_shot3.mdl", "progs/g_shot3.mdl", "WIDOWMAKER", 0},
+	{IT_LIGHTNING, STAT_VR_MODITEMS, 64, "progs/v_plasma.mdl", "progs/g_plasma.mdl", "PLASMA GUN", 0},
+};
+
+static const vr_weapon_menu_alias_t vr_weapon_menu_mg3_aliases[] = {
+	{IT_AXE, STAT_ITEMS, 128, "progs/v_hammer.mdl", "progs/g_hammer.mdl", "HAMMER", 128},
+};
+
+/* Quoth W_SetCurrentAmmo: items2 IT_HAMMER (8) turns the axe into the hammer. */
+static const vr_weapon_menu_alias_t vr_weapon_menu_quoth_aliases[] = {
+	{IT_AXE, STAT_VR_ITEMS2, 8, "progs/v_ham.mdl", "progs/g_ham.mdl", "HAMMER", 0},
+	{IT_AXE, -1, 0, "progs/c_ham.mdl", "progs/g_ham.mdl", "HAMMER", 0},
+};
+
+/* Drake W_ChangeWeapon: 21 prefers the chainsaw over the axe, 35 the
+ * hyperblaster over the blaster, 28 chain thunderbolt over thunderbolt. */
+static const vr_weapon_menu_alias_t vr_weapon_menu_drake_aliases[] = {
+	{2, -1, 0, "progs/v_saw.mdl", "progs/g_saw.mdl", "CHAINSAW", 0},
+	{4096, -1, 0, "progs/v_laserb.mdl", "progs/v_laserb.mdl", "BLASTER", 0},
+	{16384, -1, 0, "progs/v_light2.mdl", "progs/g_light2.mdl", "CHAIN THUNDERBOLT", 0},
+};
+
+static const vr_weapon_menu_alias_t *VR_WeaponMenu_Aliases (
+	const vr_weapon_menu_entry_t *entry, size_t *count)
+{
+	*count = 0;
+	if (VR_WeaponMenu_UsesADWeaponUpgrades ())
+	{
+		/* Native AD upgrades replace the native profile row only. */
+		if (!entry->game_profile)
+			return NULL;
+		*count = countof (vr_weapon_menu_ad_aliases);
+		return vr_weapon_menu_ad_aliases;
+	}
+	if (VR_WeaponMenu_GameDirIs ("mg3"))
+	{
+		*count = countof (vr_weapon_menu_mg3_aliases);
+		return vr_weapon_menu_mg3_aliases;
+	}
+	switch (VR_WeaponMenu_IsMjolnirGame () ? VR_PROGS_FAMILY_UNKNOWN : VR_WeaponMenu_Family ())
+	{
+	case VR_PROGS_FAMILY_QUOTH:
+		*count = countof (vr_weapon_menu_quoth_aliases);
+		return vr_weapon_menu_quoth_aliases;
+	case VR_PROGS_FAMILY_DRAKE:
+		if (!entry->game_profile)
+			return NULL;
+		*count = countof (vr_weapon_menu_drake_aliases);
+		return vr_weapon_menu_drake_aliases;
+	default:
+		return NULL;
+	}
+}
+
+static qboolean VR_WeaponMenu_EntryStatActiveBase (const vr_weapon_menu_entry_t *entry,
+	const int *stats, size_t num_stats)
+{
+	if (entry->active_stat >= 0)
+	{
+		const int stat = VR_WeaponMenu_Stat (stats, num_stats, entry->active_stat);
+		return entry->active_mask ? (stat & entry->active_mask) != 0 : stat != 0;
+	}
+	return entry->selector != 0 &&
+		VR_WeaponMenu_Stat (stats, num_stats, STAT_ACTIVEWEAPON) == entry->selector;
+}
+
+/* Inventory-conditioned variant of this row, if any. Held-model variants are
+ * resolved only against the live client stats (the current viewmodel). */
+static const vr_weapon_menu_alias_t *VR_WeaponMenu_EntryAlias (
+	const vr_weapon_menu_entry_t *entry, const int *stats, size_t num_stats)
+{
+	size_t count;
+	const vr_weapon_menu_alias_t *aliases = VR_WeaponMenu_Aliases (entry, &count);
+	const char *current = NULL;
+	qboolean current_resolved = false;
+	for (size_t i = 0; aliases && i < count; ++i)
+	{
+		const vr_weapon_menu_alias_t *alias = &aliases[i];
+		if (alias->selector != entry->selector)
+			continue;
+		if (alias->stat >= 0)
+		{
+			if (VR_WeaponMenu_Stat (stats, num_stats, alias->stat) & alias->mask)
+				return alias;
+			continue;
+		}
+		if (stats != cl.stats || !VR_WeaponMenu_EntryStatActiveBase (entry, stats, num_stats))
+			continue;
+		if (!current_resolved)
+		{
+			current = VR_WeaponMenu_CurrentModelPath (stats, num_stats);
+			current_resolved = true;
+		}
+		if (current && !q_strcasecmp (current, alias->held))
+			return alias;
+	}
+	return NULL;
+}
+
 /* Port of primary VR_DynWeaponViewmodel/PreviewPath: upgrades keep their native
  * parent slot. Authored held and preview paths have independent precedence. */
 static const char *VR_WeaponMenu_EntryViewmodel (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
-	if (entry->game_profile && !(entry->schema_fields & VR_SCHEMA_WHEEL_VIEWMODEL))
+	if (!(entry->schema_fields & VR_SCHEMA_WHEEL_VIEWMODEL))
 	{
-		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
+		const vr_weapon_menu_alias_t *alias;
+		if (entry->game_profile && VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
 			return (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) & 16384) ?
 				"progs/ee_v_av72.mdl" : "progs/ee_v_smgs.mdl";
-		if (VR_WeaponMenu_UsesADWeaponUpgrades ())
-		{
-			const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
-			switch (entry->selector)
-			{
-			case IT_AXE: return (modifiers & 128) ? "progs/v_ghook.mdl" :
-				(modifiers & 4096) ? "progs/v_shadaxe3.mdl" : "progs/v_shadaxe0.mdl";
-			case IT_SUPER_SHOTGUN: return (modifiers & 2) ? "progs/v_shot3.mdl" : "progs/v_shot2.mdl";
-			case IT_LIGHTNING: return (modifiers & 64) ? "progs/v_plasma.mdl" : "progs/v_light.mdl";
-			}
-		}
+		if ((alias = VR_WeaponMenu_EntryAlias (entry, stats, num_stats)) != NULL)
+			return alias->held;
+		if (entry->game_profile && VR_WeaponMenu_UsesADWeaponUpgrades () &&
+			entry->selector == IT_AXE)
+			return "progs/v_shadaxe0.mdl";
 	}
 	return entry->viewmodel_path;
 }
@@ -1300,22 +1643,21 @@ static const char *VR_WeaponMenu_EntryViewmodel (const vr_weapon_menu_entry_t *e
 static const char *VR_WeaponMenu_EntryPreviewPath (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
-	if (entry->game_profile && !(entry->schema_fields & VR_SCHEMA_WHEEL_MODEL))
+	if (!(entry->schema_fields & VR_SCHEMA_WHEEL_MODEL))
 	{
-		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
+		const vr_weapon_menu_alias_t *alias;
+		if (entry->game_profile && VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4)
 			return (VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_WEAPONS) & 16384) ?
 				"progs/ee_g_av72.mdl" : "progs/ee_g_smgs.mdl";
-		if (VR_WeaponMenu_UsesADWeaponUpgrades ())
-		{
-			const int modifiers = VR_WeaponMenu_Stat (stats, num_stats, STAT_VR_MODITEMS);
+		if ((alias = VR_WeaponMenu_EntryAlias (entry, stats, num_stats)) != NULL)
+			return alias->preview;
+		if (entry->game_profile && VR_WeaponMenu_UsesADWeaponUpgrades ())
 			switch (entry->selector)
 			{
-			case IT_AXE: return (modifiers & 128) ? "progs/g_ghook.mdl" :
-				(modifiers & 4096) ? "progs/g_shadaxe.mdl" : "progs/g_axe.mdl";
-			case IT_SUPER_SHOTGUN: return (modifiers & 2) ? "progs/g_shot3.mdl" : "progs/g_shot2.mdl";
-			case IT_LIGHTNING: return (modifiers & 64) ? "progs/g_plasma.mdl" : "progs/g_light.mdl";
+			case IT_AXE: return "progs/g_axe.mdl";
+			case IT_SUPER_SHOTGUN: return "progs/g_shot2.mdl";
+			case IT_LIGHTNING: return "progs/g_light.mdl";
 			}
-		}
 	}
 	return entry->model_path;
 }
@@ -1323,6 +1665,7 @@ static const char *VR_WeaponMenu_EntryPreviewPath (const vr_weapon_menu_entry_t 
 static const char *VR_WeaponMenu_EntryLabel (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
+	const vr_weapon_menu_alias_t *alias;
 	if (entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0"))
 	{
 		static const struct { const char *model; const char *label; } identities[] = {
@@ -1345,7 +1688,12 @@ static const char *VR_WeaponMenu_EntryLabel (const vr_weapon_menu_entry_t *entry
 			if (!q_strcasecmp (held, identities[i].model))
 				return identities[i].label;
 		}
+		return entry->label;
 	}
+	/* An authored held/preview identity names its own weapon. */
+	if (!(entry->schema_fields & (VR_SCHEMA_WHEEL_VIEWMODEL | VR_SCHEMA_WHEEL_MODEL)) &&
+		(alias = VR_WeaponMenu_EntryAlias (entry, stats, num_stats)) != NULL)
+		return alias->label;
 	return entry->label;
 }
 
@@ -1365,6 +1713,12 @@ static qpic_t *VR_WeaponMenu_EntryIcon (const vr_weapon_menu_entry_t *entry,
 			(entry->selector == IT_LIGHTNING && (modifiers & 64)))
 			return NULL;
 	}
+	/* Stock icons describe stock HUD bits: none for a variant, nor for a row
+	 * whose selector is not its HUD weapon bit (Drake arsenal identities). */
+	if (VR_WeaponMenu_EntryAlias (entry, stats, num_stats) ||
+		(entry->active_stat == STAT_ACTIVEWEAPON && entry->active_mask &&
+		 entry->active_mask != entry->selector))
+		return NULL;
 	return Sbar_WeaponMenuIcon (entry->selector);
 }
 
@@ -1372,6 +1726,15 @@ static qboolean VR_WeaponMenu_EntryModelMatches (
 	const vr_weapon_menu_entry_t *entry, const char *model_path,
 	const int *stats, size_t num_stats)
 {
+	if (model_path && !(entry->schema_fields & VR_SCHEMA_WHEEL_VIEWMODEL))
+	{
+		size_t alias_count;
+		const vr_weapon_menu_alias_t *aliases = VR_WeaponMenu_Aliases (entry, &alias_count);
+		for (size_t i = 0; aliases && i < alias_count; ++i)
+			if (aliases[i].selector == entry->selector &&
+				!q_strcasecmp (model_path, aliases[i].held))
+				return true;
+	}
 	if (model_path && entry->game_profile && !(entry->schema_fields & VR_SCHEMA_WHEEL_VIEWMODEL))
 	{
 		if (VR_WeaponMenu_GameDirIs ("enyo") && entry->selector == 4 &&
@@ -1379,11 +1742,8 @@ static qboolean VR_WeaponMenu_EntryModelMatches (
 			 !q_strcasecmp (model_path, "progs/ee_v_av72.mdl")))
 			return true;
 		if (VR_WeaponMenu_UsesADWeaponUpgrades () &&
-			((entry->selector == IT_AXE && !q_strcasecmp (model_path, "progs/v_ghook.mdl")) ||
-			 (entry->selector == IT_SUPER_SHOTGUN &&
-			  (!q_strcasecmp (model_path, "progs/v_shot2.mdl") || !q_strcasecmp (model_path, "progs/v_shot3.mdl"))) ||
-			 (entry->selector == IT_LIGHTNING &&
-			  (!q_strcasecmp (model_path, "progs/v_light.mdl") || !q_strcasecmp (model_path, "progs/v_plasma.mdl")))))
+			((entry->selector == IT_SUPER_SHOTGUN && !q_strcasecmp (model_path, "progs/v_shot2.mdl")) ||
+			 (entry->selector == IT_LIGHTNING && !q_strcasecmp (model_path, "progs/v_light.mdl"))))
 			return true;
 		if (VR_WeaponMenu_GameDirIs ("peril3.0") && entry->selector == IT_AXE &&
 			(!q_strcasecmp (model_path, "progs/v_shadaxe0.mdl") ||
@@ -1408,15 +1768,25 @@ static qboolean VR_WeaponMenu_EntryModelMatches (
 static qboolean VR_WeaponMenu_EntryStatActive (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
-	if (entry->active_stat >= 0)
-	{
-		const int stat = VR_WeaponMenu_Stat (stats, num_stats, entry->active_stat);
-		return entry->active_mask ? (stat & entry->active_mask) != 0 : stat != 0;
-	}
-	return entry->selector != 0 &&
-		VR_WeaponMenu_Stat (stats, num_stats, STAT_ACTIVEWEAPON) == entry->selector;
+	size_t count;
+	const vr_weapon_menu_alias_t *aliases;
+	if (VR_WeaponMenu_EntryStatActiveBase (entry, stats, num_stats))
+		return true;
+	/* A variant QC equips under its own .weapon value still occupies the row. */
+	aliases = VR_WeaponMenu_Aliases (entry, &count);
+	for (size_t i = 0; aliases && i < count; ++i)
+		if (aliases[i].selector == entry->selector && aliases[i].active_value &&
+			aliases[i].stat >= 0 &&
+			(VR_WeaponMenu_Stat (stats, num_stats, aliases[i].stat) & aliases[i].mask) &&
+			VR_WeaponMenu_Stat (stats, num_stats, STAT_ACTIVEWEAPON) == aliases[i].active_value)
+			return true;
+	return false;
 }
 
+/* The held model refines, but does not veto, the stat answer: QC may show
+ * an upgrade or reskin under the same .weapon bit (AD forks, Ravenkeep's
+ * sword, Immortal's c_ models). Only a different row that is also stat-active
+ * and claims the current model takes the highlight. */
 static qboolean VR_WeaponMenu_EntryActive (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
@@ -1432,7 +1802,18 @@ static qboolean VR_WeaponMenu_EntryActive (const vr_weapon_menu_entry_t *entry,
 		const char *observed_path = VR_WeaponMenu_CurrentModelPath (stats,
 			num_stats);
 		if (observed_path && !VR_WeaponMenu_EntryModelMatches (entry, observed_path, stats, num_stats))
-			return false;
+		{
+			const vr_weapon_menu_catalog_t *catalog = VR_WeaponMenu_CurrentCatalog ();
+			for (size_t i = 0; i < catalog->count; ++i)
+			{
+				const vr_weapon_menu_entry_t *other = &catalog->entries[i];
+				if (other->id == entry->id || other->kind != VR_WEAPON_MENU_WEAPON)
+					continue;
+				if (VR_WeaponMenu_EntryStatActive (other, stats, num_stats) &&
+					VR_WeaponMenu_EntryModelMatches (other, observed_path, stats, num_stats))
+					return false;
+			}
+		}
 	}
 	return active;
 }
@@ -1475,8 +1856,9 @@ static qboolean VR_WeaponMenu_EntrySelectable (const vr_weapon_menu_entry_t *ent
 		return false;
 	if (active || entry->ammo_stat < 0 || entry->ammo_stat == STAT_AMMO)
 		return true;
-	if ((size_t)entry->ammo_stat >= num_stats)
-		return true;
+	if ((size_t)entry->ammo_stat >= num_stats ||
+		!VR_WeaponMenu_AmmoStatKnown (entry, stats, num_stats))
+		return true; /* Unknown pool: QC reports "not enough ammo" itself. */
 	ammo = VR_WeaponMenu_Stat (stats, num_stats, entry->ammo_stat);
 	if (entry->game_profile && VR_WeaponMenu_GameDirIs ("peril3.0") &&
 		((entry->selector == IT_SUPER_SHOTGUN && entry->ammo_stat == STAT_SHELLS) ||
@@ -1609,7 +1991,8 @@ static int VR_WeaponMenu_BuildVisible (const vr_weapon_menu_catalog_t *catalog,
 		visible[count].selectable = VR_WeaponMenu_EntrySelectable (entry, active, stats, num_stats);
 		/* QuakeC currentammo belongs only to the equipped weapon. */
 		visible[count].ammo = entry->ammo_stat >= 0 &&
-			(entry->ammo_stat != STAT_AMMO || active) ?
+			(entry->ammo_stat != STAT_AMMO || active) &&
+			VR_WeaponMenu_AmmoStatKnown (entry, stats, num_stats) ?
 			VR_WeaponMenu_Stat (stats, num_stats, entry->ammo_stat) : -1;
 		visible[count].ammo_max = VR_WeaponCatalog_ResolveAmmoMax (entry->ammo_max,
 			VR_WeaponMenu_Stat (stats, num_stats, entry->ammo_max_stat));
@@ -1734,7 +2117,8 @@ static vr_weapon_menu_frame_t vr_weapon_menu_frame;
 /* Indexed by the active catalog, then copied into the draw frame. Model loading
  * is only permitted on the SCR_UpdateScreen main-thread side of task dispatch. */
 static struct {
-	unsigned int generation;
+	unsigned int serial;
+	const qmodel_t *world;
 	const vr_weapon_menu_catalog_t *catalog;
 	qmodel_t *model[VR_WEAPON_MENU_MAX_ENTRIES];
 	aliashdr_t *geometry[VR_WEAPON_MENU_MAX_ENTRIES];
@@ -1774,6 +2158,7 @@ void VR_WeaponMenu_ClientReset (void)
 		++vr_weapon_menu_session_generation;
 	memset (&vr_weapon_menu_frame, 0, sizeof (vr_weapon_menu_frame));
 	memset (&vr_weapon_menu_assets, 0, sizeof (vr_weapon_menu_assets));
+	vr_weapon_menu_preloaded_world = NULL;
 }
 
 static qboolean VR_WeaponMenu_EnsureMutableCatalogForDiscovery (void)
@@ -1806,6 +2191,7 @@ static void VR_WeaponMenu_LearnSchemaModel (size_t index,
 		entry->model_path = vr_weapon_menu_runtime_models[index];
 	}
 	VR_WeaponMenu_InvalidateModelSlot (&vr_weapon_menu_wwheel_catalog, index);
+	++vr_weapon_menu_catalog_serial;
 }
 
 static vr_wheel_match_t VR_WeaponMenu_FindDiscoveredModel (
@@ -1910,6 +2296,7 @@ static int VR_WeaponMenu_AddDiscoveredEntry (int selector,
 	vr_weapon_menu_wwheel_catalog.count++;
 	vr_weapon_menu_has_discoveries = true;
 	VR_WeaponMenu_InvalidateModelSlot (catalog, index);
+	++vr_weapon_menu_catalog_serial;
 	return (int)index;
 }
 
@@ -1947,6 +2334,43 @@ void VR_WeaponMenu_ObserveActive (void)
 	VR_WeaponMenu_AddDiscoveredEntry (selector, model_path);
 }
 
+static void VR_WeaponMenu_WarmModel (const char *path)
+{
+	if (path && path[0])
+		Mod_ForName (path, false);
+}
+
+/* L9: load every catalog row's preview/held mesh (and inventory variants) once
+ * per map instead of on the first wheel frame. Main thread, before draw tasks,
+ * like PrepareModels; only the XR wheel renders meshes. */
+void VR_WeaponMenu_PreloadModels (void)
+{
+	const vr_weapon_menu_catalog_t *catalog;
+	if (!vulkan_globals.stereo_active || cls.state != ca_connected ||
+		cls.signon != SIGNONS || !cl.worldmodel)
+		return;
+	if (vr_weapon_menu_preloaded_world == cl.worldmodel &&
+		vr_weapon_menu_preloaded_serial == vr_weapon_menu_catalog_serial)
+		return;
+	vr_weapon_menu_preloaded_world = cl.worldmodel;
+	vr_weapon_menu_preloaded_serial = vr_weapon_menu_catalog_serial;
+	catalog = VR_WeaponMenu_CurrentCatalog ();
+	for (size_t i = 0; i < catalog->count; ++i)
+	{
+		const vr_weapon_menu_entry_t *entry = &catalog->entries[i];
+		size_t alias_count;
+		const vr_weapon_menu_alias_t *aliases;
+		if (entry->kind != VR_WEAPON_MENU_WEAPON)
+			continue;
+		VR_WeaponMenu_WarmModel (VR_WeaponMenu_EntryPreviewPath (entry, cl.stats, MAX_CL_STATS));
+		VR_WeaponMenu_WarmModel (VR_WeaponMenu_EntryViewmodel (entry, cl.stats, MAX_CL_STATS));
+		aliases = VR_WeaponMenu_Aliases (entry, &alias_count);
+		for (size_t a = 0; aliases && a < alias_count; ++a)
+			if (aliases[a].selector == entry->selector)
+				VR_WeaponMenu_WarmModel (aliases[a].preview);
+	}
+}
+
 void VR_WeaponMenu_PrepareModels (void)
 {
 	const vr_weapon_menu_catalog_t *catalog;
@@ -1956,11 +2380,16 @@ void VR_WeaponMenu_PrepareModels (void)
 	if (!VR_WeaponMenu_IsOpenVR () || !VR_WeaponMenu_SessionValid ())
 		return;
 	catalog = VR_WeaponMenu_CurrentCatalog ();
-	if (vr_weapon_menu_assets.generation != vr_weapon_menu_session_generation ||
+	/* The cache lives for the map and catalog, not for one wheel opening:
+	 * reopening must not reload every preview (path changes invalidate the
+	 * affected slot below; ClientReset drops all borrowed models). */
+	if (vr_weapon_menu_assets.serial != vr_weapon_menu_catalog_serial ||
+		vr_weapon_menu_assets.world != cl.worldmodel ||
 		vr_weapon_menu_assets.catalog != catalog)
 	{
 		memset (&vr_weapon_menu_assets, 0, sizeof (vr_weapon_menu_assets));
-		vr_weapon_menu_assets.generation = vr_weapon_menu_session_generation;
+		vr_weapon_menu_assets.serial = vr_weapon_menu_catalog_serial;
+		vr_weapon_menu_assets.world = cl.worldmodel;
 		vr_weapon_menu_assets.catalog = catalog;
 	}
 	count = VR_WeaponMenu_BuildVisible (catalog, cl.stats, MAX_CL_STATS,
@@ -2483,7 +2912,10 @@ static float VR_WeaponMenu_LayoutPlayspace (vr_weapon_menu_visible_t *visible,
 
 qboolean VR_WeaponMenu_CanOpen (void)
 {
-	if (vr_weapon_menu_open || !VR_WeaponMenu_GameContextValid ())
+	/* GameContextValid already excludes intermission; a dead player cannot
+	 * switch weapons either, so do not offer the wheel. */
+	if (vr_weapon_menu_open || !VR_WeaponMenu_GameContextValid () ||
+		cl.stats[STAT_HEALTH] <= 0)
 		return false;
 	return vulkan_globals.stereo_active ? VR_WeaponMenu_XRContextValid () : true;
 }
@@ -2503,12 +2935,49 @@ unsigned int VR_WeaponMenu_SessionGeneration (void)
 	return vr_weapon_menu_session_generation;
 }
 
+/* Two visible rows sending one impulse means one of them cannot be chosen.
+ * Report each distinct conflict set once (developer builds/logs). */
+static int VR_WeaponMenu_CheckDuplicateImpulses (void)
+{
+	static unsigned int reported_signature;
+	vr_weapon_menu_visible_t visible[VR_WEAPON_MENU_MAX_ENTRIES];
+	const int count = VR_WeaponMenu_BuildVisible (VR_WeaponMenu_CurrentCatalog (),
+		cl.stats, MAX_CL_STATS, cl.items, visible, VR_WEAPON_MENU_MAX_ENTRIES);
+	unsigned int signature = 1;
+	int duplicates = 0;
+	for (int i = 0; i < count; ++i)
+		for (int j = i + 1; j < count; ++j)
+			if (visible[i].entry->impulse > 0 &&
+				visible[i].entry->impulse == visible[j].entry->impulse)
+			{
+				signature = signature * 31u + (unsigned int)visible[i].entry->id * 7u +
+					(unsigned int)visible[j].entry->id + (unsigned int)visible[i].entry->impulse;
+				++duplicates;
+			}
+	if (!duplicates || signature == reported_signature)
+		return duplicates;
+	reported_signature = signature;
+	for (int i = 0; i < count; ++i)
+		for (int j = i + 1; j < count; ++j)
+			if (visible[i].entry->impulse > 0 &&
+				visible[i].entry->impulse == visible[j].entry->impulse)
+				Con_DPrintf ("VR: weapon wheel rows \"%s\" and \"%s\" both send impulse %d (%s)\n",
+					visible[i].label ? visible[i].label : "?",
+					visible[j].label ? visible[j].label : "?",
+					visible[i].entry->impulse, COM_SkipPath (com_gamedir));
+	return duplicates;
+}
+
 void VR_WeaponMenu_Open (void)
 {
 	if (!VR_WeaponMenu_CanOpen ())
 		return;
+	VR_WeaponMenu_CheckDuplicateImpulses ();
 	vr_weapon_menu_open = true;
 	vr_weapon_menu_open_vr = vulkan_globals.stereo_active;
+	vr_weapon_menu_xr_invalid_since = vr_weapon_menu_tracking_lost_since = -1.0;
+	vr_weapon_menu_last_tracked_time = Sys_DoubleTime ();
+	vr_weapon_menu_hover_time = -1.0;
 	vr_weapon_menu_desktop_owner = VR_WEAPON_MENU_DESKTOP_MOUSE;
 	vr_weapon_menu_desktop_pointer_seen = false;
 	vr_weapon_menu_desktop_mouse_serial = 0;
@@ -3212,14 +3681,20 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	int pointer_x, int pointer_y, const float world_from_ndc[16],
 	const float ray_origin[3], const float ray_direction[3], qboolean playspace)
 {
-	int previous_hover_id;
+	int previous_hover_id, previous_retained_id;
+	double now;
 	const float radius = q_min (glwidth, glheight) * 0.32f;
 	const float scale = CLAMP (0.85f, q_min (glwidth, glheight) / 720.0f, 1.5f);
 	const vr_weapon_menu_catalog_t *catalog;
 
 	if (!VR_WeaponMenu_IsOpenVR ())
 		return;
-	if (!tracking_valid || !VR_WeaponMenu_SessionValid ())
+	if (!tracking_valid)
+	{
+		VR_WeaponMenu_TrackingLost ();
+		return;
+	}
+	if (!VR_WeaponMenu_SessionValid ())
 	{
 		VR_WeaponMenu_ClearSession ();
 		return;
@@ -3254,19 +3729,70 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 			}
 		}
 	}
+	now = Sys_DoubleTime ();
 	vr_weapon_menu_tracking_valid = true;
+	vr_weapon_menu_tracking_lost_since = -1.0;
+	vr_weapon_menu_last_tracked_time = now;
 	vr_weapon_menu_pointer_valid = pointer_valid;
 	vr_weapon_menu_pointer_x = pointer_valid ? pointer_x : -1;
 	vr_weapon_menu_pointer_y = pointer_valid ? pointer_y : -1;
 	previous_hover_id = vr_weapon_menu_hover_id;
+	previous_retained_id = vr_weapon_menu_retained_id;
 
 	catalog = VR_WeaponMenu_CurrentCatalog ();
 	VR_WeaponMenu_PrepareFrame (catalog, radius, scale, world_from_ndc, playspace);
 	VR_WeaponMenu_ResolvePreparedSelection (pointer_valid,
 		vr_weapon_menu_pointer_x, vr_weapon_menu_pointer_y,
 		world_from_ndc, ray_origin, ray_direction, playspace);
+	if (vr_weapon_menu_hover_id != -1)
+		vr_weapon_menu_hover_time = now;
+	else if (!pointer_valid && previous_hover_id != -1 &&
+		previous_hover_id == previous_retained_id &&
+		vr_weapon_menu_hover_time >= 0.0 &&
+		now - vr_weapon_menu_hover_time <= VR_WEAPON_MENU_RELEASE_HOVER_AGE)
+	{
+		/* An occluded/off-plane pointer (hand at a wall, one bad ray) is not
+		 * a deliberate move off the weapon: keep it briefly. Action rows are
+		 * not retained; they always need a live pointer. */
+		for (int i = 0; i < vr_weapon_menu_frame.count; ++i)
+			if (vr_weapon_menu_frame.visible[i].entry->id == previous_hover_id &&
+				vr_weapon_menu_frame.visible[i].selectable)
+			{
+				vr_weapon_menu_hover_id = vr_weapon_menu_retained_id = previous_hover_id;
+				break;
+			}
+	}
 	if (vr_weapon_menu_hover_id != -1 && vr_weapon_menu_hover_id != previous_hover_id)
 		VR_InputTriggerHaptic (VR_INPUT_ROLE_RIGHT, 0.05f, 0.5f);
+}
+
+qboolean VR_WeaponMenu_TrackingLost (void)
+{
+	double now;
+	if (!VR_WeaponMenu_IsOpenVR ())
+		return false;
+	now = Sys_DoubleTime ();
+	if (vr_weapon_menu_tracking_lost_since < 0.0)
+		vr_weapon_menu_tracking_lost_since = now;
+	if (now - vr_weapon_menu_tracking_lost_since > VR_WEAPON_MENU_TRACKING_GRACE ||
+		!VR_WeaponMenu_SessionValid ())
+	{
+		VR_WeaponMenu_ClearSession ();
+		return false;
+	}
+	/* Keep the prepared frame and hover; nothing new is resolved. */
+	vr_weapon_menu_tracking_valid = false;
+	vr_weapon_menu_pointer_valid = false;
+	return true;
+}
+
+/* VR release may use the last valid hover while tracking is briefly lost. */
+static qboolean VR_WeaponMenu_ReleaseTrackingUsable (void)
+{
+	return !vr_weapon_menu_open_vr || vr_weapon_menu_tracking_valid ||
+		(vr_weapon_menu_last_tracked_time >= 0.0 &&
+		 Sys_DoubleTime () - vr_weapon_menu_last_tracked_time <=
+			VR_WEAPON_MENU_RELEASE_HOVER_AGE);
 }
 
 int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
@@ -3279,7 +3805,7 @@ int VR_WeaponMenu_ReleaseCatalog (const vr_weapon_menu_catalog_t *catalog,
 		return 0;
 	if (!VR_WeaponMenu_SessionValid () || !vr_weapon_menu_frame_valid ||
 		vr_weapon_menu_frame.generation != vr_weapon_menu_session_generation ||
-		(vr_weapon_menu_open_vr && !vr_weapon_menu_tracking_valid))
+		!VR_WeaponMenu_ReleaseTrackingUsable ())
 	{
 		VR_WeaponMenu_ClearSession ();
 		return 0;
@@ -3350,7 +3876,7 @@ int VR_WeaponMenu_Release (void)
 	session_ready = vr_weapon_menu_open && VR_WeaponMenu_SessionValid () &&
 		vr_weapon_menu_frame_valid &&
 		vr_weapon_menu_frame.generation == vr_weapon_menu_session_generation &&
-		(!vr_weapon_menu_open_vr || vr_weapon_menu_tracking_valid);
+		VR_WeaponMenu_ReleaseTrackingUsable ();
 
 	if (session_ready)
 		for (int action = 0; action < vr_weapon_menu_frame.action_count; ++action)
