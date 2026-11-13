@@ -9563,12 +9563,18 @@ static qboolean SV_PrivateWalkTrialBuildBounds (edict_t *ent,
 	return true;
 }
 
+/* A crowded sweep (hordes, missile-heavy rooms) can exceed MAX_PHYSENTS. That
+ * is not a client fault: the preflight asks the caller to run this frame
+ * through the native owner instead of disconnecting the player. */
+static qboolean sv_private_walk_trial_native_request;
+
 static qboolean SV_PrivateWalkTrialCollect (edict_t *ent,
 	const movevars_t *vars, float seconds, const usercmd_t *command,
 	vec3_t bounds[2])
 {
 	int i;
 
+	sv_pmove_physents_overflowed = false;
 	if (seconds > 0.1251f ||
 		!SV_PrivateWalkTrialBuildBounds (ent, vars, seconds, command, bounds) ||
 		!SV_CollectPMovePhysents (ent, bounds))
@@ -10443,7 +10449,10 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 			client->vr_gorilla_capable && SV_GorillaAllowed () ?
 				&command : NULL, bounds)))
 	{
-		failure = "PMove preflight failed";
+		if (sv_pmove_physents_overflowed)
+			sv_private_walk_trial_native_request = true; // no QC has run yet
+		else
+			failure = "PMove preflight failed";
 		goto cleanup;
 	}
 
@@ -12252,10 +12261,22 @@ static void SV_Physics_Client (edict_t *ent, int num)
 					break;
 				}
 			}
+			sv_private_walk_trial_native_request = false;
 			if (!client->active || !SV_PrivateWalkTrialSelected (client) ||
 				!SV_Physics_ClientPrivateWalkTrial (ent, client,
 					queue_offset, queue_offset == 0, &think_window))
+			{
+				if (sv_private_walk_trial_native_request && client->active)
+				{
+					// Same hand-off as the q30 native path above.
+					if (queue_offset == 0)
+						SV_Physics_ClientSelectedNativeFrame (ent, num, client, false);
+					else
+						SV_PrivateWalkTrialDeferNativeHead (client);
+				}
+				sv_private_walk_trial_native_request = false;
 				break;
+			}
 			if (SV_PrivateWalkTrialTerminalState (client) ||
 				client->private_move_native_frame)
 				break;
