@@ -1065,8 +1065,12 @@ void SV_ReadClientMove (usercmd_t *move)
 
 	// read ping time
 	float timestamp = MSG_ReadFloat ();
-	host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] = qcvm->time - timestamp;
-	host_client->num_pings++;
+	// The private path already refuses non-finite times; never average one in.
+	if (isfinite (timestamp))
+	{
+		host_client->ping_times[host_client->num_pings % NUM_PING_TIMES] = qcvm->time - timestamp;
+		host_client->num_pings++;
+	}
 
 	for (i = 0; i < 3; i++)
 	{
@@ -1857,7 +1861,11 @@ static qboolean SV_HandleInstantStopCapability (const char *s)
 	static const char command[] = "vr_instant_stop_cap";
 	const size_t length = sizeof (command) - 1;
 
-	if (strncmp (s, command, length) ||
+	/* Reserve it like the sibling capability handlers: leading blanks and any
+	 * case, so variants never fall through to QC or the console. */
+	while (*s == ' ' || *s == '\t')
+		s++;
+	if (q_strncasecmp (s, command, length) ||
 		(s[length] && s[length] != ' ' && s[length] != '\t' &&
 		 s[length] != '\r' && s[length] != '\n'))
 		return false;

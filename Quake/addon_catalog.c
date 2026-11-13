@@ -163,6 +163,15 @@ static qboolean AddonCatalog_IsSafeGameDir (const char *name)
 		if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
 			(*p >= '0' && *p <= '9') || *p == '_' || *p == '-'))
 			return false;
+	/* Windows device names cannot be directories there. */
+	{
+		static const char *const reserved[] = {"CON", "PRN", "AUX", "NUL",
+			"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+			"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"};
+		for (size_t i = 0; i < sizeof (reserved) / sizeof (reserved[0]); i++)
+			if (!q_strcasecmp(name, reserved[i]))
+				return false;
+	}
 	return true;
 }
 
