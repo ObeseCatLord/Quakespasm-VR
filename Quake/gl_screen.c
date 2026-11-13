@@ -1863,6 +1863,9 @@ static unsigned int vr_weapon_menu_anchor_generation;
 static int vr_weapon_menu_anchor_mode;
 static float vr_weapon_menu_opening_matrix[3][4];
 static float vr_weapon_menu_opening_gun_angle;
+/* Hand-anchored wheel: farthest distance in front of the opening grip that is
+ * clear of world geometry, measured once at open (FLT_MAX: no wall). */
+static float vr_weapon_menu_anchor_wall_limit;
 
 typedef struct
 {
@@ -2161,6 +2164,21 @@ static void SCR_DrawTextPopupConsole (cb_context_t *cbx)
 		GL_EndUIPanel (cbx);
 }
 
+/* M10: a tracking/focus blip keeps the open wheel, its anchor, last hover and
+ * last drawn panel for a short grace; sustained loss cancels as before. */
+static void SCR_VRWeaponMenuTrackingLost (qboolean had_panel)
+{
+	if (!VR_WeaponMenu_TrackingLost ())
+	{
+		vr_weapon_menu_anchor.valid = 0;
+		return;
+	}
+	vr_weapon_menu_panel.valid = had_panel;
+	if (had_panel)
+		VR_WeaponMenu_SetVRPanel (vr_weapon_menu_panel.world_from_ndc,
+			vr_weapon_menu_anchor_mode == 0);
+}
+
 /* Prepare the held weapon wheel once for the stereo pair. Keep the opening
  * grip pose in tracking space and remap it through the current prepared view. */
 static void SCR_VRWeaponMenuPrepare (void)
@@ -2178,6 +2196,9 @@ static void SCR_VRWeaponMenuPrepare (void)
 	const int requested_mode = isfinite (vr_weaponmenu_mode.value) &&
 		vr_weaponmenu_mode.value >= 0.0f && vr_weaponmenu_mode.value < 2.0f ?
 		(int)vr_weaponmenu_mode.value : 0;
+
+	const qboolean had_panel = vr_weapon_menu_panel.valid &&
+		generation == vr_weapon_menu_anchor_generation;
 
 	vr_weapon_menu_panel.valid = false;
 	if (!VR_WeaponMenu_IsOpenVR ())
@@ -2198,11 +2219,16 @@ static void SCR_VRWeaponMenuPrepare (void)
 		vr_weapon_menu_anchor.valid = 0;
 		return;
 	}
-	if (!frame || !frame->should_render || !frame->focused || frame->reference_changed ||
-		glwidth <= 0 || glheight <= 0)
+	/* A recenter invalidates the tracking-space anchor itself. */
+	if (!frame || frame->reference_changed || glwidth <= 0 || glheight <= 0)
 	{
 		VR_WeaponMenu_Cancel ();
 		vr_weapon_menu_anchor.valid = 0;
+		return;
+	}
+	if (!frame->should_render || !frame->focused)
+	{
+		SCR_VRWeaponMenuTrackingLost (had_panel);
 		return;
 	}
 	dominant = VR_InputDominantPhysicalHand ();
@@ -2210,8 +2236,7 @@ static void SCR_VRWeaponMenuPrepare (void)
 		!VR_LocomotionControllerDevice (frame, dominant, &controller) ||
 		!R_TrackedControllerRay (dominant, ray_origin, ray_direction))
 	{
-		VR_WeaponMenu_Cancel ();
-		vr_weapon_menu_anchor.valid = 0;
+		SCR_VRWeaponMenuTrackingLost (had_panel);
 		return;
 	}
 	live_gun_angle = V_VRGunAngle ();
@@ -2219,8 +2244,7 @@ static void SCR_VRWeaponMenuPrepare (void)
 		!R_TrackedPoseBasis (controller.matrix, &live_gun_angle,
 		ray_origin, ray_right, ray_up, ray_direction))
 	{
-		VR_WeaponMenu_Cancel ();
-		vr_weapon_menu_anchor.valid = 0;
+		SCR_VRWeaponMenuTrackingLost (had_panel);
 		return;
 	}
 	ring_count = q_max (1, VR_WeaponMenu_VisibleRingCount ());
@@ -2242,10 +2266,26 @@ static void SCR_VRWeaponMenuPrepare (void)
 		}
 		/* Re-evaluate the same opening pose against this frame's head, camera,
 		 * world scale and prepared stereo basis. */
+		if (!vr_weapon_menu_anchor.valid)
+		{
+			/* Opened facing a wall: place the wheel in front of it instead of
+			 * inside it, where every slot would be occluded from the hand. */
+			vr_weapon_menu_anchor_wall_limit = FLT_MAX;
+			if (cl.worldmodel && !cl.worldmodel->needload)
+			{
+				vec3_t target, impact, hit_normal;
+				VectorMA (hand_origin, 64.0f, anchor_forward, target);
+				CL_TraceWorldLine (hand_origin, target, impact, hit_normal);
+				VectorSubtract (impact, hand_origin, target);
+				const float clear = VectorLength (target) - 1.5f;
+				if (isfinite (clear) && clear < 62.5f)
+					vr_weapon_menu_anchor_wall_limit = q_max (clear, 3.0f);
+			}
+		}
 		vr_weapon_menu_anchor.valid = 1;
 		VectorMA (hand_origin,
-			10.5f + (ring_count - 1) * 2.5f, anchor_forward,
-			vr_weapon_menu_anchor.center);
+			q_min (10.5f + (ring_count - 1) * 2.5f, vr_weapon_menu_anchor_wall_limit),
+			anchor_forward, vr_weapon_menu_anchor.center);
 		VectorCopy (anchor_right, right);
 		VectorCopy (anchor_up, up);
 		VectorCopy (anchor_forward, forward);
@@ -2885,6 +2925,7 @@ void SCR_UpdateScreen (qboolean use_tasks)
 	/* Observe the equipped viewmodel before preparing wheel assets or starting
 	 * draw tasks. Runtime discoveries share the existing catalog. */
 	VR_WeaponMenu_ObserveActive ();
+	VR_WeaponMenu_PreloadModels ();
 	VR_WeaponMenu_PrepareModels ();
 	/* XR synchronizes the previous GUI task in GL_BeginRendering. Sample the
 	 * current console animation before deciding whether its HUD reserves rows;

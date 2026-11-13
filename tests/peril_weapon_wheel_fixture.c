@@ -60,6 +60,12 @@ const vrxr_frame_t *GL_OpenXRFrame (void)
 	return NULL;
 }
 
+/* Wheel tracking-grace clock; this fixture only exercises desktop sessions. */
+double Sys_DoubleTime (void)
+{
+	return 0.0;
+}
+
 int VR_InputDominantPhysicalHand (void)
 {
 	assert (!vulkan_globals.stereo_active);
@@ -319,6 +325,11 @@ int main (int argc, char **argv)
 	strcpy (cl.mapname, "start");
 	vid.width = glwidth = 1280;
 	vid.height = glheight = 720;
+	/* L12: no wheel for a dead player; a living one may open it. */
+	cl.stats[STAT_HEALTH] = 0;
+	assert (!VR_WeaponMenu_CanOpen ());
+	cl.stats[STAT_HEALTH] = 100;
+	assert (VR_WeaponMenu_CanOpen ());
 	for (int flags = 0; flags < 4; ++flags)
 	{
 		hipnotic = flags & 1;

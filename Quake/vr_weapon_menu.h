@@ -69,6 +69,11 @@ void VR_WeaponMenu_SetVRPointer (qboolean tracking_valid, qboolean pointer_valid
 	const float ray_origin[3], const float ray_direction[3], qboolean playspace);
 /* Resolve optional wheel models on the main thread before draw tasks start. */
 void VR_WeaponMenu_PrepareModels (void);
+/* Once per map/catalog: warm wheel preview/held meshes before first open. */
+void VR_WeaponMenu_PreloadModels (void);
+/* XR tracking/focus became invalid this frame. Returns true while the open
+ * wheel tolerates it (short blips keep the last hover), false once it closed. */
+qboolean VR_WeaponMenu_TrackingLost (void);
 /* Number of occupied rings in the current visible VR catalog, including the
  * center slot's ring. */
 int VR_WeaponMenu_VisibleRingCount (void);
