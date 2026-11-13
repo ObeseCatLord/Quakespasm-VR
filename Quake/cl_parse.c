@@ -260,6 +260,19 @@ static qboolean CL_OfferVRIKProtocol (const char *command)
 	return true;
 }
 
+/* Microphone consent, device, mode and capture-sensitivity settings are the
+ * user's alone. Stuffed console text is indistinguishable from typed commands
+ * once it is in the command buffer, so refuse any server text that names a
+ * voice_ command or cvar (directly, or via set/alias/bind). */
+static qboolean CL_StuffTextTouchesVoice (const char *text)
+{
+	static const char needle[] = "voice_";
+	for (; *text; text++)
+		if (!q_strncasecmp (text, needle, sizeof (needle) - 1))
+			return true;
+	return false;
+}
+
 static qboolean CL_OfferVoiceProtocol (const char *command)
 {
 	static const char command_name[] = "voice_protocol";
@@ -3556,6 +3569,8 @@ void CL_ParseServerMessage (void)
 				if (!Cmd_ExecuteString (str + 2, src_server))
 					Con_DPrintf ("Server sent unknown command %s\n", Cmd_Argv (0));
 			}
+			else if (CL_StuffTextTouchesVoice (str))
+				Con_Printf ("Refused a server command that touches voice settings.\n");
 			else
 				Cbuf_AddText (str);
 			break;
