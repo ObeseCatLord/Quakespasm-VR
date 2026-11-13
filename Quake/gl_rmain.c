@@ -275,7 +275,11 @@ qboolean R_CullModelForEntity (entity_t *e)
 {
 	vec3_t mins, maxs;
 	vec_t  scalefactor, *minbounds, *maxbounds;
-	const r_vrik_prepared_palette_t *tracked = R_VRIKRenderLookup (e);
+	/* Only alias models can carry a prepared VRIK palette. Brush callers
+	 * (Sky_ProcessEntities, R_UpdateWarpTextures) run unordered with the
+	 * palette preparation task, so they must not touch its table. */
+	const r_vrik_prepared_palette_t *tracked = e->model && e->model->type == mod_alias ?
+		R_VRIKRenderLookup (e) : NULL;
 	const qboolean prepared_geometry_matches = tracked && tracked->model && e->model &&
 		e->model->type == mod_alias && tracked->model->type == mod_alias &&
 		(tracked->alternate_avatar ?
