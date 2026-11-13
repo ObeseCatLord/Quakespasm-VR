@@ -171,6 +171,7 @@ static void SetAdmittedCommand (usercmd_t *cmd)
 int main (void)
 {
 	sv_vr_weapon_pose_scope_t parent, child, relocated_parent, relocated_child;
+	sv_vr_weapon_pose_scope_t nudged_parent, nudged_child;
 	edict_t *player = &fixture_edicts[1];
 	edict_t *other = &fixture_edicts[2];
 	usercmd_t cmd;
@@ -253,12 +254,12 @@ int main (void)
 	AssertVector (pr_global_struct->v_up, 10.0f, 11.0f, 12.0f);
 
 	/* Relocating the parent invalidates its basis and is inherited by a child;
-	 * guarded cleanup preserves the relocated origin while restoring angles and
-	 * globals. */
+	 * guarded cleanup keeps a distant (absolute) destination while restoring
+	 * angles and globals. PF_setorigin calls the hook before copying. */
 	SV_BeginPrivateVRWeaponPose (player, &fixture_client, &cmd,
 		&relocated_parent);
-	VectorSet (player->v.origin, 400.0f, 500.0f, 600.0f);
 	SV_VRWeaponPoseSetOrigin (player);
+	VectorSet (player->v.origin, 400.0f, 500.0f, 600.0f);
 	assert (relocated_parent.origin_relocated);
 	assert (relocated_parent.akimbo_invalidated);
 	SetNativeBasis (matching);
@@ -275,6 +276,33 @@ int main (void)
 	AssertVector (pr_global_struct->v_forward, 4.0f, 5.0f, 6.0f);
 	AssertVector (pr_global_struct->v_right, 7.0f, 8.0f, 9.0f);
 	AssertVector (pr_global_struct->v_up, 10.0f, 11.0f, 12.0f);
+
+	/* A relink or small nudge of the temporary hand pose, here inside a nested
+	 * scope, is carried onto the body instead of leaving the player at the
+	 * hand. The child's hand source is built from the body, not its parent's
+	 * temporary origin. */
+	{
+		vec3_t hand_source;
+		SV_BeginPrivateVRWeaponPose (player, &fixture_client, &cmd, &nudged_parent);
+		VectorCopy (player->v.origin, hand_source);
+		assert (VectorLength (hand_source) > 0.0f && hand_source[0] != 400.0f);
+		SV_BeginPrivateVRWeaponPose (player, &fixture_client, &cmd, &nudged_child);
+		{
+			/* Body (400,500,600) + hand (10,20,30), less a calibration source
+			 * offset; compounding on the parent's source would double it. */
+			vec3_t from_body = {player->v.origin[0] - 400.0f,
+				player->v.origin[1] - 500.0f, player->v.origin[2] - 600.0f};
+			assert (VectorLength (from_body) < 50.0f);
+		}
+		SV_VRWeaponPoseSetOrigin (player);
+		player->v.origin[2] += 1.0f;
+		/* The child hands its parent the parent's own source, nudged. */
+		SV_EndPrivateVRWeaponPoseGuarded (player, &nudged_child, true);
+		AssertVector (player->v.origin, hand_source[0], hand_source[1], hand_source[2] + 1.0f);
+	}
+	SV_EndPrivateVRWeaponPoseGuarded (player, &nudged_parent, true);
+	assert (sv_vr_weapon_pose_scope == NULL);
+	AssertVector (player->v.origin, 400.0f, 500.0f, 601.0f);
 
 	puts ("VR shot roll scope: production pose, nested masking, restoration, and relocation invalidation: ok");
 	return 0;
