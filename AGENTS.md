@@ -53,6 +53,12 @@ copy, packaging and publication commands for each update. The coordinator reuses
 `publish-r2.py` and the native Windows MSBuild adapter. It is local automation;
 GitHub Actions remain disabled.
 
+Keep generated outputs in one managed project directory, using the local
+configuration's `output_base`. Do not scatter `qsvr-*` scratch folders across
+the FastGames root. Use automatically cleaned temporary directories for tests;
+remove disposable workspaces when finished. Keep required pinned build
+references in local application data, separate from disposable outputs.
+
 - Finish implementation first, then run relevant end checks. Build Windows once
   at the end alongside Linux and native Linux ARM64, not after each small edit.
 - Commit the engine changes on `main`, then prepare one immutable git archive and
