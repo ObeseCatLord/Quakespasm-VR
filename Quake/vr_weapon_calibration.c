@@ -3157,6 +3157,216 @@ static void VR_WeaponCalibrationFilterLegacyGenericDefaults(
 	}
 }
 
+/* ---- QuakeC program identity -------------------------------------------
+ * Bounded read-only scan of a version 6 progs.dat. The file is untrusted
+ * game data: every table is range-checked before use and names must be
+ * NUL-terminated inside the string table. */
+typedef struct
+{
+	const byte *data;
+	size_t size;
+	size_t ofs_globaldefs, num_globaldefs;
+	size_t ofs_fielddefs, num_fielddefs;
+	size_t ofs_functions, num_functions;
+	size_t ofs_strings, num_strings;
+	size_t ofs_globals, num_globals;
+} vr_progs_view_t;
+
+static int VR_ProgsReadInt(const byte *p)
+{
+	return (int)((unsigned)p[0] | ((unsigned)p[1] << 8) |
+		((unsigned)p[2] << 16) | ((unsigned)p[3] << 24));
+}
+
+static qboolean VR_ProgsTable(const byte *header, size_t size, int field,
+	size_t element, size_t *ofs, size_t *count)
+{
+	const int o = VR_ProgsReadInt(header + 4 * field);
+	const int n = VR_ProgsReadInt(header + 4 * (field + 1));
+	if (o < 0 || n < 0 || (size_t)o > size ||
+		(size_t)n > (size - (size_t)o) / element)
+		return false;
+	*ofs = (size_t)o;
+	*count = (size_t)n;
+	return true;
+}
+
+static const char *VR_ProgsString(const vr_progs_view_t *view, int offset)
+{
+	const char *base = (const char *)view->data + view->ofs_strings;
+	if (offset < 0 || (size_t)offset >= view->num_strings)
+		return NULL;
+	if (!memchr(base + offset, 0, view->num_strings - (size_t)offset))
+		return NULL;
+	return base + offset;
+}
+
+/* ddef_t: unsigned short type, unsigned short ofs, int s_name. */
+static qboolean VR_ProgsFindDef(const vr_progs_view_t *view, size_t table,
+	size_t count, const char *name, int *type, int *ofs)
+{
+	for (size_t i = 0; i < count; ++i)
+	{
+		const byte *def = view->data + table + i * 8;
+		const char *def_name = VR_ProgsString(view, VR_ProgsReadInt(def + 4));
+		if (def_name && !strcmp(def_name, name))
+		{
+			if (type)
+				*type = def[0] | (def[1] << 8);
+			if (ofs)
+				*ofs = def[2] | (def[3] << 8);
+			return true;
+		}
+	}
+	return false;
+}
+
+static qboolean VR_ProgsHasField(const vr_progs_view_t *view, const char *name)
+{
+	return VR_ProgsFindDef(view, view->ofs_fielddefs, view->num_fielddefs,
+		name, NULL, NULL);
+}
+
+static qboolean VR_ProgsGlobalFloat(const vr_progs_view_t *view,
+	const char *name, float *value)
+{
+	int type, ofs;
+	int bits;
+	if (!VR_ProgsFindDef(view, view->ofs_globaldefs, view->num_globaldefs,
+		name, &type, &ofs) || (type & ~DEF_SAVEGLOBAL) != ev_float ||
+		(size_t)ofs >= view->num_globals)
+		return false;
+	bits = VR_ProgsReadInt(view->data + view->ofs_globals + (size_t)ofs * 4);
+	memcpy(value, &bits, sizeof(*value));
+	return true;
+}
+
+/* dfunction_t is 36 bytes; s_name is its fifth int. */
+static qboolean VR_ProgsHasFunction(const vr_progs_view_t *view,
+	const char *name)
+{
+	for (size_t i = 0; i < view->num_functions; ++i)
+	{
+		const char *function = VR_ProgsString(view,
+			VR_ProgsReadInt(view->data + view->ofs_functions + i * 36 + 16));
+		if (function && !strcmp(function, name))
+			return true;
+	}
+	return false;
+}
+
+static qboolean VR_ProgsHasString(const vr_progs_view_t *view,
+	const char *needle)
+{
+	const size_t length = strlen(needle);
+	const byte *strings = view->data + view->ofs_strings;
+	if (!length || length > view->num_strings)
+		return false;
+	for (size_t i = 0; i + length <= view->num_strings; ++i)
+		if (strings[i] == (byte)needle[0] && !memcmp(strings + i, needle, length))
+			return true;
+	return false;
+}
+
+qboolean VR_ProgsIdentityParse(const byte *data, size_t size,
+	vr_progs_identity_t *out)
+{
+	vr_progs_view_t view;
+	float laser_bit;
+
+	if (!out)
+		return false;
+	memset(out, 0, sizeof(*out));
+	/* dprograms_t: version, crc, then seven (offset, count) pairs. */
+	if (!data || size < 15 * 4 || VR_ProgsReadInt(data) != 6)
+		return false;
+	memset(&view, 0, sizeof(view));
+	view.data = data;
+	view.size = size;
+	if (!VR_ProgsTable(data, size, 4, 8, &view.ofs_globaldefs, &view.num_globaldefs) ||
+		!VR_ProgsTable(data, size, 6, 8, &view.ofs_fielddefs, &view.num_fielddefs) ||
+		!VR_ProgsTable(data, size, 8, 36, &view.ofs_functions, &view.num_functions) ||
+		!VR_ProgsTable(data, size, 10, 1, &view.ofs_strings, &view.num_strings) ||
+		!VR_ProgsTable(data, size, 12, 4, &view.ofs_globals, &view.num_globals))
+		return false;
+	out->valid = true;
+	out->rerelease = VR_ProgsHasString(&view, "$qc_no_weapon");
+
+	/* Mjolnir is AD-derived but owns a separate wheel/calibration profile
+	 * and ships its AD weapons under progs/ad171/. */
+	if (VR_ProgsHasField(&view, "moditems") &&
+		VR_ProgsHasFunction(&view, "weapon_upgrade_axe") &&
+		VR_ProgsHasFunction(&view, "weapon_upgrade_ssg") &&
+		VR_ProgsHasFunction(&view, "weapon_upgrade_lg") &&
+		VR_ProgsHasFunction(&view, "forceweaponswitch") &&
+		!VR_ProgsHasString(&view, "progs/ad171/"))
+		out->family = VR_PROGS_FAMILY_AD;
+	else if (VR_ProgsHasField(&view, "arsenal") && VR_ProgsHasField(&view, "war") &&
+		VR_ProgsHasFunction(&view, "War_SetCurrentAmmo"))
+		out->family = VR_PROGS_FAMILY_DRAKE;
+	else if (VR_ProgsHasFunction(&view, "weapon_bomb") &&
+		VR_ProgsHasFunction(&view, "weapon_plasmagun") &&
+		VR_ProgsHasFunction(&view, "W_Bomb") &&
+		VR_ProgsHasString(&view, "progs/v_bomb.mdl"))
+		out->family = VR_PROGS_FAMILY_QUOTH;
+	else if (VR_ProgsHasString(&view, "ScREw Cannon") &&
+		VR_ProgsHasString(&view, "progs/v_stun.mdl") &&
+		VR_ProgsHasString(&view, "progs/v_saw.mdl"))
+		out->family = VR_PROGS_FAMILY_ZER;
+	else if (VR_ProgsHasFunction(&view, "laser_cannon_logic_start") &&
+		VR_ProgsHasFunction(&view, "weapon_logic_reset"))
+		out->family = VR_PROGS_FAMILY_QUAKEVR;
+	else if (VR_ProgsHasFunction(&view, "weapon_laser_cannon") &&
+		!VR_ProgsHasFunction(&view, "weapon_mjolnir") &&
+		VR_ProgsGlobalFloat(&view, "IT_LASER_CANNON", &laser_bit) &&
+		laser_bit == 128.0f)
+		out->family = VR_PROGS_FAMILY_PD_LASER;
+	return true;
+}
+
+static vr_progs_identity_t vr_progs_identity;
+static char vr_progs_identity_gamedir[MAX_OSPATH];
+static qboolean vr_progs_identity_loaded;
+
+void VR_ProgsIdentityRefresh(void)
+{
+	int handle = -1;
+	qfilesize_t length;
+	byte *data;
+
+	memset(&vr_progs_identity, 0, sizeof(vr_progs_identity));
+	q_strlcpy(vr_progs_identity_gamedir, com_gamedir,
+		sizeof(vr_progs_identity_gamedir));
+	vr_progs_identity_loaded = true;
+	length = COM_OpenFile("progs.dat", &handle, NULL);
+	if (handle < 0)
+		return;
+	/* Largest installed progs is ~4.4 MB; refuse implausible sizes. */
+	if (length <= 0 || length > 64 * 1024 * 1024)
+	{
+		Sys_FileClose(handle);
+		return;
+	}
+	data = (byte *)malloc((size_t)length);
+	if (data && Sys_FileRead(handle, data, (int)length) == (int)length)
+		VR_ProgsIdentityParse(data, (size_t)length, &vr_progs_identity);
+	Sys_FileClose(handle);
+	free(data);
+}
+
+const vr_progs_identity_t *VR_ProgsIdentityCurrent(void)
+{
+	if (!vr_progs_identity_loaded ||
+		strcmp(vr_progs_identity_gamedir, com_gamedir))
+		VR_ProgsIdentityRefresh();
+	return &vr_progs_identity;
+}
+
+qboolean VR_ProgsIdentityIsAD(void)
+{
+	return VR_ProgsIdentityCurrent()->family == VR_PROGS_FAMILY_AD;
+}
+
 qboolean VR_WeaponCalibrationReloadGame(void)
 {
 	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
@@ -3167,6 +3377,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 
 	VR_WeaponCalibrationInit();
 	VR_WeaponCalibrationReset();
+	VR_ProgsIdentityRefresh();
 	VR_WeaponCalibrationRefreshADIdentity();
 	if (!VR_WeaponCalibrationApplyBuiltinFallbacks())
 	{
@@ -3437,8 +3648,11 @@ qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out)
 	return true;
 }
 
-/* q30a1024's W_FireSpikes and Mjolnir's W_FireSpikes/Crossbow launch from
- * self.origin + 16 up, without the stock rocket's eight-forward component.
+/* Arcane Dimensions' W_FireSpikes (shared byte-for-byte by q30a1024, ad,
+ * gibtropolis, hwjam4, quake_rooftop_jam_v2, tcj and Peril; hwjam2/Ravenkeep
+ * builds use the same launch code) and Mjolnir's W_FireSpikes/Crossbow launch
+ * from self.origin + 16 up, without the stock rocket's eight-forward component.
+ * The AD family is recognized by progs content, not directory name.
  * Keep this at the QC source boundary rather than creating source-only held
  * calibration slots; an authored muzzle_source_offset remains additive. */
 static qboolean VR_WeaponCalibrationUpOnlySource(const char *viewmodel)
@@ -3456,7 +3670,8 @@ static qboolean VR_WeaponCalibrationUpOnlySource(const char *viewmodel)
 
 	if (!game || !viewmodel)
 		return false;
-	if (!q_strcasecmp(game, "q30a1024"))
+	if (!q_strcasecmp(game, "q30a1024") ||
+		(q_strcasecmp(game, "mjolnir") && VR_ProgsIdentityIsAD()))
 	{
 		models = q30_models;
 		count = sizeof(q30_models) / sizeof(q30_models[0]);
