@@ -1,0 +1,10 @@
+curl:x64-windows                                  8.23.0              A library for transferring data with URLs
+curl[http2]:x64-windows                                               HTTP2 support
+curl[ssl]:x64-windows                                                 Default SSL / TLS implementation.
+curl[sspi]:x64-windows                                                SSPI support
+nghttp2:x64-windows                               1.70.0              Implementation of the Hypertext Transfer Protoco...
+openssl:x64-windows                               3.6.5#2             OpenSSL is an open source project that provides ...
+vcpkg-cmake-config:x64-windows                    2026-07-21          
+vcpkg-cmake-get-vars:x64-windows                  2025-05-29          
+vcpkg-cmake:x64-windows                           2025-08-07          
+zlib:x64-windows                                  1.3.2#2             A compression library

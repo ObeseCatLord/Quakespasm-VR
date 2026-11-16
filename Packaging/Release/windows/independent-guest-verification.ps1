@@ -37,7 +37,7 @@ foreach($f in $tool.installed_x64_tool_facts){CheckHash $f.path $f.sha256}
 $log=[IO.File]::ReadAllText((Join-Path $receipts 'Release.log'))
 $clLines=@($log -split '[\r\n]+' | Where-Object{$_ -match '(?i)cl\.exe"?\s+/' -and $_ -match '/O2\b' -and $_ -match '/GL\b' -and $_ -match '/W4\b' -and $_ -match '/WX\b'})
 $linkLines=@($log -split '[\r\n]+' | Where-Object{$_ -match '(?i)link\.exe"?\s+/' -and $_ -match '(?i)/LTCG\b'})
-$features=@('USE_SDL3','USE_CODEC_MP3','USE_CODEC_VORBIS','USE_CODEC_WAVE','USE_CODEC_FLAC','USE_CODEC_OPUS','USE_VOICECHAT','USE_CODEC_XMP','USE_CODEC_UMX','USE_STEAMAUDIO')
+$features=@('USE_SDL3','USE_CODEC_MP3','USE_CODEC_VORBIS','USE_CODEC_WAVE','USE_CODEC_FLAC','USE_CODEC_OPUS','USE_VOICECHAT','USE_CODEC_XMP','USE_CODEC_UMX','USE_STEAMAUDIO','USE_CURL','USE_ICE','USE_OPENSSL')
 foreach($feature in $features){if(-not @($clLines | Where-Object{$_ -match ('/D\s*'+[regex]::Escape($feature)+'\b')}).Count){throw "Full-feature compile define missing: $feature"}}
 if($clLines.Count -eq 0 -or $linkLines.Count -eq 0){throw "Actual optimized compiler/linker commands missing: cl=$($clLines.Count), link=$($linkLines.Count)"}
 $result=@{status='passed';revision=$entry.production_revision;archive_sha256=$entry.archive_sha256;original_source_files_rehashed=$count;unchanged_dependency_hash_checks=$depCount;compile_file_hash_checks=$compileCount;artifact_file_hash_checks=$art.files.Count;native_tool_hashes_unchanged=$tool.installed_x64_tool_facts.Count;actual_O2_GL_compiler_commands=$clLines.Count;actual_LTCG_link_commands=$linkLines.Count;runtime_executed=$false}

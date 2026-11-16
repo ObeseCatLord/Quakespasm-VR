@@ -72,8 +72,6 @@ endif
 OBJS += ice_main.o ice_quake.o ice_socket.o ice_stream.o ice_sctp.o ice_mdns.o ice_gnutls.o ice_openssl.o ice_json.o ice_md5.o ice_sha1.o ice_sha2.o
 ice_%.o: ice/ice_%.c
 	$(CC) $(DFLAGS) $(CPPFLAGS) $(CFLAGS) $(SDL_CFLAGS) -c -o $@ $<
-ice_json.o: ice/json.c
-	$(CC) $(DFLAGS) $(CPPFLAGS) $(CFLAGS) $(SDL_CFLAGS) -c -o $@ $<
 ice_md5.o: ice/md5.c
 	$(CC) $(DFLAGS) $(CPPFLAGS) $(CFLAGS) $(SDL_CFLAGS) -c -o $@ $<
 ice_sha1.o: ice/sha1.c

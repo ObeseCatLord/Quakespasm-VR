@@ -34,6 +34,11 @@ WINDOWS_RUNTIME_NOTICES = {
     'Windows/openxr/LICENSE.txt': 'LICENSES/openxr-loader/LICENSE.txt',
     'Windows/openxr/PROVENANCE.md': 'LICENSES/openxr-loader/PROVENANCE.md',
     'Windows/msvc/PROVENANCE.md': 'LICENSES/msvc-runtime/PROVENANCE.md',
+    'Windows/net/PROVENANCE.md': 'LICENSES/net/PROVENANCE.md',
+    'Windows/net/licenses/curl.txt': 'LICENSES/net/curl.txt',
+    'Windows/net/licenses/openssl.txt': 'LICENSES/net/openssl.txt',
+    'Windows/net/licenses/nghttp2.txt': 'LICENSES/net/nghttp2.txt',
+    'Windows/net/licenses/zlib.txt': 'LICENSES/net/zlib.txt',
 }
 
 def sha(path):

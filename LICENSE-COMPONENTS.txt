@@ -25,6 +25,11 @@ Microsoft C++ runtime (Windows packages):
   deployed beside the engine under the Visual Studio license terms.
   Provenance: LICENSES/msvc-runtime/PROVENANCE.md.
 
+Networking libraries (Windows packages):
+  libcurl 8.23.0 (curl license, Schannel TLS), OpenSSL 3.6.5 (Apache-2.0),
+  nghttp2 1.70.0 (MIT) and zlib 1.3.2 (zlib license), built from pinned vcpkg
+  ports (Windows/net). License texts and provenance: LICENSES/net/.
+
 Vendored mimalloc:
   Source: Quake/mimalloc
   License: mimalloc-LICENSE.txt in the installed notice directory.

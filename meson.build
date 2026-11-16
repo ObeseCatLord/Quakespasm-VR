@@ -434,7 +434,7 @@ if not ice_opt.disabled()
             'Quake/ice/ice_mdns.c',
             'Quake/ice/ice_gnutls.c',
             'Quake/ice/ice_openssl.c',
-            'Quake/ice/json.c',
+            'Quake/ice/ice_json.c',
             'Quake/ice/md5.c',
             'Quake/ice/sha1.c',
             'Quake/ice/sha2.c',

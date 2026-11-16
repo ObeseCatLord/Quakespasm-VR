@@ -21,9 +21,15 @@ HERE = Path(__file__).resolve().parent
 SCRIPTS = ('prepare-build.ps1', 'build-release.ps1', 'independent-guest-verification.ps1')
 INPUTS = ('dependency-reference.json', 'dependency-input-manifest.json',
           'dependency-baseline-hashes-0f277d1f.json', 'shader-build-plan.json')
+# Every Windows release must compile all of these; a missing one fails the build.
 FEATURES = ('USE_SDL3', 'USE_CODEC_MP3', 'USE_CODEC_VORBIS', 'USE_CODEC_WAVE',
             'USE_CODEC_FLAC', 'USE_CODEC_OPUS', 'USE_VOICECHAT', 'USE_CODEC_XMP',
-            'USE_CODEC_UMX', 'USE_STEAMAUDIO')
+            'USE_CODEC_UMX', 'USE_STEAMAUDIO', 'USE_CURL', 'USE_ICE', 'USE_OPENSSL')
+# Features the 0f277d1f-era baseline was qualified with; only consulted when
+# requalifying from such a baseline.
+LEGACY_FEATURES = FEATURES[:10]
+# Archived build inputs pinned by the qualified baseline.
+DEPENDENCY_PREFIXES = ('Windows/SDL3/', 'Windows/codecs/', 'Windows/misc/', 'Windows/net/')
 
 
 def require(ok, message):
@@ -123,20 +129,20 @@ def transfer_receipts(receipts):
     require(required <= rows.keys(), 'Incomplete transferred build receipts')
 
 
-def optimized_commands(receipts):
+def optimized_commands(receipts, features=FEATURES):
     lines = (receipts / 'Release.log').read_text(encoding='utf-8-sig', errors='replace').splitlines()
     cl = [line for line in lines if re.search(r'cl\.exe"?\s+/', line, re.I) and
           all(re.search(r'/' + flag + r'\b', line, re.I) for flag in ('O2', 'GL', 'W4', 'WX'))]
     link = [line for line in lines if re.search(r'link\.exe"?\s+/', line, re.I) and
             re.search(r'/LTCG\b', line, re.I)]
     require(cl and link, 'Missing actual /O2 /GL /W4 /WX /LTCG commands')
-    for feature in FEATURES:
+    for feature in features:
         require(any(re.search(r'/D\s*' + feature + r'\b', line) for line in cl),
                 f'Missing full-feature compile define: {feature}')
     return len(cl), len(link)
 
 
-def baseline_inputs(baseline):
+def baseline_inputs(baseline, features=FEATURES):
     values = {name: read(baseline / name) for name in INPUTS}
     receipts = baseline / 'receipts'
     transfer_receipts(receipts)
@@ -145,7 +151,7 @@ def baseline_inputs(baseline):
     require(final['native_exit_code'] == 0 and final['package_verified'] and
             not final['postbuild_error'] and not final['launcher_exception'] and
             independent['status'] == 'passed', 'Baseline is not a qualified native build')
-    optimized_commands(receipts)
+    optimized_commands(receipts, features)
     prep = read(receipts / 'preparation.json')
     for name in ('dependency-input-manifest.json', 'shader-build-plan.json'):
         require(read(receipts / name) == values[name], f'Baseline receipt/input mismatch: {name}')
@@ -162,11 +168,29 @@ def check_dependencies(manifest, baseline, inputs):
     require(deps['dependency_tree_equal_to_accepted_baseline'], 'Dependency baseline not accepted')
     expected = inventory(deps['files'], 'path')
     require(len(expected) == deps['dependency_file_count'], 'Dependency input count mismatch')
-    prefixes = ('Windows/SDL3/', 'Windows/codecs/', 'Windows/misc/')
-    require({p for p in source if p.startswith(prefixes)} == set(expected),
+    require({p for p in source if p.startswith(DEPENDENCY_PREFIXES)} == set(expected),
             'Pinned dependency tree inventory changed; requalification required')
     for name, row in expected.items():
         require(source[name]['sha256'] == row['sha256'], f'Pinned dependency input changed: {name}')
+
+
+def requalified_dependencies(manifest, baseline, inputs):
+    """Accept the current archived dependency tree as the new pinned baseline.
+
+    Requalification is explicit (--requalify). The resulting release, built and
+    independently verified like any other, becomes the next accepted baseline."""
+    source = inventory(manifest['files'], 'path')
+    previous = inputs['dependency-input-manifest.json']
+    files = [{'path': name, 'bytes': row.get('bytes'), 'sha256': row['sha256']}
+             for name, row in sorted(source.items()) if name.startswith(DEPENDENCY_PREFIXES)]
+    if any(row['bytes'] is None for row in files):
+        for row in files:
+            row.pop('bytes')
+    inputs['dependency-input-manifest.json'] = {
+        'revision': manifest['revision'], 'source_archive_sha256': manifest['archive_sha256'],
+        'baseline_revision': previous['revision'], 'baseline_archive_sha256': previous['source_archive_sha256'],
+        'requalified_from_baseline': str(baseline), 'dependency_file_count': len(files),
+        'dependency_tree_equal_to_accepted_baseline': True, 'files': files}
 
 
 NS = '{http://schemas.microsoft.com/developer/msbuild/2003}'
@@ -199,7 +223,7 @@ def project_path(value, filename=None):
     return safe_path(value)
 
 
-def derive_project_plan(archive, manifest, baseline, inputs):
+def derive_project_plan(archive, manifest, baseline, inputs, requalify=False):
     """Derive inventories, keeping configuration/import/link policy at its qualified reference.
 
     This is an inventory reader for the existing recipe, not an MSBuild evaluator.
@@ -209,8 +233,11 @@ def derive_project_plan(archive, manifest, baseline, inputs):
     previous = inventory(read(baseline / 'production-source-manifest.json')['files'], 'path')
     recipes = {p for p in previous if p.startswith('Windows/VisualStudio/') and
                (p.endswith(('.vcxproj', '.props', '.sln')))}
-    require(recipes == {p for p in source if p.startswith('Windows/VisualStudio/') and
-                       p.endswith(('.vcxproj', '.props', '.sln'))},
+    current_recipes = {p for p in source if p.startswith('Windows/VisualStudio/') and
+                       p.endswith(('.vcxproj', '.props', '.sln'))}
+    if requalify:
+        recipes = current_recipes
+    require(recipes == current_recipes,
             'Project/import topology changed; compatibility review required')
     old_archive = baseline / 'product.tar'
     old_entry = read(baseline / 'entry.json')
@@ -219,6 +246,11 @@ def derive_project_plan(archive, manifest, baseline, inputs):
         trees = {}
         for name in sorted(recipes):
             now = current.extractfile(name).read()
+            if requalify:
+                # The new configuration is what this build qualifies.
+                if name.endswith('.vcxproj'):
+                    trees[name] = ET.fromstring(now)
+                continue
             before = old.extractfile(name).read()
             if not name.endswith('.vcxproj'):
                 require(now == before, f'Build/link/import policy changed; compatibility review required: {name}')
@@ -504,11 +536,21 @@ def fresh_build(root, entry, manifest, archive, inputs, tools):
     return verification
 
 
+def _baseline_has(baseline, features):
+    try:
+        optimized_commands(baseline / 'receipts', features)
+        return True
+    except ValueError:
+        return False
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True, type=Path, help='Immutable prepared source cohort')
     parser.add_argument('--config', required=True, type=Path, help='Local JSON with windows.baseline_release')
     parser.add_argument('--verify-only', action='store_true', help='Offline rehash; never access the guest or build')
+    parser.add_argument('--requalify', action='store_true',
+                        help='Qualify changed project settings/dependencies as a new baseline (explicit)')
     args = parser.parse_args(argv)
     root = args.root.resolve()
     config_path = args.config.resolve()
@@ -518,9 +560,14 @@ def main(argv=None):
         baseline = config_path.parent / baseline
     baseline = baseline.resolve()
     entry, manifest, archive = source_inputs(root)
-    inputs = baseline_inputs(baseline)
-    check_dependencies(manifest, baseline, inputs)
-    derive_project_plan(archive, manifest, baseline, inputs)
+    if args.requalify:
+        legacy = baseline_inputs(baseline, LEGACY_FEATURES) if not _baseline_has(baseline, FEATURES) else None
+        inputs = legacy if legacy is not None else baseline_inputs(baseline)
+        requalified_dependencies(manifest, baseline, inputs)
+    else:
+        inputs = baseline_inputs(baseline)
+        check_dependencies(manifest, baseline, inputs)
+    derive_project_plan(archive, manifest, baseline, inputs, args.requalify)
     release = root / 'windows/release'
     if (root / 'windows').exists():
         try:

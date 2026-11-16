@@ -65,8 +65,8 @@
     </Midl>
     <ClCompile>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>..\SDL3\include;..\codecs\include;..\misc\include;..\..\Quake;..\..\Quake\mimalloc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>USE_SDL3;WIN32;_DEBUG;_WINDOWS;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;USE_CODEC_MP3;USE_CODEC_VORBIS;USE_CODEC_WAVE;USE_CODEC_FLAC;USE_CODEC_OPUS;USE_VOICECHAT;USE_CODEC_XMP;USE_CODEC_UMX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\SDL3\include;..\codecs\include;..\misc\include;..\net\include;..\..\Quake;..\..\Quake\mimalloc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>USE_SDL3;WIN32;_DEBUG;_WINDOWS;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;USE_CODEC_MP3;USE_CODEC_VORBIS;USE_CODEC_WAVE;USE_CODEC_FLAC;USE_CODEC_OPUS;USE_VOICECHAT;USE_CODEC_XMP;USE_CODEC_UMX;USE_CURL;USE_ICE;USE_OPENSSL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <PrecompiledHeader>Use</PrecompiledHeader>
@@ -83,8 +83,8 @@
       <PrecompiledHeaderFile>quakedef.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>libvorbisfile.lib;libvorbis.lib;libopusfile.lib;libopus.lib;libFLAC.lib;libogg.lib;libmpg123.lib;libxmp.lib;ws2_32.lib;winmm.lib;SDL3.lib;vulkan-1.lib;dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\codecs\x64;..\SDL3\lib64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libvorbisfile.lib;libvorbis.lib;libopusfile.lib;libopus.lib;libFLAC.lib;libogg.lib;libmpg123.lib;libxmp.lib;ws2_32.lib;winmm.lib;SDL3.lib;vulkan-1.lib;dbghelp.lib;libcurl.lib;libssl.lib;libcrypto.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\codecs\x64;..\SDL3\lib64;..\net\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <IgnoreSpecificDefaultLibraries>msvcrt.lib;%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
@@ -93,6 +93,7 @@
     <PostBuildEvent>
       <Command>copy "$(SolutionDir)\..\codecs\x64\*.dll" "$(TargetDir)"
 copy "$(SolutionDir)\..\SDL3\lib64\*.dll" "$(TargetDir)"
+copy "$(SolutionDir)\..\net\x64\*.dll" "$(TargetDir)"
 copy /Y "$(SolutionDir)\..\codecs\LICENSE.opus.txt" "$(TargetDir)"
 if not "$(SteamAudioSdkDir)"=="" copy /Y "$(SteamAudioSdkDir)\lib\windows-x64\phonon.dll" "$(TargetDir)"</Command>
     </PostBuildEvent>
@@ -104,8 +105,8 @@ if not "$(SteamAudioSdkDir)"=="" copy /Y "$(SteamAudioSdkDir)\lib\windows-x64\ph
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\SDL3\include;..\codecs\include;..\misc\include;..\..\Quake;..\..\Quake\mimalloc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>USE_SDL3;WIN32;NDEBUG;_WINDOWS;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;USE_CODEC_MP3;USE_CODEC_VORBIS;USE_CODEC_WAVE;USE_CODEC_FLAC;USE_CODEC_OPUS;USE_VOICECHAT;USE_CODEC_XMP;USE_CODEC_UMX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\SDL3\include;..\codecs\include;..\misc\include;..\net\include;..\..\Quake;..\..\Quake\mimalloc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>USE_SDL3;WIN32;NDEBUG;_WINDOWS;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;USE_CODEC_MP3;USE_CODEC_VORBIS;USE_CODEC_WAVE;USE_CODEC_FLAC;USE_CODEC_OPUS;USE_VOICECHAT;USE_CODEC_XMP;USE_CODEC_UMX;USE_CURL;USE_ICE;USE_OPENSSL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader>Use</PrecompiledHeader>
@@ -123,8 +124,8 @@ if not "$(SteamAudioSdkDir)"=="" copy /Y "$(SteamAudioSdkDir)\lib\windows-x64\ph
       <PrecompiledHeaderFile>quakedef.h</PrecompiledHeaderFile>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>libvorbisfile.lib;libvorbis.lib;libopusfile.lib;libopus.lib;libFLAC.lib;libogg.lib;libmpg123.lib;libxmp.lib;ws2_32.lib;winmm.lib;SDL3.lib;vulkan-1.lib;dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\codecs\x64;..\SDL3\lib64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>libvorbisfile.lib;libvorbis.lib;libopusfile.lib;libopus.lib;libFLAC.lib;libogg.lib;libmpg123.lib;libxmp.lib;ws2_32.lib;winmm.lib;SDL3.lib;vulkan-1.lib;dbghelp.lib;libcurl.lib;libssl.lib;libcrypto.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\codecs\x64;..\SDL3\lib64;..\net\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
@@ -134,6 +135,7 @@ if not "$(SteamAudioSdkDir)"=="" copy /Y "$(SteamAudioSdkDir)\lib\windows-x64\ph
     <PostBuildEvent>
       <Command>copy "$(SolutionDir)\..\codecs\x64\*.dll" "$(TargetDir)"
 copy "$(SolutionDir)\..\SDL3\lib64\*.dll" "$(TargetDir)"
+copy "$(SolutionDir)\..\net\x64\*.dll" "$(TargetDir)"
 copy /Y "$(SolutionDir)\..\codecs\LICENSE.opus.txt" "$(TargetDir)"
 if not "$(SteamAudioSdkDir)"=="" copy /Y "$(SteamAudioSdkDir)\lib\windows-x64\phonon.dll" "$(TargetDir)"</Command>
     </PostBuildEvent>
@@ -206,6 +208,66 @@ if not "$(SteamAudioSdkDir)"=="" copy /Y "$(SteamAudioSdkDir)\lib\windows-x64\ph
     <ClCompile Include="..\..\Quake\net_dgrm.c">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_main.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_quake.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_socket.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_stream.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_sctp.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_mdns.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_gnutls.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_openssl.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\ice_json.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\md5.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\sha1.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="..\..\Quake\ice\sha2.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <!-- Vendored FTE/QSS-M transport: MSVC level-4 narrowing and shadowing notes only. -->
+      <DisableSpecificWarnings>4244;4267;4018;4456;4459;4245;4310;4295;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <ClCompile Include="..\..\Quake\net_loop.c" />
     <ClCompile Include="..\..\Quake\net_main.c" />

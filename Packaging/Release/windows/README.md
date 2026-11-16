@@ -77,3 +77,26 @@ reject altered source identity, dependencies, artifacts, receipts and partial
 namespaces, and derive evolving C/shader inventories from the actual project XML.
 They do not establish that a new engine revision has built successfully; the
 retained qualification receipts are the native-build reference.
+
+## Requalifying the baseline
+
+Changing the Visual Studio project's configuration, imports, link policy or the
+archived dependency tree (`Windows/SDL3`, `Windows/codecs`, `Windows/misc`,
+`Windows/net`) requires an explicit requalification:
+
+1. Prepare the cohort and build the other platforms as usual
+   (`release.py ... run --platforms linux,arm --build`).
+2. Run `windows/build.py --root COHORT --config CONFIG --requalify`. It accepts
+   the current archived dependency tree and project settings as the new
+   baseline instead of comparing them with the old one; every other check
+   (pinned compiler/SDK hashes, fresh compile inventory, the required feature
+   defines in `FEATURES`, independent guest verification) still runs.
+3. Copy the verified `COHORT/windows/release/` directory to a new folder in
+   local application data and point `windows.baseline_release` at it. Keep the
+   previous baseline.
+4. Continue with `--stage` and publication; later builds are checked against
+   the new baseline.
+
+`FEATURES` lists every compile define a Windows release must have (including
+`USE_CURL`, `USE_ICE` and `USE_OPENSSL`), so a release cannot silently drop a
+feature the other platforms ship.

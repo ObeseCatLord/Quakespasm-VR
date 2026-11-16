@@ -739,7 +739,7 @@ static qboolean Datagram_ICEBrokerControl (const byte *data, unsigned int length
 	}
 	if (argc == 3 && !strcmp (args[0], "ice_offer"))
 	{
-		SVC_ICE_Offer (args[1], args[2], newline, UDP_AddrToString (address, false), Datagram_ICEReply);
+		SVC_ICE_Offer (args[1], args[2], newline, dfunc.AddrToString (address, false), Datagram_ICEReply);
 		handled = true;
 	}
 	else if (argc == 4 && !strcmp (args[0], "ice_ccand"))
