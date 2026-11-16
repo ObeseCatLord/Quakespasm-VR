@@ -47,7 +47,15 @@ manifest. `package.py verify DIR` inspects metadata/hashes without executing the
 game. Keep the source-access set and manifest alongside distribution artifacts;
 it can be distributed as a separate matching archive.
 
-The declared GLIBC ceiling is2.39; actual GLIBCXX/CXXABI requirements are recorded.
+The builder is the digest-pinned `ubuntu:22.04` image (GCC 11, CMake 3.22).
+Bundled libraries come from 22.04's apt archive, so the declared GLIBC ceiling
+is 2.35 (Ubuntu 22.04, Debian 12, Mint 21 and later); staging and verification
+fail on any newer GLIBC symbol version or DT_RELR (glibc 2.36). Actual
+GLIBCXX/CXXABI requirements are recorded; the host libstdc++ must provide them.
+22.04 ships Meson 0.61 and the engine needs >= 1.3, so `sources.json`
+`archive_sources` pins the Meson 1.3.2 PyPI sdist by SHA-256. It is run from
+the verified source tree, retained in `sources/dependencies` and its Apache-2.0
+notice staged under `share/licenses/pinned/meson`.
 Host display/audio services, GPU ICDs, an installed OpenXR runtime/layers and
 CA/audio configuration remain prerequisites. Do not set a global LD_LIBRARY_PATH.
 Vulkan/OpenXR loaders and application dependencies follow `host-policy.json`.

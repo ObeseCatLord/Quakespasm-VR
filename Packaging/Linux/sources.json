@@ -11,7 +11,7 @@
     "libegl-dev", "libgl-dev", "libgles-dev", "libdrm-dev", "libgbm-dev", "libudev-dev", "libdbus-1-dev", "libsystemd-dev", "libusb-1.0-0-dev",
     "libasound2-dev", "libpulse-dev", "libpipewire-0.3-dev", "libjack-jackd2-dev", "libsndio-dev",
     "libmpg123-dev", "libflac-dev", "libogg-dev", "libvorbis-dev", "libopus-dev", "libopusfile-dev", "libcurl4-openssl-dev", "libssl-dev",
-    "libmysofa-dev", "zlib1g-dev", "libjsoncpp-dev"
+    "zlib1g-dev", "libjsoncpp-dev"
   ],
   "archive_sources": [
     {"name":"meson","version":"1.3.2","license":"Apache-2.0","url":"https://files.pythonhosted.org/packages/e5/09/5f6cd56ca83c7d093345e406aee0b8a2f9fd504e601de9a293f050a52abe/meson-1.3.2.tar.gz","sha256":"492eb450c8b073024276f916f5adbb3c4bb7e90e9e6ec124efda064f3d9b5baa","root":"meson-1.3.2","python_entry":"meson.py","notices":["COPYING"],"purpose":"Build tool only. The engine requires Meson >= 1.3 and Ubuntu 22.04 ships 0.61; this is the PyPI sdist of the release Ubuntu 24.04 used, run from source without pip."}
@@ -26,6 +26,7 @@
     {"name":"steam-audio","url":"https://github.com/ValveSoftware/steam-audio.git","commit":"0da18255cca520771f363ee01f100572b39a308e","notices":["LICENSE.md","core/THIRDPARTY.md"]},
     {"name":"sdl","url":"https://github.com/libsdl-org/SDL.git","commit":"f87239e71e42da91ca317a12eefb82cfbf3393eb","notices":["LICENSE.txt"]},
     {"name":"flatbuffers","url":"https://github.com/google/flatbuffers.git","commit":"0100f6a5779831fa7a651e4b67ef389a8752bd9b","notices":["LICENSE"]},
+    {"name":"libmysofa","url":"https://github.com/hoene/libmysofa.git","commit":"33974839677da7044ef5a70be7ad5550735aae6e","notices":["LICENSE","src/hrtf/kdtree.c","src/resampler/speex_resampler.c","src/resampler/arch.h","src/resampler/stack_alloc.h"]},
     {"name":"pffft","url":"https://github.com/marton78/pffft.git","commit":"d0db768f2898912cf7e84322124c5634aa961a41","notices":["LICENSE.txt"]}
   ]
 }

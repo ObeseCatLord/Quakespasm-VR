@@ -356,6 +356,14 @@ cmake_native "$WORK/src/pffft/pffft" "$WORK/build/pffft" \
     -DTARGET_C_ARCH=none -DTARGET_CXX_ARCH=none -DPFFFT_BUILD_TESTS=OFF \
     -DPFFFT_BUILD_BENCHMARKS=OFF -DPFFFT_BUILD_EXAMPLES=OFF
 
+# Steam Audio needs mysofa_open_data_no_norm (libmysofa >= 1.3); Ubuntu 22.04
+# ships 1.2.1, so build the pinned upstream v1.3.2 (the version 24.04 used).
+# Upstream installs mysofa.h only with its static target; install it directly.
+cmake_native "$WORK/src/libmysofa/libmysofa" "$WORK/build/libmysofa" \
+    -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=OFF -DBUILD_TESTS=OFF -DCODE_COVERAGE=OFF
+install -Dm644 "$WORK/src/libmysofa/libmysofa/src/hrtf/mysofa.h" "$DEPS/include/mysofa.h"
+[[ -f "$DEPS/lib/libmysofa.so" ]] || fail 'pinned libmysofa shared library missing'
+
 STEAM="$WORK/src/steam-audio/steam-audio"
 patch -p2 -d "$STEAM/core" < "$PRODUCT_ROOT/nix/steamaudio-unaligned-accumulate.patch"
 # Current libstdc++ cannot instantiate <future> with Valve's legacy ABI6
@@ -363,9 +371,6 @@ patch -p2 -d "$STEAM/core" < "$PRODUCT_ROOT/nix/steamaudio-unaligned-accumulate.
 # native compiler ABI; keep AVX and the public phonon C interface unchanged.
 sed -i '/add_compile_options(-fabi-version=6)/d' "$STEAM/core/CMakeLists.txt"
 sed -i '/^set(ZLIB_ROOT /d; /^set(ZLIB_INCLUDE_DIR /d' "$STEAM/core/build/FindMySOFA.cmake"
-MY_HEADER=$(dpkg-query -L libmysofa-dev | awk '!found && /\/mysofa\.h$/ {print; found=1}')
-MY_LIBRARY=$(dpkg-query -L libmysofa-dev | awk '!found && /\/libmysofa\.so$/ {print; found=1}')
-[[ -n "$MY_HEADER" && -n "$MY_LIBRARY" ]] || fail 'libmysofa-dev headers/library missing'
 STEAM_ARCH_OPTIONS=()
 if [[ "$ARCH" == x86_64 ]]; then STEAM_ARCH_OPTIONS=(-DSTEAMAUDIO_ENABLE_AVX=ON); fi
 cmake_native "$STEAM/core" "$WORK/build/steam-audio" \
@@ -378,7 +383,7 @@ cmake_native "$STEAM/core" "$WORK/build/steam-audio" \
     -DSTEAMAUDIO_BUILD_SAMPLES=OFF -DSTEAMAUDIO_BUILD_DOCS=OFF \
     -DPFFFT_INCLUDE_DIR="$DEPS/include/pffft" -DPFFFT_LIBRARY="$DEPS/lib/libpffft.so" \
     -DFlatBuffers_INCLUDE_DIR="$DEPS/include" -DFlatBuffers_EXECUTABLE="$DEPS/bin/flatc" \
-    -DMySOFA_INCLUDE_DIR="$(dirname -- "$MY_HEADER")" -DMySOFA_LIBRARY="$MY_LIBRARY"
+    -DMySOFA_INCLUDE_DIR="$DEPS/include" -DMySOFA_LIBRARY="$DEPS/lib/libmysofa.so"
 install -Dm755 "$WORK/build/steam-audio/src/core/libphonon.so" "$DEPS/lib/libphonon.so"
 install -Dm644 "$STEAM/core/src/core/phonon.h" "$DEPS/include/phonon.h"
 install -Dm644 "$WORK/build/steam-audio/src/core/phonon_version.h" "$DEPS/include/phonon_version.h"
@@ -458,7 +463,7 @@ cat >> "$OUT/receipts/options.txt" <<EOF
 Ubuntu image index: $(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ubuntu_image"])' "$PINS")
 Native architecture: $MACHINE ($ARCH)
 C/C++ baseline flags: $BASE_FLAGS; inherited compiler/linker flags cleared
-Steam Audio patch: nix/steamaudio-unaligned-accumulate.patch; MySOFA finder adjusted for distro zlib
+Steam Audio patch: nix/steamaudio-unaligned-accumulate.patch; MySOFA finder adjusted for distro zlib; pinned libmysofa 1.3.2
 Steam Audio Linux private C++ implementation uses native compiler ABI; legacy -fabi-version=6 removed; phonon C API and AVX selection retained
 Steam Audio x86-64 AVX option: ON; aarch64 uses the native SDK architecture path
 libcurl pkg-config version: $curl_version (required precondition)

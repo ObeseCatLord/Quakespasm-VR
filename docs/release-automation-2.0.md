@@ -100,6 +100,8 @@ Linux x64 and ARM64 builds mount a persistent cache at
 set, and checks everything it reuses:
 
 - Pinned git source archives are reused only if they match their stored SHA-256.
+  Pinned `archive_sources` (Meson) are reused only if they match the SHA-256 in
+  `sources.json`.
 - Ubuntu `.deb` and source packages are reused only if they match this image's
   apt index checksums. A freshly downloaded `.deb` is checked against the same
   index.
