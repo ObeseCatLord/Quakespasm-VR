@@ -864,6 +864,27 @@ def copy_install(build, root, tree):
             shutil.copy2(src, dest)
 
 
+def dpkg_path(lexical, real, owners):
+    """Return the path dpkg records for a provider file.
+
+    With merged /usr, /lib is a symlink to /usr/lib, so resolving a provider
+    canonicalizes to /usr/lib/... even when its package (Ubuntu 22.04) ships
+    and registers /lib/.... Follow only final-component symlinks from the
+    lexical path to stay in the package's namespace, and accept that path only
+    when dpkg owns it and it is the same file as the fully resolved provider.
+    """
+    if owners.get(str(real)):
+        return real
+    path = Path(lexical)
+    for _ in range(40):
+        if not path.is_symlink():
+            break
+        path = Path(os.path.normpath(path.parent / os.readlink(path)))
+    if owners.get(str(path)) and path.resolve(strict=True) == real:
+        return path
+    return real
+
+
 def provider_source(name, build, root, native_hashes, owners, installed,
                     policy, arch, multiarch, elf_by_path, provenance, owner_set):
     if not name or "/" in name or name in (".", ".."):
@@ -918,7 +939,8 @@ def provider_source(name, build, root, native_hashes, owners, installed,
         fail(f"unresolved non-host ELF dependency: {name}")
     lexical, real, facts, checksum, build_key = chosen
     pinned = build_key is not None
-    matched_owners = set() if pinned else (owners.get(str(lexical), set()) | owners.get(str(real), set()))
+    owned = real if pinned else dpkg_path(lexical, real, owners)
+    matched_owners = set() if pinned else (owners.get(str(lexical), set()) | owners.get(str(owned), set()))
     if not pinned and len(matched_owners) != 1:
         fail(f"Ubuntu provider ownership is missing or ambiguous: {lexical}")
     owner = None
@@ -939,8 +961,8 @@ def provider_source(name, build, root, native_hashes, owners, installed,
     if pinned:
         provenance[rel]["source_key"] = build_key
     else:
-        provenance[rel].update({"source_path": str(lexical), "resolved_path": str(real),
-                                "deb_member": real.as_posix().lstrip("/")})
+        provenance[rel].update({"source_path": str(lexical), "resolved_path": str(owned),
+                                "deb_member": owned.as_posix().lstrip("/")})
     aliases = {name}
     if facts["soname"]:
         aliases.add(facts["soname"])
