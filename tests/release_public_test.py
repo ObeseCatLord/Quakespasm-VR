@@ -182,12 +182,13 @@ class PublicReleaseTests(unittest.TestCase):
 
     def test_generated_and_supplied_notes_reject_private_urls_and_app_mentions(self):
         host = '.'.join(('distribution', 'invalid'))
-        private_root = '.'.join(('shrubdragon', 'studio'))
+        private_root = '.'.join(('private-root', 'invalid'))
+        sibling_public = 'https://cdn.' + private_root + '/latest'
         forbidden = ['Private LaUnChEr', 'https://' + host + '/file',
                      'http://deep.sub.' + host + '/file', '//' + host.upper() + './file',
                      'https://user@sub.' + host + ':443/file',
                      'https://' + private_root + '/file',
-                     'https://quack.' + private_root + '/file',
+                     'https://cdn.' + private_root + '/file',
                      'https://sibling.' + private_root + '/file',
                      'http://deep.sibling.' + private_root + '/file',
                      '//' + private_root.upper() + './file']
@@ -198,14 +199,14 @@ class PublicReleaseTests(unittest.TestCase):
                     if provided:
                         self.notes_path.write_text(self.notes + '\n' + text)
                         settings['notes_file'] = str(self.notes_path)
+                    public = sibling_public if private_root in text.lower() else self.config['r2']['public']
                     with self.assertRaises(RuntimeError) as error:
-                        release.release_notes(text, settings, self.rev, self.config['r2']['public'])
+                        release.release_notes(text, settings, self.rev, public)
                     self.assertNotIn(text, str(error.exception))
-        for allowed_host in (host, private_root):
+        for allowed_host, public in ((host, self.config['r2']['public']), (private_root, sibling_public)):
             allowed = 'sub.' + allowed_host + '.evil.invalid'
             self.assertIn(allowed, release.release_notes(
-                'https://' + allowed + '/', {'repository': 'owner/repo'}, self.rev,
-                self.config['r2']['public']))
+                'https://' + allowed + '/', {'repository': 'owner/repo'}, self.rev, public))
         prose = 'Follow the straight path to the exit.'
         self.assertIn(prose, release.release_notes(prose, {'repository': 'owner/repo'}, self.rev,
                                                    self.config['r2']['public']))
