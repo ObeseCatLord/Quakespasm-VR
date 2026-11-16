@@ -26,7 +26,7 @@ qualification; headset appearance, swing feel and mobile GPU filtering
 remain physical-device checks.
 
 Straight deployment backs up engine executables and installs a matching
-isolated runtime while retaining the mod launcher, mods, saves, offsets
+isolated runtime while retaining installed tools, mods, saves, offsets
 and user configuration. Foundry deployment first checks its actual
 players/mod/map/skill, preserves a verified progression checkpoint when
 players are active, then restarts the matching ARM engine and verifies
@@ -36,7 +36,7 @@ player-progression checkpoint.
 R2 publication stages matching runtimes, dependency sources, engine
 source and license notices without game data. Immutable revision objects
 and public hashes are verified before advancing the existing `2.0`
-manifest and release pointers, so installed launchers remain compatible.
+manifest and release pointers, so existing installations remain compatible.
 
 GitHub's public repository-update API does not expose fork-parent
 reassignment. The project description and README identify vkQuake as

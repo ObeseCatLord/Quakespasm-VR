@@ -9,8 +9,8 @@ Read-only sibling checkouts can supply behavioral references.
 
 Installed Quake and mod files are in
 `/home/obesecatlord/Windows/Games/quakespasm_straight`. They are external test
-assets, not release inputs. Preserve the launcher, wrappers, mods, saves and
-configs. Back up executable files only when replacing an installed engine.
+assets, not release inputs. Preserve the installed tools, wrappers, mods, saves
+and configs. Back up executable files only when replacing an installed engine.
 
 ## Planning and delegation
 
@@ -33,12 +33,14 @@ models unless the user changes that instruction. Close completed agents.
 ## Privacy in public content
 
 Never include links to `shrubdragon.studio` or any of its subdomains in GitHub
-or any other public location. The launcher is for private use only: do not
-mention, advertise, document or link to it in public-facing content.
+or any other public location. Private tools in the installed game folder are
+for private use only: never commit or release them, and do not mention,
+advertise, document or link to them in public-facing content, including this
+repository's files and commit messages.
 
 Apply these rules to release notes, READMEs, issues, pull requests, comments,
 websites and generated publication text. Keep private distribution endpoints
-and launcher details in local configuration or private operational notes.
+and private tool details in local configuration or private operational notes.
 Review generated content before publishing; release automation must not expose
 these private details.
 
@@ -66,8 +68,8 @@ GitHub Actions remain disabled.
   credentials remain with SSH, rclone and gh. Never commit credentials or export
   Codex session telemetry. Avoid shell interpolation of untrusted paths.
 - Stage and verify complete runtime libraries and component/source notices.
-  Publish R2 immutable build objects before activating updater metadata. The
-  updater channel is `2.0`; do not modify another channel.
+  Publish R2 immutable build objects before activating update metadata. Release
+  automation and its update channel are maintained on `main`.
 - GitHub attachments are the three runtime packages and `SHA256SUMS`. Keep
   dependency source-access archives on R2, not as GitHub release attachments.
   Omit top-level READMEs from public runtime archives, retain required license
@@ -75,7 +77,7 @@ GitHub Actions remain disabled.
   Preserve the existing release tag when replacing assets and link the exact
   engine commit in notes. Verify published hashes and sizes.
 - Straight deployment changes only the engine entry points and installs their
-  complete matching runtime. Preserve launcher/wrapper hashes. An identical
+  complete matching runtime. Preserve the hashes of the other installed files. An identical
   deployment should verify and skip, without another backup.
 - Automation/docs-only commits do not justify rebuilding already qualified
   engine packages. Clearly record the published engine revision separately from

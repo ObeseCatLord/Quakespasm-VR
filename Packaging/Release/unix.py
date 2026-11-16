@@ -354,9 +354,10 @@ def deploy(root, config):
         require(inventory(target) == wanted, 'Immutable runtime inventory conflict')
         require(regular(target / 'bin/vkquake').stat().st_mode & 0o111, 'Runtime engine is not executable')
     engines = [straight / 'quakespasm-openvr.bin', straight / 'bin/quakespasm-openvr.bin']
-    launchers = {path: sha(path) for path in straight.iterdir()
-                 if path.is_file() and (path.name.startswith('QuakeSpasmLauncher')
-                                        or path.name == 'quakespasm-openvr')}
+    # Other installed tools named in the private configuration stay byte-identical.
+    keep = tuple(settings.get('preserve_prefixes', ()))
+    preserved = {path: sha(path) for path in straight.iterdir()
+                 if path.is_file() and (path.name == 'quakespasm-openvr' or (keep and path.name.startswith(keep)))}
     backup_base = straight / '.engine-backups'
     require(backup_base.resolve() == backup_base, 'Symlink in backup destination')
     engine_hash = sha(package / 'bin/vkquake')
@@ -387,8 +388,8 @@ def deploy(root, config):
         require(target.exists(), 'Prepared deployment runtime is missing; retained for inspection')
         require(result['revision'] == revision and result['engine_sha256'] == engine_hash
                 and result['manifest_sha256'] == manifest_hash, 'Pending deployment identity mismatch')
-        require(result['launcher_hashes'] == {p.name: h for p, h in launchers.items()},
-                'Launcher changed since prepared deployment')
+        require(result['preserved_hashes'] == {p.name: h for p, h in preserved.items()},
+                'Preserved file changed since prepared deployment')
         rows = result['executables']
         require({row['path'] for row in rows} == {str(path) for path in engines}, 'Pending engine set mismatch')
         for row in rows:
@@ -400,10 +401,10 @@ def deploy(root, config):
                     'Engine is neither recorded old nor intended new state')
     elif all(installed(path) for path in engines):
         require(target.exists(), 'Engine points at missing runtime')
-        return {'revision': revision, 'runtime': str(target), 'changed': False, 'launcher_preserved': True}
+        return {'revision': revision, 'runtime': str(target), 'changed': False, 'preserved': True}
     else:
         # Prepare immutable runtime and all executable backups before entry-point changes.
-        # Every path/manifest/engine/launcher check above precedes these mutations.
+        # Every path/manifest/engine/preserved-file check above precedes these mutations.
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             temporary = Path(tempfile.mkdtemp(prefix='.linux-', dir=target.parent))
@@ -429,14 +430,14 @@ def deploy(root, config):
         result = {'revision': revision, 'runtime': str(target), 'status': 'prepared',
                   'engine_sha256': engine_hash, 'manifest_sha256': manifest_hash,
                   'backup': str(backup), 'executables': rows,
-                  'launcher_hashes': {p.name: h for p, h in launchers.items()}}
+                  'preserved_hashes': {p.name: h for p, h in preserved.items()}}
         # Persist the recovery contract BEFORE replacing either entry point.
         save(backup / 'deployment.json', result)
     for row in rows:
         path = Path(row['path'])
         require(original_matches(path, row) or installed(path), 'Engine changed before replacement')
-    for path, checksum in launchers.items():
-        require(sha(path) == checksum, 'Launcher changed before replacement')
+    for path, checksum in preserved.items():
+        require(sha(path) == checksum, 'Preserved file changed before replacement')
     changed = False
     for row in rows:
         path = Path(row['path'])
@@ -450,9 +451,9 @@ def deploy(root, config):
         finally:
             temporary.unlink(missing_ok=True)
     require(inventory(target) == wanted, 'Deployed runtime changed')
-    for path, checksum in launchers.items():
-        require(sha(path) == checksum, 'Launcher changed during deployment')
-    result.update(status='applied', changed=changed, launcher_preserved=True)
+    for path, checksum in preserved.items():
+        require(sha(path) == checksum, 'Preserved file changed during deployment')
+    result.update(status='applied', changed=changed, preserved=True)
     save(backup / 'deployment.json', result)
     return result
 

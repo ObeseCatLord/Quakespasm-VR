@@ -183,7 +183,7 @@ class PublicReleaseTests(unittest.TestCase):
     def test_generated_and_supplied_notes_reject_private_urls_and_app_mentions(self):
         host = '.'.join(('distribution', 'invalid'))
         private_root = '.'.join(('shrubdragon', 'studio'))
-        forbidden = ['QuakeSpasmLaUnChEr', 'https://' + host + '/file',
+        forbidden = ['Private LaUnChEr', 'https://' + host + '/file',
                      'http://deep.sub.' + host + '/file', '//' + host.upper() + './file',
                      'https://user@sub.' + host + ':443/file',
                      'https://' + private_root + '/file',

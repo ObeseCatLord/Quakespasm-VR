@@ -9,9 +9,9 @@ Native Linux, native ARM64 and native Windows Release builds passed their
 production package checks. Linux/ARM packaged dedicated startup passed without
 changing the live Foundry server. Windows runtime presentation remains untested.
 
-The complete Linux runtime is deployed to Straight; its existing launcher and
+The complete Linux runtime is deployed to Straight; its other installed files and
 wrapper hashes were preserved, and only the two old engine executables were
-backed up. R2's public 2.0 updater metadata and objects were verified before
+backed up. R2's public 2.0 update metadata and objects were verified before
 activation. The existing GitHub `v2.0.0` release now carries these runtimes plus
 `SHA256SUMS`; asset sizes and server SHA-256 digests match. Its original tag was
 retained, and release notes link the exact current engine source commit.

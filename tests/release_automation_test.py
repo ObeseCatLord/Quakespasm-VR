@@ -37,7 +37,8 @@ class ReleaseTests(unittest.TestCase):
         self.entry = unix.read(self.root / 'entry.json')
         self.config = {'output_base': str(self.base / 'outputs'),
                        'straight': {'directory': str(self.base / 'straight'),
-                                    'runtime_base': str(self.base / 'runtimes')}}
+                                    'runtime_base': str(self.base / 'runtimes'),
+                                    'preserve_prefixes': ['InstalledTool']}}
 
     def command(self, *args):
         subprocess.run(['git', '-C', str(self.repo), *args], check=True, stdout=subprocess.PIPE,
@@ -82,7 +83,7 @@ class ReleaseTests(unittest.TestCase):
             else:
                 path.write_bytes(b'old-engine-' + str(index).encode())
                 path.chmod(0o755)
-        (straight / 'QuakeSpasmLauncher.py').write_text('launcher untouched\n')
+        (straight / 'InstalledTool.py').write_text('tool untouched\n')
         (straight / 'quakespasm-openvr').write_text('wrapper untouched\n')
         (straight / 'save.sav').write_bytes(b'game state')
         return straight
@@ -96,7 +97,7 @@ class ReleaseTests(unittest.TestCase):
         for name in (*release.RUNTIME_NAMES, 'source-access-linux-x64.tar.gz', 'source-access-linux-arm64.tar.gz'):
             (prefix / name).write_bytes(('qualified immutable bytes ' + name).encode())
             archives.append((prefix / name).relative_to(destination).as_posix())
-        (destination / 'manifest.tsv').write_text('fixture updater manifest\n')
+        (destination / 'manifest.tsv').write_text('fixture update manifest\n')
         unix.save(destination / 'release.json', {'branch': '2.0', 'revision': self.rev, 'archives': archives,
                   'files': {name: row['file'] for name, row in unix.inventory(destination).items()}})
         return unix.read(destination / 'release.json')
@@ -262,10 +263,10 @@ class ReleaseTests(unittest.TestCase):
         with release.cohort_lock(empty, self.base / 'outputs'):
             self.assertFalse(empty.exists())
 
-    def test_straight_regular_and_symlink_engines_idempotent_launcher_preserved(self):
+    def test_straight_regular_and_symlink_engines_idempotent_tools_preserved(self):
         self.package()
         straight = self.straight(symlinks=True)
-        preserved = {name: unix.sha(straight / name) for name in ('QuakeSpasmLauncher.py', 'quakespasm-openvr', 'save.sav')}
+        preserved = {name: unix.sha(straight / name) for name in ('InstalledTool.py', 'quakespasm-openvr', 'save.sav')}
         first = unix.deploy(self.root, self.config)
         second = unix.deploy(self.root, self.config)
         self.assertTrue(first['changed'])
@@ -316,14 +317,14 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(unix.read(backup / 'deployment.json')['status'], 'applied')
         self.assertFalse(unix.deploy(self.root, self.config)['changed'])
 
-    def test_straight_pending_launcher_or_backup_tamper_refuses(self):
+    def test_straight_pending_tool_or_backup_tamper_refuses(self):
         straight = self.interrupted_deployment()
-        launcher = straight / 'QuakeSpasmLauncher.py'
-        original = launcher.read_text()
-        launcher.write_text('unexpected launcher')
-        with self.assertRaisesRegex(RuntimeError, 'Launcher changed'):
+        tool = straight / 'InstalledTool.py'
+        original = tool.read_text()
+        tool.write_text('unexpected tool')
+        with self.assertRaisesRegex(RuntimeError, 'Preserved file changed'):
             unix.deploy(self.root, self.config)
-        launcher.write_text(original)
+        tool.write_text(original)
         backup = next((straight / '.engine-backups').iterdir())
         (backup / 'root-engine.bin').write_bytes(b'changed backup')
         with self.assertRaisesRegex(RuntimeError, 'backup changed'):

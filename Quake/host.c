@@ -534,7 +534,7 @@ static void Host_WritePostConfiguration (void)
 		Con_Warning ("Couldn't write postcfg %s\n", path);
 		return;
 	}
-	// Reuse the legacy launcher profile format, retaining native config saves.
+	// Reuse the existing global profile format, retaining native config saves.
 	Key_WriteBindings (f);
 	Cvar_WriteVariables (f, CVAR_ARCHIVE | CVAR_ARCHIVE_GAME);
 	fprintf (f, "vid_restart\n+mlook\n");

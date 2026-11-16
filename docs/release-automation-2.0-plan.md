@@ -40,7 +40,7 @@ not in tracked defaults. Credentials continue to belong to SSH/rclone/gh.
    archives in R2 and retain the existing release tag. Verify public bytes.
 5. Deploy a verified Linux runtime to an immutable per-revision directory and
    update only Straight's engine entry points, backing up executable files only.
-   Preserve launchers, wrappers, mods, configs and saves. Re-running an identical
+   Preserve installed tools, wrappers, mods, configs and saves. Re-running an identical
    deployment should verify it and make no new backup.
 6. Document the runnable commands and required local configuration in `AGENTS.md`
    and a workflow guide. Only branch `2.0` is editable. Foundry builds do not
@@ -66,12 +66,12 @@ system. Review dispositions and verification results will be recorded here.
 
 | Fact | Evidence / status |
 | --- | --- |
-| Existing publisher verifies source commit, complete native inventory, Windows file hashes, immutable remote objects and public bytes before exposing updater metadata | Verified in `Packaging/Linux/publish-r2.py` |
+| Existing publisher verifies source commit, complete native inventory, Windows file hashes, immutable remote objects and public bytes before exposing update metadata | Verified in `Packaging/Linux/publish-r2.py` |
 | Publishing requires the engine revision to be the exact tip of `origin/2.0` | Verified in `publish()`; finish current publication before pushing automation-only commits |
 | Native recipes use one archive, native Ubuntu 24.04 containers, source/dependency receipts, and package verification | Verified in `build-native.sh`, `build-foundry.sh`, `package.py` |
 | Foundry wrapper creates a unique remote workspace; it never changes the live server | Verified in `build-foundry.sh` |
 | Existing qualified Windows build has fresh source verification, native MSBuild exit status and independent output verification | Verified current cohort receipts; Windows runtime behavior remains untested |
-| Current Straight deployment preserves launcher hashes and backs up only two engine executables | Verified current `straight-deployment.json`; coordinator must also support safe identical resume |
+| Current Straight deployment preserves installed-file hashes and backs up only two engine executables | Verified current `straight-deployment.json`; coordinator must also support safe identical resume |
 | Reusable dependency-cache invalidation is not yet generalized | Unverified; prefer existing clean recipes until a narrowly validated cache is available |
 
 Current lean: file manifests plus existing recipes and explicit actions. Reject a
@@ -91,7 +91,7 @@ and Windows runtime, and checked the existing build and deployment receipts.
 | --- | --- |
 | Freeze staged bytes and import the existing stage; gzip regeneration can conflict with immutable uploaded objects | Adopted: stage once, bind its manifest, preserve exact staged bytes on import/resume; promote completed temporary staging |
 | Separate historical publication repair from fresh activation | Adapted: keep the existing strict origin-tip gate for this fresh-release workflow; expose partial failures and retain exact local bytes. No implicit rollback or branch reset. Historical reconciliation is a separate future operation |
-| Persist the deployment undo record before replacing either engine entry | Adopted: record executable backups, original entry-point state, intended runtime and launcher hashes before replacement; resume only recorded old/new states |
+| Persist the deployment undo record before replacing either engine entry | Adopted: record executable backups, original entry-point state, intended runtime and preserved-file hashes before replacement; resume only recorded old/new states |
 | Preserve successful work on packaging/transport failure | Adapted: verified platform results survive resume; retain failed attempts and remote workspaces for explicit recovery. Avoid a generalized scheduler or automatic live-server action |
 | Inventory equality alone does not establish build qualification; delete generalized dependency-cache work | Adopted: bind existing native/Windows qualification evidence on import and keep clean production recipes. No new dependency cache |
 | Validate interruption and mismatch paths without another platform rebuild | Adopted: isolated fixtures plus the already-qualified real cohort; scripts/docs do not change the engine |

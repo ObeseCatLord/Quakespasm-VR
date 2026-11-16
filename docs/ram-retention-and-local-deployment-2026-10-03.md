@@ -20,11 +20,11 @@ Main independently verified the staging growth/recreation path, dynamic retireme
 
 ## Straight Linux deployment
 
-Replaced only `quakespasm-openvr` (launcher) and `quakespasm-openvr.bin` (now a symlink to the installed packaged ELF). Existing launcher names still work; its argument adapter maps `-vr` to `-openxr` while preserving argument boundaries and `-novr` precedence. It resolves the packaged ELF path before execution, keeping library discovery independent of loader behavior for symlink paths.
+Replaced only `quakespasm-openvr` (wrapper) and `quakespasm-openvr.bin` (now a symlink to the installed packaged ELF). Existing entry-point names still work; its argument adapter maps `-vr` to `-openxr` while preserving argument boundaries and `-novr` precedence. It resolves the packaged ELF path before execution, keeping library discovery independent of loader behavior for symlink paths.
 
-Backup: `/home/obesecatlord/Windows/Games/quakespasm_straight/executable-backups/20261003-165400`. It contains only `quakespasm-openvr`, `quakespasm-openvr.bin` and `quakespasm-openvr.exe`. The Windows executable was backed up but remains unchanged. Mods, configs, saves, other binaries/libraries and launch scripts were not changed. `QuakeSpasmLauncher`, `QuakeSpasmLauncher.exe` and both update helpers remain in Straight. The existing configured engine path selects the preserved `quakespasm-openvr` wrapper; source inspection confirms the mod launcher sends `-vr` through that adapter. No launcher settings were changed.
+Backup: `/home/obesecatlord/Windows/Games/quakespasm_straight/executable-backups/20261003-165400`. It contains only `quakespasm-openvr`, `quakespasm-openvr.bin` and `quakespasm-openvr.exe`. The Windows executable was backed up but remains unchanged. Mods, configs, saves, other binaries/libraries and launch scripts were not changed. Other installed tools remain in Straight unchanged and select the preserved `quakespasm-openvr` wrapper, which maps `-vr` through that adapter.
 
-Runtime dependencies are isolated outside Straight at `/home/obesecatlord/.local/share/quakespasmvr/2.0/d5cfff6c/linux`. Existing exact packaged bin/lib entries were copied and hash/link checked; SDL3, Steam Audio and Vulkan loader resolution is verified from the installed Straight entry point. Native binary SHA256: `3ffd3418f4c4706a1b05a1894ab97de222a6b077de37dd3806e0213976bcf3b2`. Loader and launcher syntax/argument-preservation checks pass. No user game session was launched and no system runtime/driver settings changed.
+Runtime dependencies are isolated outside Straight at `/home/obesecatlord/.local/share/quakespasmvr/2.0/d5cfff6c/linux`. Existing exact packaged bin/lib entries were copied and hash/link checked; SDL3, Steam Audio and Vulkan loader resolution is verified from the installed Straight entry point. Native binary SHA256: `3ffd3418f4c4706a1b05a1894ab97de222a6b077de37dd3806e0213976bcf3b2`. Loader and wrapper syntax/argument-preservation checks pass. No user game session was launched and no system runtime/driver settings changed.
 
 To restore a backup, replace the `.bin` symlink with a regular copy of the backed-up `.bin`, rather than copying through the symlink into the installed runtime.
 
@@ -36,10 +36,10 @@ After the user woke the Frame, home-network SSH succeeded. Native AArch64/glibc2
 
 Executable-only backup: `/home/steamos/Games/Quakespasm VR/executable-backups/20261003-181423`, containing the old wrapper and ARM engine. SHA256 of old ARM engine: `9902652d7a3286cccd68150390a5df2f1a17e6a667eefe579fdb4f012f0f1ed7`.
 
-The Frame's actual `QuakeSpasmLauncher` and saved launcher settings were hash-checked unchanged before/after installation. Its configured engine remains the wrapper, VR remains enabled, and the existing active OpenXR manifest remains `/opt/steamvr/steamxr_linuxarm64.json`. Mods, saves and runtime/system configuration were not changed.
+The Frame's other installed tools and their settings were hash-checked unchanged before/after installation. The configured engine remains the wrapper, VR remains enabled, and the existing active OpenXR manifest remains `/opt/steamvr/steamxr_linuxarm64.json`. Mods, saves and runtime/system configuration were not changed.
 
-Initial explicit `ld-linux --list` validation through the game-directory symlink failed to resolve SDL3 on the Frame, while staged and canonical-path checks succeeded. The shared wrapper was narrowed to resolve the ELF path before exec, avoiding this loader-mode difference. No binary rewrite or system library change was needed. Final canonical loader resolution, wrapper syntax and argv-preservation/VR-switch checks pass on the Frame. Existing graphical mod launchers stay in their game directories. No gameplay/headset session was launched.
+Initial explicit `ld-linux --list` validation through the game-directory symlink failed to resolve SDL3 on the Frame, while staged and canonical-path checks succeeded. The shared wrapper was narrowed to resolve the ELF path before exec, avoiding this loader-mode difference. No binary rewrite or system library change was needed. Final canonical loader resolution, wrapper syntax and argv-preservation/VR-switch checks pass on the Frame. No gameplay/headset session was launched.
 
 Local Frame deployment and resolved-loader receipts are retained with the other deployment records below.
 
-Local deployment, loader, launcher, transfer and reviewer receipts: `/home/obesecatlord/FastGames/qsvr-deploy-2.0-mtpuw_db`.
+Local deployment, loader, wrapper, transfer and reviewer receipts: `/home/obesecatlord/FastGames/qsvr-deploy-2.0-mtpuw_db`.

@@ -9,10 +9,11 @@
   },
   "straight": {
     "directory": "/path/to/quakespasm_straight",
-    "runtime_base": "~/.local/share/quakespasmvr/2.0"
+    "runtime_base": "~/.local/share/quakespasmvr/2.0",
+    "preserve_prefixes": []
   },
   "r2": {
-    "remote": "r2:quack/2.0",
+    "remote": "r2:bucket/2.0",
     "public": "https://private-distribution.example.invalid/2.0"
   },
   "github": {

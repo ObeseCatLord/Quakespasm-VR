@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage verified 2.0 runtimes and publish an isolated updater channel."""
+"""Stage verified 2.0 runtimes and publish an isolated update channel."""
 import argparse
 import hashlib
 import http.client
@@ -32,7 +32,7 @@ def public_sha256(url, timeout, attempts=4):
     # hash comparison stay outside this helper; certificate failures are fatal.
     for attempt in range(attempts):
         try:
-            request = urllib.request.Request(url, headers={'User-Agent': 'QuakeSpasmVR-Updater/2.0'})
+            request = urllib.request.Request(url, headers={'User-Agent': 'QuakeSpasmVR-Publisher/2.0'})
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return hashlib.file_digest(response, 'sha256').hexdigest()
         except (urllib.error.URLError, ConnectionError, TimeoutError, ssl.SSLError,
@@ -77,7 +77,7 @@ def stage(args):
         (root / 'quakespasm-openvr').chmod(0o755)
         for source in sorted((package / 'lib').rglob('*')):
             if source.is_file():
-                # The updater has no symlink action: materialize SONAME aliases.
+                # The update manifest has no symlink action: materialize SONAME aliases.
                 copy(source, root / 'lib' / source.relative_to(package / 'lib'))
         shutil.copytree(package / 'share', root / 'share')
         if 'docs/release-notes-2.0.md' in source_notices:
@@ -187,8 +187,9 @@ s.add_argument('--windows', type=Path)
 s.add_argument('--windows-receipt', type=Path)
 p = sub.add_parser('publish')
 p.add_argument('--stage', required=True, type=Path)
-p.add_argument('--remote', default='r2:quack/2.0')
-p.add_argument('--public', default='https://quack.shrubdragon.studio/2.0')
+# Endpoints come from the private release configuration, never from this file.
+p.add_argument('--remote', required=True)
+p.add_argument('--public', required=True)
 p.add_argument('--check', action='store_true')
 args = parser.parse_args()
 stage(args) if args.command == 'stage' else publish(args)

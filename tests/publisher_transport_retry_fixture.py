@@ -77,7 +77,7 @@ class PublisherTransportRetryTests(unittest.TestCase):
             request, = call.args
             self.assertIsInstance(request, urllib.request.Request)
             self.assertEqual(request.full_url, URL)
-            self.assertEqual(request.get_header('User-agent'), 'QuakeSpasmVR-Updater/2.0')
+            self.assertEqual(request.get_header('User-agent'), 'QuakeSpasmVR-Publisher/2.0')
             self.assertEqual(call.kwargs, {'timeout': timeout})
 
     def test_success_preserves_request_and_hashes_once(self):
