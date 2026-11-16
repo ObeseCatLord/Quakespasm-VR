@@ -459,7 +459,8 @@ qboolean VR_LocomotionWorldToMuzzleOffset (const float world[3],
 	const float hand_angles[3], float gunmodelscale, float gunmodelpitch,
 	qboolean left_handed, float local[3])
 {
-	vec3_t world_copy, hand_angles_copy, mutable_angles, model_angles;
+	/* Zeroed so GCC 11 does not flag the null-guarded copies as uninitialized. */
+	vec3_t world_copy = {0}, hand_angles_copy = {0}, mutable_angles, model_angles;
 	vec3_t model_offset, aim_world, forward, right, up, result;
 
 	if (world)
