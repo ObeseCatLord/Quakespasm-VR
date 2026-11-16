@@ -17,6 +17,11 @@ import zipfile
 from package import scan
 
 
+
+# Khronos OpenXR loader shipped in Windows packages (Windows/openxr/PROVENANCE.md).
+WINDOWS_OPENXR_LOADER = 'Windows/openxr/x64/openxr_loader.dll'
+WINDOWS_OPENXR_LOADER_SHA256 = '7f07a9ae5b02f6dc9d667673fbc7a309fdabe136c3b24c0d4f54b5c1d544dd3b'
+
 def sha(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -62,7 +67,8 @@ def stage(args):
     with tarfile.open(args.source) as source:
         source_notices = {member.name: source.extractfile(member).read() for member in source
                           if member.isfile() and (member.name.startswith('LICENSES/') or
-                          member.name in ['LICENSE-GPL-3.0.txt', 'LICENSE-COMPONENTS.txt', 'Packaging/Linux/quakespasm-openvr', 'docs/release-notes-2.0.md'])}
+                          member.name in ['LICENSE-GPL-3.0.txt', 'LICENSE-COMPONENTS.txt', 'Packaging/Linux/quakespasm-openvr', 'docs/release-notes-2.0.md',
+                          WINDOWS_OPENXR_LOADER, 'Windows/openxr/LICENSE.txt', 'Windows/openxr/PROVENANCE.md'])}
     for runtime, package in [('linux-x64', args.linux), ('linux-arm64', args.arm)]:
         manifest = json.loads((package / 'artifact-manifest.json').read_text())
         require(manifest['architecture'] == ('x86_64' if runtime == 'linux-x64' else 'aarch64'), 'Native architecture mismatch')
@@ -111,6 +117,18 @@ def stage(args):
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
+        # VR is mandatory: the engine reaches OpenXR runtimes through the Khronos
+        # loader beside the executable, so every Windows package must ship it.
+        loader = source_notices.get(WINDOWS_OPENXR_LOADER)
+        require(loader is not None and hashlib.sha256(loader).hexdigest() == WINDOWS_OPENXR_LOADER_SHA256,
+                'Windows OpenXR loader missing or not the pinned Khronos build')
+        require(not (root / 'openxr_loader.dll').exists(), 'Windows OpenXR loader already present')
+        (root / 'openxr_loader.dll').write_bytes(loader)
+        for name, target in (('Windows/openxr/LICENSE.txt', 'LICENSES/openxr-loader/LICENSE.txt'),
+                             ('Windows/openxr/PROVENANCE.md', 'LICENSES/openxr-loader/PROVENANCE.md')):
+            require(name in source_notices, 'Windows OpenXR loader notice missing: ' + name)
+            (root / target).parent.mkdir(parents=True, exist_ok=True)
+            (root / target).write_bytes(source_notices[name])
         if 'docs/release-notes-2.0.md' in source_notices:
             (root / 'README.md').write_bytes(source_notices['docs/release-notes-2.0.md'])
         for path in sorted(root.rglob('*')):

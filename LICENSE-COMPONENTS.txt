@@ -13,6 +13,12 @@ Vendored OpenXR headers:
   notice in Monado-BSL-1.0.txt. Exact revision/ABI provenance is installed as
   OpenXR-header-provenance.txt from Quake/thirdparty/openxr/PROVENANCE.md.
 
+Khronos OpenXR loader (Windows packages):
+  Binary: openxr_loader.dll from the official OpenXR SDK release-1.1.60,
+  unmodified (Windows/openxr). License: Apache-2.0, in
+  LICENSES/openxr-loader/LICENSE.txt with its provenance. Source:
+  https://github.com/KhronosGroup/OpenXR-SDK-Source/tree/release-1.1.60
+
 Vendored mimalloc:
   Source: Quake/mimalloc
   License: mimalloc-LICENSE.txt in the installed notice directory.

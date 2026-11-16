@@ -1193,11 +1193,13 @@ static bool destroy_session_resources() {
 	g.vk.arrayLayers=1; g.vk.densityMaps=false; g.vk.densityImageFlags=0; g.vk.retireImages=0; g.vk.owner=0;
 	return destroyed;
 }
+static void release_direct_runtime();
 static void destroy_resources() {
 	destroy_session_resources();
 	if(g.terminal && g.stopReason==VRXR_STOP_NONE) g.stopReason=VRXR_STOP_FAILURE;
 	if(g.instance && g.xr.DestroyInstance) g.xr.DestroyInstance(g.instance);
 	if(g.loader) SDL_UnloadObject(g.loader);
+	release_direct_runtime();
 	void (*log)(const char *)=g.log;
 	vrxr_stop_reason_t reason=g.stopReason;
 	g=State(); g.log=log; g.stopReason=reason;
@@ -1227,6 +1229,75 @@ static bool opaque_blend_mode() {
 	for(size_t i=0;i<modes.size();++i) if(modes[i]==XR_ENVIRONMENT_BLEND_MODE_OPAQUE) { g.blend=modes[i]; return true; }
 	say("OpenXR: runtime lacks opaque primary stereo composition"); return false;
 }
+#if defined(_WIN32)
+/* Windows packages do not ship the Khronos loader. Without one beside the
+ * engine or on the search path, open the active runtime the way the loader
+ * does (runtime negotiation, version 1), minus API layers. A loader DLL placed
+ * beside the engine still takes precedence and brings API layer support. */
+typedef enum { XRQ_LOADER_INFO=1, XRQ_RUNTIME_REQUEST=3 } XrqLoaderStruct;
+struct XrqNegotiateLoaderInfo {
+	XrqLoaderStruct structType; uint32_t structVersion; size_t structSize;
+	uint32_t minInterfaceVersion, maxInterfaceVersion; XrVersion minApiVersion, maxApiVersion;
+};
+struct XrqNegotiateRuntimeRequest {
+	XrqLoaderStruct structType; uint32_t structVersion; size_t structSize;
+	uint32_t runtimeInterfaceVersion; XrVersion runtimeApiVersion; PFN_xrGetInstanceProcAddr getInstanceProcAddr;
+};
+typedef XrResult (XRAPI_PTR *PFN_xrqNegotiateLoaderRuntimeInterface)(const XrqNegotiateLoaderInfo *, XrqNegotiateRuntimeRequest *);
+static HMODULE g_direct_runtime=0;
+static void release_direct_runtime() { if(g_direct_runtime) FreeLibrary(g_direct_runtime); g_direct_runtime=0; }
+/* The loader's runtime selection: XR_RUNTIME_JSON, then the registry. */
+static std::string windows_active_runtime_path() {
+	const char *env=getenv("XR_RUNTIME_JSON");
+	if(env && *env) return env;
+	char value[MAX_PATH*2]; DWORD size=sizeof(value);
+	if(RegGetValueA(HKEY_LOCAL_MACHINE,"SOFTWARE\\Khronos\\OpenXR\\1","ActiveRuntime",
+		RRF_RT_REG_SZ,nullptr,value,&size)==ERROR_SUCCESS) return value;
+	return std::string();
+}
+/* library_path from the manifest; relative paths are relative to it. */
+static std::string runtime_library_path(const std::string &manifest) {
+	FILE *file=fopen(manifest.c_str(),"rb");
+	if(!file) return std::string();
+	std::string text; char buffer[4096]; size_t read;
+	while((read=fread(buffer,1,sizeof(buffer),file))>0 && text.size()<(1u<<20)) text.append(buffer,read);
+	fclose(file);
+	size_t key=text.find("\"library_path\"");
+	if(key==std::string::npos) return std::string();
+	size_t quote=text.find('"',text.find(':',key)+1);
+	if(quote==std::string::npos) return std::string();
+	std::string value;
+	for(size_t i=quote+1;i<text.size() && text[i]!='"';++i) {
+		if(text[i]=='\\' && i+1<text.size()) ++i;
+		value+=text[i];
+	}
+	if(value.empty()) return value;
+	const bool absolute=value[0]=='\\' || value[0]=='/' || (value.size()>1 && value[1]==':');
+	if(absolute) return value;
+	size_t slash=manifest.find_last_of("\\/");
+	return slash==std::string::npos ? value : manifest.substr(0,slash+1)+value;
+}
+static PFN_xrGetInstanceProcAddr open_direct_runtime() {
+	const std::string manifest=windows_active_runtime_path();
+	if(manifest.empty()) { say("OpenXR: no active runtime is registered"); return 0; }
+	const std::string library=runtime_library_path(manifest);
+	if(library.empty()) { say(("OpenXR: runtime manifest has no library_path: "+manifest).c_str()); return 0; }
+	g_direct_runtime=LoadLibraryExA(library.c_str(),0,LOAD_WITH_ALTERED_SEARCH_PATH);
+	if(!g_direct_runtime) { say(("OpenXR: cannot load runtime "+library).c_str()); return 0; }
+	auto negotiate=reinterpret_cast<PFN_xrqNegotiateLoaderRuntimeInterface>(
+		reinterpret_cast<void *>(GetProcAddress(g_direct_runtime,"xrNegotiateLoaderRuntimeInterface")));
+	XrqNegotiateLoaderInfo info={XRQ_LOADER_INFO,1,sizeof(XrqNegotiateLoaderInfo),1,1,XR_MAKE_VERSION(1,0,0),XR_MAKE_VERSION(1,0x3ff,0xfff)};
+	XrqNegotiateRuntimeRequest request={XRQ_RUNTIME_REQUEST,1,sizeof(XrqNegotiateRuntimeRequest),0,0,0};
+	if(!negotiate || XR_FAILED(negotiate(&info,&request)) || request.runtimeInterfaceVersion!=1 || !request.getInstanceProcAddr) {
+		say(("OpenXR: runtime negotiation failed: "+library).c_str());
+		release_direct_runtime(); return 0;
+	}
+	say(("OpenXR: using runtime "+library+" directly (no openxr_loader.dll)").c_str());
+	return request.getInstanceProcAddr;
+}
+#else
+static void release_direct_runtime() {}
+#endif
 static LoaderHandle load_loader() {
 	const char *loaders[] = {
 #if defined(_WIN32)
@@ -1257,8 +1328,13 @@ static LoaderHandle load_loader() {
 }
 static bool discover_runtime() {
 	g.loader=load_loader();
-	if (!g.loader) { say("OpenXR: loader unavailable (no runtime is required until OpenXR is selected)"); return false; }
-	g.xr.gpa=reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_LoadFunction(g.loader,"xrGetInstanceProcAddr"));
+	if (g.loader)
+		g.xr.gpa=reinterpret_cast<PFN_xrGetInstanceProcAddr>(SDL_LoadFunction(g.loader,"xrGetInstanceProcAddr"));
+#if defined(_WIN32)
+	else
+		g.xr.gpa=open_direct_runtime();
+#endif
+	if (!g.loader && !g.xr.gpa) { say("OpenXR: loader unavailable (no runtime is required until OpenXR is selected)"); return false; }
 	if (!g.xr.gpa || !loader_functions()) return false;
 	uint32_t extensionCount=0;
 	if(!ok("xrEnumerateInstanceExtensionProperties",g.xr.EnumerateExtensions(0,0,&extensionCount,0))) return false;
@@ -1866,14 +1942,7 @@ static bool process_running(const wchar_t *exe) {
 	CloseHandle(snapshot);
 	return found;
 }
-static std::string active_runtime_path() {
-	const char *env=getenv("XR_RUNTIME_JSON");
-	if(env && *env) return env;
-	char value[MAX_PATH*2]; DWORD size=sizeof(value);
-	if(RegGetValueA(HKEY_LOCAL_MACHINE,"SOFTWARE\\Khronos\\OpenXR\\1","ActiveRuntime",
-		RRF_RT_REG_SZ,nullptr,value,&size)==ERROR_SUCCESS) return value;
-	return std::string();
-}
+static std::string active_runtime_path() { return windows_active_runtime_path(); }
 #else
 static bool process_running(const char *name) {
 	/* /proc/<pid>/comm holds at most 15 characters of the executable name. */
