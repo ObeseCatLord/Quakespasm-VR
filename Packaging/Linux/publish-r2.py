@@ -51,18 +51,38 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+STALL_SECONDS = 30
+STALL_MIN_RATE = 256 * 1024
+
+
+def stream_sha256(response):
+    # A connection can trickle bytes forever without tripping the socket
+    # timeout; give up once the average rate stays below a usable floor.
+    digest = hashlib.sha256()
+    start = time.monotonic()
+    received = 0
+    while chunk := response.read1(1 << 20):
+        digest.update(chunk)
+        received += len(chunk)
+        elapsed = time.monotonic() - start
+        if elapsed > STALL_SECONDS and received < STALL_MIN_RATE * elapsed:
+            raise TimeoutError('download stalled at %d bytes/s' % (received / elapsed))
+    return digest.hexdigest()
+
+
 def public_sha256(url, timeout, attempts=4):
     # Retry only downloads, from byte zero with a fresh digest. Publication and
-    # hash comparison stay outside this helper; certificate failures are fatal.
+    # hash comparison stay outside this helper; certificate failures and HTTP
+    # client errors are fatal, while server errors (5xx) are transient.
     for attempt in range(attempts):
         try:
             request = urllib.request.Request(url, headers={'User-Agent': 'QuakeSpasmVR-Updater/2.0'})
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                return hashlib.file_digest(response, 'sha256').hexdigest()
+                return stream_sha256(response)
         except (urllib.error.URLError, ConnectionError, TimeoutError, ssl.SSLError,
                 http.client.IncompleteRead, http.client.RemoteDisconnected) as error:
             reason = error.reason if isinstance(error, urllib.error.URLError) else error
-            if (isinstance(error, urllib.error.HTTPError) or
+            if ((isinstance(error, urllib.error.HTTPError) and error.code < 500) or
                     isinstance(reason, ssl.SSLCertVerificationError) or attempt + 1 == attempts):
                 raise
             print('Public download interrupted; retry %d/%d' % (attempt + 2, attempts), flush=True)
