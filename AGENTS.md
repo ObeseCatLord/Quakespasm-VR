@@ -34,8 +34,9 @@ models unless the user changes that instruction. Close completed agents.
 
 ## Privacy in public content
 
-Never include links to `shrubdragon.studio` or any of its subdomains in GitHub
-or any other public location. Private tools in the installed game folder are
+Never include the private distribution domain or any of its subdomains (see the
+public URL in the ignored local release configuration) in GitHub or any other
+public location, as a link or as a name. Private tools in the installed game folder are
 for private use only: never commit or release them, and do not mention,
 advertise, document or link to them in public-facing content, including this
 repository's files and commit messages.
