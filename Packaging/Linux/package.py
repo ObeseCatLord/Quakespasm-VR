@@ -225,13 +225,42 @@ def pin_inputs(root, output=None):
                 data = stream.read()
                 if not data:
                     fail(f"pinned source notice is empty: {member}")
-                target_rel = f"share/licenses/pinned/{item['name']}/{notice}"
-                target = (output or root) / target_rel
-                if output:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(data)
-                elif not target.is_file() or target.read_bytes() != data:
-                    fail(f"staged pinned notice differs from source: {target_rel}")
+                pinned_notice(root, output, item["name"], notice, data)
+    archive_pins = pins.get("archive_sources", [])
+    rows = table(root / "receipts/archives.tsv",
+                 ("name", "version", "url", "sha256", "notices"), header=True, empty=True)
+    by_name = {row["name"]: row for row in rows}
+    if (len(by_name) != len(rows) or set(by_name) != {p["name"] for p in archive_pins} or
+            set(by_name) & {p["name"] for p in pins["git_sources"]}):
+        fail("pinned archive list is incomplete or duplicated")
+    for item in archive_pins:
+        row, name = by_name[item["name"]], safe_rel(item["url"].rsplit("/", 1)[-1])
+        archive = root / "sources/dependencies" / name
+        if not archive.is_file() or "/" in name or (
+                row["version"], row["url"], row["sha256"], row["notices"]) != (
+                item["version"], item["url"], item["sha256"], "|".join(item["notices"])) or \
+                digest(archive) != item["sha256"]:
+            fail(f"pinned archive identity mismatch: {item['name']}")
+        with tarfile.open(archive, "r:gz") as source:
+            for notice in item["notices"]:
+                member = f"{safe_rel(item['root'])}/{safe_rel(notice)}"
+                stream = source.extractfile(member)
+                if stream is None:
+                    fail(f"pinned archive notice is missing: {item['name']}/{notice}")
+                data = stream.read()
+                if not data:
+                    fail(f"pinned archive notice is empty: {item['name']}/{notice}")
+                pinned_notice(root, output, item["name"], notice, data)
+
+
+def pinned_notice(root, output, name, notice, data):
+    target_rel = f"share/licenses/pinned/{name}/{notice}"
+    target = (output or root) / target_rel
+    if output:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    elif not target.is_file() or target.read_bytes() != data:
+        fail(f"staged pinned notice differs from source: {target_rel}")
 
 
 def magic(path):
@@ -955,8 +984,8 @@ def stage(build_arg, package_arg):
             len(set(policy["host_sonames"])) != len(policy["host_sonames"])):
         fail("host SONAME policy entries must be exact, nonempty, and unique")
     distro = Path("/etc/os-release").read_text()
-    if 'ID=ubuntu' not in distro or 'VERSION_ID="24.04"' not in distro:
-        fail("staging requires the native Ubuntu 24.04 builder image")
+    if 'ID=ubuntu' not in distro or 'VERSION_ID="22.04"' not in distro:
+        fail("staging requires the native Ubuntu 22.04 builder image")
     machine = run(["uname", "-m"]).strip()
     arch = {"x86_64": "x86_64", "aarch64": "aarch64"}.get(machine)
     if not arch or not (build / "receipts/environment.txt").is_file():

@@ -14,7 +14,7 @@ if find "$OUT" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
     fail 'output directory must be empty'
 fi
 . /etc/os-release
-[[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 24.04 ]] || fail 'builder requires Ubuntu 24.04'
+[[ "${ID:-}" == ubuntu && "${VERSION_ID:-}" == 22.04 ]] || fail 'builder requires Ubuntu 22.04'
 MACHINE=$(uname -m)
 case "$MACHINE" in
     x86_64) ARCH=x86_64; BASE_FLAGS='-march=x86-64 -mtune=generic' ;;
@@ -69,7 +69,7 @@ CACHE=${QSVR_BUILD_CACHE:-}
 if [[ -n "$CACHE" ]]; then
     [[ -d "$CACHE" && -w "$CACHE" ]] || fail 'QSVR_BUILD_CACHE must be a writable directory'
     CACHE=$(realpath -e -- "$CACHE")
-    mkdir -p "$CACHE/git" "$CACHE/deb" "$CACHE/src" "$CACHE/deps"
+    mkdir -p "$CACHE/git" "$CACHE/archive" "$CACHE/deb" "$CACHE/src" "$CACHE/deps"
     : > "$OUT/receipts/cache.txt"
 fi
 cache_note() { [[ -z "$CACHE" ]] || printf '%s\n' "$*" >> "$OUT/receipts/cache.txt"; }
@@ -119,6 +119,60 @@ for row in "${COMPONENTS[@]}"; do
     hash=$(sha256sum "$archive" | awk '{print $1}')
     printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$url" "$commit" "$hash" "$notices" >> "$OUT/receipts/sources.tsv"
 done
+
+# Hash-pinned upstream source archives (build tools newer than the distro's).
+# The archive is retained for source access; a python_entry is run from the
+# verified extracted tree through a wrapper first on PATH, never installed.
+mapfile -t ARCHIVES < <(python3 - "$PINS" <<'PY'
+import json, sys
+for item in json.load(open(sys.argv[1])).get("archive_sources", []):
+    print("\t".join((item["name"], item["version"], item["url"], item["sha256"],
+                     item["root"], item.get("python_entry", ""), "|".join(item["notices"]))))
+PY
+)
+TOOLS="$WORK/tools"
+mkdir -p "$TOOLS/bin"
+export PATH="$TOOLS/bin:$PATH"
+printf 'name\tversion\turl\tsha256\tnotices\n' > "$OUT/receipts/archives.tsv"
+for row in "${ARCHIVES[@]}"; do
+    IFS=$'\t' read -r name version url sha root entry notices <<< "$row"
+    [[ "$name" =~ ^[a-z0-9][a-z0-9.+-]*$ && "$sha" =~ ^[0-9a-f]{64}$ && "$url" == https://* ]] ||
+        fail "invalid archive pin for $name"
+    file=${url##*/}
+    [[ "$file" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*\.tar\.gz$ && "$root" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] ||
+        fail "unexpected archive name for $name"
+    archive="$OUT/sources/dependencies/$file"
+    cached="${CACHE:+$CACHE/archive/$file}"
+    if [[ -n "$cached" && -s "$cached" && "$(sha256sum "$cached" | awk '{print $1}')" == "$sha" ]]; then
+        install -m 0644 -- "$cached" "$archive"
+        cache_note "archive hit $name $version"
+    else
+        python3 - "$url" "$archive" <<'PY'
+import shutil, sys, urllib.request
+with urllib.request.urlopen(sys.argv[1], timeout=120) as response, open(sys.argv[2], "wb") as out:
+    shutil.copyfileobj(response, out)
+PY
+        [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$sha" ]] || fail "archive checksum mismatch: $name"
+        if [[ -n "$cached" ]]; then cache_put "$archive" "$cached"; cache_note "archive miss $name $version"; fi
+    fi
+    [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$sha" ]] || fail "archive checksum mismatch: $name"
+    mkdir -p "$TOOLS/$name"
+    tar -xzf "$archive" -C "$TOOLS/$name" --no-same-owner
+    [[ "$(find "$TOOLS/$name" -mindepth 1 -maxdepth 1 -printf '%f\n')" == "$root" ]] ||
+        fail "archive root differs from pin: $name"
+    for notice in ${notices//|/ }; do
+        [[ -s "$TOOLS/$name/$root/$notice" ]] || fail "pinned notice missing: $name/$notice"
+    done
+    if [[ -n "$entry" ]]; then
+        [[ -f "$TOOLS/$name/$root/$entry" ]] || fail "pinned entry point missing: $name/$entry"
+        printf '#!/bin/sh\nexec python3 %q "$@"\n' "$TOOLS/$name/$root/$entry" > "$TOOLS/bin/$name"
+        chmod 0755 "$TOOLS/bin/$name"
+    fi
+    [[ "$name" != meson ]] || MESON_VERSION=$version
+    printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$version" "$url" "$sha" "$notices" >> "$OUT/receipts/archives.tsv"
+done
+[[ -n "${MESON_VERSION:-}" && "$(command -v meson)" == "$TOOLS/bin/meson" &&
+    "$(meson --version)" == "$MESON_VERSION" ]] || fail 'pinned Meson is not the selected meson'
 
 cp -- "$PINS" "$OUT/sources/recipes/sources.json"
 cp -- "$SCRIPT_DIR/build-native.sh" "$OUT/sources/recipes/build-native.sh"
@@ -178,7 +232,7 @@ import json, sys
 print("\n".join(json.load(open(sys.argv[1]))["apt_packages"]))
 PY
 )
-cp -- /etc/apt/sources.list.d/ubuntu.sources "$OUT/receipts/ubuntu.sources"
+cp -- /etc/apt/sources.list "$OUT/receipts/sources.list"
 printf 'binary_package\tbinary_version\tsource_package\tsource_version\trepository\tdeb_sha256\n' > "$OUT/receipts/packages.tsv"
 declare -A SOURCES_SAVED=()
 for package in "${PACKAGES[@]}"; do
@@ -304,9 +358,9 @@ cmake_native "$WORK/src/pffft/pffft" "$WORK/build/pffft" \
 
 STEAM="$WORK/src/steam-audio/steam-audio"
 patch -p2 -d "$STEAM/core" < "$PRODUCT_ROOT/nix/steamaudio-unaligned-accumulate.patch"
-# GCC 13's libstdc++ cannot instantiate <future> with Valve's legacy ABI6.
-# Build the complete private SDK implementation with the native compiler ABI;
-# keep AVX and the public phonon C interface unchanged.
+# Current libstdc++ cannot instantiate <future> with Valve's legacy ABI6
+# (seen with GCC 13). Build the complete private SDK implementation with the
+# native compiler ABI; keep AVX and the public phonon C interface unchanged.
 sed -i '/add_compile_options(-fabi-version=6)/d' "$STEAM/core/CMakeLists.txt"
 sed -i '/^set(ZLIB_ROOT /d; /^set(ZLIB_INCLUDE_DIR /d' "$STEAM/core/build/FindMySOFA.cmake"
 MY_HEADER=$(dpkg-query -L libmysofa-dev | awk '!found && /\/mysofa\.h$/ {print; found=1}')
@@ -408,6 +462,7 @@ Steam Audio patch: nix/steamaudio-unaligned-accumulate.patch; MySOFA finder adju
 Steam Audio Linux private C++ implementation uses native compiler ABI; legacy -fabi-version=6 removed; phonon C API and AVX selection retained
 Steam Audio x86-64 AVX option: ON; aarch64 uses the native SDK architecture path
 libcurl pkg-config version: $curl_version (required precondition)
+Meson: pinned archive_sources meson $MESON_VERSION (PyPI sdist, run from source)
 Meson DESTDIR: install/
 Output dependencies prefix: deps/
 EOF

@@ -1,17 +1,20 @@
 {
-  "ubuntu_image": "ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+  "ubuntu_image": "ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde",
   "receipt_ownership": {
     "build-native.sh": "Captures exact binary/source versions, repository URLs, .deb hashes, and matching source archives for direct apt_packages inputs; records installed-packages.tsv and installed-file-owners.tsv for the full image. These are inventory maps, not the incorporated-code closure.",
-    "package.py": "Slice 2 owns final staging and closure-derived distro attribution. Run it in this pinned image and consume install/, deps/, sources/, the installed package/file-owner maps, and enabled deb-src indexes. Resolve every shipped ELF runtime provider and installed *-dev header/static contributor; for each resolved Ubuntu package capture the exact matching .deb and source archives, identities, hashes, and installed copyright notice. Missing or ambiguous ownership/source/notice is a hard failure. The direct apt_packages list alone is not a complete contributor inventory. Slice 1 recipes currently contain sources.json, Dockerfile, build-native.sh, and the reused Steam Audio patch only; final staging must add package.py, host-policy.json, and any other production packaging inputs to its source-access artifact."
+    "package.py": "Slice 2 owns final staging and closure-derived distro attribution. Run it in this pinned image and consume install/, deps/, sources/, the installed package/file-owner maps, and enabled deb-src indexes. Resolve every shipped ELF runtime provider and installed *-dev header/static contributor; for each resolved Ubuntu package capture the exact matching .deb and source archives, identities, hashes, and installed copyright notice. Missing or ambiguous ownership/source/notice is a hard failure. The direct apt_packages list alone is not a complete contributor inventory. Slice 1 recipes currently contain sources.json, Dockerfile, build-native.sh, and the reused Steam Audio patch only; archive_sources are hash-pinned upstream source archives retained under sources/dependencies with their notices; final staging must add package.py, host-policy.json, and any other production packaging inputs to its source-access artifact."
   },
   "apt_packages": [
-    "build-essential", "cmake", "ninja-build", "meson", "python3", "pkg-config", "git", "ca-certificates", "patch", "binutils", "patchelf", "ccache", "dpkg-dev", "xz-utils",
+    "build-essential", "cmake", "ninja-build", "python3", "pkg-config", "git", "ca-certificates", "patch", "binutils", "patchelf", "ccache", "dpkg-dev", "xz-utils",
     "libx11-dev", "libx11-xcb-dev", "libxcb1-dev", "libxcb-randr0-dev", "libxext-dev", "libxcursor-dev", "libxrandr-dev", "libxfixes-dev", "libxi-dev", "libxss-dev", "libxrender-dev", "libxinerama-dev", "libxtst-dev",
     "libwayland-dev", "libwayland-bin", "wayland-protocols", "libxkbcommon-dev", "libdecor-0-dev",
     "libegl-dev", "libgl-dev", "libgles-dev", "libdrm-dev", "libgbm-dev", "libudev-dev", "libdbus-1-dev", "libsystemd-dev", "libusb-1.0-0-dev",
     "libasound2-dev", "libpulse-dev", "libpipewire-0.3-dev", "libjack-jackd2-dev", "libsndio-dev",
     "libmpg123-dev", "libflac-dev", "libogg-dev", "libvorbis-dev", "libopus-dev", "libopusfile-dev", "libcurl4-openssl-dev", "libssl-dev",
     "libmysofa-dev", "zlib1g-dev", "libjsoncpp-dev"
+  ],
+  "archive_sources": [
+    {"name":"meson","version":"1.3.2","license":"Apache-2.0","url":"https://files.pythonhosted.org/packages/e5/09/5f6cd56ca83c7d093345e406aee0b8a2f9fd504e601de9a293f050a52abe/meson-1.3.2.tar.gz","sha256":"492eb450c8b073024276f916f5adbb3c4bb7e90e9e6ec124efda064f3d9b5baa","root":"meson-1.3.2","python_entry":"meson.py","notices":["COPYING"],"purpose":"Build tool only. The engine requires Meson >= 1.3 and Ubuntu 22.04 ships 0.61; this is the PyPI sdist of the release Ubuntu 24.04 used, run from source without pip."}
   ],
   "git_sources": [
     {"name":"vulkan-headers","url":"https://github.com/KhronosGroup/Vulkan-Headers.git","commit":"b5c8f996196ba4aa6d8f97e52b5d3b6e70f7e4e2","notices":["LICENSE.md","LICENSES/Apache-2.0.txt","LICENSES/MIT.txt"]},

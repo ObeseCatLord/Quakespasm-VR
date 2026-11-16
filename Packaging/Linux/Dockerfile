@@ -1,4 +1,6 @@
-FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+# Ubuntu 22.04 (glibc 2.35) keeps the shipped runtime usable on 22.04, Debian 12
+# and later hosts; host-policy.json enforces the matching GLIBC ceiling.
+FROM ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
 
 COPY sources.json /usr/local/bin/sources.json
 COPY build-native.sh /usr/local/bin/build-native.sh
@@ -7,8 +9,9 @@ COPY package.py host-policy.json /usr/local/bin/
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN set -eu; \
-    sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources; \
-    grep -q '^Types: deb deb-src$' /etc/apt/sources.list.d/ubuntu.sources; \
+    sed -i 's/^# deb-src /deb-src /' /etc/apt/sources.list; \
+    test "$(grep -c '^deb ' /etc/apt/sources.list)" -gt 0; \
+    test "$(grep -c '^deb ' /etc/apt/sources.list)" = "$(grep -c '^deb-src ' /etc/apt/sources.list)"; \
     apt-get update; \
     apt-get install -y --no-install-recommends python3 ca-certificates
 

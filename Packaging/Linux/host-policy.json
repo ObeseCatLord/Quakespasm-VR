@@ -9,7 +9,7 @@
       "interpreter": "/lib/ld-linux-aarch64.so.1"
     }
   },
-  "glibc_max": "2.39",
+  "glibc_max": "2.35",
   "glibc_abi_dt_relr": "2.36",
   "openxr_loader": "libopenxr_loader.so.1",
   "runpath": {
@@ -31,7 +31,8 @@
     "libpipewire-0.3.so.0", "libjack.so.0", "libsndio.so.7.0"
   ],
   "host_prerequisites": [
-    "Native glibc, ELF interpreter, libgcc_s and libstdc++ meeting recorded version needs",
+    "Native glibc 2.35 or newer with its ELF interpreter (Ubuntu 22.04, Debian 12 and later)",
+    "Host libgcc_s and libstdc++ meeting the recorded GLIBCXX/CXXABI needs; the builder is GCC 11, so a GCC 11 or newer runtime (libstdc++ GLIBCXX_3.4.29) suffices",
     "Host Vulkan ICDs and graphics drivers",
     "A working OpenXR runtime and its user/system runtime discovery configuration",
     "Host X11 or Wayland display service and applicable runtime libraries",
