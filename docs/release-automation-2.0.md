@@ -73,14 +73,22 @@ native Release MSBuild. Native process exit status and independent source,
 compile/output hashes must pass before its files can enter publication. Neither
 build success nor dedicated startup certifies Windows/Frame/headset graphics.
 
-## Windows OpenXR loader
+## Windows runtime files
 
-VR is required on every platform. The native Windows build has no OpenXR
-loader of its own, so `publish-r2.py` adds the pinned, unmodified Khronos
-`openxr_loader.dll` from `Windows/openxr/` (read from the exact source archive
-and checked against its pinned SHA-256) beside `quakespasm-openvr.exe`, with
-its Apache-2.0 license and provenance under `LICENSES/openxr-loader/`.
-Publication fails if it is missing. It matches the OpenXR SDK version the
+VR is required on every platform. The native Windows build produces neither
+an OpenXR loader nor the C++ runtime the engine imports, so `publish-r2.py`
+adds these pinned, unmodified files beside `quakespasm-openvr.exe`, read from
+the exact source archive and checked against their pinned SHA-256
+(`WINDOWS_RUNTIME_FILES`):
+
+- the Khronos `openxr_loader.dll` (`Windows/openxr/`, Apache-2.0, notices in
+  `LICENSES/openxr-loader/`);
+- `msvcp140.dll` and `vcruntime140.dll` from the MSVC toolset that builds the
+  engine (`Windows/msvc/`, notice in `LICENSES/msvc-runtime/`), so players
+  without the Visual C++ Redistributable can start the game.
+
+Publication fails if any is missing. Update the MSVC files when the Windows
+build toolset changes. It matches the OpenXR SDK version the
 Linux packages ship. Without a loader (for example a hand-copied engine) the
 engine also opens the registered runtime directly, without API layers.
 

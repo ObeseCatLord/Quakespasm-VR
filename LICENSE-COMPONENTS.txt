@@ -19,6 +19,12 @@ Khronos OpenXR loader (Windows packages):
   LICENSES/openxr-loader/LICENSE.txt with its provenance. Source:
   https://github.com/KhronosGroup/OpenXR-SDK-Source/tree/release-1.1.60
 
+Microsoft C++ runtime (Windows packages):
+  msvcp140.dll and vcruntime140.dll, unmodified and Microsoft-signed, from the
+  Visual Studio 2022 (MSVC 14.44) redistributable files (Windows/msvc),
+  deployed beside the engine under the Visual Studio license terms.
+  Provenance: LICENSES/msvc-runtime/PROVENANCE.md.
+
 Vendored mimalloc:
   Source: Quake/mimalloc
   License: mimalloc-LICENSE.txt in the installed notice directory.
