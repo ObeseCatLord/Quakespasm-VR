@@ -405,8 +405,10 @@ def release_notes(body, settings, rev, public):
         notes += '<!-- qsvr-source-revision:end -->\n'
     require(not re.search(r'launcher', notes, re.IGNORECASE),
             'Release notes contain a private app mention')
-    forbidden = {urllib.parse.urlsplit(public).hostname.lower().rstrip('.'),
-                 '.'.join(('shrubdragon', 'studio'))}
+    # Block the configured distribution host and its parent domain (so sibling
+    # subdomains are covered too) without naming either in this file.
+    distribution = urllib.parse.urlsplit(public).hostname.lower().rstrip('.')
+    forbidden = {distribution, '.'.join(distribution.split('.')[-2:])}
     for url in re.findall(r'(?:[a-z][a-z0-9+.-]*:)?//[^\s<>"\')\]]+', notes, re.IGNORECASE):
         try:
             host = (urllib.parse.urlsplit(url).hostname or '').lower().rstrip('.')
