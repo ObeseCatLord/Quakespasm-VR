@@ -46,4 +46,4 @@ helgrind.log
 
 # Local release settings and Python caches (never distribution inputs).
 Packaging/Release/local*.json
-Packaging/Release/**/__pycache__/
+Packaging/**/__pycache__/
