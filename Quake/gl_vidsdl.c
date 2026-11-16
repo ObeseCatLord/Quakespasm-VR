@@ -1359,11 +1359,13 @@ static void GL_InitInstance (void)
 	{
 		if (!VRXR_CreateVulkanInstance (fpGetInstanceProcAddr, &instance_create_info, &vulkan_instance))
 		{
+			/* Nothing renderer-side exists yet, so a runtime that cannot
+			 * create the instance leaves the desktop path fully available. */
 			GL_OpenXRCreationFailed ();
-			Sys_Error ("OpenXR bootstrap failed to create the Vulkan instance");
+			Con_Warning ("OpenXR could not create the Vulkan instance; continuing with desktop Vulkan.\n");
 		}
 	}
-	else
+	if (!openxr_vulkan_binding)
 	{
 		err = vkCreateInstance (&instance_create_info, NULL, &vulkan_instance);
 		if (err != VK_SUCCESS)

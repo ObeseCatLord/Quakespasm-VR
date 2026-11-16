@@ -1608,7 +1608,14 @@ extern "C" int VRXR_CreateVulkanInstance(PFN_vkGetInstanceProcAddr get_proc,
 	VulkanCreation saved;
 	const bool captured=end_capture(*instance,VK_NULL_HANDLE,saved);
 	if(!vulkan_result("xrCreateVulkanInstanceKHR",xrResult,result) || !*instance) return 0;
-	if(!captured) { say("OpenXR: runtime did not forward Vulkan instance creation through the supplied callback"); return 0; }
+	if(!captured) {
+		/* Bridging runtimes (Proton's wineopenxr) create the instance with
+		 * their own Vulkan entry points; a native callback cannot reach the
+		 * game's. XR_KHR_vulkan_enable2 still requires the instance to carry
+		 * everything requested, so the request is the record. */
+		say("OpenXR: runtime created the Vulkan instance directly; recording the requested parameters");
+		saved=instance_creation(info); saved.instance=*instance;
+	}
 	const XrVersion createdVersion=XR_MAKE_VERSION(VK_API_VERSION_MAJOR(saved.apiVersion),VK_API_VERSION_MINOR(saved.apiVersion),0);
 	if(VK_API_VERSION_VARIANT(saved.apiVersion) || createdVersion<xrVersion) {
 		// The renderer prepared core entry points/features for the requested
@@ -1641,7 +1648,12 @@ extern "C" int VRXR_CreateVulkanDevice(const VkDeviceCreateInfo *info, VkDevice 
 	VulkanCreation saved;
 	const bool captured=end_capture(VK_NULL_HANDLE,*device,saved);
 	if(!vulkan_result("xrCreateVulkanDeviceKHR",xrResult,result) || !*device) return 0;
-	if(!captured || saved.physicalDevice!=g.vk.physicalDevice) {
+	if(!captured) {
+		/* As for the instance: a bridging runtime creates the device itself
+		 * on the GPU it selected, with at least the requested features. */
+		say("OpenXR: runtime created the Vulkan device directly; recording the requested parameters");
+		saved=device_creation(info); saved.physicalDevice=g.vk.physicalDevice; saved.device=*device;
+	} else if(saved.physicalDevice!=g.vk.physicalDevice) {
 		say("OpenXR: runtime did not forward the selected Vulkan device creation through the supplied callback"); return 0;
 	}
 	g_creation.device=*device; g_creation.physicalDevice=saved.physicalDevice;
