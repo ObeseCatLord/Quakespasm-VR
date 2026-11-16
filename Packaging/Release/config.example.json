@@ -9,7 +9,8 @@
   },
   "straight": {
     "directory": "/path/to/quakespasm_straight",
-    "runtime_base": "~/.local/share/quakespasmvr/2.0"
+    "runtime_base": "~/.local/share/quakespasmvr/2.0",
+    "preserve_prefixes": []
   },
   "r2": {
     "remote": "r2:bucket/latest",

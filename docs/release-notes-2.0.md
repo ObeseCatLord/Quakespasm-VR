@@ -3,7 +3,7 @@
 Quakespasm VR has moved from its Quakespasm/OpenVR base to **vkQuake**, adding
 OpenXR VR while retaining Vulkan desktop play. vkQuake history is retained so
 upstream updates can be merged. `main` is the maintained engine, `2.0` remains
-the updater channel/branch, and `legacy1.0` preserves the previous engine.
+a maintained branch, and `legacy1.0` preserves the previous engine.
 
 ## What changed
 

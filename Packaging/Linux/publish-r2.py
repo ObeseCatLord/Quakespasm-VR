@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage verified 2.0 runtimes and publish them to the single updater channel.
+"""Stage verified 2.0 runtimes and publish them to the single update channel.
 
 The bucket holds exactly one set of files: the `latest` channel. Its manifest is
 the staged build's runtime rows plus the channel's other rows (shared content),
@@ -83,7 +83,7 @@ def public_sha256(url, timeout, attempts=4):
     # client errors are fatal, while server errors (5xx) are transient.
     for attempt in range(attempts):
         try:
-            request = urllib.request.Request(url, headers={'User-Agent': 'QuakeSpasmVR-Updater/2.0'})
+            request = urllib.request.Request(url, headers={'User-Agent': 'QuakeSpasmVR-Publisher/2.0'})
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return stream_sha256(response)
         except (urllib.error.URLError, ConnectionError, TimeoutError, ssl.SSLError,
@@ -182,7 +182,7 @@ def stage(args):
         (root / 'quakespasm-openvr').chmod(0o755)
         for source in sorted((package / 'lib').rglob('*')):
             if source.is_file():
-                # The updater has no symlink action: materialize SONAME aliases.
+                # The update manifest has no symlink action: materialize SONAME aliases.
                 copy(source, root / 'lib' / source.relative_to(package / 'lib'))
         shutil.copytree(package / 'share', root / 'share')
         if 'docs/release-notes-2.0.md' in source_notices:

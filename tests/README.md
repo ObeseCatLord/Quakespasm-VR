@@ -3518,7 +3518,7 @@ connected socket qualification is implied.
 ## Dwell paired-axe server runtime
 
 These Linux headless fixtures use `build-debug/vkquake`, GDB, and the installed
-licensed Quake/Dwell 2.2 assets under `quakespasm_straight`. The launcher makes
+licensed Quake/Dwell 2.2 assets under `quakespasm_straight`. The test script makes
 an isolated temporary game tree and does not load the installed user's config.
 
 ```sh

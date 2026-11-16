@@ -182,7 +182,7 @@ verified package. It does not restart the live server or change its mod. Server
 administration is a separate explicitly requested operation.
 
 R2 staging preserves dependency source-access archives and component notices.
-Publication verifies immutable objects and public bytes before exposing updater
+Publication verifies immutable objects and public bytes before exposing update
 metadata. Keep an existing stage intact for retry: regenerating compressed
 archives can produce different bytes within the same immutable revision.
 
@@ -237,7 +237,7 @@ progress for that response keeps native errors fatal; an injected-progress check
 returned clean JSON. The failed namespace was retained, and a fresh Windows
 attempt built and passed independent source, compiler and artifact verification.
 The matching packages were published to the R2 `2.0` channel and the existing
-GitHub `v2.0.0` release; public objects, updater metadata and release attachment
+GitHub `v2.0.0` release; public objects, update metadata and release attachment
 hashes passed the coordinator's verification.
 
 ## Public download connection recovery
@@ -247,7 +247,7 @@ connection setup and a reset while reading. Keep the existing publication owner,
 immutable objects and hash gating. Retry only a failed public download, up to
 four attempts with 1/2/4-second delays, reopening from byte zero and computing a
 fresh digest. Certificate verification and HTTP failures remain fatal; a
-completed wrong hash is not retried. Both build-object and updater-metadata
+completed wrong hash is not retried. Both build-object and update-metadata
 readbacks use the same small helper. Do not regenerate staged archives or
 rebuild engines for this automation correction.
 

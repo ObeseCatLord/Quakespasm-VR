@@ -40,7 +40,7 @@ not in tracked defaults. Credentials continue to belong to SSH/rclone/gh.
    archives in R2 and retain the existing release tag. Verify public bytes.
 5. Deploy a verified Linux runtime to an immutable per-revision directory and
    update only Straight's engine entry points, backing up executable files only.
-   Preserve launchers, wrappers, mods, configs and saves. Re-running an identical
+   Preserve installed tools, wrappers, mods, configs and saves. Re-running an identical
    deployment should verify it and make no new backup.
 6. Document the runnable commands and required local configuration in `AGENTS.md`
    and a workflow guide. Only branch `2.0` is editable. Foundry builds do not
@@ -71,7 +71,7 @@ system. Review dispositions and verification results will be recorded here.
 | Native recipes use one archive, native Ubuntu 24.04 containers, source/dependency receipts, and package verification | Verified in `build-native.sh`, `build-foundry.sh`, `package.py` |
 | Foundry wrapper creates a unique remote workspace; it never changes the live server | Verified in `build-foundry.sh` |
 | Existing qualified Windows build has fresh source verification, native MSBuild exit status and independent output verification | Verified current cohort receipts; Windows runtime behavior remains untested |
-| Current Straight deployment preserves launcher hashes and backs up only two engine executables | Verified current `straight-deployment.json`; coordinator must also support safe identical resume |
+| Current Straight deployment preserves installed-file hashes and backs up only two engine executables | Verified current `straight-deployment.json`; coordinator must also support safe identical resume |
 | Reusable dependency-cache invalidation is not yet generalized | Unverified; prefer existing clean recipes until a narrowly validated cache is available |
 
 Current lean: file manifests plus existing recipes and explicit actions. Reject a

@@ -1,7 +1,7 @@
 # VR audio focus boundary
 
 The SDL2 and SDL3 event pumps currently mute the engine whenever the desktop
-mirror loses keyboard focus. The Frame launcher runs the game under Gamescope
+mirror loses keyboard focus. On the Frame the game runs under Gamescope
 alongside SteamVR; mirror focus is not OpenXR session focus. This is a verified
 mute path, although it does not establish the cause of every reported dropout.
 

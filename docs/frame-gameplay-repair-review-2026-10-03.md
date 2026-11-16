@@ -3,7 +3,7 @@
 Only `2.0` is changed. The source reference remains main/master `bd923e92`;
 the focused recent-source checkpoint is `main-source-checkpoint-2026-10-03.md`.
 This repair retains vkQuake Vulkan, the tracked pose protocol, the current UI
-panel adapter, and the launcher. No GPU reset or runtime/driver configuration
+panel adapter, and the installed tools. No GPU reset or runtime/driver configuration
 change is part of this work.
 
 ## Astra disposition
@@ -71,6 +71,6 @@ The engine uses `$ORIGIN/../lib`; its loader check succeeds and imported GLIBC
 versions remain at or below 2.39. All 44 existing packaged library files retain
 their hashes. The executable-only backup is `executable-backups/20261004-013238`
 and contains just the preceding `quakespasm-openvr.bin` executable. The wrapper,
-GUI launcher, update helper, launcher settings, mods, saves and configs are
+other installed tools and their settings, mods, saves and configs are
 unchanged. The canonical engine link is switched atomically; no running game is
 stopped and a new launch is required. No new headset session is claimed tested.

@@ -158,4 +158,4 @@ The committed update uses the existing automated release coordinator for clean
 Linux, native ARM64 and Windows production builds, Straight deployment and R2 /
 GitHub publication. Immutable per-revision receipts identify actual source,
 package verification and publication results; the Debug test executable is not
-deployed. The launcher, mod content and live Foundry server remain untouched.
+deployed. Other installed tools, mod content and the live Foundry server remain untouched.
