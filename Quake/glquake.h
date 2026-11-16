@@ -30,6 +30,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "tasks.h"
 
 void		  GL_WaitForDeviceIdle (void);
+qboolean	  GL_OpenXRStartupRequested (void);
 void		  VID_Restart (qboolean set_mode);
 // Prepares the frame. With use_tasks, creates a task for the caller to submit,
 // which runs after the previous frame's end task and before drawing starts.

@@ -925,12 +925,30 @@ static void GL_OpenXRUnlockQueue (void *owner)
 	SDL_UnlockMutex ((SDL_Mutex *)owner);
 }
 
+/* VR starts with -openxr, or by default when an OpenXR runtime is active and
+ * running; -novr always keeps the desktop. Decided once per process. */
+qboolean GL_OpenXRStartupRequested (void)
+{
+	static int requested = -1;
+	if (requested < 0)
+	{
+		if (COM_CheckParm ("-novr"))
+		{
+			if (COM_CheckParm ("-openxr"))
+				Con_Printf ("OpenXR bootstrap skipped: -novr takes precedence over -openxr.\n");
+			requested = 0;
+		}
+		else if (COM_CheckParm ("-openxr"))
+			requested = 1;
+		else
+			requested = VRXR_RuntimeLikelyActive (GL_OpenXRLog) ? 1 : 0;
+	}
+	return requested != 0;
+}
+
 static void GL_OpenXRPrepareVulkan (uint32_t loader_api_version)
 {
-	const qboolean openxr_requested = COM_CheckParm ("-openxr") && !COM_CheckParm ("-novr");
-	if (COM_CheckParm ("-openxr") && COM_CheckParm ("-novr"))
-		Con_Printf ("OpenXR bootstrap skipped: -novr takes precedence over -openxr.\n");
-	if (!openxr_requested)
+	if (!GL_OpenXRStartupRequested ())
 		return;
 
 	uint32_t minimum_version = 0;

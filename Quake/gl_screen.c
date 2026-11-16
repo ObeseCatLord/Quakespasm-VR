@@ -617,8 +617,7 @@ static void SCR_VRScreenDefaults_f (void)
 		Con_Printf ("usage: vr_screen_defaults\n");
 		return;
 	}
-	if (!vulkan_globals.stereo_active &&
-		(!COM_CheckParm ("-openxr") || COM_CheckParm ("-novr")))
+	if (!vulkan_globals.stereo_active && !GL_OpenXRStartupRequested ())
 		return;
 	Cvar_SetQuick (&scr_viewsize, "100");
 	Cvar_SetQuick (&cl_alwaysrun, "1");

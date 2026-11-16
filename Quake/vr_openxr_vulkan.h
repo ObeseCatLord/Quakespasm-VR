@@ -12,6 +12,11 @@ extern "C" {
  * Shutdown on abandoned setup. */
 int VRXR_PrepareVulkan(void (*log_message)(const char *),
                        uint32_t *minimum_version, uint32_t *maximum_version);
+/* Cheap check, without loading OpenXR, for an active runtime that is already
+ * running (SteamVR's server, Monado's service) or that does not launch heavy
+ * software when probed. Lets an ordinary launch start in VR without dragging
+ * SteamVR up for desktop players who merely have it installed. */
+int VRXR_RuntimeLikelyActive(void (*log_message)(const char *));
 /* These hooks preserve enable2 creation provenance. The renderer owns all
  * returned Vulkan handles, including any non-null output on failure. Both
  * wrappers use default/null allocation callbacks; destroy these instance/device

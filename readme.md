@@ -27,6 +27,19 @@ on VR play, mod compatibility, and multiplayer.
 Download your platform's archive from [Releases](https://github.com/ObeseCatLord/Quakespasm-VR/releases)
 Extract it
 
+### Starting in VR
+
+Start your headset's OpenXR runtime first (SteamVR, the Meta Quest/Oculus app,
+Virtual Desktop, WiVRn or Monado), then launch the game: it starts in VR when
+the runtime is running and a headset is connected, and on the desktop
+otherwise. The console shows why if it stays on the desktop.
+
+- `-openxr` always tries VR, even if SteamVR or Monado isn't running yet.
+- `-novr` always starts on the desktop.
+
+SteamVR and Meta Link need SteamVR or the Meta app set as the active OpenXR
+runtime in their settings.
+
 
 ## Co-op Features
 

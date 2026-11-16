@@ -9,7 +9,12 @@
 #endif
 #include <windows.h>
 #include <unknwn.h>
+#include <tlhelp32.h>
+#else
+#include <dirent.h>
+#include <unistd.h>
 #endif
+#include <cstdlib>
 #ifdef USE_SDL3
 #include <SDL3/SDL.h>
 #else
@@ -1843,4 +1848,100 @@ extern "C" int VRXR_VulkanEyeSubmitted(int eye) {
 	vrxr_vulkan_eye_t target;
 	if(!VRXR_GetVulkanEye(eye,&target)) return 0;
 	eye_chain(eye).copiedMask|=1u<<eye; return 1;
+}
+
+/* ---- Runtime presence for ordinary (no -openxr) launches ---------------- */
+static std::string lower_copy(std::string text) {
+	for(char &c:text) c=(char)std::tolower((unsigned char)c);
+	return text;
+}
+#if defined(_WIN32)
+static bool process_running(const wchar_t *exe) {
+	HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
+	if(snapshot==INVALID_HANDLE_VALUE) return false;
+	PROCESSENTRY32W entry; entry.dwSize=sizeof(entry);
+	bool found=false;
+	for(BOOL more=Process32FirstW(snapshot,&entry); more && !found; more=Process32NextW(snapshot,&entry))
+		found=_wcsicmp(entry.szExeFile,exe)==0;
+	CloseHandle(snapshot);
+	return found;
+}
+static std::string active_runtime_path() {
+	const char *env=getenv("XR_RUNTIME_JSON");
+	if(env && *env) return env;
+	char value[MAX_PATH*2]; DWORD size=sizeof(value);
+	if(RegGetValueA(HKEY_LOCAL_MACHINE,"SOFTWARE\\Khronos\\OpenXR\\1","ActiveRuntime",
+		RRF_RT_REG_SZ,nullptr,value,&size)==ERROR_SUCCESS) return value;
+	return std::string();
+}
+#else
+static bool process_running(const char *name) {
+	/* /proc/<pid>/comm holds at most 15 characters of the executable name. */
+	std::string wanted=std::string(name).substr(0,15);
+	DIR *proc=opendir("/proc");
+	if(!proc) return false;
+	bool found=false;
+	for(struct dirent *entry; !found && (entry=readdir(proc));) {
+		if(!std::isdigit((unsigned char)entry->d_name[0])) continue;
+		std::string path=std::string("/proc/")+entry->d_name+"/comm";
+		FILE *file=fopen(path.c_str(),"r");
+		if(!file) continue;
+		char comm[64]={0};
+		if(fgets(comm,sizeof(comm),file)) {
+			comm[strcspn(comm,"\n")]=0;
+			found=wanted==comm;
+		}
+		fclose(file);
+	}
+	closedir(proc);
+	return found;
+}
+static std::string resolved(const std::string &path) {
+	char *real=realpath(path.c_str(),nullptr);
+	if(!real) return std::string();
+	std::string out=real; free(real); return out;
+}
+static std::string active_runtime_path() {
+	const char *env=getenv("XR_RUNTIME_JSON");
+	if(env && *env) return env;
+	std::vector<std::string> candidates;
+	const char *config=getenv("XDG_CONFIG_HOME");
+	const char *home=getenv("HOME");
+	if(config && *config) candidates.push_back(std::string(config)+"/openxr/1/active_runtime.json");
+	else if(home && *home) candidates.push_back(std::string(home)+"/.config/openxr/1/active_runtime.json");
+	candidates.push_back("/etc/xdg/openxr/1/active_runtime.json");
+	candidates.push_back("/etc/openxr/1/active_runtime.json");
+	for(const std::string &candidate:candidates) {
+		std::string real=resolved(candidate);
+		if(!real.empty()) return lower_copy(candidate).find("steam")!=std::string::npos ? candidate : real;
+	}
+	return std::string();
+}
+#endif
+extern "C" int VRXR_RuntimeLikelyActive(void (*log_message)(const char *)) {
+	auto note=[&](const std::string &text){ if(log_message) log_message(text.c_str()); };
+	const std::string runtime=active_runtime_path();
+	if(runtime.empty()) { note("OpenXR: no active runtime is installed; starting on the desktop."); return 0; }
+	const std::string key=lower_copy(runtime);
+	if(key.find("steamvr")!=std::string::npos || key.find("steamxr")!=std::string::npos) {
+#if defined(_WIN32)
+		const bool running=process_running(L"vrserver.exe");
+#else
+		const bool running=process_running("vrserver");
+#endif
+		if(!running) note("OpenXR: SteamVR is not running; starting on the desktop (start SteamVR first, or use -openxr).");
+		return running ? 1 : 0;
+	}
+#if !defined(_WIN32)
+	if(key.find("monado")!=std::string::npos || key.find("envision")!=std::string::npos) {
+		const char *dir=getenv("XDG_RUNTIME_DIR");
+		const std::string socket=std::string(dir && *dir ? dir : "/tmp")+"/monado_comp_ipc";
+		const bool running=access(socket.c_str(),F_OK)==0;
+		if(!running) note("OpenXR: Monado is not running; starting on the desktop (start it first, or use -openxr).");
+		return running ? 1 : 0;
+	}
+#endif
+	/* Other runtimes (Meta, Virtual Desktop, WiVRn, ...) report a missing
+	 * headset quickly, and the probe then falls back to the desktop. */
+	return 1;
 }
