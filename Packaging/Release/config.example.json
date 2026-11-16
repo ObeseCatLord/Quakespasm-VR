@@ -12,8 +12,8 @@
     "runtime_base": "~/.local/share/quakespasmvr/2.0"
   },
   "r2": {
-    "remote": "r2:quack/2.0",
-    "public": "https://private-distribution.example.invalid/2.0"
+    "remote": "r2:bucket/latest",
+    "public": "https://private-distribution.example.invalid/latest"
   },
   "github": {
     "repository": "ObeseCatLord/Quakespasm-VR",

@@ -4,8 +4,8 @@
 
 This checkout is the vkQuake-based engine. Work directly on `main`; it contains
 all migrated `2.0` work. Keep `legacy1.0` unchanged and never reset or force-push
-published branches without explicit user authorization. The existing `2.0`
-download channel is independent of the source branch and remains unchanged.
+published branches without explicit user authorization. The single `latest`
+download channel is independent of the source branch (see the release workflow).
 Keep inherited vkQuake systems and reuse upstream code through narrow adapters
 where possible. Read-only sibling checkouts can supply behavioral references.
 
@@ -74,8 +74,11 @@ references in local application data, separate from disposable outputs.
   credentials remain with SSH, rclone and gh. Never commit credentials or export
   Codex session telemetry. Avoid shell interpolation of untrusted paths.
 - Stage and verify complete runtime libraries and component/source notices.
-  Publish R2 immutable build objects before activating updater metadata. The
-  updater channel is `2.0`; do not modify another channel.
+  Publish R2 immutable build objects before activating updater metadata. R2
+  holds one set of files: the `latest` channel. Its manifest is the build's rows
+  plus the channel's other rows, which publish-r2.py carries forward (or takes
+  from a private `--extras` file); it then deletes every object the new release
+  does not reference, including the previous build.
 - GitHub attachments are the three runtime packages and `SHA256SUMS`. Keep
   dependency source-access archives on R2, not as GitHub release attachments.
   Omit top-level READMEs from public runtime archives, retain required license

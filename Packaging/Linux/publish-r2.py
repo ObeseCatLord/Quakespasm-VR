@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Stage verified 2.0 runtimes and publish an isolated updater channel."""
+"""Stage verified 2.0 runtimes and publish them to the single updater channel.
+
+The bucket holds exactly one set of files: the `latest` channel. Its manifest is
+the staged build's runtime rows plus the channel's other rows (shared content),
+carried forward from the live manifest or replaced with --extras. After the new
+metadata is live, every object the new release does not reference is deleted,
+including the previous build."""
 import argparse
 import hashlib
 import http.client
@@ -10,6 +16,7 @@ import shutil
 import ssl
 import subprocess
 import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -87,6 +94,59 @@ def public_sha256(url, timeout, attempts=4):
                 raise
             print('Public download interrupted; retry %d/%d' % (attempt + 2, attempts), flush=True)
             time.sleep(2 ** attempt)
+
+
+RUNTIME_PREFIX = '#qsvr-runtime-v1\t'
+RUNTIMES = ('linux-x64', 'linux-arm64', 'win-x64')
+CHANNEL = 'latest'
+
+
+def parse_manifest(text):
+    rows = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        tagged = line.startswith(RUNTIME_PREFIX)
+        if tagged:
+            line = line[len(RUNTIME_PREFIX):]
+        elif line.startswith('#'):
+            continue
+        parts = line.split('\t')
+        require(3 <= len(parts) <= 5, 'Malformed manifest row: ' + line)
+        runtimes = parts[4].split(',') if len(parts) == 5 else []
+        require(re.fullmatch('[0-9a-f]{64}', parts[0]) and parts[1] in ('file', 'extract'), 'Malformed manifest row: ' + line)
+        require(not tagged or runtimes, 'Tagged manifest row without runtimes: ' + line)
+        require(not runtimes or tagged, 'Runtime column without the runtime tag would break older clients: ' + line)
+        rows.append({'sha256': parts[0], 'action': parts[1], 'source': parts[2],
+                     'destination': parts[3] if len(parts) > 3 and parts[3] else parts[2], 'runtimes': runtimes})
+    return rows
+
+
+def format_row(row):
+    fields = [row['sha256'], row['action'], row['source'], row['destination']]
+    if row['runtimes']:
+        return RUNTIME_PREFIX + '\t'.join(fields + [','.join(row['runtimes'])]) + '\n'
+    return '\t'.join(fields) + '\n'
+
+
+def check_destinations(extras, build_rows):
+    # Two rows writing one path would leave clients permanently "out of date"
+    # or install the wrong platform's file, so refuse such a manifest. Untagged
+    # rows apply to every platform and must not collide with any build row.
+    # ARM64 clients skip untagged executables, so there an ARM-tagged extra row
+    # may stand in for an untagged extra with the same destination.
+    untagged = [row for row in extras if not row['runtimes']]
+    for runtime in RUNTIMES:
+        seen = {}
+        tagged = [row for row in extras + build_rows if runtime in row['runtimes'] or 'all' in row['runtimes']]
+        for row in untagged + tagged:
+            key = row['destination'].lower()
+            # seen maps a destination to (source, is an untagged extra).
+            replaces = (runtime == 'linux-arm64' and key in seen and seen[key][1] and
+                        row['runtimes'] and any(row is extra for extra in extras))
+            require(key not in seen or replaces, 'Two manifest rows install %s for %s: %s and %s' %
+                    (row['destination'], runtime, seen.get(key, ('',))[0], row['source']))
+            seen[key] = (row['source'], not row['runtimes'])
 
 
 def copy(source, destination):
@@ -194,7 +254,8 @@ def publish(args):
     revision = release['revision']
     remote_revision = subprocess.check_output(['git', 'ls-remote', 'origin', 'refs/heads/main'], text=True).split()[0]
     require(remote_revision == revision, 'Publishing requires source revision on origin/main')
-    require(args.remote.rstrip('/').endswith('/2.0'), 'Publisher only writes the isolated 2.0 channel')
+    require(args.remote.rstrip('/').endswith('/' + CHANNEL) and args.public.rstrip('/').endswith('/' + CHANNEL),
+            'Publisher only writes the single %s channel' % CHANNEL)
     actual = scan(out)
     actual.pop('release.json', None)
     require(actual == {name: {'file': digest} for name, digest in release['files'].items()}, 'Staged inventory differs from release')
@@ -202,6 +263,25 @@ def publish(args):
         print(json.dumps({'status': 'verified', 'revision': revision}))
         return
     prefix = 'builds/' + revision
+    # The channel's other rows (shared content), never a build.
+    if args.extras:
+        extras = parse_manifest(args.extras.read_text())
+    else:
+        live = subprocess.run(['rclone', 'cat', args.remote.rstrip('/') + '/manifest.tsv'], capture_output=True, text=True)
+        extras = parse_manifest(live.stdout) if live.returncode == 0 else []
+    extras = [row for row in extras if not row['source'].startswith('builds/')]
+    if args.extras_root:
+        root = args.extras_root.resolve()
+        wanted = {row['source']: row['sha256'] for row in extras}
+        for path in root.rglob('*'):
+            if path.is_file():
+                name = path.relative_to(root).as_posix()
+                require(wanted.get(name) == sha(path), 'Extra file not in --extras with this hash: ' + name)
+    build_rows = parse_manifest((out / 'manifest.tsv').read_text())
+    require(all(row['source'].startswith(prefix + '/') for row in build_rows), 'Staged manifest row outside the build')
+    check_destinations(extras, build_rows)
+    manifest_text = ('# sha256\taction\tsource_path\tdestination_path\n' +
+                     ''.join(format_row(row) for row in extras + build_rows))
     bucket, channel = args.remote.rstrip('/').rsplit('/', 1)
     remote_files = json.loads(subprocess.check_output(['rclone', 'lsjson', bucket, '--recursive', '--files-only',
         '--include', channel + '/' + prefix + '/**'], text=True))
@@ -224,12 +304,31 @@ def publish(args):
         url = args.public.rstrip('/') + '/' + name + '?sha256=' + digest
         actual = public_sha256(url, timeout=120)
         require(actual == digest, 'Public object mismatch: ' + name)
-    for name in ['release.json', 'manifest.tsv']:
-        subprocess.run(['rclone', 'copyto', str(out / name), args.remote.rstrip('/') + '/' + name,
-                        '--s3-no-check-bucket'], check=True)
-        actual = public_sha256(args.public.rstrip('/') + '/' + name + '?revision=' + revision, timeout=30)
-        require(actual == sha(out / name), 'Public metadata mismatch')
-    print(json.dumps({'status': 'published', 'revision': revision, 'channel': args.public}))
+    if args.extras_root:
+        subprocess.run(['rclone', 'copy', str(args.extras_root), args.remote.rstrip('/'),
+                        '--s3-no-check-bucket', '--immutable'], check=True)
+    for source, digest in sorted({(row['source'], row['sha256']) for row in extras}):
+        actual = public_sha256(args.public.rstrip('/') + '/' + source + '?sha256=' + digest, timeout=120)
+        require(actual == digest, 'Public extra object mismatch: ' + source)
+    with tempfile.TemporaryDirectory() as temporary:
+        merged = Path(temporary) / 'manifest.tsv'
+        merged.write_text(manifest_text)
+        for name, path in [('release.json', out / 'release.json'), ('manifest.tsv', merged)]:
+            subprocess.run(['rclone', 'copyto', str(path), args.remote.rstrip('/') + '/' + name,
+                            '--s3-no-check-bucket'], check=True)
+            actual = public_sha256(args.public.rstrip('/') + '/' + name + '?revision=' + revision, timeout=30)
+            require(actual == sha(path), 'Public metadata mismatch')
+        # One set only: delete everything the live release does not reference.
+        keep = {'release.json', 'manifest.tsv', *release['files'], *(row['source'] for row in extras)}
+        listing = json.loads(subprocess.check_output(['rclone', 'lsjson', args.remote.rstrip('/'), '--recursive',
+                                                      '--files-only'], text=True))
+        stale = sorted(entry['Path'] for entry in listing if entry['Path'] not in keep)
+        if stale:
+            (Path(temporary) / 'stale').write_text(''.join(path + '\n' for path in stale))
+            subprocess.run(['rclone', 'delete', args.remote.rstrip('/'), '--files-from-raw',
+                            str(Path(temporary) / 'stale')], check=True)
+    print(json.dumps({'status': 'published', 'revision': revision, 'channel': args.public,
+                      'extras': len(extras), 'deleted': len(stale)}))
 
 
 parser = argparse.ArgumentParser()
@@ -242,8 +341,11 @@ s.add_argument('--windows', type=Path)
 s.add_argument('--windows-receipt', type=Path)
 p = sub.add_parser('publish')
 p.add_argument('--stage', required=True, type=Path)
-p.add_argument('--remote', default='r2:quack/2.0')
-p.add_argument('--public', default='https://quack.shrubdragon.studio/2.0')
+# Endpoints come from the private release configuration, never from this file.
+p.add_argument('--remote', required=True, help='rclone path of the channel, ending in /latest')
+p.add_argument('--public', required=True, help='public HTTPS URL of the same channel')
+p.add_argument('--extras', type=Path, help='non-build manifest rows (default: keep the live ones)')
+p.add_argument('--extras-root', type=Path, help='new extra files to upload, laid out at their source paths')
 p.add_argument('--check', action='store_true')
 args = parser.parse_args()
 stage(args) if args.command == 'stage' else publish(args)

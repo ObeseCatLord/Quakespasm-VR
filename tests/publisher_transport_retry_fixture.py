@@ -29,7 +29,10 @@ def load_helpers():
             aliases = [alias for alias in node.names if alias.name in imports]
             if aliases:
                 nodes.append(ast.copy_location(ast.Import(names=aliases), node))
-        elif isinstance(node, ast.FunctionDef) and node.name in {'public_sha256', 'require'}:
+        elif isinstance(node, ast.FunctionDef) and node.name in {'public_sha256', 'stream_sha256', 'require'}:
+            nodes.append(node)
+        elif isinstance(node, ast.Assign) and any(getattr(target, 'id', '').startswith('STALL_')
+                                                  for target in node.targets):
             nodes.append(node)
     namespace = {}
     module = ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[]))
@@ -46,6 +49,10 @@ class InterruptedResponse(io.RawIOBase):
         self.prefix = prefix
         self.error = error
         self.delivered = 0
+
+    def read1(self, size=-1):
+        # http.client.HTTPResponse offers read1; the publisher streams with it.
+        return self.read(size)
 
     def readable(self):
         return True
@@ -67,8 +74,8 @@ class PublisherTransportRetryTests(unittest.TestCase):
     def setUp(self):
         self.opener = self.enterContext(mock.patch.object(urllib.request, 'urlopen'))
         self.sleep = self.enterContext(mock.patch.object(time, 'sleep'))
-        self.file_digest = self.enterContext(
-            mock.patch.object(hashlib, 'file_digest', wraps=hashlib.file_digest))
+        self.file_digest = self.enterContext(mock.patch.dict(
+            self.namespace, stream_sha256=mock.Mock(wraps=self.namespace['stream_sha256'])))['stream_sha256']
         self.helper = self.namespace['public_sha256']
 
     def assert_requests(self, count, timeout=17):
@@ -86,7 +93,7 @@ class PublisherTransportRetryTests(unittest.TestCase):
         self.assertEqual(self.helper(URL, 17), hashlib.sha256(PAYLOAD).hexdigest())
         self.assert_requests(1)
         self.sleep.assert_not_called()
-        self.file_digest.assert_called_once_with(response, 'sha256')
+        self.file_digest.assert_called_once_with(response)
         self.assertTrue(response.closed)
 
     def test_handshake_eof_then_success(self):
@@ -95,7 +102,7 @@ class PublisherTransportRetryTests(unittest.TestCase):
         self.assertEqual(self.helper(URL, 17), hashlib.sha256(PAYLOAD).hexdigest())
         self.assert_requests(2)
         self.sleep.assert_called_once_with(1)
-        self.file_digest.assert_called_once_with(response, 'sha256')
+        self.file_digest.assert_called_once_with(response)
         self.assertTrue(response.closed)
 
     def test_mid_stream_reset_discards_partial_hash(self):
@@ -109,7 +116,7 @@ class PublisherTransportRetryTests(unittest.TestCase):
         self.assert_requests(2)
         self.sleep.assert_called_once_with(1)
         self.assertEqual(self.file_digest.call_args_list,
-                         [mock.call(interrupted, 'sha256'), mock.call(complete, 'sha256')])
+                         [mock.call(interrupted), mock.call(complete)])
         self.assertTrue(interrupted.closed)
         self.assertTrue(complete.closed)
 
@@ -118,8 +125,11 @@ class PublisherTransportRetryTests(unittest.TestCase):
                   ssl.SSLError('fixture SSL failure'),
                   urllib.error.URLError(ssl.SSLEOFError('fixture wrapped EOF')),
                   http.client.IncompleteRead(b'partial', 20),
-                  http.client.RemoteDisconnected('fixture disconnect')]
+                  http.client.RemoteDisconnected('fixture disconnect'),
+                  urllib.error.HTTPError(URL, 503, 'fixture server error', {}, io.BytesIO())]
         for error in errors:
+            if isinstance(error, urllib.error.HTTPError):
+                self.addCleanup(error.close)
             with self.subTest(error=type(error).__name__):
                 self.opener.reset_mock()
                 self.sleep.reset_mock()
@@ -147,11 +157,11 @@ class PublisherTransportRetryTests(unittest.TestCase):
         self.assert_requests(2)
         self.sleep.assert_called_once_with(1)
 
-    def test_certificates_and_http_errors_are_fatal(self):
+    def test_certificates_and_client_errors_are_fatal(self):
         certificate = ssl.SSLCertVerificationError('fixture untrusted certificate')
         errors = [certificate, urllib.error.URLError(certificate)]
         errors.extend(urllib.error.HTTPError(URL, code, 'fixture HTTP error', {}, io.BytesIO())
-                      for code in (403, 404, 503))
+                      for code in (403, 404))
         for error in errors:
             if isinstance(error, urllib.error.HTTPError):
                 self.addCleanup(error.close)
@@ -202,7 +212,7 @@ class PublisherTransportRetryTests(unittest.TestCase):
         self.assertEqual(namespace['actual'], hashlib.sha256(PAYLOAD).hexdigest())
         self.assert_requests(1, timeout=120)
         self.sleep.assert_not_called()
-        self.file_digest.assert_called_once_with(response, 'sha256')
+        self.file_digest.assert_called_once_with(response)
 
 
 if __name__ == '__main__':

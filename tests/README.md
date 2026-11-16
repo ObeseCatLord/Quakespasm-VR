@@ -4267,9 +4267,14 @@ physical headset alignment from synthetic input or command spies.
 
 `python3 -B -W error::ResourceWarning tests/publisher_transport_retry_fixture.py`
 checks public-download retries without network access. It covers fresh hashing
-following partial reads, bounded exhaustion, request settings, and fatal
-certificate/HTTP/hash failures. The existing release coordinator and public
-archive checks remain in `release_automation_test.py` and `release_public_test.py`.
+following partial reads, retried server errors, bounded exhaustion, request
+settings, and fatal certificate/client-error/hash failures. The existing release
+coordinator and public archive checks remain in `release_automation_test.py` and
+`release_public_test.py`.
+
+`python3 -B tests/publisher_manifest_fixture.py` checks how the single channel's
+manifest is merged: untagged rows stay readable by older clients, and no two
+rows may install the same file on one platform.
 
 
 ## Reusable custom mod controls
