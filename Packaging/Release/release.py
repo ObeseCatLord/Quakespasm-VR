@@ -249,7 +249,7 @@ def import_cohort(root, original, rev, platforms, repo=REPO, config_path=None):
     return state
 
 
-def build(root, platforms, config, config_path, repo=REPO):
+def build(root, platforms, config, config_path, repo=REPO, requalify_windows=False):
     entry = verify_source(root, repo)
     state = read(unix.regular(root / 'coordinator.json'))
     # Validate every completed platform before any new build, not just selected ones.
@@ -260,10 +260,16 @@ def build(root, platforms, config, config_path, repo=REPO):
     for name in platforms:
         if name in state['platforms']:
             continue
-        if name == 'windows':
-            require(not (root / 'windows').exists(), 'Windows output conflict')
+        if name == 'windows' and (root / 'windows').exists():
+            # A completed Windows output (for example from an explicit
+            # requalification) is adopted only after the adapter re-verifies all
+            # of its evidence against the configured baseline; partial or
+            # invalid output still stops here.
+            verify_windows_adapter(root, config_path, repo)
+        elif name == 'windows':
             unix.run([sys.executable, repo / 'Packaging/Release/windows/build.py', '--root', root,
-                      '--config', config_path], root / 'windows-build.log', cwd=repo)
+                      '--config', config_path] + (['--requalify'] if requalify_windows else []),
+                     root / 'windows-build.log', cwd=repo)
         else:
             unix.build(root, name, config, root / 'source')
         if name == 'windows':
@@ -509,6 +515,10 @@ def parser():
                              help='committed main revision; import requires explicit engine revision')
         if name in ('build', 'verify', 'import', 'run'):
             sub.add_argument('--platforms', type=platform_list, default=list(PLATFORMS))
+        if name in ('build', 'run'):
+            sub.add_argument('--requalify-windows', action='store_true',
+                             help='qualify changed Windows project settings/dependencies as a new baseline '
+                                  '(see Packaging/Release/windows/README.md)')
         if name == 'import':
             sub.add_argument('--from-root', required=True, type=Path)
         if name == 'run':
@@ -530,7 +540,7 @@ def execute(args, config, config_path, root):
     elif command == 'verify':
         result = verify(root, args.platforms, expected_revision=args.revision, config_path=config_path)
     elif command == 'build':
-        result = build(root, args.platforms, config, config_path)
+        result = build(root, args.platforms, config, config_path, requalify_windows=args.requalify_windows)
     elif command == 'stage':
         result = stage(root, config_path=config_path)
     elif command == 'deploy':
@@ -553,7 +563,7 @@ def execute(args, config, config_path, root):
         else:
             verify_source(root, expected_revision=args.revision)
         if args.build:
-            build(root, args.platforms, config, config_path)
+            build(root, args.platforms, config, config_path, requalify_windows=args.requalify_windows)
         if args.stage:
             stage(root, config_path=config_path)
         if args.deploy:

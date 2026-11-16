@@ -86,16 +86,20 @@ archived dependency tree (`Windows/SDL3`, `Windows/codecs`, `Windows/misc`,
 
 1. Prepare the cohort and build the other platforms as usual
    (`release.py ... run --platforms linux,arm --build`).
-2. Run `windows/build.py --root COHORT --config CONFIG --requalify`. It accepts
+2. Run `release.py ... run --platforms windows --build --requalify-windows`
+   (or `windows/build.py --root COHORT --config CONFIG --requalify`). It accepts
    the current archived dependency tree and project settings as the new
    baseline instead of comparing them with the old one; every other check
    (pinned compiler/SDK hashes, fresh compile inventory, the required feature
-   defines in `FEATURES`, independent guest verification) still runs.
+   defines in `FEATURES`, independent guest verification) still runs. The
+   packaged DLL set and hashes are taken from the archived runtime folders
+   (`RUNTIME_DLL_DIRS`) of the exact source.
 3. Copy the verified `COHORT/windows/release/` directory to a new folder in
    local application data and point `windows.baseline_release` at it. Keep the
    previous baseline.
-4. Continue with `--stage` and publication; later builds are checked against
-   the new baseline.
+4. Continue with `--build --stage` and publication: a completed Windows output
+   is adopted only after the adapter re-verifies it against the new baseline.
+   Later builds are checked against the new baseline.
 
 `FEATURES` lists every compile define a Windows release must have (including
 `USE_CURL`, `USE_ICE` and `USE_OPENSSL`), so a release cannot silently drop a

@@ -30,6 +30,8 @@ FEATURES = ('USE_SDL3', 'USE_CODEC_MP3', 'USE_CODEC_VORBIS', 'USE_CODEC_WAVE',
 LEGACY_FEATURES = FEATURES[:10]
 # Archived build inputs pinned by the qualified baseline.
 DEPENDENCY_PREFIXES = ('Windows/SDL3/', 'Windows/codecs/', 'Windows/misc/', 'Windows/net/')
+# Folders whose DLLs the Visual Studio post-build step copies into the package.
+RUNTIME_DLL_DIRS = ('Windows/codecs/x64/', 'Windows/SDL3/lib64/', 'Windows/net/x64/')
 
 
 def require(ok, message):
@@ -191,6 +193,12 @@ def requalified_dependencies(manifest, baseline, inputs):
         'baseline_revision': previous['revision'], 'baseline_archive_sha256': previous['source_archive_sha256'],
         'requalified_from_baseline': str(baseline), 'dependency_file_count': len(files),
         'dependency_tree_equal_to_accepted_baseline': True, 'files': files}
+    # The packaged Release file set and its pinned hashes: the post-build step
+    # copies every DLL from these archived runtime folders beside the engine.
+    pins = inputs['dependency-baseline-hashes-0f277d1f.json']['Release']
+    for name, row in source.items():
+        if name.startswith(RUNTIME_DLL_DIRS) and name.lower().endswith('.dll') and name.count('/') == 3:
+            pins[PurePosixPath(name).name] = row['sha256']
 
 
 NS = '{http://schemas.microsoft.com/developer/msbuild/2003}'
