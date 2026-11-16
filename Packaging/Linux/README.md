@@ -52,6 +52,8 @@ Bundled libraries come from 22.04's apt archive, so the declared GLIBC ceiling
 is 2.35 (Ubuntu 22.04, Debian 12, Mint 21 and later); staging and verification
 fail on any newer GLIBC symbol version or DT_RELR (glibc 2.36). Actual
 GLIBCXX/CXXABI requirements are recorded; the host libstdc++ must provide them.
+GCC 11 links against 22.04's GCC 12 libstdc++, so the floor can be
+GLIBCXX_3.4.30 (GCC 12 runtime, present on Ubuntu 22.04 and Debian 12).
 22.04 ships Meson 0.61 and the engine needs >= 1.3, so `sources.json`
 `archive_sources` pins the Meson 1.3.2 PyPI sdist by SHA-256. It is run from
 the verified source tree, retained in `sources/dependencies` and its Apache-2.0
