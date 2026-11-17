@@ -63,6 +63,7 @@ static XrResult XRAPI_PTR wrapped_instance(XrInstance, const XrVulkanInstanceCre
  return wrapper_result;
 }
 static XrResult XRAPI_PTR wrapped_device(XrInstance, const XrVulkanDeviceCreateInfoKHR *info, VkDevice *out, VkResult *result) {
+ if(bypass) { *out=reinterpret_cast<VkDevice>(98);*result=VK_SUCCESS;return wrapper_result; }
  VkDeviceCreateInfo merged=*info->vulkanCreateInfo;
  std::vector<const char *> names;
  for(uint32_t i=0;i<merged.enabledExtensionCount;++i) names.push_back(merged.ppEnabledExtensionNames[i]);
@@ -129,6 +130,13 @@ static void spy_checks() {
   assert(g.vk.physicalDevice==physical && g_creation.instance==instance && g_creation.apiVersion==merged_api);
  }
  uncaptured_device_output=unselected_device=false;
+ // A bridging runtime creates the device itself on the selected GPU: record the request.
+ bypass=true;assert(VRXR_CreateVulkanDevice(&device_info,&device));
+ assert(device==reinterpret_cast<VkDevice>(98) && g.vk.device==device && g_creation.device==device && g_creation.physicalDevice==physical);
+ // Density maps count only when the request itself names the extension.
+ assert(g_creation.deviceExtensions.size()==1 && g_creation.queues.size()==2 && g_creation.multiview && !g_creation.densityMap);
+ bypass=false;g.vk.device=VK_NULL_HANDLE;g_creation.device=VK_NULL_HANDLE;g_creation.physicalDevice=VK_NULL_HANDLE;
+ g_creation.deviceExtensions.clear();g_creation.queues.clear();g_creation.multiview=g_creation.densityMap=false;
  wrapper_result=XR_ERROR_RUNTIME_FAILURE;assert(!VRXR_CreateVulkanDevice(&device_info,&device));
  assert(device && !g.vk.device && !g_creation.device && g_creation.deviceExtensions.empty());
  wrapper_result=XR_SUCCESS;assert(VRXR_CreateVulkanDevice(&device_info,&device));
@@ -152,7 +160,12 @@ static void spy_checks() {
  VRXR_ForgetVulkanCreation();assert(!g_creation.instance && !g_creation.device && g_creation.queues.empty());
  setup();wrapper_result=XR_ERROR_RUNTIME_FAILURE;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));
  assert(instance && !g.vk.instance && !g_creation.instance && g_creation.instanceExtensions.empty());
- setup();bypass=true;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));assert(instance && !g_creation.instance);
+ // A bridging runtime (Proton's wineopenxr) creates the instance without the
+ // callback; the request is recorded. Observed-but-ambiguous creation is refused above.
+ setup();bypass=true;assert(VRXR_CreateVulkanInstance(spy_proc,&info,&instance));
+ assert(instance==reinterpret_cast<VkInstance>(99) && g_creation.instance==instance && g.vk.instance==instance);
+ assert(g_creation.apiVersion==application.apiVersion && g_creation.instanceExtensions.size()==1 && !driver_instances);
+ VRXR_ForgetVulkanCreation();
  setup();missing_instance_proc=true;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));assert(!instance && !driver_instances && !g_creation.instance);
  setup();merged_api=VK_API_VERSION_1_0;assert(!VRXR_CreateVulkanInstance(spy_proc,&info,&instance));assert(instance && !g_creation.instance && !g.vk.instance);
  // Direct renderer creation keeps names/API/features without needing XR discovery.

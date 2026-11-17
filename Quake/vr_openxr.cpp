@@ -254,10 +254,15 @@ static bool begin_capture(PFN_vkGetInstanceProcAddr getProc, VkInstance instance
 	g_capture.records.clear(); g_capture.active=true;
 	return true;
 }
-static bool end_capture(VkInstance instance, VkDevice device, VulkanCreation &saved) {
+/* observed: the runtime created at least one object of the requested kind
+ * through the supplied callback. A bridging runtime that bypasses the
+ * callback observes none; any observed but unmatched creation is refused. */
+static bool end_capture(VkInstance instance, VkDevice device, VulkanCreation &saved, bool *observed) {
 	std::lock_guard<std::mutex> lock(g_capture.mutex);
 	g_capture.active=false;
 	bool found=false;
+	*observed=false;
+	for(const VulkanCreation &record:g_capture.records) if(device ? record.device!=VK_NULL_HANDLE : record.instance!=VK_NULL_HANDLE) *observed=true;
 	if(device) {
 		// A runtime can destroy/recreate a device during setup; Vulkan may
 		// recycle its handle. The latest successful matching create is live.
@@ -1605,9 +1610,12 @@ extern "C" int VRXR_CreateVulkanInstance(PFN_vkGetInstanceProcAddr get_proc,
 	VkResult result=VK_ERROR_INITIALIZATION_FAILED;
 	if(!begin_capture(get_proc,VK_NULL_HANDLE)) { say("OpenXR: Vulkan instance creation entry point unavailable"); return 0; }
 	XrResult xrResult=g.xr.CreateVulkanInstance(g.instance,&create,instance,&result);
-	VulkanCreation saved;
-	const bool captured=end_capture(*instance,VK_NULL_HANDLE,saved);
+	VulkanCreation saved; bool observed=false;
+	const bool captured=end_capture(*instance,VK_NULL_HANDLE,saved,&observed);
 	if(!vulkan_result("xrCreateVulkanInstanceKHR",xrResult,result) || !*instance) return 0;
+	if(!captured && observed) {
+		say("OpenXR: runtime's Vulkan instance creation through the supplied callback is ambiguous"); return 0;
+	}
 	if(!captured) {
 		/* Bridging runtimes (Proton's wineopenxr) create the instance with
 		 * their own Vulkan entry points; a native callback cannot reach the
@@ -1645,9 +1653,12 @@ extern "C" int VRXR_CreateVulkanDevice(const VkDeviceCreateInfo *info, VkDevice 
 	VkResult result=VK_ERROR_INITIALIZATION_FAILED;
 	if(!begin_capture(g.vk.getProc,g.vk.instance)) { say("OpenXR: Vulkan device creation entry point unavailable"); return 0; }
 	XrResult xrResult=g.xr.CreateVulkanDevice(g.instance,&create,device,&result);
-	VulkanCreation saved;
-	const bool captured=end_capture(VK_NULL_HANDLE,*device,saved);
+	VulkanCreation saved; bool observed=false;
+	const bool captured=end_capture(VK_NULL_HANDLE,*device,saved,&observed);
 	if(!vulkan_result("xrCreateVulkanDeviceKHR",xrResult,result) || !*device) return 0;
+	if(!captured && observed) {
+		say("OpenXR: runtime did not forward the selected Vulkan device creation through the supplied callback"); return 0;
+	}
 	if(!captured) {
 		/* As for the instance: a bridging runtime creates the device itself
 		 * on the GPU it selected, with at least the requested features. */
