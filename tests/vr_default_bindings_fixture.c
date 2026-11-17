@@ -23,6 +23,39 @@ void Key_SetBinding (int keynum, const char *binding)
 	++fixture_bind_count;
 }
 
+/* A runtime can complete its first XR sample before the startup command
+ * buffer runs default.cfg (unbindall) and config.cfg. Filling must wait for
+ * the end of that chain, and a game change must arm it again. */
+static void startup_order (void)
+{
+	vrxr_frame_t frame;
+	memset (&frame, 0, sizeof (frame));
+	frame.sample_id = 1;
+	memset (keybindings, 0, sizeof (keybindings));
+	vr_default_bindings_phase = VR_DEFAULT_BINDINGS_STARTUP_PENDING;
+	vr_default_bindings_configs_ready = false;
+
+	VR_InputConfigsPending ();
+	VR_InputFillPendingDefaults (&frame);
+	assert (!keybindings[K_VR_RTRIGGER]); /* the chain has not run yet */
+	keybindings[K_VR_LTRIGGER] = "+moveup"; /* config.cfg choice */
+	VR_InputConfigsExecuted_f ();
+	VR_InputFillPendingDefaults (NULL);
+	assert (!keybindings[K_VR_RTRIGGER]); /* still needs an XR sample */
+	VR_InputFillPendingDefaults (&frame);
+	assert (!strcmp (keybindings[K_VR_RTRIGGER], "+attack"));
+	assert (!strcmp (keybindings[K_VR_LTRIGGER], "+moveup"));
+
+	VR_InputConfigsPending (); /* game change */
+	memset (keybindings, 0, sizeof (keybindings)); /* the new chain's unbindall */
+	VR_InputFillPendingDefaults (&frame);
+	assert (!keybindings[K_VR_RTRIGGER]);
+	VR_InputConfigsExecuted_f ();
+	VR_InputFillPendingDefaults (&frame);
+	assert (!strcmp (keybindings[K_VR_RTRIGGER], "+attack"));
+	assert (!strcmp (keybindings[K_VR_LTRIGGER], "+jump"));
+}
+
 int main (void)
 {
 	keybindings[K_VR_RTRIGGER] = "+custom_attack";
@@ -60,6 +93,7 @@ int main (void)
 	assert (!strcmp (keybindings[K_VR_RIGHT_STICK_UP], "+vr_weaponmenu"));
 	assert (!strcmp (keybindings['t'], "vr_turn180"));
 	assert (fixture_bind_count == 8);
+	startup_order ();
 	puts ("VR default bindings: ok");
 	return 0;
 }

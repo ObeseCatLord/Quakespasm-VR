@@ -31,6 +31,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "steam.h"
 #include "vr_weapon_calibration.h"
 #include "vr_weapon_menu.h"
+#include "vr_input.h"
 #include <errno.h>
 #include <stdlib.h>
 
@@ -3651,6 +3652,11 @@ void COM_SwitchGame (const char *paths)
 	Cbuf_AddText ("exec quake.rc\n");
 	Cbuf_AddText ("vid_unlock\n");
 	Cmd_QueuePostConfigAfterGameChange ();
+	if (!isDedicated)
+	{
+		VR_InputConfigsPending ();
+		Cbuf_AddText ("vr_configs_executed\n");
+	}
 }
 
 static qboolean COM_CurrentGameHasStartMap (void)

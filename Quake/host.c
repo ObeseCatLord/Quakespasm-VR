@@ -1572,6 +1572,8 @@ void Host_Init (void)
 		// note: two leading newlines because the command buffer swallows one of them.
 		Cbuf_AddText ("\n\nvid_unlock\n");
 		Cmd_QueuePostConfig ();
+		VR_InputConfigsPending ();
+		Cbuf_AddText ("vr_configs_executed\n");
 	}
 
 	if (cls.state == ca_dedicated)

@@ -4181,6 +4181,11 @@ typedef enum
 } vr_default_bindings_phase_t;
 
 static vr_default_bindings_phase_t vr_default_bindings_phase;
+/* Startup and game changes execute default.cfg (unbindall) and config.cfg
+ * from the command buffer. A runtime can deliver its first XR sample before
+ * that buffer runs, so filling must also wait for the marker queued after
+ * the configuration chain; otherwise unbindall erases the filled defaults. */
+static qboolean vr_default_bindings_configs_ready;
 /* Temporary exclusions over the existing defaults, only while explicit
  * restoration is pending. Startup filling retains its original policy. */
 static unsigned int vr_default_bindings_excluded;
@@ -4229,6 +4234,30 @@ static void VR_InputFinishDefaultBindings (void)
 	VR_InputApplyDefaultBindings (excluded);
 }
 
+void VR_InputConfigsPending (void)
+{
+	vr_default_bindings_configs_ready = false;
+	/* A completed fill is armed again: the new chain may unbind dedicated XR
+	 * controls, and filling still respects every binding the chain sets. */
+	if (vr_default_bindings_phase == VR_DEFAULT_BINDINGS_APPLIED)
+		vr_default_bindings_phase = VR_DEFAULT_BINDINGS_STARTUP_PENDING;
+}
+
+/* The first completed XR frame after the configuration chain fills missing
+ * startup bindings; a later detached defaults request fills once, respecting
+ * intervening changes. */
+static void VR_InputFillPendingDefaults (const vrxr_frame_t *frame)
+{
+	if (vr_default_bindings_phase != VR_DEFAULT_BINDINGS_APPLIED && vr_default_bindings_configs_ready &&
+		frame && frame->sample_id)
+		VR_InputFinishDefaultBindings ();
+}
+
+static void VR_InputConfigsExecuted_f (void)
+{
+	vr_default_bindings_configs_ready = true;
+}
+
 static void VR_InputDefaultBindings_f (void)
 {
 	vr_default_bindings_excluded = 0;
@@ -4245,6 +4274,7 @@ void VR_InputInit (void)
 {
 	vr_default_bindings_phase = VR_DEFAULT_BINDINGS_STARTUP_PENDING;
 	vr_default_bindings_excluded = 0;
+	vr_default_bindings_configs_ready = false;
 	VR_InputFBTReset ();
 	Cvar_RegisterVariable (&vr_lefthanded);
 	Cvar_RegisterVariable (&vr_haptic);
@@ -4270,6 +4300,7 @@ void VR_InputInit (void)
 	Cvar_SetCallback (&vr_fbt_enabled, VR_InputFBTEnabledChanged);
 	Cmd_AddCommand ("vr_turn180", VR_InputTurn180_f);
 	Cmd_AddCommand ("vr_defaultbindings", VR_InputDefaultBindings_f);
+	Cmd_AddCommand ("vr_configs_executed", VR_InputConfigsExecuted_f);
 	Cmd_AddCommand ("vr_fbt_list", VR_InputFBTList_f);
 	Cmd_AddCommand ("vr_fbt_assign", VR_InputFBTAssign_f);
 	Cmd_AddCommand ("vr_fbt_unassign", VR_InputFBTUnassign_f);
@@ -4295,10 +4326,7 @@ void VR_InputCommands (const vrxr_frame_t *frame)
 	vrxr_input_t input_hands[2];
 	vr_input_context_t context;
 	int weapon_cycle_impulse = 0;
-	/* The first completed XR frame fills missing startup bindings; a later
-	 * detached defaults request fills once, respecting intervening changes. */
-	if (vr_default_bindings_phase != VR_DEFAULT_BINDINGS_APPLIED && frame && frame->sample_id)
-		VR_InputFinishDefaultBindings ();
+	VR_InputFillPendingDefaults (frame);
 	/* Reapply the archived preference each input pass: OpenXR teardown resets
 	 * runtime state, while this also lets users enable tracking mid-session. */
 	VRXR_SetTrackerEnabled (vr_fbt_enabled.value != 0.0f);

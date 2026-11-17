@@ -42,6 +42,9 @@ void VR_InputInit (void);
 void VR_InputDefaultBindingChanged (int key);
 void VR_InputDefaultBindingsCleared (void);
 void VR_InputDefaultCommandCleared (const char *command);
+/* Called before queueing a configuration chain; the chain ends with the
+ * vr_configs_executed command, which allows missing XR defaults to fill. */
+void VR_InputConfigsPending (void);
 extern cvar_t vr_fbt_enabled;
 
 typedef enum
