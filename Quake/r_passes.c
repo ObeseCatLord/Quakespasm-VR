@@ -223,7 +223,8 @@ static void R_DescribeFrame (frame_desc_t *desc, main_render_pass_variant_t vari
 	R_BeginGraphicsPass (&builder, FRAME_TARGET_SCENE, SUBPASS_MAIN);
 	if (pending_layout.fragment_density_map)
 		R_AddGraphicsWork (&builder, DRAW_WORLD_DEPTH_REPLAY, SCBX_WORLD_DEPTH_REPLAY, SCBX_WORLD_DEPTH_REPLAY);
-	R_AddGraphicsWork (&builder, DRAW_WORLD, SCBX_WORLD, SCBX_WORLD);
+	// Lightmapped brush entities belong to the SSAO receiver depth, including alpha-tested surfaces.
+	R_AddGraphicsWork (&builder, DRAW_WORLD, SCBX_WORLD, SCBX_BRUSH_ENTITIES);
 	if (R_SSAOEnabled ())
 	{
 		R_EndGraphicsPass (&builder);

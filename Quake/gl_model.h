@@ -173,6 +173,8 @@ typedef struct msurface_s
 	int firstedge; // look up in model->surfedges[], negative numbers
 	int numedges;  // are backwards edges
 
+	vec3_t mins, maxs; // for per-surface frustum culling
+
 	short texturemins[2];
 	short extents[2];
 
@@ -801,7 +803,7 @@ typedef struct qmodel_s
 	int	 nummarksurfaces;
 	int *marksurfaces;
 
-	soa_aabb_t	*soa_leafbounds;
+	soa_aabb_t	*soa_surfbounds;
 	byte		*surfvis;
 	byte *stereo_vis; // map-owned union visibility scratch
 	soa_plane_t *soa_surfplanes;

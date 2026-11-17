@@ -2279,7 +2279,8 @@ void R_CreatePipelineLayouts ()
 
 		ZEROED_STRUCT (VkPushConstantRange, push_constant_range);
 		push_constant_range.offset = 0;
-		push_constant_range.size = 14 * sizeof (uint32_t);
+		// 14 words of view/eye data, padded to vec4, then 4 frustum planes (indirect.comp).
+		push_constant_range.size = 16 * sizeof (uint32_t) + 4 * sizeof (vec4_t);
 		push_constant_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
 		ZEROED_STRUCT (VkPipelineLayoutCreateInfo, pipeline_layout_create_info);

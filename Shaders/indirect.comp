@@ -21,6 +21,9 @@ layout (push_constant) uniform PushConsts
 	float eye1_x;
 	float eye1_y;
 	float eye1_z;
+	// Stereo frames pass the combined frustum of both eyes. vec4 alignment
+	// places it at byte 64; the block ends at the guaranteed 128 bytes.
+	vec4  frustum[4];
 }
 push_constants;
 
@@ -120,6 +123,19 @@ void main ()
 		const float dp = dot (surf_normal, vieworg);
 		if ((backface && dp > dist) || (!backface && dp < dist))
 			return;
+	}
+
+	// World surfaces can extend outside the leaves that reference them.
+	// Moving submodels have already been culled using their entity bounds.
+	if (submodel == 0u)
+	{
+		for (int i = 0; i < 4; ++i)
+		{
+			const vec4 plane = push_constants.frustum[i];
+			const vec3 corner = mix (surfaces[surf].maxs, surfaces[surf].mins, lessThan (plane.xyz, vec3 (0.0)));
+			if (dot (plane.xyz, corner) < plane.w)
+				return;
+		}
 	}
 
 	uint	   tex_idx = surfaces[surf].packed_tex_edgecount & 0x7FFF;
