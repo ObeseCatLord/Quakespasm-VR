@@ -123,7 +123,21 @@ static void reset() {
  instance_calls=device_calls=retirement=swapchain_destroys=queue_lock_depth=queue_locks=queue_unlocks=error_logs=queue_proc_calls=0;
 }
 }
+static void controller_layouts() {
+ // Whole-path matching: vendor profiles share name fragments with Vive/Touch.
+ assert(profile_layout("/interaction_profiles/oculus/touch_controller")==VRXR_PROFILE_TOUCH);
+ assert(profile_layout("/interaction_profiles/valve/index_controller")==VRXR_PROFILE_INDEX);
+ assert(profile_layout("/interaction_profiles/htc/vive_controller")==VRXR_PROFILE_VIVE);
+ assert(profile_layout("/interaction_profiles/valve/frame_controller_valve")==VRXR_PROFILE_FRAME);
+ assert(profile_layout("/interaction_profiles/ml/ml2_controller")==VRXR_PROFILE_VIVE);
+ const char *generic[]={"/interaction_profiles/microsoft/motion_controller","/interaction_profiles/samsung/odyssey_controller",
+  "/interaction_profiles/hp/mixed_reality_controller","/interaction_profiles/htc/vive_cosmos_controller","/interaction_profiles/htc/vive_focus3_controller"};
+ for(const char *path:generic) assert(profile_layout(path)==VRXR_PROFILE_GENERIC);
+ assert(profile_layout("/interaction_profiles/khr/simple_controller")==VRXR_PROFILE_SIMPLE);
+ assert(profile_layout("/interaction_profiles/oculus/touch_controller_unknown")==VRXR_PROFILE_SIMPLE);
+}
 int main() {
+ controller_layouts();
  VkApplicationInfo application={VK_STRUCTURE_TYPE_APPLICATION_INFO};application.apiVersion=VK_API_VERSION_1_1;
  VkInstanceCreateInfo instance_info={VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};instance_info.pApplicationInfo=&application;
  VkInstance instance;

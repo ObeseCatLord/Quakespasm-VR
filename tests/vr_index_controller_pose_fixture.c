@@ -119,7 +119,7 @@ static void check_hand (int hand, int sample)
 	frame.devices[hand+1].angular_velocity[0] = NAN;
 	assert (VR_LocomotionControllerDevice (&frame, hand, &out));
 	assert (out.valid && !out.velocity_valid);
-	for (int profile=VRXR_PROFILE_SIMPLE; profile<=VRXR_PROFILE_FRAME; ++profile)
+	for (int profile=VRXR_PROFILE_SIMPLE; profile<=VRXR_PROFILE_GENERIC; ++profile)
 	{
 		if (profile == VRXR_PROFILE_INDEX) continue;
 		frame.hands[hand].profile = profile;

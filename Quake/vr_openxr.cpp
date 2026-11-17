@@ -468,16 +468,50 @@ static void vector_action(ActionId action, int hand, float out[2], bool *active)
 	if (!ok("xrGetActionStateVector2f", g.xr.VectorState(g.session, &info, &state))) { *active=false; return; }
 	*active=state.isActive == XR_TRUE; out[0]=*active ? state.currentState.x : 0.f; out[1]=*active ? state.currentState.y : 0.f;
 }
+/* Optional controller profiles: each is suggested only when its extension is
+ * enabled. Paths are limited to each extension's first revision. */
+enum { PROFILE_EXT_HP, PROFILE_EXT_ODYSSEY, PROFILE_EXT_COSMOS, PROFILE_EXT_FOCUS3, PROFILE_EXT_ML2, PROFILE_EXT_COUNT };
+static const char *const kProfileExtensions[PROFILE_EXT_COUNT]={
+	XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME, XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME,
+	XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME, XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
+	XR_ML_ML2_CONTROLLER_INTERACTION_EXTENSION_NAME};
+static bool g_profileExtension[PROFILE_EXT_COUNT];
+/* Layout groups drive grip offsets and a few profile-specific controls.
+ * Match whole profile paths: several vendor profiles share name fragments. */
+static int profile_layout(const char *path) {
+	static const struct { const char *path; int layout; } layouts[]={
+		{"/interaction_profiles/valve/index_controller",VRXR_PROFILE_INDEX},
+		{"/interaction_profiles/htc/vive_controller",VRXR_PROFILE_VIVE},
+		{"/interaction_profiles/oculus/touch_controller",VRXR_PROFILE_TOUCH},
+		{"/interaction_profiles/valve/frame_controller_valve",VRXR_PROFILE_FRAME},
+		{"/interaction_profiles/ml/ml2_controller",VRXR_PROFILE_VIVE}, // trackpad-driven like the Vive wand
+		{"/interaction_profiles/microsoft/motion_controller",VRXR_PROFILE_GENERIC},
+		{"/interaction_profiles/samsung/odyssey_controller",VRXR_PROFILE_GENERIC},
+		{"/interaction_profiles/hp/mixed_reality_controller",VRXR_PROFILE_GENERIC},
+		{"/interaction_profiles/htc/vive_cosmos_controller",VRXR_PROFILE_GENERIC},
+		{"/interaction_profiles/htc/vive_focus3_controller",VRXR_PROFILE_GENERIC}};
+	for(size_t i=0;i<sizeof(layouts)/sizeof(layouts[0]);++i) if(!std::strcmp(path,layouts[i].path)) return layouts[i].layout;
+	return VRXR_PROFILE_SIMPLE;
+}
+/* Name the runtime's chosen controller profile per hand, so a report of
+ * unresponsive buttons shows which binding set is in use. */
+static void log_hand_profiles() {
+	static const char *const names[2]={"left","right"};
+	for (int hand=0; hand<kHands; ++hand) {
+		XrInteractionProfileState state={XR_TYPE_INTERACTION_PROFILE_STATE};
+		if (!ok("xrGetCurrentInteractionProfile",g.xr.CurrentProfile(g.session,g.handPath[hand],&state))) continue;
+		uint32_t size=0; char text[XR_MAX_PATH_LENGTH]={0};
+		if (state.interactionProfile==XR_NULL_PATH) std::strcpy(text,"none");
+		else if (!ok("xrPathToString",g.xr.PathToString(g.instance,state.interactionProfile,sizeof(text),&size,text))) continue;
+		char line[XR_MAX_PATH_LENGTH+64]; std::snprintf(line,sizeof(line),"OpenXR: %s controller profile %s",names[hand],text); say(line);
+	}
+}
 static int profile_for_hand(int hand) {
 	XrInteractionProfileState profile = { XR_TYPE_INTERACTION_PROFILE_STATE };
 	if (!ok("xrGetCurrentInteractionProfile", g.xr.CurrentProfile(g.session, g.handPath[hand], &profile)) || profile.interactionProfile == XR_NULL_PATH) return VRXR_PROFILE_SIMPLE;
 	uint32_t size=0; char path[XR_MAX_PATH_LENGTH] = {0};
 	if (!ok("xrPathToString", g.xr.PathToString(g.instance, profile.interactionProfile, sizeof(path), &size, path))) return VRXR_PROFILE_SIMPLE;
-	if (std::strstr(path, "index_controller")) return VRXR_PROFILE_INDEX;
-	if (std::strstr(path, "vive_controller")) return VRXR_PROFILE_VIVE;
-	if (std::strstr(path, "touch_controller")) return VRXR_PROFILE_TOUCH;
-	if (std::strstr(path, "frame_controller_valve")) return VRXR_PROFILE_FRAME;
-	return VRXR_PROFILE_SIMPLE;
+	return profile_layout(path);
 }
 static void input_for_hand(vrxr_input_t *input, int hand) {
 	std::memset(input, 0, sizeof(*input)); input->profile=profile_for_hand(hand);
@@ -725,6 +759,20 @@ static bool create_actions() {
 	suggest("/interaction_profiles/oculus/touch_controller",touch,sizeof(touch)/sizeof(touch[0]));
 	suggest("/interaction_profiles/htc/vive_controller",vive,sizeof(vive)/sizeof(vive[0]));
 	suggest("/interaction_profiles/valve/index_controller",index,sizeof(index)/sizeof(index[0]));
+	/* Windows Mixed Reality (core) and Samsung Odyssey: the trackpad click is
+	 * the primary face button, menu is the secondary/Escape button. */
+	Binding wmr[]={{ACT_GRIP_POSE,"/user/hand/left/input/grip/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/grip/pose"},{ACT_HAPTIC,"/user/hand/left/output/haptic"},{ACT_HAPTIC,"/user/hand/right/output/haptic"},{ACT_TRIGGER,"/user/hand/left/input/trigger/value"},{ACT_TRIGGER,"/user/hand/right/input/trigger/value"},{ACT_GRIP_CLICK,"/user/hand/left/input/squeeze/click"},{ACT_GRIP_CLICK,"/user/hand/right/input/squeeze/click"},{ACT_STICK,"/user/hand/left/input/thumbstick"},{ACT_STICK,"/user/hand/right/input/thumbstick"},{ACT_STICK_CLICK,"/user/hand/left/input/thumbstick/click"},{ACT_STICK_CLICK,"/user/hand/right/input/thumbstick/click"},{ACT_PRIMARY,"/user/hand/left/input/trackpad/click"},{ACT_PRIMARY,"/user/hand/right/input/trackpad/click"},{ACT_MENU,"/user/hand/left/input/menu/click"},{ACT_MENU,"/user/hand/right/input/menu/click"}};
+	Binding hp[]={{ACT_GRIP_POSE,"/user/hand/left/input/grip/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/grip/pose"},{ACT_HAPTIC,"/user/hand/left/output/haptic"},{ACT_HAPTIC,"/user/hand/right/output/haptic"},{ACT_TRIGGER,"/user/hand/left/input/trigger/value"},{ACT_TRIGGER,"/user/hand/right/input/trigger/value"},{ACT_GRIP,"/user/hand/left/input/squeeze/value"},{ACT_GRIP,"/user/hand/right/input/squeeze/value"},{ACT_GRIP_CLICK,"/user/hand/left/input/squeeze/value"},{ACT_GRIP_CLICK,"/user/hand/right/input/squeeze/value"},{ACT_STICK,"/user/hand/left/input/thumbstick"},{ACT_STICK,"/user/hand/right/input/thumbstick"},{ACT_STICK_CLICK,"/user/hand/left/input/thumbstick/click"},{ACT_STICK_CLICK,"/user/hand/right/input/thumbstick/click"},{ACT_PRIMARY,"/user/hand/left/input/x/click"},{ACT_PRIMARY,"/user/hand/right/input/a/click"},{ACT_SECONDARY,"/user/hand/left/input/y/click"},{ACT_SECONDARY,"/user/hand/right/input/b/click"},{ACT_MENU,"/user/hand/left/input/menu/click"},{ACT_MENU,"/user/hand/right/input/menu/click"}};
+	Binding cosmos[]={{ACT_GRIP_POSE,"/user/hand/left/input/grip/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/grip/pose"},{ACT_HAPTIC,"/user/hand/left/output/haptic"},{ACT_HAPTIC,"/user/hand/right/output/haptic"},{ACT_TRIGGER,"/user/hand/left/input/trigger/value"},{ACT_TRIGGER,"/user/hand/right/input/trigger/value"},{ACT_TRIGGER_CLICK,"/user/hand/left/input/trigger/click"},{ACT_TRIGGER_CLICK,"/user/hand/right/input/trigger/click"},{ACT_GRIP_CLICK,"/user/hand/left/input/squeeze/click"},{ACT_GRIP_CLICK,"/user/hand/right/input/squeeze/click"},{ACT_STICK,"/user/hand/left/input/thumbstick"},{ACT_STICK,"/user/hand/right/input/thumbstick"},{ACT_STICK_CLICK,"/user/hand/left/input/thumbstick/click"},{ACT_STICK_CLICK,"/user/hand/right/input/thumbstick/click"},{ACT_STICK_TOUCH,"/user/hand/left/input/thumbstick/touch"},{ACT_STICK_TOUCH,"/user/hand/right/input/thumbstick/touch"},{ACT_PRIMARY,"/user/hand/left/input/x/click"},{ACT_PRIMARY,"/user/hand/right/input/a/click"},{ACT_SECONDARY,"/user/hand/left/input/y/click"},{ACT_SECONDARY,"/user/hand/right/input/b/click"},{ACT_MENU,"/user/hand/left/input/menu/click"}};
+	Binding focus3[]={{ACT_GRIP_POSE,"/user/hand/left/input/grip/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/grip/pose"},{ACT_HAPTIC,"/user/hand/left/output/haptic"},{ACT_HAPTIC,"/user/hand/right/output/haptic"},{ACT_TRIGGER,"/user/hand/left/input/trigger/value"},{ACT_TRIGGER,"/user/hand/right/input/trigger/value"},{ACT_TRIGGER_CLICK,"/user/hand/left/input/trigger/click"},{ACT_TRIGGER_CLICK,"/user/hand/right/input/trigger/click"},{ACT_TRIGGER_TOUCH,"/user/hand/left/input/trigger/touch"},{ACT_TRIGGER_TOUCH,"/user/hand/right/input/trigger/touch"},{ACT_GRIP_CLICK,"/user/hand/left/input/squeeze/click"},{ACT_GRIP_CLICK,"/user/hand/right/input/squeeze/click"},{ACT_STICK,"/user/hand/left/input/thumbstick"},{ACT_STICK,"/user/hand/right/input/thumbstick"},{ACT_STICK_CLICK,"/user/hand/left/input/thumbstick/click"},{ACT_STICK_CLICK,"/user/hand/right/input/thumbstick/click"},{ACT_STICK_TOUCH,"/user/hand/left/input/thumbstick/touch"},{ACT_STICK_TOUCH,"/user/hand/right/input/thumbstick/touch"},{ACT_PRIMARY,"/user/hand/left/input/x/click"},{ACT_PRIMARY,"/user/hand/right/input/a/click"},{ACT_SECONDARY,"/user/hand/left/input/y/click"},{ACT_SECONDARY,"/user/hand/right/input/b/click"},{ACT_MENU,"/user/hand/left/input/menu/click"}};
+	/* Magic Leap 2: one trackpad controller; the bumper acts as the grip button. */
+	Binding ml2[]={{ACT_GRIP_POSE,"/user/hand/left/input/grip/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/grip/pose"},{ACT_HAPTIC,"/user/hand/left/output/haptic"},{ACT_HAPTIC,"/user/hand/right/output/haptic"},{ACT_TRIGGER,"/user/hand/left/input/trigger/value"},{ACT_TRIGGER,"/user/hand/right/input/trigger/value"},{ACT_TRIGGER_CLICK,"/user/hand/left/input/trigger/click"},{ACT_TRIGGER_CLICK,"/user/hand/right/input/trigger/click"},{ACT_PAD,"/user/hand/left/input/trackpad"},{ACT_PAD,"/user/hand/right/input/trackpad"},{ACT_PAD_CLICK,"/user/hand/left/input/trackpad/click"},{ACT_PAD_CLICK,"/user/hand/right/input/trackpad/click"},{ACT_PAD_TOUCH,"/user/hand/left/input/trackpad/touch"},{ACT_PAD_TOUCH,"/user/hand/right/input/trackpad/touch"},{ACT_GRIP_CLICK,"/user/hand/left/input/shoulder/click"},{ACT_GRIP_CLICK,"/user/hand/right/input/shoulder/click"},{ACT_MENU,"/user/hand/left/input/menu/click"},{ACT_MENU,"/user/hand/right/input/menu/click"}};
+	suggest("/interaction_profiles/microsoft/motion_controller",wmr,sizeof(wmr)/sizeof(wmr[0]));
+	if (g_profileExtension[PROFILE_EXT_ODYSSEY]) suggest("/interaction_profiles/samsung/odyssey_controller",wmr,sizeof(wmr)/sizeof(wmr[0]));
+	if (g_profileExtension[PROFILE_EXT_HP]) suggest("/interaction_profiles/hp/mixed_reality_controller",hp,sizeof(hp)/sizeof(hp[0]));
+	if (g_profileExtension[PROFILE_EXT_COSMOS]) suggest("/interaction_profiles/htc/vive_cosmos_controller",cosmos,sizeof(cosmos)/sizeof(cosmos[0]));
+	if (g_profileExtension[PROFILE_EXT_FOCUS3]) suggest("/interaction_profiles/htc/vive_focus3_controller",focus3,sizeof(focus3)/sizeof(focus3[0]));
+	if (g_profileExtension[PROFILE_EXT_ML2]) suggest("/interaction_profiles/ml/ml2_controller",ml2,sizeof(ml2)/sizeof(ml2[0]));
 	if (g.gazeSupported && !create_gaze_actions()) {
 		say("OpenXR: eye tracking unavailable; continuing without gaze input");
 		disable_gaze_actions();
@@ -1102,6 +1150,7 @@ static void poll_events() {
 		if(g.htcxSupported && (event.type==XR_TYPE_EVENT_DATA_VIVE_TRACKER_CONNECTED_HTCX ||
 		    event.type==XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED || event.type==XR_TYPE_EVENT_DATA_EVENTS_LOST))
 			g.trackersDirty=true;
+		if (event.type==XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED && g.session) log_hand_profiles();
 		if (event.type==XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR) {
 			const XrEventDataVisibilityMaskChangedKHR *change=reinterpret_cast<const XrEventDataVisibilityMaskChangedKHR *>(&event);
 			if(change->session==g.session && change->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO && change->viewIndex<kViews)
@@ -1367,6 +1416,10 @@ static bool discover_runtime() {
 	if(g.htcxSupported) enabled.push_back(XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
 	if(g.xdevSupported) enabled.push_back(XR_MNDX_XDEV_SPACE_EXTENSION_NAME);
 	if(g.frameSupported) enabled.push_back("XR_VALVE_frame_controller_interaction");
+	for(int i=0;i<PROFILE_EXT_COUNT;++i) {
+		g_profileExtension[i]=extension(extensions,kProfileExtensions[i]);
+		if(g_profileExtension[i]) enabled.push_back(kProfileExtensions[i]);
+	}
 	if(g.maskSupported) enabled.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
 	if(g.localFloorSupported) enabled.push_back(XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
 	if(g.foveationSupported) {
