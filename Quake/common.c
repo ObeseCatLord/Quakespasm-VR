@@ -3711,6 +3711,14 @@ static void COM_Game_f (void)
 				if (!q_strcasecmp (p, GAMENAME))
 					continue; // don't add id1, its not interesting enough.
 
+				// a typo would otherwise disconnect, drop the current game
+				// and create an empty directory in the user dir
+				if (!COM_GameDirExists (p))
+				{
+					Con_Printf ("No such game directory \"%s\"\n", p);
+					return;
+				}
+
 				if (*paths)
 					q_strlcat (paths, ";", sizeof (paths));
 				q_strlcat (paths, p, sizeof (paths));

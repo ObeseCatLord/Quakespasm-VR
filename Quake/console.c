@@ -852,7 +852,7 @@ static void Con_Dump_f (void)
 	int			l, x;
 	const char *line;
 	FILE	   *f;
-	char		buffer[1024];
+	char	   *buffer;
 	char		relname[MAX_OSPATH];
 	char		name[MAX_OSPATH];
 
@@ -863,6 +863,15 @@ static void Con_Dump_f (void)
 	if (!f)
 	{
 		Con_Printf ("ERROR: couldn't open file %s.\n", relname);
+		return;
+	}
+
+	// a line can be wider than any fixed buffer at high console resolutions
+	buffer = (char *)malloc ((size_t)con_linewidth + 1);
+	if (!buffer)
+	{
+		fclose (f);
+		Con_Printf ("ERROR: couldn't allocate memory for condump.\n");
 		return;
 	}
 
@@ -896,6 +905,7 @@ static void Con_Dump_f (void)
 		fprintf (f, "%s\n", buffer);
 	}
 
+	free (buffer);
 	fclose (f);
 	Con_SafePrintf ("Dumped console text to ");
 	Con_LinkPrintf (name, "%s", relname);
