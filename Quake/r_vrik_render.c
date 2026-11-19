@@ -4,6 +4,7 @@
 #include "custom_avatar.h"
 #include "r_vrik.h"
 #include "r_vrik_render.h"
+#include "r_player_rig.h"
 #include "vr_input.h"
 #include "mem.h"
 
@@ -20,6 +21,8 @@ extern VkAccelerationStructureKHR bmodel_tlas;
 #define R_VRIK_RENDER_FRAME_CPU_BUDGET (8u * 1024u * 1024u)
 
 cvar_t r_avatar_humanoid = {"r_avatar_humanoid", "0", CVAR_ARCHIVE};
+/* Developer test aid: show code-built body rigs on untracked players. */
+cvar_t r_player_rig_untracked = {"r_player_rig_untracked", "0", CVAR_NONE};
 
 typedef struct r_vrik_candidate_s
 {
@@ -81,6 +84,8 @@ typedef struct r_vrik_staged_avatar_s
 	qboolean humanoid;
 	qboolean humanoid_ik;
 	qboolean implicit_qbj3;
+	/* Tracked player shown with the code-built rig of its own MDL. */
+	qboolean implicit_generated;
 	qboolean valid;
 } r_vrik_staged_avatar_t;
 
@@ -258,13 +263,33 @@ static qboolean R_VRIKRenderQBJ3Death (const entity_t *entity)
 		entity->frame >= 41 && entity->frame <= 102;
 }
 
+/* Stock ordinal of a generated-rig model frame; identity for other models. */
+static int R_VRIKRenderSourceFrame (const entity_t *entity, int frame)
+{
+	return R_PlayerRigCanonicalFrame (entity->model, frame);
+}
+
+/* A generated rig shows the living player; deaths keep the mod's own frames. */
+static qboolean R_VRIKRenderGeneratedLive (const entity_t *entity)
+{
+	int frame;
+	if (!entity || !entity->model || R_PlayerRigLookup (entity->model) < 0)
+		return false;
+	frame = R_VRIKRenderSourceFrame (entity, entity->frame);
+	return !(frame >= 41 && frame <= 102);
+}
+
 qboolean R_VRIKRenderOriginalModelEligible (const entity_t *entity)
 {
 	if (!entity || !entity->model || entity->model->needload ||
 		entity->model->type != mod_alias)
 		return false;
 	if (R_VRIKRenderQBJ3Game ())
-		return R_VRIKRenderQBJ3PlayerFrame (entity);
+		return R_VRIKRenderQBJ3PlayerFrame (entity) ||
+			(R_PlayerRigLookup (entity->model) >= 0 &&
+			 q_strcasecmp (entity->model->name, "progs/player_qbj.mdl"));
+	if (R_PlayerRigLookup (entity->model) >= 0)
+		return true;
 	return !strcmp (entity->model->name, "progs/player.mdl");
 }
 
@@ -670,6 +695,39 @@ static void R_VRIKRenderStageEquipment (r_vrik_staged_avatar_t *selection)
 	selection->equipment = equipment;
 }
 
+static qboolean R_VRIKRenderRigUntracked (void)
+{
+	return developer.value && r_player_rig_untracked.value;
+}
+
+/* Builds (once) and returns the code-defined rig for a live player's model. */
+static int R_VRIKRenderGeneratedAvatar (const entity_t *entity)
+{
+	md5_skeleton_view_t ranger;
+	qmodel_t *source;
+	int id;
+	if (!entity || !entity->model || entity->model->needload || entity->model->type != mod_alias)
+		return -1;
+	/* A model with an MD5 companion (the rerelease Ranger) already animates. */
+	if (entity->model->extradata[PV_MD5])
+		return -1;
+	id = R_PlayerRigLookup (entity->model);
+	if (id < 0 && !R_PlayerRigSeen (entity->model))
+	{
+		source = R_VRIKRenderBuiltinModel (PLAYER_AVATAR_RANGER);
+		/* Building reads the model file and publishes state that the raster
+		 * and BLAS eligibility checks read; join the render task first. */
+		GL_SynchronizeEndRenderingTask ();
+		if (!source || !Mod_GetMD5Skeleton (source, &ranger) || !ranger.from_rerelease)
+			return -1;
+		id = R_PlayerRigEnsure (entity->model, &ranger);
+	}
+	if (id < PLAYER_AVATAR_COUNT || id >= R_VRIK_RENDER_MAX_AVATARS ||
+		!CustomAvatar_Get (id) || CustomAvatar_HasFailed (id) || !R_VRIKRenderGeneratedLive (entity))
+		return -1;
+	return id;
+}
+
 static qboolean R_VRIKRenderStageSelection (r_vrik_frame_entry_t *entry, int id)
 {
 	r_vrik_staged_avatar_t selection = {0};
@@ -679,7 +737,8 @@ static qboolean R_VRIKRenderStageSelection (r_vrik_frame_entry_t *entry, int id)
 	const custom_avatar_t *custom = NULL;
 	vrik_pose_t pose;
 	int selected_id = id;
-	qboolean qbj3_game, implicit_qbj3 = false;
+	qboolean qbj3_game, implicit_qbj3 = false, implicit_generated = false;
+	int generated = -1;
 
 	if (!entry)
 		return false;
@@ -687,26 +746,32 @@ static qboolean R_VRIKRenderStageSelection (r_vrik_frame_entry_t *entry, int id)
 	if (!entity)
 		return false;
 	qbj3_game = R_VRIKRenderQBJ3Game ();
-	if (!R_VRIKRenderOriginalModelEligible (entity))
-		return false;
-	if (qbj3_game && id == PLAYER_AVATAR_RANGER)
+	if (id == PLAYER_AVATAR_RANGER)
 	{
-		/* The receiver leaves unresolved custom descriptors at Ranger. Keep
-		 * QBJ3's native art for those descriptors instead of inferring a pack. */
-		if (!R_VRIKRenderQBJ3LivePlayer (entity) ||
-			cl.avatar_custom_keys[entry->owner_slot][0] || !VR_InputVRIKAllowed () ||
-			!R_VRIKSampleEntityPose (entity, &pose))
+		/* The receiver leaves unresolved custom descriptors at Ranger. Keep the
+		 * mod's native art for those descriptors instead of inferring a body. */
+		if (entry->corpse || cl.avatar_custom_keys[entry->owner_slot][0] || !VR_InputVRIKAllowed () ||
+			(!R_VRIKSampleEntityPose (entity, &pose) && !R_VRIKRenderRigUntracked ()))
 			return false;
-		selected_id = CustomAvatar_IdForKey ("qbj3");
-		if (selected_id < PLAYER_AVATAR_COUNT || selected_id >= R_VRIK_RENDER_MAX_AVATARS)
+		/* An installed QBJ3 package keeps precedence over the built rig. */
+		if (qbj3_game && R_VRIKRenderOriginalModelEligible (entity) &&
+			R_VRIKRenderQBJ3LivePlayer (entity) &&
+			(selected_id = CustomAvatar_IdForKey ("qbj3")) >= PLAYER_AVATAR_COUNT &&
+			selected_id < R_VRIK_RENDER_MAX_AVATARS && (custom = CustomAvatar_Get (selected_id)) &&
+			!CustomAvatar_HasFailed (selected_id) &&
+			custom->profile.equipment_policy == R_AVATAR_EQUIPMENT_RANGER)
+			implicit_qbj3 = true;
+		else if ((generated = R_VRIKRenderGeneratedAvatar (entity)) >= 0)
+		{
+			selected_id = generated;
+			implicit_generated = true;
+		}
+		else
 			return false;
-		custom = CustomAvatar_Get (selected_id);
-		if (!custom || CustomAvatar_HasFailed (selected_id) ||
-			custom->profile.equipment_policy != R_AVATAR_EQUIPMENT_RANGER)
+		if (!R_VRIKRenderOriginalModelEligible (entity))
 			return false;
-		implicit_qbj3 = true;
 	}
-	else if (id == PLAYER_AVATAR_RANGER)
+	else if (!R_VRIKRenderOriginalModelEligible (entity))
 		return false;
 	if (selected_id < 0 || selected_id >= R_VRIK_RENDER_MAX_AVATARS)
 		return false;
@@ -719,6 +784,7 @@ static qboolean R_VRIKRenderStageSelection (r_vrik_frame_entry_t *entry, int id)
 		R_VRIKRenderCustomModel (selected_id)) : NULL;
 	selection.id = selected_id;
 	selection.implicit_qbj3 = implicit_qbj3;
+	selection.implicit_generated = implicit_generated;
 	if (!source || !target || !Mod_GetMD5Skeleton (source, &selection.source_skeleton) ||
 		!selection.source_skeleton.from_rerelease ||
 		!Mod_GetMD5Skeleton (target, &selection.target_skeleton) ||
@@ -1505,6 +1571,7 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	float source_palette[R_VRIK_RENDER_MAX_JOINTS][12];
 	r_vrik_palette_result_t result;
 	qboolean tracked, qbj3_death;
+	int source_frame;
 
 	memset (&candidate->muzzle, 0, sizeof (candidate->muzzle));
 	candidate->tracked_root_yaw = 0.0f;
@@ -1541,17 +1608,27 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 		return false;
 	qbj3_death = R_VRIKRenderQBJ3Game () && R_VRIKRenderQBJ3Death (entity);
 
-	canonical_entity = *entity;
-	canonical_entity.model = selection->source_model;
-	canonical_entity.frame = R_VRIKRenderCanonicalFrame (entity, selection->source_geometry);
-	if (entity->frame < 0 || entity->frame >= selection->source_geometry->numframes ||
-		canonical_entity.lerp.prev_frame < 0 || canonical_entity.lerp.prev_frame >= selection->source_geometry->numframes)
+	if (selection->implicit_generated && !R_VRIKRenderGeneratedLive (entity))
+		return false;
 	{
-		canonical_entity.lerp.prev_frame = canonical_entity.frame;
-		canonical_entity.lerp.frame_change_time = 0;
+		/* Generated rigs of reordered stock layouts read the stock ordinal. */
+		const int frame = R_VRIKRenderSourceFrame (entity, entity->frame);
+		const int prev_frame = R_VRIKRenderSourceFrame (entity, entity->lerp.prev_frame);
+		canonical_entity = *entity;
+		canonical_entity.model = selection->source_model;
+		canonical_entity.frame = frame;
+		canonical_entity.lerp.prev_frame = prev_frame;
+		source_frame = frame;
+		canonical_entity.frame = R_VRIKRenderCanonicalFrame (&canonical_entity, selection->source_geometry);
+		if (frame < 0 || frame >= selection->source_geometry->numframes ||
+			prev_frame < 0 || prev_frame >= selection->source_geometry->numframes)
+		{
+			canonical_entity.lerp.prev_frame = canonical_entity.frame;
+			canonical_entity.lerp.frame_change_time = 0;
+		}
 	}
 	R_SetupAliasFrame (&canonical_entity, (aliashdr_t *)selection->source_geometry, &candidate->lerpdata);
-	if ((entity->frame < 0 || entity->frame >= selection->source_geometry->numframes) &&
+	if ((source_frame < 0 || source_frame >= selection->source_geometry->numframes) &&
 		selection->source_geometry->numframes > 16 && isfinite (cl.time) && cl.time >= 0.0)
 	{
 		/* An out-of-range mod frame uses the stock Ranger run/stand cycle.
@@ -1581,7 +1658,8 @@ static qboolean R_VRIKRenderAlternateCandidate (const entity_t *entity,
 	ranger.joint_count = 0;
 	tracked = !qbj3_death && VR_InputVRIKAllowed () &&
 		R_VRIKSampleEntityPose (entity, &pose);
-	if (selection->implicit_qbj3 && !tracked)
+	if ((selection->implicit_qbj3 ||
+		 (selection->implicit_generated && !R_VRIKRenderRigUntracked ())) && !tracked)
 		return false;
 	if (tracked)
 	{
@@ -1770,7 +1848,15 @@ static qboolean R_VRIKRenderEntryCurrent (r_vrik_frame_entry_t *entry)
 	{
 		if (entry->selection.entity != entity)
 			return false;
-		if (entry->selection.implicit_qbj3)
+		if (entry->selection.implicit_generated)
+		{
+			if (entry->corpse || current_id != PLAYER_AVATAR_RANGER ||
+				cl.avatar_custom_keys[slot][0] ||
+				R_PlayerRigLookup (entity->model) != entry->selection.id ||
+				!R_VRIKRenderGeneratedLive (entity))
+				return false;
+		}
+		else if (entry->selection.implicit_qbj3)
 		{
 			if (entry->corpse || !qbj3_game || current_id != PLAYER_AVATAR_RANGER ||
 				cl.avatar_custom_keys[slot][0] ||

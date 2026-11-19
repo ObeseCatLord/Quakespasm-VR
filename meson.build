@@ -322,6 +322,7 @@ srcs = [
     'Quake/r_vrik.c',
     'Quake/r_avatar.c',
     'Quake/r_vrik_render.c',
+    'Quake/r_player_rig.c',
     'Quake/r_brush.c',
     'Quake/r_part.c',
     'Quake/r_part_fte.c',

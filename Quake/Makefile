@@ -97,6 +97,7 @@ OBJS += custom_avatar.o
 OBJS += r_vrik.o
 OBJS += r_avatar.o
 OBJS += r_vrik_render.o
+OBJS += r_player_rig.o
 LINKER = $(CXX)
 
 vr_openxr.o: vr_openxr.cpp

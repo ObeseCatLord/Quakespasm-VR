@@ -23,7 +23,9 @@
 
 static custom_avatar_t ca_avatars[CUSTOM_AVATAR_MAX_PACKAGES];
 static qboolean ca_failed[CUSTOM_AVATAR_MAX_PACKAGES];
-static int ca_count;
+static int ca_count; /* installed packages, ca_avatars[0..ca_count) */
+static int ca_generated; /* engine-built, ca_avatars[ca_count..) */
+static custom_avatar_data_t ca_generated_data[CUSTOM_AVATAR_MAX_PACKAGES];
 static qboolean ca_initialized;
 
 static const char *const ca_files[CUSTOM_AVATAR_FILE_COUNT] = {"avatar.cfg", "model.md5mesh",
@@ -647,11 +649,15 @@ static void CustomAvatar_List_f(void)
 	for (i = 0; i < ca_count; ++i)
 		Con_Printf("  %-16s %s (%s)\n    %s\n", ca_avatars[i].key, ca_avatars[i].name,
 				   ca_failed[i] ? "rejected this session" : "installed", ca_avatars[i].directory);
+	for (i = ca_count; i < ca_count + ca_generated; ++i)
+		Con_Printf("  %s (VR body rig built from the mod's player model%s)\n", ca_avatars[i].name,
+				   ca_failed[i] ? ", rejected this session" : "");
 	Con_Printf(
 		"%d custom packages. Install player_models/<key>/ beside id1 or in %s; restart to scan.\n",
 		ca_count, COM_GetWriteRoot());
 	Con_Printf(
-		"Avatars require official rerelease player data; QBJ3 also needs its local rig package.\n");
+		"Avatars require official rerelease player data. Mods with their own player model\n"
+		"use a built-in VR body rig for it (vr_player_rigs).\n");
 }
 
 void CustomAvatar_Init(void)
@@ -727,7 +733,7 @@ const custom_avatar_t *CustomAvatar_Get(int id)
 	if (id < PLAYER_AVATAR_COUNT)
 		return NULL;
 	i = id - PLAYER_AVATAR_COUNT;
-	return i < ca_count ? ca_avatars + i : NULL;
+	return i < ca_count + ca_generated ? ca_avatars + i : NULL;
 }
 int CustomAvatar_Resolve(const char *key, const char *digest)
 {
@@ -744,7 +750,7 @@ int CustomAvatar_IdForModelName(const char *name)
 	int i;
 	if (!name)
 		return -1;
-	for (i = 0; i < ca_count; ++i)
+	for (i = 0; i < ca_count + ca_generated; ++i)
 		if (!strcmp(name, ca_avatars[i].model_name))
 			return ca_avatars[i].id;
 	return -1;
@@ -756,7 +762,31 @@ qboolean CustomAvatar_ReadData(int id, custom_avatar_data_t *data)
 	if (!data)
 		return false;
 	memset(data, 0, sizeof(*data));
-	if (!a || ca_failed[id - PLAYER_AVATAR_COUNT] || !CA_ReadPackage(a->directory, data))
+	if (!a)
+		return false;
+	/* Generated data stays readable after a rejection so it can be dumped;
+	 * the model loader checks CustomAvatar_HasFailed itself. */
+	if (id - PLAYER_AVATAR_COUNT >= ca_count)
+	{
+		const custom_avatar_data_t *src = &ca_generated_data[id - PLAYER_AVATAR_COUNT];
+		for (int k = 0; k < CUSTOM_AVATAR_FILE_COUNT; ++k)
+		{
+			if (!src->bytes[k])
+				continue;
+			/* Text parsers read to a terminating NUL, as for package files. */
+			data->bytes[k] = (byte *)malloc(src->sizes[k] + 1);
+			if (!data->bytes[k])
+			{
+				CA_FreeData(data);
+				return false;
+			}
+			memcpy(data->bytes[k], src->bytes[k], src->sizes[k]);
+			data->bytes[k][src->sizes[k]] = 0;
+			data->sizes[k] = src->sizes[k];
+		}
+		return true;
+	}
+	if (ca_failed[id - PLAYER_AVATAR_COUNT] || !CA_ReadPackage(a->directory, data))
 		return false;
 	CA_Hash(data, digest);
 	if (strcmp(digest, a->digest))
@@ -778,4 +808,51 @@ void CustomAvatar_MarkFailed(int id)
 qboolean CustomAvatar_HasFailed(int id)
 {
 	return CustomAvatar_Get(id) && ca_failed[id - PLAYER_AVATAR_COUNT];
+}
+
+int CustomAvatar_RegisterGenerated(const char *key, const char *name, custom_avatar_data_t *data)
+{
+	custom_avatar_t *a;
+	int i;
+	if (!key || !name || !data || isDedicated)
+	{
+		CA_FreeData(data);
+		return -1;
+	}
+	for (i = ca_count; i < ca_count + ca_generated; ++i)
+		if (!strcmp(ca_avatars[i].key, key))
+		{
+			CA_FreeData(data);
+			return ca_avatars[i].id;
+		}
+	if (ca_count + ca_generated >= CUSTOM_AVATAR_MAX_PACKAGES)
+	{
+		CA_FreeData(data);
+		return -1;
+	}
+	i = ca_count + ca_generated;
+	a = &ca_avatars[i];
+	memset(a, 0, sizeof(*a));
+	q_strlcpy(a->key, key, sizeof(a->key));
+	q_strlcpy(a->name, name, sizeof(a->name));
+	for (int b = 0; b < 19; ++b)
+		q_strlcpy(a->bones[b], ca_bone_names[b], sizeof(a->bones[b]));
+	a->profile.display_scale = 1.0f;
+	/* The mesh keeps whatever its reference frame holds; attach nothing. */
+	a->profile.equipment_policy = R_AVATAR_EQUIPMENT_RANGER;
+	CA_Hash(data, a->digest);
+	a->id = PLAYER_AVATAR_COUNT + i;
+	q_snprintf(a->model_name, sizeof(a->model_name), "progs/@custom_avatar_%d.md5mesh", a->id);
+	CA_Profile(a);
+	ca_generated_data[i] = *data;
+	memset(data, 0, sizeof(*data));
+	ca_failed[i] = false;
+	++ca_generated;
+	return a->id;
+}
+
+qboolean CustomAvatar_IsGenerated(int id)
+{
+	const int i = id - PLAYER_AVATAR_COUNT;
+	return i >= ca_count && i < ca_count + ca_generated;
 }

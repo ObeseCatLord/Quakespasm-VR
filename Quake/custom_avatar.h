@@ -46,6 +46,11 @@ int CustomAvatar_IdForModelName (const char *name);
 qboolean CustomAvatar_ReadData (int id, custom_avatar_data_t *data);
 void CustomAvatar_FreeData (custom_avatar_data_t *data);
 void CustomAvatar_MarkFailed (int id);
+/* Registers an engine-built avatar (r_player_rig.c) and takes ownership of
+ * data. Generated avatars are never offered in menus or matched to network
+ * descriptors. Returns the id of the avatar with this key, or -1. */
+int CustomAvatar_RegisterGenerated (const char *key, const char *name, custom_avatar_data_t *data);
+qboolean CustomAvatar_IsGenerated (int id);
 qboolean CustomAvatar_HasFailed (int id);
 
 #endif

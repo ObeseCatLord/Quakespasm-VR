@@ -232,6 +232,9 @@
     <ClCompile Include="..\..\Quake\r_vrik_render.c">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Quake\r_player_rig.c">
+      <Filter>Renderer</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Quake\cfgfile.c">
       <Filter>Main</Filter>
     </ClCompile>

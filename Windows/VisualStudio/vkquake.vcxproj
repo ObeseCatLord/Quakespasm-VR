@@ -297,6 +297,7 @@ if not "$(SteamAudioSdkDir)"=="" copy /Y "$(SteamAudioSdkDir)\lib\windows-x64\ph
     <ClCompile Include="..\..\Quake\r_world.c" />
     <ClCompile Include="..\..\Quake\r_vrik.c" />
     <ClCompile Include="..\..\Quake\r_vrik_render.c" />
+    <ClCompile Include="..\..\Quake\r_player_rig.c" />
     <ClCompile Include="..\..\Quake\sbar.c" />
     <ClCompile Include="..\..\Quake\snd_codec.c" />
     <ClCompile Include="..\..\Quake\snd_dma.c" />

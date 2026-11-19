@@ -27,6 +27,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "r_ssao.h"
 #include "gl_heap.h"
 #include "r_vrik_render.h"
+#include "r_player_rig.h"
 #include <float.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -5494,6 +5495,8 @@ void R_Init (void)
 
 	Cvar_RegisterVariable (&r_fullbright);
 	Cvar_RegisterVariable (&r_avatar_humanoid);
+	Cvar_RegisterVariable (&r_player_rig_untracked);
+	R_PlayerRigInit ();
 	Cvar_RegisterVariable (&r_lightmap);
 	Cvar_RegisterVariable (&r_drawentities);
 	Cvar_RegisterVariable (&r_aliasbatch);

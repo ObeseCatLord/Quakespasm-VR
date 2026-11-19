@@ -5,6 +5,7 @@
 #include "quakedef.h"
 
 extern cvar_t r_avatar_humanoid;
+extern cvar_t r_player_rig_untracked;
 
 /* CPU-only light socket, published with the complete prepared palette. */
 typedef struct r_vrik_prepared_muzzle_s
