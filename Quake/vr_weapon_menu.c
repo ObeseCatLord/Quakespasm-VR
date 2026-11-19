@@ -20,8 +20,8 @@ cvar_t vr_weaponmenu_player_teleport = {"vr_weaponmenu_player_teleport", "1", CV
 
 #define VR_WEAPON_MENU_MAX_ENTRIES VR_WEAPON_CATALOG_MAX_OBSERVATIONS
 #define VR_WEAPON_MENU_PLAYSPACE_MESH_SCALE 0.28f
-#define VR_WEAPON_MENU_PLAYSPACE_ACTION_GLYPH (8.0f * 0.30f * 0.60f)
-#define VR_WEAPON_MENU_PLAYSPACE_ACTION_OUTLINE 0.28f
+#define VR_WEAPON_MENU_PLAYSPACE_ACTION_GLYPH (8.0f * 0.30f * 0.40f)
+#define VR_WEAPON_MENU_PLAYSPACE_ACTION_OUTLINE 0.2f
 
 typedef struct {
 	const vr_weapon_menu_entry_t *entry;
@@ -4058,34 +4058,35 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 		float info_width;
 		float info_x;
 
+		/* Playspace: the hovered name sits large in the middle of the wheel,
+		 * where the eye already is, with ammo under it. */
+		const float info_scale = playspace_layout ? scale * 1.75f : scale;
 		if (playspace_layout)
 		{
 			VR_WeaponMenu_FitActionLabel (playspace_info, sizeof (playspace_info),
-				info, q_max (0.0f, glwidth - 8.0f * scale), scale);
+				info, q_max (0.0f, glwidth - 8.0f * scale), info_scale);
 			info = playspace_info;
 		}
-		info_width = strlen (info) * CHARACTER_SIZE * scale;
+		info_width = strlen (info) * CHARACTER_SIZE * info_scale;
 		info_x = playspace_layout ? q_max (0.0f,
 			q_min (glwidth * 0.5f - info_width * 0.5f, glwidth - info_width)) :
 			glwidth * 0.5f - 56.0f * scale;
-		info_y = playspace_layout ? q_max (0.0f, q_min (glheight * 0.5f +
-			q_max (outer_radius, 28.0f * scale) + 8.0f * scale,
-			q_max (0.0f, glheight - 32.0f * scale))) :
+		info_y = playspace_layout ? glheight * 0.5f - CHARACTER_SIZE * info_scale :
 			glheight * 0.5f - 12.0f * scale;
 
-		Draw_String_Scaled (cbx, info_x, info_y, info, scale);
+		Draw_String_Scaled (cbx, info_x, info_y, info, info_scale);
 		if (selected_action < 0 && selected >= 0 && visible[selected].ammo >= 0)
 		{
 			q_snprintf (ammo_text, sizeof (ammo_text), "%d / %d",
 				visible[selected].ammo, visible[selected].ammo_max);
 			Draw_String_Scaled (cbx, glwidth * 0.5f - strlen (ammo_text) * 4.0f * scale,
-				playspace_layout ? info_y + 10.0f * scale :
+				playspace_layout ? info_y + (CHARACTER_SIZE + 3.0f) * info_scale :
 				glheight * 0.5f + 2.0f * scale, ammo_text, scale);
 		}
 		Draw_String_Scaled (cbx, glwidth * 0.5f - 64.0f * scale,
-			playspace_layout ? info_y +
-				((selected_action < 0 && selected >= 0 && visible[selected].ammo >= 0) ?
-					22.0f : 12.0f) * scale :
+			playspace_layout ? q_max (0.0f, q_min (glheight * 0.5f +
+				q_max (outer_radius, 28.0f * scale) + 8.0f * scale,
+				q_max (0.0f, glheight - 32.0f * scale))) :
 			glheight * 0.5f + outer_radius + 10.0f * scale,
 			"RELEASE TO SELECT", scale);
 	}

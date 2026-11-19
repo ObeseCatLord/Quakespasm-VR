@@ -2102,7 +2102,30 @@ static void SCR_VRTextPopupPrepare (void)
 	AngleVectors (head_angles, forward, right, up);
 	VectorScale (up, -1.0f, down);
 	VectorCopy (forward, normal);
-	VectorMA (r_refdef.vieworg, 48.0f, normal, center);
+	{
+		/* The popup is an overlay: anything nearer than its stereo depth would
+		 * be drawn behind it while appearing in front. Rest it just in front of
+		 * the first surface along the view, at most about 2 m, and size it with
+		 * distance so it reads comfortably smaller than a head-locked sign. */
+		const float units_per_metre = V_VRUnitsPerMetre ();
+		const float upm = isfinite (units_per_metre) && units_per_metre > 0.0f ? units_per_metre : 32.0f;
+		const float far_distance = 2.0f * upm, near_distance = 0.6f * upm;
+		vec3_t probe_end, impact;
+		float distance = far_distance;
+		VectorMA (r_refdef.vieworg, far_distance, normal, probe_end);
+		if (cl.worldmodel)
+		{
+			TraceLine (r_refdef.vieworg, probe_end, impact);
+			vec3_t delta;
+			VectorSubtract (impact, r_refdef.vieworg, delta);
+			distance = VectorLength (delta) - 0.1f * upm;
+		}
+		if (!isfinite (distance))
+			distance = far_distance;
+		distance = CLAMP (near_distance, distance, far_distance);
+		scale *= 0.85f * distance / 48.0f;
+		VectorMA (r_refdef.vieworg, distance, normal, center);
+	}
 	for (int i = 0; i < 3; ++i)
 		if (!isfinite (center[i]) || !isfinite (right[i]) || !isfinite (down[i]) || !isfinite (normal[i]))
 			return;
