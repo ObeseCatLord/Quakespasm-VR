@@ -37,6 +37,9 @@ typedef struct
 	/* Classic muzzle derived from a geometry family's barrel tip and the
 	 * slot's current grip; refreshed whenever that grip changes. */
 	qboolean muzzle_from_family;
+	/* Grip or scale authored by vr_weapons.txt (or a vradjustweapon save);
+	 * families and stock-grip borrowing never replace it. */
+	qboolean held_from_file;
 	qboolean has_enhanced_muzzle_offset;
 	vec3_t enhanced_muzzle_offset;
 	qboolean has_enhanced_held_offset;
@@ -2770,6 +2773,8 @@ static qboolean VR_WeaponCalibrationApplySchemaMode(
 			calibration->has_muzzle_offset = true;
 			calibration->muzzle_seeded_from_held = true;
 		}
+		if (!preset_mode && VR_CalibrationEntryHasHeldFields(entry))
+			calibration->held_from_file = true;
 		if (entry->has_held_offset)
 		{
 			Cvar_SetValueQuick(&VR_WeaponOffsetCvar(slot, VR_WOFS_X),
@@ -3196,7 +3201,9 @@ qboolean VR_WeaponFamilySignature(const byte *data, size_t length,
 	{
 		scale[axis] = VR_FamilyReadFloat(data + 8 + 4 * axis);
 		origin[axis] = VR_FamilyReadFloat(data + 20 + 4 * axis);
-		if (!isfinite(scale[axis]) || !isfinite(origin[axis]))
+		/* Bounded so every decoded vertex * 8 fits an int below. */
+		if (!isfinite(scale[axis]) || !isfinite(origin[axis]) ||
+			fabsf(scale[axis]) > 1e4f || fabsf(origin[axis]) > 1e6f)
 			return false;
 	}
 	numskins = (int)VR_FamilyReadU32(data + 48);
@@ -3395,22 +3402,44 @@ static qboolean VR_WeaponFamilyHeldReserved(const char *path)
 		VR_WeaponCalibrationGameIs("enyo");
 }
 
-static void VR_WeaponFamilyApplyHeld(void)
+/* Leave room for vr_weapons.txt entries and vradjustweapon. */
+#define VR_WEAPON_FAMILY_SLOT_RESERVE 16
+
+static int VR_CountFreeCalibrationSlots(void)
+{
+	int count = 0;
+	for (int slot = 0; slot < VR_WEAPON_CALIBRATION_MAX_SLOTS; ++slot)
+	{
+		const char *slot_id = VR_WeaponOffsetCvar(slot, VR_WOFS_ID).string;
+		if (!slot_id || !slot_id[0] || !strcmp(slot_id, "-1"))
+			++count;
+	}
+	return count;
+}
+
+/* Grip/scale for matched paths. A full pass runs with each preset; a
+ * borrow-only pass after vr_weapons.txt lets a stock mesh under another path
+ * pick up the stock path's file or vradjustweapon grip. */
+static void VR_WeaponFamilyApplyHeld(qboolean borrow_only)
 {
 	for (int i = 0; i < vr_weapon_family_match_count; ++i)
 	{
 		const vr_weapon_family_match_t *match = &vr_weapon_family_matches[i];
 		const vr_weapon_family_t *family = &vr_weapon_families[match->family];
+		const int slot = VR_FindCalibrationSlot(match->path);
 		vr_weapon_schema_entry_t entry;
 		vec3_t held;
 		float scale;
 
 		if (VR_WeaponFamilyHeldReserved(match->path) ||
-			(VR_FindCalibrationSlot(match->path) < 0 &&
-			 VR_FindFreeCalibrationSlot() < 0))
+			(slot >= 0 && vr_weapon_calibration_slots[slot].held_from_file) ||
+			(slot < 0 &&
+			 VR_CountFreeCalibrationSlots() <= VR_WEAPON_FAMILY_SLOT_RESERVE))
 			continue;
 		if (family->has_grip)
 		{
+			if (borrow_only)
+				continue;
 			/* Exact for this file's quantization origin; see ComputeSlotMuzzle. */
 			scale = family->scale;
 			for (int axis = 0; axis < 3; ++axis)
@@ -3419,10 +3448,14 @@ static void VR_WeaponFamilyApplyHeld(void)
 		}
 		else
 		{
+			const vr_weapon_family_match_t *stock_match;
 			int stock_slot;
-			/* Re-borrow on every preset application, like any preset grip. */
 			if (!family->stock_path || !strcmp(family->stock_path, match->path) ||
 				(stock_slot = VR_FindCalibrationSlot(family->stock_path)) < 0)
+				continue;
+			/* The stock path must hold this same mesh in this game. */
+			stock_match = VR_WeaponFamilyMatch(family->stock_path);
+			if (stock_match && stock_match->family != match->family)
 				continue;
 			for (int axis = 0; axis < 3; ++axis)
 				held[axis] = VR_WeaponOffsetCvar(stock_slot, VR_WOFS_X + axis).value;
@@ -3566,6 +3599,30 @@ static void VR_WeaponFamilyRefreshSlotMuzzle(int slot)
 		VR_WeaponFamilyComputeSlotMuzzle(slot, match);
 }
 
+/* A vradjustweapon save writes the family-derived muzzle with its grip. It
+ * is still the barrel tip for that grip, not an authored muzzle, so it keeps
+ * following later grip changes and table updates. */
+static qboolean VR_WeaponFamilySavedBarrelMuzzle(
+	const vr_weapon_schema_entry_t *entry, const vr_weapon_family_match_t *match)
+{
+	const vr_weapon_family_t *family = &vr_weapon_families[match->family];
+	const float scale = entry->held_scale;
+	float delta[3];
+
+	if (!family->has_tip || !entry->has_held_offset || !entry->has_held_scale ||
+		!isfinite(scale) || scale <= 0.0f)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		const float grip = -(entry->held_offset[axis] +
+			(1.0f - scale) * match->origin[axis]) / scale;
+		delta[axis] = scale / 0.75f * (family->tip[axis] - grip);
+	}
+	return fabsf(entry->muzzle_offset[0] + delta[1]) < 0.001f &&
+		fabsf(entry->muzzle_offset[1] - delta[2]) < 0.001f &&
+		fabsf(entry->muzzle_offset[2] - delta[0]) < 0.001f;
+}
+
 /* A vr_weapons.txt copied from the old generic defaults (a half-unit grip
  * with the implicit (0, 0, held Z) muzzle) predates families. It must not
  * mask a family's grip or barrel muzzle; edited values stay authoritative. */
@@ -3591,8 +3648,9 @@ static void VR_WeaponFamilyFilterGenericCopies(
 			entry->muzzle_offset[1] == 0.0f &&
 			entry->muzzle_offset[2] == entry->held_offset[2];
 		if (family->has_tip && entry->has_muzzle_offset &&
-			VR_WeaponFamilySeedMuzzle(entry->muzzle_offset,
-				entry->has_held_offset ? entry->held_offset[2] : NAN))
+			(VR_WeaponFamilySeedMuzzle(entry->muzzle_offset,
+				entry->has_held_offset ? entry->held_offset[2] : NAN) ||
+			 VR_WeaponFamilySavedBarrelMuzzle(entry, match)))
 			entry->has_muzzle_offset = false;
 		if (family->has_grip && generic_triple &&
 			entry->held_offset[0] * 2.0f == floorf(entry->held_offset[0] * 2.0f) &&
@@ -3642,7 +3700,7 @@ static qboolean VR_WeaponCalibrationApplyPreset(int preset, qboolean reload_defa
 		&inherits_ad) || !VR_WeaponCalibrationApplySchemaMode(entries, count, true))
 		return false;
 	vr_weapon_calibration_inherits_ad = inherits_ad;
-	VR_WeaponFamilyApplyHeld();
+	VR_WeaponFamilyApplyHeld(false);
 	VR_WeaponFamilyApplyMuzzles();
 	return true;
 }
@@ -3986,7 +4044,9 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 			VR_WeaponCalibrationReset();
 		return false;
 	}
-	/* File grips may have moved; keep family muzzles on the barrel. */
+	/* File grips may have moved; keep borrowed grips and family muzzles on
+	 * the barrel. */
+	VR_WeaponFamilyApplyHeld(true);
 	VR_WeaponFamilyApplyMuzzles();
 
 	return true;

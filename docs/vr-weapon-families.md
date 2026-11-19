@@ -36,7 +36,9 @@ space (x forward, y left, z up):
 Stock meshes (id1, Hipnotic and Rogue weapons) have tip-only families: their
 grips stay on the user-selectable presets. The same stock mesh under another
 path, such as Mjolnir's `progs/hipnotic/v_prox.mdl`, borrows the stock path's
-current grip.
+current grip, including one set by the mod's file, when the stock path holds the
+same mesh. Families stop claiming new calibration slots while 16 or fewer remain
+free.
 
 ## Precedence
 
@@ -45,7 +47,9 @@ current grip.
    tuned on that very mesh: byte-identified AD assets and the Peril, QBJ3,
    Alkaline and Enyo folders, and Snack's two nailguns.
 3. The mod's `vr_weapons.txt` overrides grips and muzzles as before, so values
-   saved by `vradjustweapon`/`vradjustmuzzle` stay authoritative. Two kinds of
+   saved by `vradjustweapon`/`vradjustmuzzle` stay authoritative, including
+   after a weapon-preset change. A saved muzzle that equals the barrel muzzle for
+   its saved grip is treated as derived and keeps following the barrel. Two kinds of
    entries carry no calibration and are ignored for a matched path:
    - a complete copy of the old generic defaults: a half-unit grip, its scale
      and the implicit muzzle `(0, 0, held Z)`;
@@ -102,6 +106,10 @@ Drake's `v_mirv`), the `v_ssmoke` effect quad, and Bonk's hammer cosmetics,
 which use held-melee recipes.
 
 ## Limits
+
+Families are found from the local game directory's `progs.dat`; a
+multiplayer client whose local mod does not name the server's viewmodels uses
+the path presets for them.
 
 Grips were chosen on ready-frame wireframes, not in a headset. Muzzles assume
 `vr_world_scale 1`, as did the existing tuned muzzles. Enhanced (MD5)

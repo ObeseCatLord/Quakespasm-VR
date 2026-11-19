@@ -3668,6 +3668,17 @@ static qboolean COM_CurrentGameHasStartMap (void)
 		path_id == com_searchpaths->path_id;
 }
 
+/* Whether a game directory exists in any content root. Names are already
+ * checked by COM_ModForbiddenChars; unlike COM_GameDirExists this accepts any
+ * such name (e.g. one containing spaces). */
+static qboolean COM_GameDirPresent (const char *dir)
+{
+	for (int i = 0; i < com_numbasedirs; ++i)
+		if (Sys_FileType (va ("%s/%s", com_basedirs[i], dir)) == FS_ENT_DIRECTORY)
+			return true;
+	return false;
+}
+
 static void COM_Game_f (void)
 {
 	const qboolean play_after_change = !q_strcasecmp (Cmd_Argv (0), "playgame");
@@ -3713,7 +3724,7 @@ static void COM_Game_f (void)
 
 				// a typo would otherwise disconnect, drop the current game
 				// and create an empty directory in the user dir
-				if (!COM_GameDirExists (p))
+				if (!COM_GameDirPresent (p))
 				{
 					Con_Printf ("No such game directory \"%s\"\n", p);
 					return;
