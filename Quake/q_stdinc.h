@@ -220,6 +220,15 @@ typedef ptrdiff_t ssize_t;
 #define FUNC_NOINLINE
 #endif
 
+/* Keep a real, callable symbol with the declared signature: no inlining,
+ * partial inlining (.part) or constant-propagated clones (.constprop).
+ * Native gdb runtime tests call such functions directly. */
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 8)
+#define FUNC_NOIPA __attribute__ ((__noipa__))
+#else
+#define FUNC_NOIPA FUNC_NOINLINE
+#endif
+
 #if defined(__GNUC__) && ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 5))
 #define FUNC_NOCLONE __attribute__ ((__noclone__))
 #else

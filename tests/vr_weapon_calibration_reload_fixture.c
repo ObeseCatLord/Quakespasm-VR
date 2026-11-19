@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+#include <sys/stat.h>
 
 #define CALIBRATION_CVAR_COUNT \
 	(1 + VR_WEAPON_CALIBRATION_MAX_SLOTS * \
@@ -86,6 +88,70 @@ byte *__wrap_COM_LoadFile(const char *path, unsigned int *path_id)
 	if (!fixture_file_contents)
 		return NULL;
 	return (byte *)FixtureDuplicate(fixture_file_contents);
+}
+
+/* Host stubs shared by the calibration fixtures that include this harness
+ * (alk, AD/Peril); the production filesystem comes from common.c and
+ * sys_sdl.c. */
+cvar_t developer = {"developer", "0", CVAR_NONE};
+
+void *Mem_AllocNonZero(size_t size)
+{
+	void *result = malloc(size);
+	assert(result);
+	return result;
+}
+
+void *Mem_Alloc(size_t size)
+{
+	void *result = calloc(1, size);
+	assert(result);
+	return result;
+}
+
+void Con_DPrintf(const char *format, ...)
+{
+	assert(format);
+}
+
+const mod_held_melee_recipe_t *Mod_GetHeldMeleeRecipe(const char *source)
+{
+	(void)source;
+	return NULL;
+}
+
+void Sys_Error(const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	vfprintf(stderr, format, args);
+	va_end(args);
+	abort();
+}
+
+FILE *Sys_fopen(const char *path, const char *mode)
+{
+	assert(!strcmp(mode, "rb")); /* No profile or installed asset writes. */
+	return fopen(path, mode);
+}
+
+qfileofs_t Sys_ftell(FILE *file)
+{
+	return (qfileofs_t)ftello(file);
+}
+
+int Sys_fseek(FILE *file, qfileofs_t offset, int origin)
+{
+	return fseeko(file, (off_t)offset, origin);
+}
+
+int Sys_FileType(const char *path)
+{
+	struct stat info;
+	if (stat(path, &info))
+		return FS_ENT_NONE;
+	return S_ISREG(info.st_mode) ? FS_ENT_FILE :
+		S_ISDIR(info.st_mode) ? FS_ENT_DIRECTORY : FS_ENT_NONE;
 }
 
 void Mem_Free(const void *pointer)
@@ -182,7 +248,7 @@ static void AssertStockClassicProfiles(void)
 	}
 }
 
-static void AssertADRootProfiles(void)
+__attribute__((unused)) static void AssertADRootProfiles(void)
 {
 	static const struct
 	{
@@ -216,7 +282,28 @@ static void AssertADRootProfiles(void)
 			0.0f, 0.0f, expected[index].z);
 }
 
-static void AssertAD171AliasProfiles(void)
+/* AD values come from byte-identified installed assets
+ * (tests/vr_ad_calibration_fixture.c). This harness mounts no assets, so a
+ * game name alone must leave stock paths on their stock values and give AD-only
+ * paths no calibration. */
+static void AssertNoNameOnlyADProfiles(void)
+{
+	static const char *const ad_only[] = {
+		"progs/v_shadaxe0.mdl", "progs/v_shadaxe5.mdl", "progs/v_shot3.mdl",
+		"progs/ad171/v_shot.mdl", "progs/ad171/v_rock.mdl",
+		"progs/ad171/v_shadaxe0.mdl",
+	};
+	vec3_t held;
+	float scale;
+	AssertClassicProfile("progs/v_shot.mdl", 1.5f, 1.0f, 10.0f, 0.5f,
+		0.0f, 0.0f, 10.0f);
+	AssertClassicProfile("progs/v_nail.mdl", -5.0f, 3.0f, 15.0f, 0.5f,
+		0.0f, 0.0f, 15.0f);
+	for (size_t i = 0; i < sizeof(ad_only) / sizeof(ad_only[0]); ++i)
+		assert(!VR_WeaponCalibrationLookupHeld(ad_only[i], false, held, &scale));
+}
+
+__attribute__((unused)) static void AssertAD171AliasProfiles(void)
 {
 	static const struct
 	{
@@ -427,15 +514,15 @@ int main(void)
 		"progs/ee_v_pistol.mdl", false, muzzle));
 	AssertVector(muzzle, 9.0f, 10.0f, 11.0f);
 
-	/* AD root defaults are scoped to AD-derived game roots. */
+	/* AD defaults need identified AD assets, not an AD-looking game name. */
 	strcpy(com_gamedir, "/fixtures/ad");
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 9 && file_free_count == 5);
-	AssertADRootProfiles();
+	AssertNoNameOnlyADProfiles();
 
-	/* q30's old generic profile must not override the matching AD root meshes.
-	 * It retains non-AD paths and a changed complete classic triple. */
+	/* Without identified AD meshes q30's old generic profile is ordinary
+	 * authored data. It keeps non-AD paths and a changed complete triple. */
 	strcpy(com_gamedir, "/fixtures/q30a1024");
 	fixture_file_contents =
 		"{ viewmodel progs/v_axe.mdl held_scale 0.33 "
@@ -474,7 +561,7 @@ int main(void)
 		"held_offset -3.5 34 41.5 muzzle_offset 0 0 41.5 }";
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 10 && file_free_count == 6);
-	AssertADRootProfiles();
+	AssertStockClassicProfiles();
 	AssertClassicProfile("progs/v_axe.mdl", -4.0f, 24.0f, 37.0f,
 		0.33f, 0.0f, 0.0f, 37.0f);
 	AssertClassicProfile("progs/v_axe2.mdl", -3.5f, 34.0f, 41.5f,
@@ -498,12 +585,13 @@ int main(void)
 		AssertVector(source, 8.0f, 0.0f, 16.0f);
 	}
 
-	/* Only hash-confirmed Mjolnir ad171 copies receive canonical AD values. */
+	/* Only hash-confirmed Mjolnir ad171 copies receive canonical AD values;
+	 * none are mounted here (see vr_ad_calibration_fixture.c). */
 	strcpy(com_gamedir, "/fixtures/mjolnir");
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 12 && file_free_count == 7);
-	AssertAD171AliasProfiles();
+	AssertNoNameOnlyADProfiles();
 	assert(!VR_WeaponCalibrationLookupHeld(
 		"progs/ad171/v_shot2.mdl", false, held, &held_scale));
 	assert(!VR_WeaponCalibrationLookupHeld(
@@ -528,20 +616,20 @@ int main(void)
 	assert(file_load_count == 13 && file_free_count == 8);
 	AssertClassicProfile("progs/ad171/v_shot.mdl", 12.0f, 13.0f, 14.0f,
 		0.6f, 2.0f, 3.0f, 4.0f);
-	AssertClassicProfile("progs/ad171/v_rock.mdl", -3.0f, 1.25f,
-		17.0f, 0.5f, 0.0f, 0.0f, 17.0f);
+	assert(!VR_WeaponCalibrationLookupHeld(
+		"progs/ad171/v_rock.mdl", false, held, &held_scale));
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(file_load_count == 14 && file_free_count == 8);
-	AssertClassicProfile("progs/ad171/v_shot.mdl", 1.5f, 1.7f, 17.5f,
-		0.33f, 0.0f, 0.0f, 17.5f);
+	assert(!VR_WeaponCalibrationLookupHeld(
+		"progs/ad171/v_shot.mdl", false, held, &held_scale));
 
-	/* These AD-derived games have byte-identical root viewmodel assets.
-	 * Their own schema still overrides an individual AD default. */
+	/* AD-derived game names alone do not imply AD meshes; their own schema
+	 * still overrides an individual default. */
 	strcpy(com_gamedir, "/fixtures/gibtropolis");
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
-	AssertADRootProfiles();
+	AssertNoNameOnlyADProfiles();
 	strcpy(com_gamedir, "/fixtures/hwjam4");
 	fixture_file_contents =
 		"{ viewmodel progs/v_shot.mdl held_scale 0.7 "
@@ -549,8 +637,8 @@ int main(void)
 	assert(VR_WeaponCalibrationReloadGame());
 	AssertClassicProfile("progs/v_shot.mdl", 1.0f, 2.0f, 3.0f,
 		0.7f, 4.0f, 5.0f, 6.0f);
-	AssertClassicProfile("progs/v_shadaxe5.mdl", -1.5f, 43.1f, 41.0f,
-		0.25f, 0.0f, 0.0f, 41.0f);
+	assert(!VR_WeaponCalibrationLookupHeld(
+		"progs/v_shadaxe5.mdl", false, held, &held_scale));
 
 	/* Hipnotic proximity bombs originate at self.origin in its QuakeC.
 	 * Ordinary weapons and other game roots retain their source offsets. */
@@ -587,10 +675,10 @@ int main(void)
 	strcpy(com_gamedir, "/fixtures/snack");
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
-	AssertClassicProfile("progs/v_nail.mdl", -18.119550f, 29.178477f,
-		113.478652f, 0.1666667f, 0.015233f, 7.372823f, 18.445326f);
-	AssertClassicProfile("progs/v_nail2.mdl", -0.301060f, 69.561041f,
-		136.059723f, 0.1666667f, -0.072624f, 5.060089f, 31.53750f);
+	AssertClassicProfile("progs/v_nail.mdl", -11.88f, 32.99599f,
+		113.865081f, 0.11f, -2.493333f, 4.4f, 7.773333f);
+	AssertClassicProfile("progs/v_nail2.mdl", 0.721246f, 74.173819f,
+		139.216208f, 0.11f, 0.0f, 2.493333f, 17.16f);
 	AssertClassicProfile("progs/v_shot3.mdl", -3.5f, 0.4f, 8.5f,
 		0.5333333f, 0.0f, 0.0f, 8.5f);
 	{
@@ -603,10 +691,10 @@ int main(void)
 		AssertVector(source, 0.0f, 0.0f, 0.0f);
 	}
 
-	/* HWJAM2 uses the existing AD profile rather than a duplicate preset. */
+	/* HWJAM2 has no duplicate preset; AD values need identified assets. */
 	strcpy(com_gamedir, "/fixtures/hwjam2");
 	assert(VR_WeaponCalibrationReloadGame());
-	AssertADRootProfiles();
+	AssertNoNameOnlyADProfiles();
 
 	/* Unauthored melee profiles require deliberate motion; authored speed
 	 * continues to take precedence over the safer default. */
@@ -614,7 +702,7 @@ int main(void)
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(VR_WeaponCalibrationLookupMelee("progs/v_axe.mdl", &melee));
-	assert(fabsf(melee.speed - 1.25f) < 0.0001f);
+	assert(fabsf(melee.speed - 1.5f) < 0.0001f);
 	assert(!melee.has_speed);
 	fixture_file_contents =
 		"{ viewmodel progs/v_axe.mdl melee_speed 0.5 }";
@@ -657,8 +745,10 @@ int main(void)
 		"melee 1 melee_speed 0.75 "
 		"muzzle_source_offset 2 3 4 muzzle_source_viewofs 0 }";
 	assert(VR_WeaponCalibrationReloadGame());
-	AssertClassicProfile("progs/v_shot.mdl", 1.5f, 1.7f, 17.5f,
-		0.33f, 0.0f, 0.0f, 17.5f);
+	/* Without identified AD meshes the copied classic triple is not filtered;
+	 * the other fields are always authored. */
+	AssertClassicProfile("progs/v_shot.mdl", 1.5f, 1.0f, 10.0f,
+		0.5f, 0.0f, 0.0f, 10.0f);
 	assert(VR_WeaponCalibrationLookupHeld("progs/v_shot.mdl", true, held, &held_scale));
 	AssertVector(held, 11.0f, 12.0f, 13.0f);
 	assert(VR_WeaponCalibrationLookupMuzzle("progs/v_shot.mdl", true, muzzle));

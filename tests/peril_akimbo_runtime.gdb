@@ -81,13 +81,18 @@ def fire(frame,auto,mode='vr',refresh=True,weapon='nail'):
         assert near(origin,expected),'desktop muzzle changed '+str((origin,expected))
         assert near(velocity,[1000,0,0]), 'desktop direction changed '+str(velocity)
     else:
-        # Rejected paired commands retain the existing dominant-hand fallback:
-        # generic source is dominant muzzle - 8forward - world16; native QC
-        # then adds world16 + right*ox. The configured zero-roll/yaw dominant
-        # muzzle equals the saved body eye, so no clamp adjustment is needed.
+        # Rejected paired commands retain the existing dominant-hand fallback.
+        # Peril's QC is the AD family, whose W_FireSpikes launches from
+        # origin + world16 + right*ox with no forward component, so the source
+        # is dominant muzzle - world16 (VR_WeaponCalibrationUpOnlySource) and
+        # the nail starts at the muzzle + right*ox. The muzzle is relative to
+        # the saved body eye, which a nested scope inherits from its outer
+        # scope even after QC relocated the player. The configured
+        # zero-roll/yaw dominant muzzle equals that eye, so no clamp
+        # adjustment is needed.
         ox=2 if frame&1 else -2
         if weapon=='snail': ox=[2.5,-3.5,2.5,0,-2.5,3.5,-2.5,0][frame-1]
-        expected=[prior[0]-8,prior[1]-ox,prior[2]+22]
+        expected=[body[0],body[1]-ox,body[2]+22]
         assert near(origin,expected), 'rejected pair fallback origin mismatch '+str((origin,expected))
         assert near(velocity,[1000,0,0]), 'rejected pair retained hand direction '+str(velocity)
     cmd('call ED_Free('+e+')')
@@ -201,8 +206,13 @@ setv('*(int *)&qcvm->globals[4]','((int)((byte *)$p - (byte *)qcvm->edicts))');s
 cmd('call PF_aim()')
 assert near([float(ev('qcvm->globals[%d]'%(1+i))) for i in range(3)],vec('pr_global_struct->v_forward')), 'ordinary aim fallback changed'
 setv('qcvm->xfunction','$saved_xfunction');setv('qcvm->xstatement','$saved_xstatement');setv('qcvm->globals[20409]','$saved_ox')
-fire(1,1,'rejected');cmd('call SV_EndPrivateVRWeaponPoseGuarded($p,$outer,1)')
-assert near(vec('$p->v.origin'),relocated,.001),'relocation rewound by outer scope'
+fire(1,1,'rejected')
+# A small QC move relative to the temporary hand pose is carried onto the
+# saved body origin (SV_EndPrivateVRWeaponPoseGuarded); it is not rewound.
+carried=[a+b-c for a,b,c in zip(vec('$outer->origin'),vec('$p->v.origin'),vec('$outer->relocation_base'))]
+cmd('call SV_EndPrivateVRWeaponPoseGuarded($p,$outer,1)')
+assert near(vec('$p->v.origin'),carried,.001),'relocation rewound by outer scope'
+assert not near(vec('$p->v.origin'),vec('$outer->origin'),.5),'relocation discarded by outer scope'
 setvec('$p->v.origin',body);cmd('call SV_LinkEdict($p,0)')
 print('PERIL_RELOCATION_PASS successful makevectors cached physical muzzle, real PF_setorigin invalidated cache, pinned aim rejected stale output, nested shot fallback origin and body relocation=pass')
 # An eye-to-muzzle ray crosses the actual start-map floor. Derive expected

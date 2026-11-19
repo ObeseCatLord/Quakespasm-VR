@@ -13,9 +13,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <stdint.h>
-#include <sys/stat.h>
 
-cvar_t developer = {"developer", "0", CVAR_NONE};
 static size_t asset_reads;
 static qboolean short_asset_read;
 static qboolean native_profile_load;
@@ -28,64 +26,14 @@ byte *__wrap_COM_LoadFile(const char *path, unsigned int *path_id)
 	return FixtureLegacyLoadFile(path, path_id);
 }
 
-void *Mem_AllocNonZero(size_t size)
-{
-	void *result = malloc(size);
-	assert(result);
-	return result;
-}
 
-void *Mem_Alloc(size_t size)
-{
-	void *result = calloc(1, size);
-	assert(result);
-	return result;
-}
 
-void Con_DPrintf(const char *format, ...)
-{
-	assert(format);
-}
 
-const mod_held_melee_recipe_t *Mod_GetHeldMeleeRecipe(const char *source)
-{
-	(void)source;
-	return NULL;
-}
 
-void Sys_Error(const char *format, ...)
-{
-	va_list args;
-	va_start(args, format);
-	vfprintf(stderr, format, args);
-	va_end(args);
-	abort();
-}
 
-FILE *Sys_fopen(const char *path, const char *mode)
-{
-	assert(!strcmp(mode, "rb")); /* No profile or installed asset writes. */
-	return fopen(path, mode);
-}
 
-qfileofs_t Sys_ftell(FILE *file)
-{
-	return (qfileofs_t)ftello(file);
-}
 
-int Sys_fseek(FILE *file, qfileofs_t offset, int origin)
-{
-	return fseeko(file, (off_t)offset, origin);
-}
 
-int Sys_FileType(const char *path)
-{
-	struct stat info;
-	if (stat(path, &info))
-		return FS_ENT_NONE;
-	return S_ISREG(info.st_mode) ? FS_ENT_FILE :
-		S_ISDIR(info.st_mode) ? FS_ENT_DIRECTORY : FS_ENT_NONE;
-}
 
 int __real_Sys_FileRead(int handle, void *dest, int count);
 int __wrap_Sys_FileRead(int handle, void *dest, int count)

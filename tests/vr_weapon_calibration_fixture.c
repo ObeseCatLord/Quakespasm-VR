@@ -42,6 +42,47 @@ int q_strcasecmp(const char *left, const char *right)
 	return strcasecmp(left, right);
 }
 
+int q_strncasecmp(const char *left, const char *right, size_t count)
+{
+	return strncasecmp(left, right, count);
+}
+
+char *q_strcasestr(const char *haystack, const char *needle)
+{
+	return strcasestr(haystack, needle);
+}
+
+/* No game files are mounted: progs.dat (families), AD assets and models are
+ * absent, so calibration keeps its path presets. */
+qfilesize_t COM_OpenFile(const char *filename, int *handle, unsigned int *path_id)
+{
+	(void)filename;
+	(void)path_id;
+	*handle = -1;
+	return -1;
+}
+
+unsigned COM_HashBlock(const void *data, size_t size)
+{
+	(void)data;
+	(void)size;
+	abort();
+}
+
+int Sys_FileRead(int handle, void *dest, int count)
+{
+	(void)handle;
+	(void)dest;
+	(void)count;
+	abort();
+}
+
+void Sys_FileClose(int handle)
+{
+	(void)handle;
+	abort();
+}
+
 qboolean VR_WeaponSchemaParse(const char *text,
 							  vr_weapon_schema_entry_t *entries,
 							  size_t capacity, size_t *out_count)

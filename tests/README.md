@@ -1345,7 +1345,7 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -ffunction-sections -fdata-sections -fsanitize=address,undefined \
   -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
   tests/vr_weapon_calibration_fixture.c Quake/vr_weapon_calibration.c \
-  Quake/vr_locomotion.c Quake/mathlib.c \
+  Quake/vr_locomotion.c Quake/mathlib.c Quake/strlcpy.c \
   -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/quakespasm-vr-weapon-calibration-fixture
 /tmp/quakespasm-vr-weapon-calibration-fixture
@@ -1362,7 +1362,9 @@ of nonfinite authored calibration values.
 cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
   -ffunction-sections -fdata-sections -IQuake \
-  tests/vr_weapon_model_selector_fixture.c Quake/vr_weapon_calibration.c \
+  tests/vr_weapon_model_selector_fixture.c Quake/vr_weapon_calibration.c Quake/vr_weapon_schema.c \
+  Quake/vr_locomotion.c Quake/mathlib.c Quake/common.c Quake/sys_sdl.c \
+  Quake/strlcpy.c \
   -Wl,--gc-sections $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/quakespasm-vr-weapon-model-selector-fixture
 /tmp/quakespasm-vr-weapon-model-selector-fixture
@@ -1383,13 +1385,13 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
   -ffunction-sections -fdata-sections -fsanitize=address,undefined \
   -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
-  tests/vr_weapon_calibration_reload_fixture.c \
-  Quake/vr_weapon_calibration.c Quake/vr_weapon_schema.c \
-  Quake/vr_locomotion.c Quake/mathlib.c Quake/common.c \
+  tests/vr_weapon_calibration_reload_fixture.c Quake/vr_weapon_calibration.c Quake/vr_weapon_schema.c \
+  Quake/vr_locomotion.c Quake/mathlib.c Quake/common.c Quake/sys_sdl.c \
+  Quake/strlcpy.c \
   -Wl,--gc-sections -Wl,--wrap=COM_LoadFile \
   $(pkg-config --cflags --libs sdl3) -lm \
   -o /tmp/quakespasm-vr-weapon-calibration-reload-fixture
-/tmp/quakespasm-vr-weapon-calibration-reload-fixture
+ASAN_OPTIONS=detect_leaks=0 /tmp/quakespasm-vr-weapon-calibration-reload-fixture
 ```
 
 `vr_weapon_calibration_save_fixture.c` exercises the production token-span
@@ -3598,10 +3600,11 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
   -ffunction-sections -fdata-sections -fsanitize=address,undefined \
   -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
-  tests/vr_alk_calibration_fixture.c Quake/vr_weapon_calibration.c \
-  Quake/vr_weapon_schema.c Quake/common.c -Wl,--gc-sections \
-  -Wl,--wrap=COM_LoadFile $(pkg-config --cflags --libs sdl3) -lm \
-  -o /tmp/qsvr-alk-calibration-fixture
+  tests/vr_alk_calibration_fixture.c Quake/vr_weapon_calibration.c Quake/vr_weapon_schema.c \
+  Quake/vr_locomotion.c Quake/mathlib.c Quake/common.c Quake/sys_sdl.c \
+  Quake/strlcpy.c \
+  -Wl,--gc-sections -Wl,--wrap=COM_LoadFile \
+  $(pkg-config --cflags --libs sdl3) -lm -o /tmp/qsvr-alk-calibration-fixture
 ASAN_OPTIONS=detect_leaks=0 /tmp/qsvr-alk-calibration-fixture
 ```
 

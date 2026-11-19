@@ -4610,7 +4610,8 @@ static qboolean SV_VRStockID1Program (sv_vr_weapon_pose_scope_t *scope)
 	return scope->stock_id1_program > 0;
 }
 
-static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
+/* Native gdb runtime tests call this directly; see FUNC_NOIPA. */
+FUNC_NOIPA static void SV_BeginPrivateVRWeaponPose (edict_t *ent, client_t *client,
 	const usercmd_t *cmd, sv_vr_weapon_pose_scope_t *scope)
 {
 	vec3_t muzzle, source_offset;
@@ -5100,7 +5101,8 @@ qboolean SV_EnyoAkimboTrace (edict_t *ent, const vec3_t start,
 	return true;
 }
 
-static void SV_EndPrivateVRWeaponPoseGuarded (edict_t *ent,
+/* Native gdb runtime tests call this directly; see FUNC_NOIPA. */
+FUNC_NOIPA static void SV_EndPrivateVRWeaponPoseGuarded (edict_t *ent,
 	sv_vr_weapon_pose_scope_t *scope, qboolean restore_entity)
 {
 	scope->enyo_clearance_pending = false;
@@ -8972,7 +8974,8 @@ static qboolean SV_VRContactDrainQueued (edict_t *ent, client_t *client,
 	return true;
 }
 
-static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client,
+/* Native gdb runtime tests call this directly; see FUNC_NOIPA. */
+FUNC_NOIPA static qboolean SV_RunPrivateVRWeaponThink (edict_t *ent, client_t *client,
 	const usercmd_t *pose_cmd)
 {
 	sv_vr_weapon_pose_scope_t scope;

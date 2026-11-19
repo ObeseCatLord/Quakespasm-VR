@@ -7,8 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The vr_gunmodeloffsets preset plus every slot's classic cvars. */
 #define CALIBRATION_CVAR_COUNT \
-	(VR_WEAPON_CALIBRATION_MAX_SLOTS * \
+	(1 + VR_WEAPON_CALIBRATION_MAX_SLOTS * \
 	 (VR_WEAPON_CALIBRATION_VARS_PER_WEAPON + \
 	  VR_WEAPON_CALIBRATION_VARS_PER_MUZZLE))
 
@@ -78,6 +79,16 @@ void *Mod_Extradata_CheckSkin(qmodel_t *model, int skinnum)
 	last_checked_model = model;
 	last_checked_skin = skinnum;
 	return fixture_alias_header_result;
+}
+
+void Cvar_SetCallback(cvar_t *variable, cvarcallback_t callback)
+{
+	variable->callback = callback;
+}
+
+void Con_Warning(const char *format, ...)
+{
+	assert(format);
 }
 
 static void AssertVector(const vec3_t actual, float x, float y, float z)
