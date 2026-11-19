@@ -565,10 +565,13 @@ static const vr_weapon_preset_muzzle_row_t vr_snack_weapon_fallbacks[] = {
 	{"progs/v_axe2.mdl", {-3.5f, 34.0f, 41.5f}, 0.33f, {0.0f, 0.0f, 41.5f}},
 	{"progs/v_shot.mdl", {1.5f, 1.0f, 10.0f}, 0.5f, {0.0f, 0.0f, 10.0f}},
 	{"progs/v_shot2.mdl", {-3.5f, 1.0f, 8.5f}, 0.8f, {0.0f, 0.0f, 8.5f}},
-	{"progs/v_nail.mdl", {-18.119550f, 29.178477f, 113.478652f}, 0.1666667f,
-		{0.015233f, 7.372823f, 18.445326f}},
-	{"progs/v_nail2.mdl", {-0.301060f, 69.561041f, 136.059723f}, 0.1666667f,
-		{-0.072624f, 5.060089f, 31.53750f}},
+	/* Stakegun: right hand on its handle (108, -17, -100), barrel face centre
+	 * (161, 0, -70). Impaler: pistol grip (48, 0, -80), bolt head
+	 * (165, 0, -63). Scale 0.11 puts both at stock nailgun size. */
+	{"progs/v_nail.mdl", {-11.88f, 32.99599f, 113.865081f}, 0.11f,
+		{-2.493333f, 4.4f, 7.773333f}},
+	{"progs/v_nail2.mdl", {0.721246f, 74.173819f, 139.216208f}, 0.11f,
+		{0.0f, 2.493333f, 17.16f}},
 	{"progs/v_rock.mdl", {10.0f, 1.5f, 13.0f}, 0.5f, {0.0f, 0.0f, 13.0f}},
 	{"progs/v_rock2.mdl", {10.0f, 7.0f, 19.0f}, 0.5f, {0.0f, 0.0f, 19.0f}},
 	{"progs/v_light.mdl", {3.0f, 4.0f, 13.0f}, 0.5f, {0.0f, 0.0f, 13.0f}},

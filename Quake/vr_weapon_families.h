@@ -234,9 +234,9 @@ static const vr_weapon_family_t vr_weapon_families[] = {
 	/* qbj3 progs/v_wrench.mdl */
 	{0x5b1aac7683cc9f1dull, true, {32.82995f, -26.88831f, -17.80775f}, 0.2f, true, {32.82995f, -26.88831f, -17.80775f}, NULL},
 	/* snack progs/v_nail.mdl */
-	{0xc3a7b824c8a99879ull, true, {108.71728f, -0.20576f, -102.9782f}, 0.16667f, true, {191.72123f, -0.27431f, -69.8005f}, NULL},
+	{0xc3a7b824c8a99879ull, true, {108.0f, -17.0f, -100.0f}, 0.11f, true, {161.0f, 0.0f, -70.0f}, NULL},
 	/* snack progs/v_nail2.mdl */
-	{0x25a53f4f29bd2f27ull, true, {35.52122f, -0.65941f, -83.68303f}, 0.16667f, true, {177.43994f, -0.33261f, -60.91263f}, NULL},
+	{0x25a53f4f29bd2f27ull, true, {48.0f, 0.0f, -80.0f}, 0.11f, true, {165.0f, 0.0f, -63.00001f}, NULL},
 	/* stock progs/v_axe.mdl (barrel tip only) */
 	{0x22f55d50f57daf56ull, false, {0.0f, 0.0f, 0.0f}, 1.0f, true, {45.64305f, 1.42771f, -16.06312f}, "progs/v_axe.mdl"},
 	/* stock progs/v_hammer.mdl (barrel tip only) */

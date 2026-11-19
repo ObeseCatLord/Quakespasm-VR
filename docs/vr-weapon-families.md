@@ -66,6 +66,15 @@ mesh the stock shotgun grip and put the axe and rail grips outside the models.
 Families now calibrate all of them, and Dwell's AD meshes inherit AD identity
 like any other AD fork.
 
+## Snack
+
+Snack keeps its folder preset only for its own Stakegun (`v_nail`) and
+Impaler (`v_nail2`). The earlier values held the Impaler by the rear tip of its
+stock at roughly twice the size of the stock nailguns and put both muzzles far
+past the barrels. They now hold the Stakegun's right handle and the Impaler's
+pistol grip at scale 0.11, with muzzles on the barrel face and bolt head. Its
+other weapons follow their families.
+
 ## Coverage of the installed mods (2026-11-18)
 
 127 families: 16 stock meshes (tip only), 52 rows re-expressing existing tuned
