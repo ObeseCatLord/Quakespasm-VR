@@ -2595,7 +2595,9 @@ static void SCR_DrawVRHUDPanel (cb_context_t *cbx, qboolean flat_fallback)
 
 	if (!draw_panel)
 	{
-		if (flat_fallback)
+		/* In VR the status bar belongs on the hand panel only; a flat copy
+		 * would sit at the bottom of the view whenever that panel lapses. */
+		if (flat_fallback && !vulkan_globals.stereo_active)
 			Sbar_Draw (cbx);
 		return;
 	}
