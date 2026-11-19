@@ -2075,6 +2075,8 @@ static void SCR_VRMenuPrepare (void)
 /* Keep popup text at the inherited 48-unit menu distance. At the default
  * world scale this is about 1.83 m, and cancelling the menu canvas scale keeps
  * CANVAS_MENU glyphs at the familiar angular size. */
+static qboolean SCR_VRHUDPose (vec3_t target, vec3_t right, vec3_t down, vec3_t normal);
+
 static void SCR_VRTextPopupPrepare (void)
 {
 	const vrxr_frame_t *frame = GL_OpenXRFrame ();
@@ -2149,19 +2151,31 @@ static void SCR_VRTextPopupPrepare (void)
 	 * that top edge just above the forward view. Keep console glyph aspect. */
 	if (vid.conwidth > 0 && vid.conheight > 0)
 	{
-		const float width = fminf (320.0f * vr_menu_scale.value, 64.0f);
-		const float height = width * (float)vid.conheight / vid.conwidth;
-		if (!isfinite (width) || !isfinite (height) || height <= 0.0f)
+		/* Notify lines are HUD text: put them on the right-hand HUD, just
+		 * above the status bar, with the bar's own text scale, so they move
+		 * with the hand instead of the head. */
+		vec3_t hud_target, hud_right, hud_down, hud_normal, top_left;
+		const float px = vr_hud_scale.value;
+		const float width = vid.conwidth * px;
+		const float height = vid.conheight * px;
+		if (!isfinite (width) || !isfinite (height) || width <= 0.0f || height <= 0.0f ||
+			!SCR_VRHUDPose (hud_target, hud_right, hud_down, hud_normal))
 			return;
 		memset (vr_text_popup_panel.notify_world_from_ndc, 0,
 			sizeof (vr_text_popup_panel.notify_world_from_ndc));
 		for (int i = 0; i < 3; ++i)
 		{
-			vr_text_popup_panel.notify_world_from_ndc[i] = right[i] * width * 0.5f;
-			vr_text_popup_panel.notify_world_from_ndc[4 + i] = down[i] * height * 0.5f;
-			vr_text_popup_panel.notify_world_from_ndc[8 + i] = normal[i];
-			vr_text_popup_panel.notify_world_from_ndc[12 + i] =
-				center[i] + up[i] * 8.0f + down[i] * height * 0.5f;
+			/* Left edge of the status bar, four text lines plus a gap above it. */
+			top_left[i] = hud_target[i] - hud_right[i] * 160.0f * px -
+				hud_down[i] * (4.0f * 8.0f + 4.0f) * px;
+			vr_text_popup_panel.notify_world_from_ndc[i] = hud_right[i] * width * 0.5f;
+			vr_text_popup_panel.notify_world_from_ndc[4 + i] = hud_down[i] * height * 0.5f;
+			vr_text_popup_panel.notify_world_from_ndc[8 + i] = hud_normal[i] * px;
+			vr_text_popup_panel.notify_world_from_ndc[12 + i] = top_left[i] +
+				vr_text_popup_panel.notify_world_from_ndc[i] +
+				vr_text_popup_panel.notify_world_from_ndc[4 + i];
+			if (!isfinite (vr_text_popup_panel.notify_world_from_ndc[12 + i]))
+				return;
 		}
 		vr_text_popup_panel.notify_world_from_ndc[15] = 1.0f;
 		vr_text_popup_panel.notify_valid = true;
