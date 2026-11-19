@@ -2567,6 +2567,9 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 			VR_CalibrationAdjustInputAbort("calibration could not be persisted");
 			return;
 		}
+		/* Saved to vr_weapons.txt: authored like a loaded file grip, so a
+		 * later preset change keeps it. */
+		calibration->held_from_file = true;
 	}
 
 	Con_Printf("VR: %s grip adjusted for %s\n",
