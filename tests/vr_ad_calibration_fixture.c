@@ -343,8 +343,9 @@ static void FixtureAssertInstalledSchema(size_t mod,
 	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
 	size_t count;
 	byte *file = __real_COM_LoadFile("vr_weapons.txt", NULL);
-	qboolean special = !strcmp(fixture_installed_audit[mod].game, "alk") ||
-		strstr(fixture_installed_audit[mod].game, "dwellv2p2") != NULL;
+	/* Alkaline keeps its folder preset. Dwell's retired preset now inherits
+	 * AD identity like any other AD-based mod. */
+	qboolean special = !strcmp(fixture_installed_audit[mod].game, "alk");
 	if (!file)
 		return;
 	assert(VR_WeaponSchemaParse((const char *)file, entries,

@@ -3575,6 +3575,20 @@ bash tests/vr_alk_program_fixture.sh
 This is a program-identity fixture. It does not execute a physical sweep,
 QuakeC damage, controller input, or headset presentation.
 
+`run_vr_weapon_families.py` runs the dedicated engine on a private symlinked
+copy of every installed game and lists `vr_weapon_families`. It checks that each
+`progs.dat` viewmodel whose mesh is in `Quake/vr_weapon_families.h` is matched
+(engine and generator signatures agree) and that every family barrel muzzle is
+the family tip carried through the renderer's held transform. The legacy
+`vr_ad_calibration_fixture.c` audit pins the preset and AD-identity layer and is
+built with `-DVR_WEAPON_FAMILIES_DISABLED`.
+
+```sh
+python3 tests/run_vr_weapon_families.py --base "$QSVR_GAME_BASE" \
+  --binary build-debug/vkquake
+python3 Misc/vr-weapon-families/generate.py --base "$QSVR_GAME_BASE" --check
+```
+
 `vr_alk_calibration_fixture.c` extends the production calibration reload harness.
 It checks that only the Alkaline and LimJam game roots receive the axe muzzle
 fallback, authored schema entries override it, and a clean reload restores it.

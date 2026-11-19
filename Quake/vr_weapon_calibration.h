@@ -40,6 +40,9 @@ qboolean VR_WeaponCalibrationLookupMuzzle(const char *model_name,
 										  qboolean enhanced_format,
 										  vec3_t out);
 qboolean VR_WeaponCalibrationCurrentMuzzle(vec3_t out);
+/* Ready-frame geometry signature of an MDL file (weapon families). */
+qboolean VR_WeaponFamilySignature(const byte *data, size_t length,
+	unsigned long long *out_signature, vec3_t out_origin);
 qboolean VR_WeaponCalibrationStockRangedViewmodel(const char *name);
 /* Generic fallback convention/override; does not authorize physical damage. */
 qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,

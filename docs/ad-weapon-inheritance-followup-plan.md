@@ -96,6 +96,7 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers \
   -ffunction-sections -fdata-sections -fsanitize=address,undefined \
   -fno-sanitize-recover=all -fno-omit-frame-pointer -IQuake \
+  -DVR_WEAPON_FAMILIES_DISABLED \
   tests/vr_ad_calibration_fixture.c Quake/vr_weapon_calibration.c \
   Quake/vr_weapon_schema.c Quake/vr_locomotion.c Quake/mathlib.c \
   Quake/common.c Quake/sys_sdl.c Quake/strlcpy.c \
@@ -103,6 +104,11 @@ cc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -Wall -Wextra -Werror \
   $(pkg-config --cflags --libs sdl3) -lm -o /tmp/vr-ad-calibration-fixture
 /tmp/vr-ad-calibration-fixture "$AD_FIXTURE_BASEDIR"
 ```
+
+This audit pins the preset and AD-identity layer as it was before geometry
+weapon families, so it is built with `-DVR_WEAPON_FAMILIES_DISABLED`. Families
+are covered against every installed mod by `tests/run_vr_weapon_families.py`
+(see `docs/vr-weapon-families.md`).
 
 Existing isolated calibration fixtures now also need filesystem/hash linkage
 or narrow stubs. Their game-name-only AD assertions must be supplied with real

@@ -34,6 +34,9 @@ typedef struct
 {
 	qboolean has_muzzle_offset;
 	qboolean muzzle_seeded_from_held;
+	/* Classic muzzle derived from a geometry family's barrel tip and the
+	 * slot's current grip; refreshed whenever that grip changes. */
+	qboolean muzzle_from_family;
 	qboolean has_enhanced_muzzle_offset;
 	vec3_t enhanced_muzzle_offset;
 	qboolean has_enhanced_held_offset;
@@ -78,6 +81,7 @@ static int vr_weapon_preset_accepted = VR_WEAPON_PRESET_VANILLA;
 static qboolean VR_WeaponCalibrationPreflightSchema(
 	const vr_weapon_schema_entry_t *entries, size_t count);
 static void VR_WeaponCalibrationPresetChanged(cvar_t *var);
+static void VR_WeaponFamilyRefreshSlotMuzzle(int slot);
 
 extern cvar_t vr_aimmode;
 extern cvar_t vr_world_scale;
@@ -554,21 +558,8 @@ static const vr_weapon_preset_row_t vr_alk_plague[] = {
 	{"progs/v_mine_40fps.mdl", {-3.5f, 2.6f, 12.0f}, 0.36f},
 };
 
-static const vr_weapon_preset_row_t vr_dwell_weapon_fallbacks[] = {
-	{"progs/v_axe2.mdl", {-3.5f, 34.0f, 41.5f}, 0.4f},
-	{"progs/v_axeb.mdl", {-4.0f, 24.0f, 37.0f}, 0.4f},
-	{"progs/v_shot.mdl", {1.5f, 1.0f, 10.0f}, 0.3333333f},
-	{"progs/v_shot2.mdl", {-3.5f, 1.0f, 8.5f}, 0.5333333f},
-	{"progs/v_shot3.mdl", {-3.5f, 0.4f, 8.5f}, 0.5333333f},
-	{"progs/v_nail.mdl", {-5.0f, 3.0f, 15.0f}, 0.5f},
-	{"progs/v_nail2.mdl", {0.0f, 3.0f, 19.0f}, 0.5f},
-	{"progs/v_nail3.mdl", {-4.0f, 3.5f, 19.0f}, 0.35f},
-	{"progs/v_rock.mdl", {10.0f, 1.5f, 13.0f}, 0.5f},
-	{"progs/v_rock2.mdl", {10.0f, 7.0f, 19.0f}, 0.5f},
-	{"progs/v_light.mdl", {3.0f, 4.0f, 13.0f}, 0.5f},
-	{"progs/v_rail.mdl", {4.0f, 5.0f, 31.0f}, 0.65f},
-	{"progs/v_rifle.mdl", {1.5f, 1.0f, 10.0f}, 0.5f},
-};
+/* Dwell's weapons are AD/Alkaline meshes plus two of its own; geometry
+ * families calibrate all of them (docs/vr-weapon-families.md). */
 
 static const vr_weapon_preset_muzzle_row_t vr_snack_weapon_fallbacks[] = {
 	{"progs/v_axe2.mdl", {-3.5f, 34.0f, 41.5f}, 0.33f, {0.0f, 0.0f, 41.5f}},
@@ -2461,6 +2452,7 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 				return;
 			}
 			vr_weapon_calibration_slots[adjustment->slot].has_muzzle_offset = true;
+			vr_weapon_calibration_slots[adjustment->slot].muzzle_from_family = false;
 		}
 		Con_Printf("VR: %s muzzle recentered for %s; return the grip to its starting point\n",
 			enhanced_format ? "enhanced" : "classic", adjustment->model_name);
@@ -2548,6 +2540,8 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 				VR_WMUZZLE_Z), new_base[2]);
 			calibration->has_muzzle_offset = true;
 		}
+		/* A family-derived muzzle follows the barrel, not the old grip. */
+		VR_WeaponFamilyRefreshSlotMuzzle(adjustment->slot);
 		if (!VR_WeaponCalibrationSave())
 		{
 			Cvar_SetValueQuick(&VR_WeaponOffsetCvar(adjustment->slot, VR_WOFS_X),
@@ -2563,6 +2557,7 @@ void VR_WeaponCalibrationAdjustInput(int physical_hand,
 						axis), old_muzzle[axis]);
 				calibration->has_muzzle_offset = false;
 			}
+			VR_WeaponFamilyRefreshSlotMuzzle(adjustment->slot);
 			VR_CalibrationAdjustInputAbort("calibration could not be persisted");
 			return;
 		}
@@ -2616,6 +2611,8 @@ void VR_WeaponCalibrationInit(void)
 	Cvar_SetCallback(&vr_gunmodeloffsets, VR_WeaponCalibrationPresetChanged);
 }
 
+static void VR_WeaponFamilies_f(void);
+
 void VR_WeaponCalibrationRegisterCommands(void)
 {
 	if (vr_weapon_calibration_commands_registered)
@@ -2625,6 +2622,7 @@ void VR_WeaponCalibrationRegisterCommands(void)
 	Cmd_AddCommand("vrweaponsaveglobal", VR_WeaponCalibrationSaveGlobal_f);
 	Cmd_AddCommand("vradjustweapon", VR_WeaponCalibrationAdjustGrip_f);
 	Cmd_AddCommand("vradjustmuzzle", VR_WeaponCalibrationAdjustMuzzle_f);
+	Cmd_AddCommand("vr_weapon_families", VR_WeaponFamilies_f);
 }
 
 void VR_WeaponCalibrationReset(void)
@@ -2791,6 +2789,7 @@ static qboolean VR_WeaponCalibrationApplySchemaMode(
 						   entry->muzzle_offset[2]);
 			calibration->has_muzzle_offset = true;
 			calibration->muzzle_seeded_from_held = false;
+			calibration->muzzle_from_family = false;
 		}
 		if (entry->has_enhanced_held_offset)
 		{
@@ -3085,10 +3084,6 @@ static qboolean VR_WeaponCalibrationBuildPreset(
 	if (VR_WeaponCalibrationGameIs("enyo"))
 		return VR_WeaponCalibrationPresetAppendSchema(entries, count,
 			vr_enyo_weapon_fallbacks, countof(vr_enyo_weapon_fallbacks));
-	if (VR_WeaponCalibrationGameIs("dwell") ||
-		VR_WeaponCalibrationGameIs("dwellv2p2"))
-		return VR_WeaponCalibrationPresetAppendRows(entries, count,
-			vr_dwell_weapon_fallbacks, countof(vr_dwell_weapon_fallbacks));
 	if (VR_WeaponCalibrationGameIs("enhanced"))
 		preset = VR_WEAPON_PRESET_ENHANCED;
 	*inherits_ad = true;
@@ -3109,6 +3104,532 @@ static qboolean VR_WeaponCalibrationBuildPreset(
 		VR_WeaponCalibrationPresetAppendIdentifiedAD(entries, count);
 }
 
+/* ---- Geometry weapon families -------------------------------------------
+ * Many mods reuse another mod's viewmodel geometry under a new path or a new
+ * skin (Drake/Quoth packs, AD weapons, mission-pack models). A family is keyed
+ * by the model's ready-frame geometry, so its calibration follows the mesh to
+ * any mod. Candidates are the viewmodel paths named by the active progs.dat.
+ * Families fill held grip/scale for non-stock meshes and derive the classic
+ * muzzle from the mesh's barrel tip through the slot's current grip, so the
+ * muzzle stays on the barrel under user presets and vradjustweapon changes.
+ * A mod's own vr_weapons.txt still overrides held values. */
+typedef struct
+{
+	unsigned long long signature;
+	qboolean has_grip;
+	vec3_t grip; /* model space, ready frame */
+	float scale;
+	qboolean has_tip;
+	vec3_t tip;
+	/* Stock meshes keep the user-selected preset grip of this path; the same
+	 * mesh under another path (a mod subfolder) borrows that grip. */
+	const char *stock_path;
+} vr_weapon_family_t;
+
+#include "vr_weapon_families.h"
+
+#define VR_WEAPON_FAMILY_MAX_MATCHES 128
+typedef struct
+{
+	char path[MAX_QPATH];
+	int family;
+	vec3_t origin;
+} vr_weapon_family_match_t;
+
+static vr_weapon_family_match_t
+	vr_weapon_family_matches[VR_WEAPON_FAMILY_MAX_MATCHES];
+static int vr_weapon_family_match_count;
+
+static unsigned VR_FamilyReadU32(const byte *p)
+{
+	return (unsigned)p[0] | ((unsigned)p[1] << 8) | ((unsigned)p[2] << 16) |
+		((unsigned)p[3] << 24);
+}
+
+static float VR_FamilyReadFloat(const byte *p)
+{
+	union { unsigned u; float f; } value;
+	value.u = VR_FamilyReadU32(p);
+	return value.f;
+}
+
+static void VR_FamilyMix(unsigned long long *hash, int value)
+{
+	const unsigned u = (unsigned)value;
+	for (int i = 0; i < 4; ++i)
+	{
+		*hash ^= (u >> (8 * i)) & 0xffu;
+		*hash *= 0x100000001b3ull;
+	}
+}
+
+/* Advance *pos by count*size bytes, refusing overflow and truncation. */
+static qboolean VR_FamilySkip(size_t *pos, size_t count, size_t size,
+	size_t length)
+{
+	if (size && count > (SIZE_MAX - *pos) / size)
+		return false;
+	if (*pos + count * size > length)
+		return false;
+	*pos += count * size;
+	return true;
+}
+
+/* FNV-1a over vertex/triangle counts and the first frame's decoded vertex
+ * positions quantized to 1/8 unit, independent of skins and normals.
+ * Misc/vr-weapon-families/generate.py computes the identical value. */
+qboolean VR_WeaponFamilySignature(const byte *data, size_t length,
+	unsigned long long *out_signature, vec3_t out_origin)
+{
+	float scale[3], origin[3];
+	int numskins, skinwidth, skinheight, numverts, numtris, numframes;
+	size_t pos = 84, skin_bytes, verts;
+	unsigned long long hash = 0xcbf29ce484222325ull;
+
+	if (!data || length < 84 || memcmp(data, "IDPO", 4) ||
+		VR_FamilyReadU32(data + 4) != 6)
+		return false;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		scale[axis] = VR_FamilyReadFloat(data + 8 + 4 * axis);
+		origin[axis] = VR_FamilyReadFloat(data + 20 + 4 * axis);
+		if (!isfinite(scale[axis]) || !isfinite(origin[axis]))
+			return false;
+	}
+	numskins = (int)VR_FamilyReadU32(data + 48);
+	skinwidth = (int)VR_FamilyReadU32(data + 52);
+	skinheight = (int)VR_FamilyReadU32(data + 56);
+	numverts = (int)VR_FamilyReadU32(data + 60);
+	numtris = (int)VR_FamilyReadU32(data + 64);
+	numframes = (int)VR_FamilyReadU32(data + 68);
+	if (numskins < 0 || numskins > 256 || skinwidth <= 0 || skinwidth > 16384 ||
+		skinheight <= 0 || skinheight > 16384 || numverts <= 0 ||
+		numverts > 65536 || numtris <= 0 || numtris > 131072 || numframes <= 0)
+		return false;
+	skin_bytes = (size_t)skinwidth * (size_t)skinheight;
+	for (int skin = 0; skin < numskins; ++skin)
+	{
+		size_t type_pos = pos;
+		if (!VR_FamilySkip(&pos, 1, 4, length))
+			return false;
+		if (VR_FamilyReadU32(data + type_pos) == 0)
+		{
+			if (!VR_FamilySkip(&pos, 1, skin_bytes, length))
+				return false;
+		}
+		else
+		{
+			size_t count_pos = pos;
+			int count;
+			if (!VR_FamilySkip(&pos, 1, 4, length))
+				return false;
+			count = (int)VR_FamilyReadU32(data + count_pos);
+			if (count <= 0 || count > 256 ||
+				!VR_FamilySkip(&pos, (size_t)count, 4, length) ||
+				!VR_FamilySkip(&pos, (size_t)count, skin_bytes, length))
+				return false;
+		}
+	}
+	if (!VR_FamilySkip(&pos, (size_t)numverts, 12, length) ||
+		!VR_FamilySkip(&pos, (size_t)numtris, 16, length))
+		return false;
+	{
+		size_t type_pos = pos;
+		if (!VR_FamilySkip(&pos, 1, 4, length))
+			return false;
+		if (VR_FamilyReadU32(data + type_pos) != 0)
+		{
+			size_t count_pos = pos;
+			int count;
+			if (!VR_FamilySkip(&pos, 1, 4, length))
+				return false;
+			count = (int)VR_FamilyReadU32(data + count_pos);
+			if (count <= 0 || count > 1024 ||
+				!VR_FamilySkip(&pos, 1, 8, length) ||
+				!VR_FamilySkip(&pos, (size_t)count, 4, length))
+				return false;
+		}
+	}
+	/* Simple frame (or a group's first frame): bounds, name, vertices. */
+	if (!VR_FamilySkip(&pos, 1, 8 + 16, length))
+		return false;
+	verts = pos;
+	if (!VR_FamilySkip(&pos, (size_t)numverts, 4, length))
+		return false;
+
+	VR_FamilyMix(&hash, numverts);
+	VR_FamilyMix(&hash, numtris);
+	for (int vertex = 0; vertex < numverts; ++vertex)
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			const double decoded = (double)origin[axis] +
+				(double)scale[axis] * (double)data[verts + 4 * vertex + axis];
+			VR_FamilyMix(&hash, (int)floor(decoded * 8.0 + 0.5));
+		}
+	if (out_signature)
+		*out_signature = hash;
+	if (out_origin)
+		for (int axis = 0; axis < 3; ++axis)
+			out_origin[axis] = origin[axis];
+	return true;
+}
+
+static int VR_WeaponFamilyFind(unsigned long long signature)
+{
+	for (size_t i = 0; i < countof(vr_weapon_families); ++i)
+		if (vr_weapon_families[i].signature == signature)
+			return (int)i;
+	return -1;
+}
+
+static const vr_weapon_family_match_t *VR_WeaponFamilyMatch(const char *path)
+{
+	if (!path || !path[0])
+		return NULL;
+	for (int i = 0; i < vr_weapon_family_match_count; ++i)
+		if (!strcmp(vr_weapon_family_matches[i].path, path))
+			return &vr_weapon_family_matches[i];
+	return NULL;
+}
+
+static void VR_WeaponFamilyConsider(const char *path)
+{
+	int handle = -1;
+	qfilesize_t length;
+	byte *data;
+	unsigned long long signature;
+	vec3_t origin;
+	int family;
+
+	if (vr_weapon_family_match_count >= VR_WEAPON_FAMILY_MAX_MATCHES ||
+		VR_WeaponFamilyMatch(path))
+		return;
+	length = COM_OpenFile(path, &handle, NULL);
+	if (handle < 0)
+		return;
+	if (length < 84 || length > 16 * 1024 * 1024)
+	{
+		Sys_FileClose(handle);
+		return;
+	}
+	data = (byte *)malloc((size_t)length);
+	if (data && Sys_FileRead(handle, data, (int)length) == (int)length &&
+		VR_WeaponFamilySignature(data, (size_t)length, &signature, origin) &&
+		(family = VR_WeaponFamilyFind(signature)) >= 0)
+	{
+		vr_weapon_family_match_t *match =
+			&vr_weapon_family_matches[vr_weapon_family_match_count++];
+		q_strlcpy(match->path, path, sizeof(match->path));
+		match->family = family;
+		VectorCopy(origin, match->origin);
+	}
+	Sys_FileClose(handle);
+	free(data);
+}
+
+/* A viewmodel path literal: progs/...v_*.mdl, any case, within MAX_QPATH. */
+static qboolean VR_WeaponFamilyCandidate(const char *text, size_t len)
+{
+	const char *base;
+	if (len < 12 || len >= MAX_QPATH || q_strncasecmp(text, "progs/", 6) ||
+		q_strcasecmp(text + len - 4, ".mdl"))
+		return false;
+	base = strrchr(text, '/') + 1;
+	return !q_strncasecmp(base, "v_", 2) || q_strcasestr(base, "_v_") != NULL;
+}
+
+static void VR_WeaponFamilyRefresh(void)
+{
+	int handle = -1;
+	qfilesize_t length;
+	byte *data;
+
+	vr_weapon_family_match_count = 0;
+#ifdef VR_WEAPON_FAMILIES_DISABLED
+	/* Legacy preset-only fixtures (tests/vr_ad_calibration_fixture.c). */
+	return;
+#endif
+	length = COM_OpenFile("progs.dat", &handle, NULL);
+	if (handle < 0)
+		return;
+	if (length <= 0 || length > 64 * 1024 * 1024)
+	{
+		Sys_FileClose(handle);
+		return;
+	}
+	data = (byte *)malloc((size_t)length + 1);
+	if (data && Sys_FileRead(handle, data, (int)length) == (int)length)
+	{
+		size_t start = 0;
+		data[length] = 0;
+		/* Scan NUL-terminated runs; the string table is a subset of these. */
+		for (size_t i = 0; i <= (size_t)length; ++i)
+		{
+			if (data[i])
+				continue;
+			if (VR_WeaponFamilyCandidate((const char *)data + start, i - start))
+				VR_WeaponFamilyConsider((const char *)data + start);
+			start = i + 1;
+		}
+	}
+	Sys_FileClose(handle);
+	free(data);
+}
+
+/* Folder presets tuned on their own meshes and byte-identified AD assets
+ * keep their held calibration; families still supply their barrel muzzle.
+ * Snack's other rows were copied from stock/AD meshes it does not ship. */
+static qboolean VR_WeaponFamilyHeldReserved(const char *path)
+{
+	if (VR_WeaponCalibrationGameIs("snack") ||
+		VR_WeaponCalibrationGameIs("snack3"))
+		return !strcmp(path, "progs/v_nail.mdl") ||
+			!strcmp(path, "progs/v_nail2.mdl");
+	return VR_WeaponCalibrationIdentifiedADProfile(path) ||
+		VR_WeaponCalibrationGameIs("peril3.0") ||
+		VR_WeaponCalibrationGameIs("qbj3") ||
+		VR_WeaponCalibrationGameIs("alk") ||
+		VR_WeaponCalibrationGameIs("enyo");
+}
+
+static void VR_WeaponFamilyApplyHeld(void)
+{
+	for (int i = 0; i < vr_weapon_family_match_count; ++i)
+	{
+		const vr_weapon_family_match_t *match = &vr_weapon_family_matches[i];
+		const vr_weapon_family_t *family = &vr_weapon_families[match->family];
+		vr_weapon_schema_entry_t entry;
+		vec3_t held;
+		float scale;
+
+		if (VR_WeaponFamilyHeldReserved(match->path) ||
+			(VR_FindCalibrationSlot(match->path) < 0 &&
+			 VR_FindFreeCalibrationSlot() < 0))
+			continue;
+		if (family->has_grip)
+		{
+			/* Exact for this file's quantization origin; see ComputeSlotMuzzle. */
+			scale = family->scale;
+			for (int axis = 0; axis < 3; ++axis)
+				held[axis] = -scale * family->grip[axis] -
+					(1.0f - scale) * match->origin[axis];
+		}
+		else
+		{
+			int stock_slot;
+			/* Re-borrow on every preset application, like any preset grip. */
+			if (!family->stock_path || !strcmp(family->stock_path, match->path) ||
+				(stock_slot = VR_FindCalibrationSlot(family->stock_path)) < 0)
+				continue;
+			for (int axis = 0; axis < 3; ++axis)
+				held[axis] = VR_WeaponOffsetCvar(stock_slot, VR_WOFS_X + axis).value;
+			scale = VR_WeaponOffsetCvar(stock_slot, VR_WOFS_SCALE).value;
+		}
+		memset(&entry, 0, sizeof(entry));
+		q_strlcpy(entry.viewmodel_path, match->path, sizeof(entry.viewmodel_path));
+		VectorCopy(held, entry.held_offset);
+		entry.held_scale = scale;
+		entry.has_held_offset = entry.has_held_scale = true;
+		VR_WeaponCalibrationApplySchemaMode(&entry, 1, true);
+	}
+}
+
+static void VR_WeaponFamilyComputeSlotMuzzle(int slot,
+	const vr_weapon_family_match_t *match)
+{
+	const vr_weapon_family_t *family = &vr_weapon_families[match->family];
+	vr_weapon_calibration_slot_t *calibration = &vr_weapon_calibration_slots[slot];
+	const float scale = VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value;
+	vec3_t delta;
+
+	if (!isfinite(scale) || scale <= 0.0f)
+		return;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		/* R_AliasModelMatrixInternal places a model point m at
+		 * c*(scale*m + held + (1-scale)*origin), c = 1/0.75 by default. */
+		const float held = VR_WeaponOffsetCvar(slot, VR_WOFS_X + axis).value;
+		const float grip = -(held + (1.0f - scale) * match->origin[axis]) / scale;
+		delta[axis] = scale / 0.75f * (family->tip[axis] - grip);
+	}
+	if (!VR_CalibrationVectorIsFinite(delta))
+		return;
+	/* Model forward/left/up -> muzzle right/up/forward. */
+	Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X), -delta[1]);
+	Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y), delta[2]);
+	Cvar_SetValueQuick(&VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z), delta[0]);
+	calibration->has_muzzle_offset = true;
+	calibration->muzzle_seeded_from_held = false;
+	calibration->muzzle_from_family = true;
+}
+
+/* The donor's implicit muzzle is (0, 0, held Z). A saved grip adjustment can
+ * leave that seed behind at a stale Z; any muzzle straight ahead of the grip
+ * with no lateral or vertical component carries no barrel data. An all-zero
+ * muzzle is an authored "no barrel" (Peril/QBJ3 melee) and is kept. */
+static qboolean VR_WeaponFamilyRowsHaveZ(const vr_weapon_preset_row_t *rows,
+	size_t count, float z)
+{
+	for (size_t i = 0; i < count; ++i)
+		if (rows[i].held[2] == z)
+			return true;
+	return false;
+}
+
+static qboolean VR_WeaponFamilySchemaHaveZ(const vr_weapon_schema_entry_t *rows,
+	size_t count, float z)
+{
+	for (size_t i = 0; i < count; ++i)
+		if (rows[i].has_held_offset && rows[i].held_offset[2] == z)
+			return true;
+	return false;
+}
+
+/* Built-in grips seed an implicit (0, 0, held Z) muzzle. A later grip-only
+ * vradjustweapon save keeps that seed at the old Z, so a (0, 0, z) muzzle
+ * whose z is one of these seeds is still donor data, not an authored barrel.
+ * The retired Dwell rows are included for profiles saved while they were
+ * active. Any other value, including an all-zero muzzle, stays authored. */
+static qboolean VR_WeaponFamilyDonorSeedZ(float z)
+{
+	static const float retired_dwell[] = {41.5f, 37.0f, 10.0f, 8.5f, 15.0f,
+		19.0f, 13.0f, 31.0f};
+	for (size_t i = 0; i < countof(retired_dwell); ++i)
+		if (retired_dwell[i] == z)
+			return true;
+	return VR_WeaponFamilySchemaHaveZ(vr_stock_classic_fallbacks,
+			countof(vr_stock_classic_fallbacks), z) ||
+		VR_WeaponFamilySchemaHaveZ(vr_ad_weapon_fallbacks,
+			countof(vr_ad_weapon_fallbacks), z) ||
+		VR_WeaponFamilySchemaHaveZ(vr_copper_axe_fallback,
+			countof(vr_copper_axe_fallback), z) ||
+		VR_WeaponFamilySchemaHaveZ(vr_alk_axe_fallback,
+			countof(vr_alk_axe_fallback), z) ||
+		VR_WeaponFamilyRowsHaveZ(vr_enhanced_classic_overrides,
+			countof(vr_enhanced_classic_overrides), z) ||
+		VR_WeaponFamilyRowsHaveZ(vr_authentic_classic_overrides,
+			countof(vr_authentic_classic_overrides), z) ||
+		VR_WeaponFamilyRowsHaveZ(vr_plague_classic_overrides,
+			countof(vr_plague_classic_overrides), z) ||
+		VR_WeaponFamilyRowsHaveZ(vr_blockquake_classic,
+			countof(vr_blockquake_classic), z) ||
+		VR_WeaponFamilyRowsHaveZ(vr_alk_fixed_fallbacks,
+			countof(vr_alk_fixed_fallbacks), z) ||
+		VR_WeaponFamilyRowsHaveZ(vr_alk_classic, countof(vr_alk_classic), z) ||
+		VR_WeaponFamilyRowsHaveZ(vr_alk_plague, countof(vr_alk_plague), z);
+}
+
+static qboolean VR_WeaponFamilySeedMuzzle(const float muzzle[3], float held_z)
+{
+	return muzzle[0] == 0.0f && muzzle[1] == 0.0f && muzzle[2] != 0.0f &&
+		(muzzle[2] == held_z || VR_WeaponFamilyDonorSeedZ(muzzle[2]));
+}
+
+static qboolean VR_WeaponFamilyMuzzleIsImplicit(int slot)
+{
+	const vr_weapon_calibration_slot_t *calibration =
+		&vr_weapon_calibration_slots[slot];
+	const float muzzle[3] = {
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value,
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y).value,
+		VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value};
+	return !calibration->has_muzzle_offset ||
+		calibration->muzzle_seeded_from_held ||
+		calibration->muzzle_from_family ||
+		VR_WeaponFamilySeedMuzzle(muzzle,
+			VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value);
+}
+
+static void VR_WeaponFamilyApplyMuzzles(void)
+{
+	for (int i = 0; i < vr_weapon_family_match_count; ++i)
+	{
+		const vr_weapon_family_match_t *match = &vr_weapon_family_matches[i];
+		const int slot = VR_FindCalibrationSlot(match->path);
+		if (slot >= 0 && vr_weapon_families[match->family].has_tip &&
+			VR_WeaponFamilyMuzzleIsImplicit(slot))
+			VR_WeaponFamilyComputeSlotMuzzle(slot, match);
+	}
+}
+
+static void VR_WeaponFamilyRefreshSlotMuzzle(int slot)
+{
+	const vr_weapon_family_match_t *match;
+	if (slot < 0 || slot >= VR_WEAPON_CALIBRATION_MAX_SLOTS ||
+		!vr_weapon_calibration_slots[slot].muzzle_from_family)
+		return;
+	match = VR_WeaponFamilyMatch(VR_WeaponOffsetCvar(slot, VR_WOFS_ID).string);
+	if (match && vr_weapon_families[match->family].has_tip)
+		VR_WeaponFamilyComputeSlotMuzzle(slot, match);
+}
+
+/* A vr_weapons.txt copied from the old generic defaults (a half-unit grip
+ * with the implicit (0, 0, held Z) muzzle) predates families. It must not
+ * mask a family's grip or barrel muzzle; edited values stay authoritative. */
+static void VR_WeaponFamilyFilterGenericCopies(
+	vr_weapon_schema_entry_t *entries, size_t count)
+{
+	for (size_t i = 0; i < count; ++i)
+	{
+		vr_weapon_schema_entry_t *entry = &entries[i];
+		const vr_weapon_family_match_t *match =
+			VR_WeaponFamilyMatch(entry->viewmodel_path);
+		const vr_weapon_family_t *family;
+		qboolean generic_triple;
+
+		if (!match)
+			continue;
+		family = &vr_weapon_families[match->family];
+		/* Only a complete copied triple masks a family grip; a partial or
+		 * changed entry is authored. Dropping one also uncovers a folder
+		 * preset for reserved paths. */
+		generic_triple = entry->has_muzzle_offset && entry->has_held_offset &&
+			entry->has_held_scale && entry->muzzle_offset[0] == 0.0f &&
+			entry->muzzle_offset[1] == 0.0f &&
+			entry->muzzle_offset[2] == entry->held_offset[2];
+		if (family->has_tip && entry->has_muzzle_offset &&
+			VR_WeaponFamilySeedMuzzle(entry->muzzle_offset,
+				entry->has_held_offset ? entry->held_offset[2] : NAN))
+			entry->has_muzzle_offset = false;
+		if (family->has_grip && generic_triple &&
+			entry->held_offset[0] * 2.0f == floorf(entry->held_offset[0] * 2.0f) &&
+			entry->held_offset[1] * 2.0f == floorf(entry->held_offset[1] * 2.0f) &&
+			entry->held_offset[2] * 2.0f == floorf(entry->held_offset[2] * 2.0f))
+		{
+			entry->has_held_offset = entry->has_held_scale = false;
+			entry->has_muzzle_offset = false;
+		}
+	}
+}
+
+static void VR_WeaponFamilies_f(void)
+{
+	Con_Printf("Weapon families for the active game (%d viewmodels matched):\n",
+		vr_weapon_family_match_count);
+	for (int i = 0; i < vr_weapon_family_match_count; ++i)
+	{
+		const vr_weapon_family_match_t *match = &vr_weapon_family_matches[i];
+		const int slot = VR_FindCalibrationSlot(match->path);
+		if (slot < 0)
+		{
+			Con_Printf("  %s: family %d, no calibration slot\n", match->path,
+				match->family);
+			continue;
+		}
+		Con_Printf("  %s: family %d held %g %g %g scale %g muzzle %g %g %g%s\n",
+			match->path, match->family,
+			VR_WeaponOffsetCvar(slot, VR_WOFS_X).value,
+			VR_WeaponOffsetCvar(slot, VR_WOFS_Y).value,
+			VR_WeaponOffsetCvar(slot, VR_WOFS_Z).value,
+			VR_WeaponOffsetCvar(slot, VR_WOFS_SCALE).value,
+			VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_X).value,
+			VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Y).value,
+			VR_WeaponMuzzleCvar(slot, VR_WMUZZLE_Z).value,
+			vr_weapon_calibration_slots[slot].muzzle_from_family ?
+				" (barrel)" : "");
+	}
+}
+
 static qboolean VR_WeaponCalibrationApplyPreset(int preset, qboolean reload_defaults)
 {
 	vr_weapon_schema_entry_t entries[VR_WEAPON_SCHEMA_MAX_ENTRIES];
@@ -3118,6 +3639,8 @@ static qboolean VR_WeaponCalibrationApplyPreset(int preset, qboolean reload_defa
 		&inherits_ad) || !VR_WeaponCalibrationApplySchemaMode(entries, count, true))
 		return false;
 	vr_weapon_calibration_inherits_ad = inherits_ad;
+	VR_WeaponFamilyApplyHeld();
+	VR_WeaponFamilyApplyMuzzles();
 	return true;
 }
 
@@ -3433,6 +3956,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 	VR_WeaponCalibrationReset();
 	VR_ProgsIdentityRefresh();
 	VR_WeaponCalibrationRefreshADIdentity();
+	VR_WeaponFamilyRefresh();
 	if (!VR_WeaponCalibrationApplyBuiltinFallbacks())
 	{
 		VR_WeaponCalibrationReset();
@@ -3449,6 +3973,7 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 	if (!parsed)
 		return false;
 	VR_WeaponCalibrationFilterLegacyGenericDefaults(entries, count);
+	VR_WeaponFamilyFilterGenericCopies(entries, count);
 
 	applied = VR_WeaponCalibrationApplySchema(entries, count);
 	if (!applied)
@@ -3458,6 +3983,8 @@ qboolean VR_WeaponCalibrationReloadGame(void)
 			VR_WeaponCalibrationReset();
 		return false;
 	}
+	/* File grips may have moved; keep family muzzles on the barrel. */
+	VR_WeaponFamilyApplyMuzzles();
 
 	return true;
 }

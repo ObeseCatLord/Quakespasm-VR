@@ -115,7 +115,8 @@ static void AssertClassicProfile(const char *path, float x, float y, float z,
 	AssertVector(held, x, y, z);
 	assert(fabsf(actual_scale - scale) < 0.0001f);
 	assert(VR_WeaponCalibrationLookupMuzzle(path, false, muzzle));
-	AssertVector(muzzle, muzzle_x, muzzle_y, muzzle_z);
+	if (!isnan(muzzle_x)) /* NAN: the caller checks the muzzle itself */
+		AssertVector(muzzle, muzzle_x, muzzle_y, muzzle_z);
 }
 
 static void AssertStockClassicProfiles(void)
@@ -143,10 +144,42 @@ static void AssertStockClassicProfiles(void)
 		{"progs/v_plasma.mdl", 3.0f, 4.0f, 13.0f, 0.5f},
 	};
 
+	/* With the installed id1 progs.dat and meshes mounted, geometry families
+	 * replace the implicit (0, 0, held Z) muzzle with the stock barrel tip
+	 * through the same grip (docs/vr-weapon-families.md). */
+	static const struct
+	{
+		const char *path;
+		float x, y, z;
+	} barrel[] = {
+		{"progs/v_axe.mdl", -6.05256f, 4.25832f, 10.6164f},
+		{"progs/v_shot.mdl", -0.142509f, -1.45655f, 6.11379f},
+		{"progs/v_shot2.mdl", -0.806307f, -0.631002f, 6.29255f},
+		{"progs/v_nail.mdl", 0.070343f, -0.448291f, 7.06118f},
+		{"progs/v_nail2.mdl", -0.063868f, -0.710397f, 8.20543f},
+		{"progs/v_rock.mdl", -0.006432f, -0.856543f, 5.33836f},
+		{"progs/v_rock2.mdl", 0.742481f, -0.41139f, 18.944f},
+		{"progs/v_light.mdl", 0.448125f, -0.994796f, 12.6097f},
+	};
+
 	for (size_t index = 0; index < sizeof(expected) / sizeof(expected[0]); ++index)
+	{
+		vec3_t muzzle;
+		size_t b;
 		AssertClassicProfile(expected[index].path, expected[index].x,
 			expected[index].y, expected[index].z, expected[index].scale,
-			0.0f, 0.0f, expected[index].z);
+			NAN, NAN, NAN);
+		assert(VR_WeaponCalibrationLookupMuzzle(expected[index].path, false,
+			muzzle));
+		for (b = 0; b < sizeof(barrel) / sizeof(barrel[0]); ++b)
+			if (!strcmp(barrel[b].path, expected[index].path) &&
+				fabsf(muzzle[0] - barrel[b].x) < 0.001f &&
+				fabsf(muzzle[1] - barrel[b].y) < 0.001f &&
+				fabsf(muzzle[2] - barrel[b].z) < 0.001f)
+				break;
+		if (b == sizeof(barrel) / sizeof(barrel[0]))
+			AssertVector(muzzle, 0.0f, 0.0f, expected[index].z);
+	}
 }
 
 static void AssertADRootProfiles(void)
