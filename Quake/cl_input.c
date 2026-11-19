@@ -723,6 +723,7 @@ static void CL_FinishMoveInternal (usercmd_t *cmd, qboolean isfinal)
 	if (VR_InputSuppressUncalibratedAttack (cmd))
 		bits &= ~1u;
 	cmd->buttons = bits;
+	VR_InputSteerMeleeStrike (cmd);
 	cmd->impulse = in_impulse;
 
 	if (in_impulse_deferred)

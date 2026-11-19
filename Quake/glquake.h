@@ -47,6 +47,7 @@ void		  GL_UpdateDescriptorSets (void);
 #include "vr_openxr.h"
 struct cb_context_s;
 const vrxr_frame_t *GL_OpenXRFrame (void);
+const char		  *GL_OpenXRFoveationStatus (void);
 qboolean GL_OpenXRHiddenAreaWorldEligible (const struct cb_context_s *cbx);
 void GL_InvalidateXRInput (void);
 void GL_EndXRFrame (void);

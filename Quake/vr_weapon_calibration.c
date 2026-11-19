@@ -4092,7 +4092,7 @@ qboolean VR_WeaponCalibrationLookupMelee(const char *model_name,
 	const mod_held_melee_recipe_t *recipe = Mod_GetHeldMeleeRecipe (model_name);
 	if (recipe && recipe->contact_profile == VR_WEAPON_CONTACT_PROFILE_BONK)
 		out->enabled = true; // Input additionally requires the exact Bonk/head offer.
-	out->speed = 1.5f;
+	out->speed = 1.75f;
 	out->ready_frame = 0;
 	slot = VR_FindCalibrationSlot(model_name);
 	if (slot >= 0)

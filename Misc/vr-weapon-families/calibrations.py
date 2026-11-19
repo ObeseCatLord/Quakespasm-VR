@@ -138,4 +138,15 @@ PICKS = [
     Pick('mjolnir', 'progs/zerstorer/v_stun.mdl', grip=(12, -2, -11), scale=0.7, tip=(20.5, 0, -7.5), kind='gun'),  # zer stun
     Pick('dwellv2p2', 'progs/v_axeb.mdl', grip=(26, -13, -32), scale=0.4, tip=(42, -14, -15), kind='melee'),  # dwell v_axeb (right axe of the pair)
     Pick('dwellv2p2', 'progs/v_rail.mdl', grip=(17, 0, -17), scale=0.65, tip=(38, 0, -12), kind='gun'),  # dwell v_rail
+    # mcj2 (Copper 1.30 based; installed as mcj2_upd1/mcj2): blocky models
+    Pick('mcj2_upd1/mcj2', 'progs/v_axe2.mdl', grip=(30, -20, -22), scale=0.33, tip=(44, -20, -8), kind='melee'),  # axe, gold/fish variants
+    Pick('mcj2_upd1/mcj2', 'progs/v_axe_3d.mdl', grip=(32, -21, -20), scale=0.33, tip=(33, -25, 0), kind='melee'),  # 3D axe
+    Pick('mcj2_upd1/mcj2', 'progs/v_hand.mdl', grip=(16, -15, -17), scale=0.5, tip=(25, -17, -13), kind='melee'),  # block-placing hand
+    Pick('mcj2_upd1/mcj2', 'progs/v_shot.mdl', grip=(8, 0, -13), scale=0.5, tip=(22, 0, -11), kind='gun'),
+    Pick('mcj2_upd1/mcj2', 'progs/v_shot2.mdl', grip=(16, 0, -17), scale=0.5, tip=(34, 0, -15.3), kind='gun'),
+    Pick('mcj2_upd1/mcj2', 'progs/v_nail.mdl', grip=(10, 0, -22), scale=0.5, tip=(36, 0, -15), kind='gun'),
+    Pick('mcj2_upd1/mcj2', 'progs/v_nail2.mdl', grip=(12, 0, -20), scale=0.5, tip=(35.5, 0, -16.3), kind='gun'),
+    Pick('mcj2_upd1/mcj2', 'progs/v_rock.mdl', grip=(7, 0, -24), scale=0.5, tip=(38, 0, -19), kind='gun'),
+    Pick('mcj2_upd1/mcj2', 'progs/v_rock2.mdl', grip=(19, 0, -28), scale=0.45, tip=(51, 0, -21), kind='gun'),
+    Pick('mcj2_upd1/mcj2', 'progs/v_light.mdl', grip=(10, 0, -28), scale=0.5, tip=(39, 2.5, -19), kind='gun'),
 ]

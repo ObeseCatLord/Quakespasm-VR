@@ -1417,7 +1417,9 @@ void R_PrepareVRCrosshair (void)
 		vr_crosshair_frame = prepared;
 		return;
 	}
+	/* Gesture melee is swung, not aimed: no pointer while one is held. */
 	if (!vulkan_globals.stereo_active || VR_WeaponCalibrationAdjustActive () ||
+		VR_InputGestureMeleeActive () ||
 		!cl.worldmodel || cls.signon != SIGNONS || cl.intermission ||
 		!isfinite (vr_crosshair.value) ||
 		(vr_crosshair.value != 1.0f && vr_crosshair.value != 2.0f) ||

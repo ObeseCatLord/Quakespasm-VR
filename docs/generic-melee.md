@@ -5,7 +5,8 @@ to request the mod's normal attack input. Physical attack triggers are disabled
 for these weapons, and the held VR model stays in its ready pose. Native QuakeC
 retains damage, range, timing, sounds, effects and its internal attack sequence.
 There is no swept-blade damage replacement. Turning immersive melee off restores
-ordinary trigger attacks and animation; desktop input is unchanged.
+ordinary trigger attacks and animation; desktop input is unchanged. While a
+gesture-melee weapon is held the aim laser is hidden.
 
 Standard axe paths and existing known axe/wrench/sword/fist conventions are
 recognized by default. Other models use the shared profile opt-in below; no
@@ -24,7 +25,9 @@ Other weapon models can opt in through the existing `vr_weapons.txt` file:
 
 `melee 0` disables generic recognition for that model, including the standard
 axe convention. `melee_speed` sets the gesture threshold in metres/second,
-between 0.25 and 10; its default is 1.0. `melee_frame N` selects the held ready
+between 0.25 and 10; its default is 1.75. A swing also needs the hand (the grip
+end of the weapon) to travel `vr_melee_swing_distance` metres during the
+stroke (archived, default 0.2), so wrist flicks of a long blade do not attack. `melee_frame N` selects the held ready
 frame (integer 0..65535, default 0). A frame beyond the selected asset's frame
 count uses frame 0. Existing generated split weapon/fist meshes keep their
 recipe's ready pose. The shared classification controls gestures, physical attack
@@ -39,6 +42,10 @@ replacement meshes may need different endpoints. No multiplayer-only offsets
 are introduced.
 
 A gesture requests an ordinary attack-button pulse, not direct blade damage.
+The strike command's aim points at the first monster the blade passed through
+during the swing (within the mod's 64-unit melee reach from the hand), so the
+mod's straight-ahead melee trace lands on what the blade crossed. That is one
+target per swing; several monsters in one swing would need server-side damage.
 Native cooldown may reject a pulse; some mods require holding attack or schedule
 their own multiple effects. The fallback neither retries until damage occurs
 nor replaces these behaviors. Very rapid gestures before a command is sent

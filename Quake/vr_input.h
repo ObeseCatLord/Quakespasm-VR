@@ -92,6 +92,7 @@ void VR_InputTestGorillaHands (usercmd_t *cmd);
 qboolean VR_WeaponCollisionAuthorized (void);
 /* Selected gesture-mode melee policy; independent of current hand tracking. */
 qboolean VR_InputGestureMeleeActive (void);
+void	 VR_InputSteerMeleeStrike (usercmd_t *cmd);
 /* Selected supported axe edge in the raw presentation hand frame. False without
  * an admitted MELEE profile; callers may use calibrated generic fallback. */
 qboolean VR_InputStockAxePresentationEdgeOffsets (int physical_hand,

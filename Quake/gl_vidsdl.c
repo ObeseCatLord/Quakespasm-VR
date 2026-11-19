@@ -146,6 +146,7 @@ static void GL_InitInstance (void);
 static void GL_InitDevice (void);
 static void GL_OpenXRPrepareVulkan (uint32_t loader_api_version);
 static void GL_OpenXRCreationFailed (void);
+static void GL_NoteFoveationState (int requested, int mode, const vrxr_frame_t *frame);
 static bool GL_CreateFrameBuffers (void);
 static void GL_CreateOITBuffers (void);
 static void GL_DestroyOITBuffers (void);
@@ -912,6 +913,14 @@ static int GL_CompareVulkanApiVersions (uint32_t left, uint32_t right)
 
 static void GL_OpenXRLog (const char *message)
 {
+	/* Session and focus transitions recur whenever the runtime shows its own
+	 * overlay; keep them out of the in-game console unless developer is set. */
+	if (strstr (message, "session state ") || strstr (message, "focus transition"))
+	{
+		Sys_Printf ("%s\n", message);
+		Con_DPrintf ("%s\n", message);
+		return;
+	}
 	Con_Printf ("%s\n", message);
 }
 
@@ -5151,6 +5160,7 @@ static qboolean GL_PrepareRuntimeFoveation (void)
 		mode = VRF_MODE_OFF;
 	float centers[2][2];
 	int effective = VRXR_UpdateVulkanFoveation (mode, allow_eye, centers);
+	GL_NoteFoveationState (VRF_RequestedMode (vr_foveation.value), effective > 0 ? effective : VRF_MODE_OFF, &openxr_frame);
 	if (effective == VRF_MODE_EYE_TRACKED && vulkan_globals.openxr_fragment_density_offset_enabled)
 	{
 		const VkExtent2D granularity = vulkan_globals.openxr_fragment_density_offset_granularity;
@@ -5190,6 +5200,37 @@ static void GL_RecoverRuntimeFoveation (void)
 		openxr_attach_attempted = false;
 }
 
+/* Live foveation state for the VR options menu and the engine log. Menus
+ * always render at full rate, so this reports the last gameplay frame. */
+static char openxr_foveation_status[64] = "off";
+
+const char *GL_OpenXRFoveationStatus (void)
+{
+	return openxr_foveation_status;
+}
+
+static void GL_NoteFoveationState (int requested, int mode, const vrxr_frame_t *frame)
+{
+	char status[sizeof (openxr_foveation_status)];
+	if (key_dest == key_menu)
+		return; /* keep reporting gameplay, not the menu's full rate */
+	if (requested == VRF_MODE_OFF)
+		q_strlcpy (status, "off", sizeof (status));
+	else if (mode != VRF_MODE_OFF)
+		q_strlcpy (status, "active", sizeof (status));
+	else if (!frame || frame->focused != 1)
+		q_strlcpy (status, "waiting: app not focused", sizeof (status));
+	else if (requested == VRF_MODE_EYE_TRACKED && VRF_GazeRejection (&frame->gaze, 0.05))
+		q_snprintf (status, sizeof (status), "waiting: %s", VRF_GazeRejection (&frame->gaze, 0.05));
+	else
+		q_strlcpy (status, "waiting: gaze settling", sizeof (status));
+	if (strcmp (status, openxr_foveation_status))
+	{
+		q_strlcpy (openxr_foveation_status, status, sizeof (openxr_foveation_status));
+		Sys_Printf ("VR foveation: %s\n", status);
+	}
+}
+
 static void GL_PrepareFragmentShadingRateMap (void)
 {
 	if (!vulkan_globals.openxr_fragment_shading_rate_active || !fragment_shading_rate_map ||
@@ -5215,6 +5256,8 @@ static void GL_PrepareFragmentShadingRateMap (void)
 			fragment_shading_rate_image_extent.width, fragment_shading_rate_image_extent.height, fragment_shading_rate_image_layers,
 			VRF_MODE_OFF, NULL, NULL, fragment_shading_rate_2x2_supported, fragment_shading_rate_4x4_supported);
 	}
+	/* After the build: a failed map falls back to full rate. */
+	GL_NoteFoveationState (VRF_RequestedMode (vr_foveation.value), mode, &openxr_frame);
 }
 
 static void GL_UploadFragmentShadingRateMap (void)

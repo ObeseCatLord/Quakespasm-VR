@@ -702,7 +702,7 @@ int main(void)
 	fixture_file_contents = NULL;
 	assert(VR_WeaponCalibrationReloadGame());
 	assert(VR_WeaponCalibrationLookupMelee("progs/v_axe.mdl", &melee));
-	assert(fabsf(melee.speed - 1.5f) < 0.0001f);
+	assert(fabsf(melee.speed - 1.75f) < 0.0001f);
 	assert(!melee.has_speed);
 	fixture_file_contents =
 		"{ viewmodel progs/v_axe.mdl melee_speed 0.5 }";

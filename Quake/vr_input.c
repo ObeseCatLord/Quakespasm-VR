@@ -91,6 +91,9 @@ static cvar_t vr_turn_speed = {"vr_turn_speed", "2", CVAR_ARCHIVE};
 static cvar_t vr_joystick_yaw_multi = {"vr_joystick_yaw_multi", "1", CVAR_ARCHIVE};
 static cvar_t vr_vrik = {"vr_vrik", "1", CVAR_ARCHIVE};
 static cvar_t vr_immersive_melee = {"vr_immersive_melee", "1", CVAR_ARCHIVE};
+/* Physical hand (grip) travel a gesture swing needs, in metres. Wrist flicks
+ * move a long blade's tip fast but the hand little. */
+static cvar_t vr_melee_swing_distance = {"vr_melee_swing_distance", "0.2", CVAR_ARCHIVE};
 cvar_t vr_fbt_enabled = {"vr_fbt_enabled", "0", CVAR_ARCHIVE};
 cvar_t vr_weapon_collision = {"vr_weapon_collision", "1", CVAR_ARCHIVE};
 
@@ -245,6 +248,7 @@ typedef struct
 	double sample_time, intent_time;
 	uint64_t sample_id;
 	float arc;
+	float base_arc; /* grip-side travel this stroke, metres */
 } vr_input_generic_melee_t;
 static vr_input_generic_melee_t vr_input_generic_melee[2];
 
@@ -2192,6 +2196,7 @@ static void VR_InputAdvanceMeleeStroke (vr_input_generic_melee_t *state,
 		(!state->consumed && reversal))
 	{
 		state->arc = 0.0f;
+		state->base_arc = 0.0f;
 		state->consumed = false;
 		VectorClear (state->direction);
 		/* Rest/reversal begins a new stroke, not effort towards its strike.
@@ -2200,10 +2205,14 @@ static void VR_InputAdvanceMeleeStroke (vr_input_generic_melee_t *state,
 	}
 	if (!state->consumed && length > 0.0001f)
 	{
+		const float swing_distance = isfinite (vr_melee_swing_distance.value) ?
+			CLAMP (0.0f, vr_melee_swing_distance.value, 1.0f) : 0.2f;
 		for (int axis = 0; axis < 3; ++axis)
 			state->direction[axis] += motion[endpoint][axis] / units;
 		state->arc = VectorLength (state->direction);
-		if (state->arc >= strike_distance && speed[endpoint] >= state->profile.speed)
+		state->base_arc += lengths[0] / units;
+		if (state->arc >= strike_distance && state->base_arc >= swing_distance &&
+			speed[endpoint] >= state->profile.speed)
 		{
 			state->pending = true;
 			state->intent_time = time;
@@ -2256,6 +2265,7 @@ static void VR_InputPrepareGenericMelee (const vrxr_frame_t *frame, int hand)
 	if (!state->sample_id || seconds <= 0 || seconds > 0.1)
 	{
 		state->arc = 0;
+		state->base_arc = 0;
 		VectorClear (state->direction);
 		state->consumed = false;
 		state->pending = false;
@@ -2278,6 +2288,169 @@ baseline:
 	return;
 reset:
 	memset (state, 0, sizeof (*state));
+}
+
+/* World-space blade trail of the held gesture-melee weapon: grip and tip of
+ * the visible model for the last fraction of a second. */
+#define VR_MELEE_TRAIL_SAMPLES 24
+#define VR_MELEE_TRAIL_SECONDS 0.4
+typedef struct
+{
+	vec3_t base, tip;
+	double time;
+} vr_melee_trail_sample_t;
+static vr_melee_trail_sample_t vr_melee_trail[VR_MELEE_TRAIL_SAMPLES];
+static int vr_melee_trail_count, vr_melee_trail_next;
+
+static void VR_InputRecordMeleeTrail (void)
+{
+	vec3_t angles, muzzle, offset;
+	vr_melee_trail_sample_t *sample;
+	const int dominant = VR_InputDominantPhysicalHand ();
+	if (!VR_InputGestureMeleeActive () || dominant < 0 ||
+		!V_TrackedPresentationHandAngles (dominant, angles) ||
+		!VR_WeaponCalibrationCurrentMuzzle (muzzle) ||
+		!VR_LocomotionMuzzleOffsetToWorld (muzzle, angles, vr_gunmodelscale.value,
+			vr_gunmodelpitch.value, dominant == 0, offset) ||
+		!VR_InputWireVec (cl.viewent.origin))
+	{
+		vr_melee_trail_count = 0;
+		return;
+	}
+	if (vr_melee_trail_count)
+	{
+		const int last = (vr_melee_trail_next + VR_MELEE_TRAIL_SAMPLES - 1) % VR_MELEE_TRAIL_SAMPLES;
+		if (vr_melee_trail[last].time == cl.time)
+			return;
+	}
+	sample = &vr_melee_trail[vr_melee_trail_next];
+	VectorCopy (cl.viewent.origin, sample->base);
+	VectorAdd (cl.viewent.origin, offset, sample->tip);
+	sample->time = cl.time;
+	vr_melee_trail_next = (vr_melee_trail_next + 1) % VR_MELEE_TRAIL_SAMPLES;
+	if (vr_melee_trail_count < VR_MELEE_TRAIL_SAMPLES)
+		++vr_melee_trail_count;
+}
+
+/* Fraction along p0->p1 where it enters [mins,maxs], or -1. */
+static float VR_InputSegmentBoxFraction (const vec3_t p0, const vec3_t p1,
+	const vec3_t mins, const vec3_t maxs)
+{
+	float enter = 0.0f, leave = 1.0f;
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		const float delta = p1[axis] - p0[axis];
+		if (fabsf (delta) < 1e-6f)
+		{
+			if (p0[axis] < mins[axis] || p0[axis] > maxs[axis])
+				return -1.0f;
+			continue;
+		}
+		float t0 = (mins[axis] - p0[axis]) / delta;
+		float t1 = (maxs[axis] - p0[axis]) / delta;
+		if (t0 > t1)
+		{
+			const float swap = t0;
+			t0 = t1;
+			t1 = swap;
+		}
+		enter = q_max (enter, t0);
+		leave = q_min (leave, t1);
+		if (enter > leave)
+			return -1.0f;
+	}
+	return enter;
+}
+
+/* A gesture strike lets the mod's own melee code run (damage, reach,
+ * cooldown), but that code traces straight along the hand aim. Point the
+ * strike command at the first monster the blade passed through during the
+ * swing, if the mod's trace from the hand source can reach it. One target per
+ * swing; native QuakeC still decides the hit. */
+#define VR_MELEE_NATIVE_REACH 64.0f
+void VR_InputSteerMeleeStrike (usercmd_t *cmd)
+{
+	const entity_t *self;
+	vec3_t source, best_mins, best_maxs;
+	double newest;
+	float best_order = -1.0f;
+	int best_entity = 0;
+
+	if (!cmd || !(cmd->buttons & BUTTON_ATTACK) || !cmd->vr_active ||
+		!cmd->vr_handpos_relative || vr_melee_trail_count < 2 ||
+		!VR_InputGestureMeleeActive () || cl.viewentity < 1 ||
+		cl.viewentity >= cl.num_entities)
+		return;
+	self = &cl.entities[cl.viewentity];
+	VectorAdd (self->origin, cmd->vr_handpos, source);
+	newest = vr_melee_trail[(vr_melee_trail_next + VR_MELEE_TRAIL_SAMPLES - 1) % VR_MELEE_TRAIL_SAMPLES].time;
+
+	for (int e = cl.maxclients + 1; e < cl.num_entities; ++e)
+	{
+		const entity_t *ent = &cl.entities[e];
+		vec3_t mins, maxs, closest;
+		float reach = 0.0f;
+		if (!ent->model || ent->model->type != mod_alias || ent->model->flags ||
+			ent->msgtime != cl.mtime[0] || e == cl.viewentity)
+			continue; /* rotating items, gibs and projectiles carry model flags */
+		for (int axis = 0; axis < 3; ++axis)
+		{
+			mins[axis] = ent->origin[axis] + ent->model->mins[axis] - 2.0f;
+			maxs[axis] = ent->origin[axis] + ent->model->maxs[axis] + 2.0f;
+			closest[axis] = CLAMP (mins[axis], source[axis], maxs[axis]);
+			reach += (closest[axis] - source[axis]) * (closest[axis] - source[axis]);
+		}
+		if (sqrtf (reach) > VR_MELEE_NATIVE_REACH)
+			continue;
+		/* Oldest pair first: the earliest crossing is the first thing hit. */
+		for (int k = vr_melee_trail_count - 1, order = 0; k >= 1; --k, ++order)
+		{
+			const vr_melee_trail_sample_t *a = &vr_melee_trail[(vr_melee_trail_next + VR_MELEE_TRAIL_SAMPLES - 1 - k) % VR_MELEE_TRAIL_SAMPLES];
+			const vr_melee_trail_sample_t *b = &vr_melee_trail[(vr_melee_trail_next + VR_MELEE_TRAIL_SAMPLES - k) % VR_MELEE_TRAIL_SAMPLES];
+			float hit = -1.0f;
+			if (newest - a->time > VR_MELEE_TRAIL_SECONDS)
+				continue;
+			for (int step = 0; step <= 4 && hit < 0.0f; ++step)
+			{
+				vec3_t p0, p1;
+				const float along = step / 4.0f;
+				for (int axis = 0; axis < 3; ++axis)
+				{
+					p0[axis] = a->base[axis] + along * (a->tip[axis] - a->base[axis]);
+					p1[axis] = b->base[axis] + along * (b->tip[axis] - b->base[axis]);
+				}
+				hit = VR_InputSegmentBoxFraction (p0, p1, mins, maxs);
+			}
+			if (hit < 0.0f)
+				hit = VR_InputSegmentBoxFraction (b->base, b->tip, mins, maxs);
+			if (hit >= 0.0f)
+			{
+				const float key = order + hit;
+				if (best_order < 0.0f || key < best_order)
+				{
+					best_order = key;
+					best_entity = e;
+					VectorCopy (mins, best_mins);
+					VectorCopy (maxs, best_maxs);
+				}
+				break;
+			}
+		}
+	}
+	if (best_entity)
+	{
+		vec3_t center, dir, angles;
+		for (int axis = 0; axis < 3; ++axis)
+			center[axis] = 0.5f * (best_mins[axis] + best_maxs[axis]);
+		VectorSubtract (center, source, dir);
+		if (VectorNormalize (dir) > 0.0f)
+		{
+			VectorAngles (dir, NULL, angles);
+			angles[ROLL] = cmd->vr_handrot[ROLL];
+			if (isfinite (angles[0]) && isfinite (angles[1]) && isfinite (angles[2]))
+				VectorCopy (angles, cmd->vr_handrot);
+		}
+	}
 }
 
 unsigned int VR_InputMergeMeleeAttack (unsigned int buttons, qboolean isfinal)
@@ -4057,6 +4230,12 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 		!state->wheel_touch_wait_release && (input->touched & VRXR_BUTTON_PAD) &&
 		(context->destination == key_game || context->binding_capture))
 		VR_InputAddKey (desired, hand, K_VR_RTHUMB);
+	/* Index only: pushing the right stick up also opens the wheel (stick
+	 * click is Index alternate fire). Other controllers use the stick click. */
+	if (!logical_left && state->profile == VRXR_PROFILE_INDEX &&
+		context->destination == key_game && !context->binding_capture &&
+		VR_InputFilteredAxis (input, 1, 0.0f) > 0.6f)
+		VR_InputAddKey (desired, hand, K_VR_RTHUMB);
 	if (state->profile == VRXR_PROFILE_INDEX && (pressed & VRXR_BUTTON_PAD))
 		VR_InputAddKey (desired, hand, VR_InputBindingKey (K_YBUTTON, context));
 	if (pressed & VRXR_BUTTON_GRIP)
@@ -4292,6 +4471,7 @@ void VR_InputInit (void)
 	Cvar_RegisterVariable (&vr_joystick_yaw_multi);
 	Cvar_RegisterVariable (&vr_vrik);
 	Cvar_RegisterVariable (&vr_immersive_melee);
+	Cvar_RegisterVariable (&vr_melee_swing_distance);
 	Cvar_RegisterVariable (&vr_fbt_enabled);
 	Cvar_RegisterVariable (&vr_weapon_collision);
 	Cvar_SetCallback (&vr_lefthanded, VR_InputMotionSettingsChanged);
@@ -5403,6 +5583,7 @@ void VR_InputMove (usercmd_t *pending)
 	VR_InputPreparePrivatePose (pending, dominant, dominant_accepted);
 	for (int hand = 0; hand < 2; ++hand)
 		VR_InputPrepareGenericMelee (frame, hand);
+	VR_InputRecordMeleeTrail ();
 }
 
 void VR_InputApplyPending (usercmd_t *cmd)

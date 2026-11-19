@@ -2430,8 +2430,13 @@ void R_InitSamplers ()
 		sampler_create_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 		sampler_create_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 
+		/* Classic texels stay nearest when magnified. Minification must be
+		 * LINEAR for anisotropy to engage on every driver: Turnip (Steam
+		 * Frame, Adreno) ignores anisotropy for a NEAREST filter, which left
+		 * distant surfaces blurred by trilinear mip selection alone. */
 		sampler_create_info.anisotropyEnable = anisotropy > 1.0f;
 		sampler_create_info.maxAnisotropy = anisotropy;
+		sampler_create_info.minFilter = anisotropy > 1.0f ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
 		err = vkCreateSampler (vulkan_globals.device, &sampler_create_info, NULL, &vulkan_globals.point_aniso_sampler);
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateSampler failed with code %i", (int)err);
@@ -2529,6 +2534,8 @@ void R_InitSamplers ()
 
 		sampler_create_info.anisotropyEnable = anisotropy > 1.0f;
 		sampler_create_info.maxAnisotropy = anisotropy;
+		/* See point_aniso above: LINEAR minification engages anisotropy. */
+		sampler_create_info.minFilter = anisotropy > 1.0f ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
 		err = vkCreateSampler (vulkan_globals.device, &sampler_create_info, NULL, &vulkan_globals.point_aniso_sampler_lod_bias);
 		if (err != VK_SUCCESS)
 			Sys_Error ("vkCreateSampler failed with code %i", (int)err);

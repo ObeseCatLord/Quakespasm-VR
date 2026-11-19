@@ -4671,11 +4671,12 @@ static void M_VROptions_FoveationValue (char *text, size_t text_size)
 {
 	static const char *const requests[] = {"off", "fixed", "eye"};
 	const int requested = VRF_RequestedMode (vr_foveation.value);
-	// These renderer flags describe configured paths, not successful gaze acquisition.
 	const qboolean configured = vulkan_globals.stereo_active &&
 		(vulkan_globals.openxr_fragment_shading_rate_active || vulkan_globals.openxr_fragment_density_map_active);
-	// Both backends deliberately use full rate in menus; paused means currently off.
-	const char *now = requested != VRF_MODE_OFF && configured ? "paused" : "off";
+	/* Menus render at full rate; report the last gameplay frame instead. */
+	const char *status = GL_OpenXRFoveationStatus ();
+	const char *now = !configured ? "unsupported" :
+		!strcmp (status, "active") ? "on" : !strcmp (status, "off") ? "off" : "no gaze";
 	if (requested == VRF_MODE_OFF)
 		q_strlcpy (text, "off", text_size);
 	else
@@ -4730,7 +4731,7 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 		return;
 	}
 
-	char foveation_value[16];
+	char foveation_value[32];
 	M_VROptions_FoveationValue (foveation_value, sizeof (foveation_value));
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_FOVEATION, "Foveation");
 	M_Print (cbx, MENU_VALUE_X - 2 * CHARACTER_SIZE, top + CHARACTER_SIZE * VR_OPT_FOVEATION, foveation_value);

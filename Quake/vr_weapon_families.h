@@ -97,6 +97,20 @@ static const vr_weapon_family_t vr_weapon_families[] = {
 	{0x43778f7932436b7bull, true, {0.5f, 0.0f, -11.0f}, 0.5f, true, {22.0f, 0.0f, -8.7f}, NULL},
 	/* gun lq1:progs/v_shot2.mdl */
 	{0xeb6f7972824acf1dull, true, {-0.5f, 0.0f, -10.5f}, 0.75f, true, {16.5f, 0.0f, -8.3f}, NULL},
+	/* gun mcj2_upd1/mcj2:progs/v_light.mdl */
+	{0xb2c0c87fbd60d68aull, true, {10.0f, 0.0f, -28.0f}, 0.5f, true, {39.0f, 2.5f, -19.0f}, NULL},
+	/* gun mcj2_upd1/mcj2:progs/v_nail.mdl */
+	{0x8adebcf24a70e9c6ull, true, {10.0f, 0.0f, -22.0f}, 0.5f, true, {36.0f, 0.0f, -15.0f}, NULL},
+	/* gun mcj2_upd1/mcj2:progs/v_nail2.mdl */
+	{0xfe6dcb8411c1d2abull, true, {12.0f, 0.0f, -20.0f}, 0.5f, true, {35.5f, 0.0f, -16.3f}, NULL},
+	/* gun mcj2_upd1/mcj2:progs/v_rock.mdl */
+	{0x5eed341d37d07046ull, true, {7.0f, 0.0f, -24.0f}, 0.5f, true, {38.0f, 0.0f, -19.0f}, NULL},
+	/* gun mcj2_upd1/mcj2:progs/v_rock2.mdl */
+	{0xc7644426024d5c6full, true, {19.0f, 0.0f, -28.0f}, 0.45f, true, {51.0f, 0.0f, -21.0f}, NULL},
+	/* gun mcj2_upd1/mcj2:progs/v_shot.mdl */
+	{0xee034de53942297bull, true, {8.0f, 0.0f, -13.0f}, 0.5f, true, {22.0f, 0.0f, -11.0f}, NULL},
+	/* gun mcj2_upd1/mcj2:progs/v_shot2.mdl */
+	{0x5babb6d540b96216ull, true, {16.0f, 0.0f, -17.0f}, 0.5f, true, {34.0f, 0.0f, -15.3f}, NULL},
 	/* gun mg3:progs/v_bloodshot.mdl */
 	{0xa7b580def699ca0cull, true, {11.4f, -0.2f, -7.7f}, 0.5f, true, {21.0f, 0.0f, -9.8f}, NULL},
 	/* gun mg3:progs/v_bloodshot2.mdl */
@@ -163,6 +177,12 @@ static const vr_weapon_family_t vr_weapon_families[] = {
 	{0xf98b4de0f3f65183ull, true, {37.0f, -11.0f, -21.0f}, 0.33f, true, {38.0f, 0.0f, -17.0f}, NULL},
 	/* melee lq1:progs/v_axe.mdl */
 	{0x6c38d9ad96bfd89dull, true, {21.0f, -11.0f, -30.0f}, 0.33f, true, {45.0f, -1.0f, -18.0f}, NULL},
+	/* melee mcj2_upd1/mcj2:progs/v_axe2.mdl */
+	{0xf6c45ef246f1acbcull, true, {30.0f, -20.0f, -22.0f}, 0.33f, true, {44.0f, -20.0f, -8.0f}, NULL},
+	/* melee mcj2_upd1/mcj2:progs/v_axe_3d.mdl */
+	{0xcdb44d1a371821cdull, true, {32.0f, -21.0f, -20.0f}, 0.33f, true, {33.0f, -25.0f, 0.0f}, NULL},
+	/* melee mcj2_upd1/mcj2:progs/v_hand.mdl */
+	{0x187abeb50c741128ull, true, {16.0f, -15.0f, -17.0f}, 0.5f, true, {25.0f, -17.0f, -13.0f}, NULL},
 	/* melee mg3:progs/v_hammer.mdl */
 	{0x0e6f0af72257a9f9ull, true, {20.0f, -11.0f, -29.5f}, 0.33f, true, {38.0f, -5.0f, -12.0f}, NULL},
 	/* melee mjolnir:progs/aoa/v_gungnir.mdl */
