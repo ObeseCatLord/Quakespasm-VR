@@ -166,10 +166,10 @@ int main (void)
 	assert (!strcmp (keybindings[K_VR_LSHOULDER], "impulse 12"));
 	assert (!strcmp (keybindings[K_VR_LTRIGGER], "+jump"));
 	assert (!strcmp (keybindings[K_VR_BBUTTON], "impulse 10"));
-	assert (!strcmp (keybindings[K_VR_LTHUMB], "+speed"));
+	assert (!strcmp (keybindings[K_VR_LTHUMB], "+vr_mod stick_l +speed"));
 	assert (!strcmp (keybindings[K_VR_RTHUMB], "+vr_weaponmenu"));
-	assert (!strcmp (keybindings[K_VR_ALTFIRE], "+button3"));
-	assert (!strcmp (keybindings[K_VR_RSHOULDER], "+showscores"));
+	assert (!strcmp (keybindings[K_VR_ALTFIRE], "+vr_mod altfire +button3"));
+	assert (!strcmp (keybindings[K_VR_RSHOULDER], "+vr_mod grip_r +showscores"));
 	assert (!strcmp (keybindings[K_VR_ABUTTON], "impulse 12"));
 	assert (!strcmp (keybindings[K_VR_XBUTTON], "+showscores"));
 	assert (!strcmp (keybindings[K_VR_YBUTTON], "+showscores"));

@@ -4012,6 +4012,75 @@ static qboolean VR_InputRoomscaleCommandAccepted (const vec3_t move)
 		fabsf (move[2]) <= VR_INPUT_ROOM_SCALE_MAX_DELTA_UNITS;
 }
 
+/* Mod-specific actions for controls a mod needs but the shared layout uses for
+ * something else. A control bound to "+vr_mod <slot> <fallback...>" runs the
+ * active game's action for that slot, or its ordinary fallback elsewhere, so
+ * nothing game-specific is saved into the shared configuration. */
+typedef struct
+{
+	const char *game, *slot, *command;
+} vr_mod_action_t;
+
+static const vr_mod_action_t vr_mod_actions[] = {
+	/* Minecraft Texture Jam 2: build mode, place block, wind charge dash. */
+	{"mcj2", "grip_l", "impulse 109"},
+	{"mcj2", "grip_r", "impulse 130"},
+	{"mcj2", "altfire", "impulse 130"},
+	{"mcj2", "stick_l", "impulse 127"},
+};
+
+static const char *VR_InputModActionFor (const char *slot)
+{
+	const char *game = COM_SkipPath (com_gamedir);
+	for (size_t i = 0; game && i < countof (vr_mod_actions); ++i)
+		if (!q_strcasecmp (game, vr_mod_actions[i].game) && !strcmp (slot, vr_mod_actions[i].slot))
+			return vr_mod_actions[i].command;
+	return NULL;
+}
+
+/* "+vr_mod <slot> <fallback...> <key>" from a button binding. A "+" command is
+ * pressed and released with the control; any other command runs on press. */
+static void VR_InputModAction (qboolean down)
+{
+	char fallback[256] = "", command[320];
+	const char *action, *key;
+	int argc = Cmd_Argc ();
+	if (argc < 3)
+	{
+		Con_Printf ("+vr_mod <slot> <fallback command>: runs the game's action for a control\n");
+		return;
+	}
+	key = Cmd_Argv (argc - 1);
+	for (int i = 2; i < argc - 1; ++i)
+	{
+		if (i > 2)
+			q_strlcat (fallback, " ", sizeof (fallback));
+		q_strlcat (fallback, Cmd_Argv (i), sizeof (fallback));
+	}
+	action = VR_InputModActionFor (Cmd_Argv (1));
+	if (!action)
+		action = fallback;
+	if (!action[0])
+		return;
+	if (action[0] == '+')
+		q_snprintf (command, sizeof (command), "%c%s %s\n", down ? '+' : '-', action + 1, key);
+	else if (down)
+		q_snprintf (command, sizeof (command), "%s\n", action);
+	else
+		return;
+	Cbuf_InsertText (command);
+}
+
+static void VR_InputModActionDown_f (void)
+{
+	VR_InputModAction (true);
+}
+
+static void VR_InputModActionUp_f (void)
+{
+	VR_InputModAction (false);
+}
+
 static void VR_InputTurn180_f (void)
 {
 	// Ignore commands issued while no gameplay accumulation will run; never
@@ -4340,17 +4409,18 @@ typedef struct
 /* The inherited VR defaults fill only dedicated XR controls. Existing user
  * and physical desktop-gamepad bindings remain authoritative. */
 /* Right A/B cycle weapons (previous/next), left X/Y and the grips show the
- * scoreboard. No control defaults to a 180-degree turn. */
+ * scoreboard. No control defaults to a 180-degree turn. Grips, left stick
+ * click and alt-fire go through +vr_mod so mods with extra actions use them. */
 static const vr_default_binding_t vr_default_bindings[] = {
 	{K_VR_LTRIGGER, "+jump"},
 	{K_VR_RTRIGGER, "+attack"},
 	{K_VR_ABUTTON, "impulse 12"},
 	{K_VR_BBUTTON, "impulse 10"},
-	{K_VR_LTHUMB, "+speed"},
+	{K_VR_LTHUMB, "+vr_mod stick_l +speed"},
 	{K_VR_RTHUMB, "+vr_weaponmenu"},
-	{K_VR_ALTFIRE, "+button3"},
-	{K_VR_LSHOULDER, "+showscores"},
-	{K_VR_RSHOULDER, "+showscores"},
+	{K_VR_ALTFIRE, "+vr_mod altfire +button3"},
+	{K_VR_LSHOULDER, "+vr_mod grip_l +showscores"},
+	{K_VR_RSHOULDER, "+vr_mod grip_r +showscores"},
 	{K_VR_XBUTTON, "+showscores"},
 	{K_VR_YBUTTON, "+showscores"},
 };
@@ -4492,6 +4562,8 @@ void VR_InputInit (void)
 	Cvar_SetCallback (&vr_snap_turn, VR_InputMotionSettingsChanged);
 	Cvar_SetCallback (&vr_fbt_enabled, VR_InputFBTEnabledChanged);
 	Cmd_AddCommand ("vr_turn180", VR_InputTurn180_f);
+	Cmd_AddCommand ("+vr_mod", VR_InputModActionDown_f);
+	Cmd_AddCommand ("-vr_mod", VR_InputModActionUp_f);
 	Cmd_AddCommand ("vr_defaultbindings", VR_InputDefaultBindings_f);
 	Cmd_AddCommand ("vr_configs_executed", VR_InputConfigsExecuted_f);
 	Cmd_AddCommand ("vr_fbt_list", VR_InputFBTList_f);
