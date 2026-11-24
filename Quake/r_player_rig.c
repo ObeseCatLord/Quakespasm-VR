@@ -689,15 +689,16 @@ static void PR_Weigh (const pr_skeleton_t *s, const float p[3], pr_influence_t *
 	float distance[PR_BODY];
 	const float side = 0.02f * s->height, blend = 0.08f * s->height;
 	const float centre = s->ref[MD5_VRIK_HIP][1];
-	int best = MD5_VRIK_SPINE1, second = -1;
+	int best = 0, second = -1;
 	for (int i = 0; i < PR_BODY; ++i)
 	{
 		distance[i] = PR_SegmentDistance (p, s->ref[i], s->segment_end[i]);
 		if ((PR_LeftLimb (i) && p[1] < centre - side) || (PR_RightLimb (i) && p[1] > centre + side))
 			distance[i] += 1e4f;
+	}
+	for (int i = 1; i < PR_BODY; ++i)
 		if (distance[i] < distance[best])
 			best = i;
-	}
 	for (int i = 0; i < PR_BODY; ++i)
 		if (i != best && (pr_parent[i] == best || pr_parent[best] == i) &&
 			(second < 0 || distance[i] < distance[second]))
@@ -1128,7 +1129,9 @@ int R_PlayerRigEnsure (qmodel_t *model, const md5_skeleton_view_t *ranger)
 
 qboolean R_PlayerRigSeen (const qmodel_t *model)
 {
-	return !strcmp (pr_gamedir, com_gamedir) && PR_Find (model) != NULL;
+	/* A full table also counts as seen, so callers don't retry every frame. */
+	return !strcmp (pr_gamedir, com_gamedir) &&
+		(PR_Find (model) != NULL || pr_model_count >= PR_MAX_MODELS);
 }
 
 int R_PlayerRigLookup (const qmodel_t *model)
@@ -1227,6 +1230,7 @@ static void R_PlayerRigs_f (void)
 	int shown = 0;
 	if (Cmd_Argc () >= 3 && !q_strcasecmp (Cmd_Argv (1), "build"))
 	{
+		GL_SynchronizeEndRenderingTask ();
 		PR_ResetForGame ();
 		PR_BuildNamed (Cmd_Argv (2));
 		return;

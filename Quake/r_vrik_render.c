@@ -715,11 +715,12 @@ static int R_VRIKRenderGeneratedAvatar (const entity_t *entity)
 	if (id < 0 && !R_PlayerRigSeen (entity->model))
 	{
 		source = R_VRIKRenderBuiltinModel (PLAYER_AVATAR_RANGER);
-		/* Building reads the model file and publishes state that the raster
-		 * and BLAS eligibility checks read; join the render task first. */
-		GL_SynchronizeEndRenderingTask ();
 		if (!source || !Mod_GetMD5Skeleton (source, &ranger) || !ranger.from_rerelease)
 			return -1;
+		/* Building reads the model file and publishes state that the raster
+		 * and BLAS eligibility checks read; join the render task first. It
+		 * runs once per model: the result, built or not, is remembered. */
+		GL_SynchronizeEndRenderingTask ();
 		id = R_PlayerRigEnsure (entity->model, &ranger);
 	}
 	if (id < PLAYER_AVATAR_COUNT || id >= R_VRIK_RENDER_MAX_AVATARS ||

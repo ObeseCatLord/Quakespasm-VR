@@ -652,7 +652,7 @@ static qboolean M_CancelPendingConnection (void)
  * every controller and key press after joining. Close only that menu. */
 void M_CloseMainMenuForGame (void)
 {
-	if (key_dest != key_menu || m_state != m_main)
+	if (key_dest != key_menu || m_state != m_main || cls.demoplayback)
 		return;
 	M_MenuChanged ();
 	IN_Activate ();
