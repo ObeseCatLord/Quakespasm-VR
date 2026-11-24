@@ -424,14 +424,25 @@ static void SCTP_DecodeDCEP(sctp_t *sctp, qbyte *resp)
 		uint16_t protocollen;
 	} *dcep = (void*)sctp->i.r.buf;
 
+	if (sctp->i.r.size < sizeof(*dcep))
+		return;	//runt
 	if (dcep->type == 3)
 	{
-		char *label = (char*)(dcep+1);
-		char *prot = label + strlen(label)+1;
+		//label and protocol are length-prefixed, not NUL-terminated (RFC 8832)
+		const char *label = (const char*)(dcep+1);
+		size_t avail = sctp->i.r.size - sizeof(*dcep);
+		size_t labellen = (uint16_t)BigShort(dcep->labellen);
+		size_t protlen = (uint16_t)BigShort(dcep->protocollen);
+
+		if (labellen > avail)
+			labellen = avail;
+		if (protlen > avail - labellen)
+			protlen = avail - labellen;
 
 		sctp->qstreamid = sctp->i.r.sid;
 		if (sctp->modeflags & ICEF_VERBOSE)
-			Con_Printf(S_COLOR_GRAY"[%s]: New SCTP Channel: \"%s\" (%s)\n", sctp->friendlyname, label, prot);
+			Con_Printf(S_COLOR_GRAY"[%s]: New SCTP Channel: \"%.*s\" (%.*s)\n", sctp->friendlyname,
+				(int)labellen, label, (int)protlen, label + labellen);
 
 		h->dstport = sctp->peerport;
 		h->srcport = sctp->myport;

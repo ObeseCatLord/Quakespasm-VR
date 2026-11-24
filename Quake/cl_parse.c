@@ -3073,9 +3073,11 @@ static void CL_ParseStatic (int version) // johnfitz -- added a parameter
 	}
 
 	ent = cl.static_entities[i];
-	cl.num_statics++;
 	ent->is_static = true;
 	CL_ParseBaseline (ent, version); // johnfitz -- added second parameter
+	if (msg_badread || ent->baseline.modelindex >= MAX_MODELS)
+		Host_Error ("CL_ParseStatic: invalid model index or truncated entity");
+	cl.num_statics++;
 
 	// copy it to the current state
 
@@ -3121,6 +3123,10 @@ static void CL_ParseStaticSound (int version) // johnfitz -- added argument
 
 	vol = MSG_ReadByte ();
 	atten = MSG_ReadByte ();
+
+	// version 2 reads a signed short off the wire; bound it like CL_ParseStartSoundPacket
+	if (sound_num < 0 || sound_num >= MAX_SOUNDS)
+		Host_Error ("CL_ParseStaticSound: sound %i out of range (max %i)", sound_num, MAX_SOUNDS);
 
 	S_StaticSound (cl.sound_precache[sound_num], org, vol, atten);
 }

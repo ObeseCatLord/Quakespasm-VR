@@ -160,6 +160,8 @@ typedef struct
 
 	// demo file position where the current level starts (after signon packets)
 	qfileofs_t demo_prespawn_end;
+	// file position just past the demo being played; a demo inside a pak is followed by other files
+	qfileofs_t demo_file_end;
 
 	qboolean timedemo;
 	int		 forcetrack; // -1 = use normal cd track

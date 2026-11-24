@@ -486,6 +486,10 @@ void R_ParticleExplosion2 (vec3_t org, int colorStart, int colorLength)
 	particle_t *p;
 	int			colorMod = 0;
 
+	// the length comes off the network (TE_EXPLOSION2) or from QC; 0 would divide by zero
+	if (colorLength < 1)
+		colorLength = 1;
+
 	for (i = 0; i < 512; i++)
 	{
 		if (!free_particles)

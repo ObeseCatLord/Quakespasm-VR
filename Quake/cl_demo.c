@@ -60,6 +60,7 @@ void CL_StopPlayback (void)
 	cls.demofile = NULL;
 	cls.state = ca_disconnected;
 	cls.demo_prespawn_end = 0;
+	cls.demo_file_end = 0;
 	CL_ResetWeaponContactState ();
 
 	if (cls.timedemo)
@@ -131,6 +132,13 @@ static int CL_GetDemoMessage (void)
 	else if (cls.signon < (SIGNONS - 2))
 		cls.demo_prespawn_end = 0;
 
+	// a demo in a pak that ends without svc_disconnect must not read into the next pak entry
+	if (cls.demo_file_end > 0 && cls.demo_file_end - Sys_ftell (cls.demofile) < 16) // length + view angles
+	{
+		CL_StopPlayback ();
+		return 0;
+	}
+
 	// get the next message
 	if (fread (&net_message.cursize, 4, 1, cls.demofile) != 1)
 	{
@@ -149,8 +157,15 @@ static int CL_GetDemoMessage (void)
 	}
 
 	net_message.cursize = LittleLong (net_message.cursize);
-	if (net_message.cursize < 0 || net_message.cursize > MAX_MSGLEN)
-		Sys_Error ("Demo message size %d out of range (0..%d)", net_message.cursize, MAX_MSGLEN);
+	if (net_message.cursize < 0 || net_message.cursize > MAX_MSGLEN ||
+		(cls.demo_file_end > 0 && net_message.cursize > cls.demo_file_end - Sys_ftell (cls.demofile)))
+	{
+		// a corrupt or truncated demo stops playback instead of quitting the engine
+		Con_Printf ("Corrupt demo: message size %d out of range\n", net_message.cursize);
+		net_message.cursize = 0;
+		CL_StopPlayback ();
+		return 0;
+	}
 	r = fread (net_message.data, net_message.cursize, 1, cls.demofile);
 	if (r != 1)
 	{
@@ -772,6 +787,9 @@ play [demoname]
 */
 void CL_PlayDemo_f (void)
 {
+	qfilesize_t demo_length;
+	qfileofs_t	demo_end;
+
 	if (cmd_source != src_command)
 		return;
 
@@ -790,13 +808,14 @@ void CL_PlayDemo_f (void)
 
 	Con_Printf ("Playing demo from %s.\n", name);
 
-	COM_FOpenFile (name, &cls.demofile, NULL);
+	demo_length = COM_FOpenFile (name, &cls.demofile, NULL);
 	if (!cls.demofile)
 	{
 		Con_Printf ("ERROR: couldn't open %s\n", name);
 		cls.demonum = -1; // stop demo loop
 		return;
 	}
+	demo_end = Sys_ftell (cls.demofile) + demo_length;
 
 	// ZOID, fscanf is evil
 	// O.S.: if a space character e.g. 0x20 (' ') follows '\n',
@@ -811,6 +830,7 @@ void CL_PlayDemo_f (void)
 		return;
 	}
 
+	cls.demo_file_end = demo_end;
 	cls.demoplayback = true;
 	cls.demopaused = false;
 	cls.demospeed = 1.f;

@@ -3718,7 +3718,7 @@ retry:
 	MSG_WriteString (&client->message, PR_GetString (qcvm->edicts->v.message));
 
 	// johnfitz -- only send the first 256 model and sound precaches if protocol is 15
-	for (i = 1, s = sv.model_precache + 1; *s && i < client->limit_models; s++, i++)
+	for (i = 1, s = sv.model_precache + 1; i < MAX_MODELS && i < client->limit_models && *s; s++, i++)
 		MSG_WriteString (&client->message, *s);
 	MSG_WriteByte (&client->message, 0);
 	client->signon_models = i;
@@ -3727,7 +3727,7 @@ retry:
 	if (host_client->protocol_pext2 && truncated)
 		i = 1; // we tried, it didn't fit.
 	else
-		for (i = 1, s = sv.sound_precache + 1; *s && i < client->limit_sounds; s++, i++)
+		for (i = 1, s = sv.sound_precache + 1; i < MAX_SOUNDS && i < client->limit_sounds && *s; s++, i++)
 			MSG_WriteString (&client->message, *s);
 	MSG_WriteByte (&client->message, 0);
 	client->signon_sounds = i;
@@ -6526,7 +6526,8 @@ void SV_SpawnServer (const char *server)
 	sv.sound_precache[0] = dummy;
 	sv.model_precache[0] = dummy;
 	sv.model_precache[1] = sv.modelname;
-	if (qcvm->worldmodel->numsubmodels > MAX_MODELS)
+	// slot 0 is reserved; the world and inline models occupy slots 1 through numsubmodels
+	if (qcvm->worldmodel->numsubmodels >= MAX_MODELS)
 	{
 		Con_Printf ("too many inline models %s\n", sv.modelname);
 		sv.active = false;

@@ -426,13 +426,13 @@ static void PF_sv_setmodel (void)
 	m = G_STRING (OFS_PARM1);
 
 	// check to see if model was properly precached
-	for (i = 0, check = sv.model_precache; *check; i++, check++)
+	for (i = 0, check = sv.model_precache; i < MAX_MODELS && *check; i++, check++)
 	{
 		if (!strcmp (*check, m))
 			break;
 	}
 
-	if (!*check)
+	if (i == MAX_MODELS || !*check)
 	{
 		if (pr_checkextension.value)
 		{
@@ -440,6 +440,9 @@ static void PF_sv_setmodel (void)
 			//			PR_StackTrace();
 			Con_Warning ("PF_setmodel(\"%s\"): Model was not precached\n", m);
 			i = SV_Precache_Model (m);
+			if (!i)
+				PR_RunError ("PF_setmodel: precache overflow");
+			check = &sv.model_precache[i];
 		}
 		else
 			PR_RunError ("no precache: %s", m);
@@ -713,13 +716,13 @@ static void PF_sv_ambientsound (void)
 	attenuation = G_FLOAT (OFS_PARM3);
 
 	// check to see if samp was properly precached
-	for (soundnum = 0, check = sv.sound_precache; *check; check++, soundnum++)
+	for (soundnum = 0, check = sv.sound_precache; soundnum < MAX_SOUNDS && *check; check++, soundnum++)
 	{
 		if (!strcmp (*check, samp))
 			break;
 	}
 
-	if (!*check)
+	if (soundnum == MAX_SOUNDS || !*check)
 	{
 		Con_Printf ("no precache: %s\n", samp);
 		return;

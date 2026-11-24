@@ -3661,6 +3661,9 @@ static void Mod_LoadSubmodels (qmodel_t *mod, byte *mod_base, lump_t *l)
 			out->headnode[j] = ReadLongUnaligned (in + offsetof (dmodel_t, headnode[j]));
 		}
 		out->visleafs = ReadLongUnaligned (in + offsetof (dmodel_t, visleafs));
+		// visible leaf counts exclude the solid leaf 0; they size PVS rows and leaf walks
+		if (out->visleafs < 0 || out->visleafs >= mod->numleafs)
+			Host_Error ("Mod_LoadSubmodels: submodel %d has an invalid visible leaf count %d (%d leafs) in %s", i, out->visleafs, mod->numleafs, mod->name);
 		out->firstface = ReadLongUnaligned (in + offsetof (dmodel_t, firstface));
 		out->numfaces = ReadLongUnaligned (in + offsetof (dmodel_t, numfaces));
 	}
