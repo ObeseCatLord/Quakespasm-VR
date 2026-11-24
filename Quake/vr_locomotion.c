@@ -44,22 +44,45 @@ static qboolean VR_LocomotionFiniteVec3 (const float value[3])
 	return value && isfinite (value[0]) && isfinite (value[1]) && isfinite (value[2]);
 }
 
+/* Per-profile basis C, with the device pose converted as T * inverse(C).
+ *
+ * OpenXR defines the grip pose identically for every controller profile, so
+ * every profile that delivers a grip shares the Touch basis (identity): Touch,
+ * Touch Plus/Pro, Vive wand, Frame, WMR/HP/Odyssey, Cosmos/Focus 3, Pico,
+ * Magic Leap 2, simple and unknown profiles. Only profiles with a qualified
+ * deviation carry a conversion:
+ *
+ * INDEX: Monado's Index grip offset from the OpenVR controller pose, Euler
+ *   degrees (15.392, -2.071, .303), Rz*Ry*Rx; right hand mirrors Y/Z. This
+ *   leaves Index about 15.5 degrees from the grip basis the other profiles
+ *   use; both bases are kept as verified in a headset.
+ * Tracked hands are already in the grip basis: the OpenXR backend converts
+ *   their aim ray at the source (VRXR_HandAimToGrip).
+ * Constants avoid repeated trig per consumer. */
+typedef struct
+{
+	int			profile;
+	float		rotation[2][3][3];
+	float		translation[3];
+} vr_grip_basis_t;
+
+static const vr_grip_basis_t vr_grip_bases[] = {
+	{VRXR_PROFILE_INDEX,
+	 {{{0.9993328387f, -0.0146902851f, -0.0334375996f},
+	   {0.0052848687f, 0.9640682673f, -0.2656020446f},
+	   {0.0361378985f, 0.2652481319f, 0.9635027145f}},
+	  {{0.9993328387f, 0.0146902851f, 0.0334375996f},
+	   {-0.0052848687f, 0.9640682673f, -0.2656020446f},
+	   {-0.0361378985f, 0.2652481319f, 0.9635027145f}}},
+	 {0.0f, -0.015f, 0.13f}},
+};
+
 qboolean VR_LocomotionControllerDevice (const vrxr_frame_t *frame,
 	int physical_hand, vrxr_device_t *out)
 {
 	vrxr_device_t device;
 	float controller[3][3], lever[3];
-	/* Monado Index grip Euler degrees (15.392, -2.071, .303), Rz*Ry*Rx;
-	 * right hand mirrors Y/Z. Constants avoid repeated trig per consumer. */
-	static const float grip_rotation[2][3][3] = {
-		{{0.9993328387f, -0.0146902851f, -0.0334375996f},
-		 {0.0052848687f, 0.9640682673f, -0.2656020446f},
-		 {0.0361378985f, 0.2652481319f, 0.9635027145f}},
-		{{0.9993328387f, 0.0146902851f, 0.0334375996f},
-		 {-0.0052848687f, 0.9640682673f, -0.2656020446f},
-		 {-0.0361378985f, 0.2652481319f, 0.9635027145f}}
-	};
-	const float translation[3] = {0.0f, -0.015f, 0.13f};
+	const vr_grip_basis_t *basis = NULL;
 
 	if (!out)
 		return false;
@@ -73,7 +96,10 @@ qboolean VR_LocomotionControllerDevice (const vrxr_frame_t *frame,
 		for (int column = 0; column < 4; ++column)
 			if (!isfinite (device.matrix[row][column]))
 				return false;
-	if (frame->hands[physical_hand].profile != VRXR_PROFILE_INDEX)
+	for (size_t i = 0; i < countof (vr_grip_bases); ++i)
+		if (vr_grip_bases[i].profile == frame->hands[physical_hand].profile)
+			basis = &vr_grip_bases[i];
+	if (!basis)
 	{
 		*out = device;
 		return true;
@@ -87,13 +113,13 @@ qboolean VR_LocomotionControllerDevice (const vrxr_frame_t *frame,
 		{
 			controller[row][column] = 0.0f;
 			for (int k = 0; k < 3; ++k)
-				controller[row][column] += device.matrix[row][k] * grip_rotation[physical_hand][column][k];
+				controller[row][column] += device.matrix[row][k] * basis->rotation[physical_hand][column][k];
 			if (!isfinite (controller[row][column]))
 				return false;
 		}
 		lever[row] = 0.0f;
 		for (int k = 0; k < 3; ++k)
-			lever[row] -= controller[row][k] * translation[k];
+			lever[row] -= controller[row][k] * basis->translation[k];
 	}
 	for (int row = 0; row < 3; ++row)
 	{

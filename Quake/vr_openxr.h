@@ -10,9 +10,12 @@ extern "C" {
 #define VRXR_MAX_DEVICES 64
 enum { VRXR_DEVICE_NONE, VRXR_DEVICE_HEAD, VRXR_DEVICE_HAND, VRXR_DEVICE_TRACKER };
 /* GENERIC: a bound thumbstick controller with no qualified grip offset
- * (WMR, HP Reverb G2, Vive Cosmos/Focus 3). Append new values only. */
+ * (WMR, HP Reverb G2, Vive Cosmos/Focus 3, Pico). HAND: a tracked bare hand
+ * (ext/hand_interaction_ext, microsoft/hand_interaction); its device pose is
+ * the hand's aim ray expressed in the grip basis. Append new values only. */
 enum { VRXR_PROFILE_SIMPLE, VRXR_PROFILE_TOUCH, VRXR_PROFILE_INDEX,
-       VRXR_PROFILE_VIVE, VRXR_PROFILE_FRAME, VRXR_PROFILE_GENERIC };
+       VRXR_PROFILE_VIVE, VRXR_PROFILE_FRAME, VRXR_PROFILE_GENERIC,
+       VRXR_PROFILE_HAND };
 enum { VRXR_BUTTON_TRIGGER = 1, VRXR_BUTTON_GRIP = 2,
        VRXR_BUTTON_STICK = 4, VRXR_BUTTON_PAD = 8,
        VRXR_BUTTON_PRIMARY = 16, VRXR_BUTTON_SECONDARY = 32,

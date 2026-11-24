@@ -158,4 +158,20 @@ static inline void VRXR_LegacyGrip(vrxr_device_t *device, int profile) {
   } else if (device->velocity_valid) device->velocity_valid=0;
   memcpy(device->matrix,result,sizeof(result));
 }
+
+/* A tracked hand's pose action is bound to its aim ray: a bare-hand grip's -Z
+ * runs little finger to thumb, roughly vertical while the hand points level.
+ * Express the ray in the controller grip basis instead, pitched up about the
+ * hand's own X axis by the default vr_gunangle (32 degrees), so the default
+ * gun angle leaves a held weapon along the ray. Pure rotation: position and
+ * velocities are unchanged. */
+static inline void VRXR_HandAimToGrip(vrxr_device_t *device) {
+  static const float c=.8480480962f, s=.5299192642f; /* cos/sin 32 degrees */
+  if (!device || !device->valid) return;
+  for (int i=0;i<3;++i) {
+    const float y=device->matrix[i][1], z=device->matrix[i][2];
+    device->matrix[i][1]=y*c+z*s;
+    device->matrix[i][2]=-y*s+z*c;
+  }
+}
 #endif

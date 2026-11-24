@@ -31,7 +31,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define VR_MOVEMENT_MODE_FOLLOW_HAND 1
 #define VR_MOVEMENT_MODE_RAW_INPUT 2
 
-/* Immutable XR grip -> inherited controller pose/velocity, Index only.
+/* Immutable XR grip -> inherited controller pose/velocity. Converts Index
+ * to the OpenVR controller pose; every other profile shares the OpenXR grip
+ * basis and passes through unchanged.
  * out is a caller-owned copy, never frame storage. A usable pose can have an
  * invalid derived linear velocity when its required angular velocity is absent. */
 qboolean VR_LocomotionControllerDevice (const vrxr_frame_t *frame,

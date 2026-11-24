@@ -44,6 +44,7 @@ def main():
 
         for fixture, owner, dependencies in (
             ("vr_index_controller_pose_fixture", "vr_locomotion.c", ("vr_locomotion", "mathlib")),
+            ("vr_controller_basis_fixture", "vr_locomotion.c", ("vr_locomotion", "mathlib")),
             ("vr_coherent_gesture_fixture", "vr_input.c", ("vr_locomotion", "mathlib")),
             ("vr_held_offset_scale_fixture", "vr_weapon_calibration.c", ()),
             ("render_acquire_fixture", "r_passes.c", ()),

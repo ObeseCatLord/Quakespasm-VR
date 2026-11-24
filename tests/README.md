@@ -4236,7 +4236,13 @@ python3 -B tests/run_anisotropy_native.py \
   --build-dir /path/to/strict-debug-graph
 ```
 
-Coverage includes the immutable Index grip inverse and origin velocity; real
+Coverage includes the immutable Index grip inverse and origin velocity; the
+per-profile controller basis (`vr_controller_basis_fixture.c`: every
+grip-delivering profile, including simple/unknown, Vive, Frame, Touch Plus/Pro,
+WMR/HP/Cosmos/Focus 3 and Pico, gives exactly the Touch result; Index keeps
+its ~15.5 degree qualified offset; a tracked hand's aim ray with the default
+`vr_gunangle` leaves the weapon along the ray, where a bare-hand grip would
+point it roughly vertical); real
 recognizer/merge behavior with angular blade motion, coherent translation,
 wiggle rejection, source changes and partial authored endpoints; wheel centering,
 slot picking and action dimensions; CPU dynamic-light cleanup and alias lighting;
