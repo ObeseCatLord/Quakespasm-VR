@@ -2,13 +2,14 @@
 
 Scope: what a player sees and feels in internet co-op on a dedicated server
 (40 Hz, 30–150 ms ping, several VR players, large Arcane Dimensions maps).
-The reference is QSS-M (`03a498aa` lineage, sibling checkout); line numbers
-for it are given as `QSS-M file:line`. Line numbers for this tree are those of
+The reference is QSS-M at `03a498aa` (sibling checkout, branch `qsrebase`);
+line numbers for it are given as `QSS-M file:line`. Line numbers for this tree are those of
 the commit that adds this document.
 
-Four changes were implemented and measured. None changes the wire format, so
-2.3.x servers and clients keep working in any mix; each has a cvar that
-restores the previous behaviour. Everything else is listed as a
+Four changes were implemented and measured. None changes the wire format, and
+each has a cvar that restores the previous behaviour. A client and a server
+of the parent commit were run against this tree in both directions (see
+Verification). Everything else is listed as a
 recommendation.
 
 ## Summary
@@ -17,7 +18,7 @@ recommendation.
 |---|---|---|---|
 | 1 | Command-driven players move in whole commands per server frame, so everyone else sees them alternate between about half and full speed | every remote player, even on a perfect link | fixed on the server, `sv_playercarry` |
 | 2 | The client clock is forced back between the last two messages on every late or early datagram | everything that is interpolated: players, monsters, projectiles, doors, lifts | fixed on the client, `cl_interp` |
-| 3 | A remote VR pose is drawn between the newest two samples by arrival time with a delay longer than their spacing | heads and hands of other VR players | fixed on the client (pose timeline) |
+| 3 | A remote VR pose is drawn between the newest two samples by arrival time with a delay longer than their spacing | heads and hands of other VR players | fixed on the client, `cl_vrik_timeline`; not seen in a headset |
 | 4 | A lost reliable fragment stalls the whole reliable stream for a flat second | prints, centerprints, scoreboard and state changes, map loads | fixed in the transport, `net_resend_adaptive` |
 | 5 | Entities are removed the moment their removal arrives, ahead of the interpolation clock | rockets and nails vanish a little before the wall | recommended |
 | 6 | Pose stream is 20 Hz, gated again by the server, and carries no sender time | remote VR hands lag about 85 ms and stall on a lost pose | recommended |
@@ -30,18 +31,19 @@ recommendation.
 
 Nothing here was judged by eye.
 
-- **Link impairment** (`net_dgrm.c:596`, `Datagram_ReadLagged` `net_dgrm.c:735`,
-  `Datagram_WriteLagged` `net_dgrm.c:715`). New development cvars on a
+- **Link impairment** (`net_dgrm.c:598`, `Datagram_ReadLagged` `net_dgrm.c:744`,
+  `Datagram_WriteLagged` `net_dgrm.c:724`). New development cvars on a
   connecting client: `net_fakelag` (one-way ms, both directions),
   `net_fakejitter` (0..N ms per datagram), `net_fakeloss` (percent),
   `net_fakeburst "period_ms length_ms"` (inbound datagrams held and released
-  together), `net_fakeseed`. They act on raw datagrams below sequencing and
+  together), `net_fakestep "period_ms extra_ms"` (inbound delay that is
+  longer for half of every period), `net_fakeseed`. They act on raw datagrams below sequencing and
   acknowledgement, keep datagram order, are seeded so two runs see the same
   sequence, and never act in a dedicated server. All default to off.
   QSS-M has only `pq_lag`, which delays outgoing commands
   (`QSS-M cl_input.c:362,784`). The cvars the old server cfg refers to
   (`net_lagdebug*`) do not exist in this engine.
-- **Displayed-position log** (`CL_LerpDebugLog`, `cl_main.c:1983`).
+- **Displayed-position log** (`CL_LerpDebugLog`, `cl_main.c:1984`).
   `cl_lerpdebug_log <file>` writes, per rendered frame, the client clock, the
   message times and the position each entity is actually drawn at (through
   `R_GetEntityLerpedTransform`, so step entities are covered), plus counters
@@ -57,7 +59,10 @@ Nothing here was judged by eye.
   over its mean. `stall` and `jump` are the share of frames drawn below 30 %
   or above 170 % of the median speed. `jerk p95` is the 95th percentile of
   the frame-to-frame change of speed, over the mean speed. The mover's true
-  speed varies by about 2 %, which is the floor of `cv`.
+  speed varies by about 2 %, which is the floor of `cv`. Depending on where
+  it spawns, the mover's circle sometimes clips a wall once per lap; such a
+  run (mean drawn speed below 366) was repeated so that every row compares
+  the same motion.
 
 Everything ran on one machine over localhost on a hidden display with VR
 disabled. No headset session, no real internet path and no ARM build were
@@ -70,11 +75,20 @@ binary. After = defaults. 20 s per run, id1 `start`.
 
 | Link (observer side unless noted) | cv before | cv after | stall+jump before | after | jerk p95 before | after | clock forced per second before | after |
 |---|---|---|---|---|---|---|---|---|
-| clean | 0.185 | 0.021 | 0.0 % | 0.0 % | 0.449 | 0.050 | 0.1 | 0.0 |
-| 40 ms, 0–10 ms jitter | 0.323 | 0.021 | 5.8 % | 0.0 % | 0.818 | 0.048 | 19.8 | 0.0 |
-| 40 ms, 0–20 ms jitter, 3 % loss | 0.471 | 0.023 | 9.9 % | 0.0 % | 1.298 | 0.048 | 24.6 | 0.1 |
-| 40 ms, 0–8 ms jitter, 120 ms stall every 2 s | 0.287 | 0.021 | 3.8 % | 0.0 % | 0.787 | 0.049 | 20.1 | 0.0 |
-| both clients: 30–40 ms, 0–15 ms jitter, 2 % loss | 0.449 | 0.026 | 8.6 % | 0.0 % | 1.135 | 0.055 | 17.3 | 0.0 |
+| clean | 0.187 | 0.022 | 0.0 % | 0.0 % | 0.464 | 0.056 | 0.2 | 0.0 |
+| 40 ms, 0–10 ms jitter | 0.290 | 0.022 | 4.4 % | 0.0 % | 0.793 | 0.054 | 18.7 | 0.0 |
+| 40 ms, 0–20 ms jitter, 3 % loss | 0.439 | 0.024 | 11.5 % | 0.0 % | 1.179 | 0.059 | 24.7 | 0.0 |
+| both clients: 30–40 ms, 0–15 ms jitter, 2 % loss | 0.482 | 0.028 | 11.3 % | 0.0 % | 1.192 | 0.058 | 18.2 | 0.0 |
+| 40 ms, 0–8 ms jitter, everything held for 120 ms every 2 s | 0.690 | 0.241 | 10.2 % | 3.5 % | 0.801 | 0.070 | 24.9 | 3.9 |
+| 0–8 ms jitter, delay switching between 40 and 120 ms every 2 s | 0.461 | 0.266 | 5.9 % | 0.8 % | 0.788 | 0.161 | 18.8 | 3.0 |
+
+The last two rows are disturbances longer than any reasonable buffer. A
+120 ms hold still freezes the picture once the margin and the 25 ms of
+extrapolation are used up, and when the held updates arrive together the
+clock skips to the oldest one it kept; the classic lerp freezes for the
+whole hold and then jumps the full distance (largest single-frame speed
+10.8 times normal, against 4.8). A delay that changes level costs one such
+freeze or skip per change instead of a second of stutter.
 
 The tcj start map (Arcane Dimensions progs, `q30` predictive movement) gives
 the same picture; its numbers are in the verification section.
@@ -85,6 +99,10 @@ Which change does what, from the two-by-two runs:
 |---|---|---|---|---|
 | clean, cv / jerk p95 | 0.184 / 0.446 | 0.152 / 0.091 | 0.211 / 0.467 | 0.021 / 0.053 |
 | 40 ms + 0–10 ms jitter, cv / jerk p95 | 0.297 / 0.791 | 0.216 / 0.701 | 0.182 / 0.446 | 0.021 / 0.048 |
+
+(These four-way runs used an earlier build of the same changes that kept
+three updates instead of four; the before and after columns agree with the
+final table.)
 
 The carry removes the judder that is there on a perfect link; the buffered
 clock removes what the link adds. Each leaves the other's share untouched.
@@ -132,17 +150,18 @@ predictive-movement players only.
 
 ### 2. The client clock is forced on every late or early datagram
 
-**Evidence here.** `CL_LerpPoint` (`cl_main.c:2159`) keeps `cl.time` between
+**Evidence here.** `CL_LerpPoint` (`cl_main.c:2165`) keeps `cl.time` between
 the last two message times. A datagram that arrives late leaves the clock at
 the newest message and every interpolated entity stops; one that arrives
 early sets the clock forward and everything skips. With 10 ms of jitter the
-clock was forced 20 times a second, and the forcing occasionally leaves
-`cl.time` below the previous frame's value, which takes the "time ran
-backwards" path (`cl_main.c:3619`) and resets every entity's animation and
-movement blend for a frame (seen about once per 20 s). Step entities and
-animation frames start their blend at the moment the datagram happens to be
-read (`cl_parse.c:1297`, previously always `q_min (cl.time, cl.mtime[0])`),
-so the same jitter moves into monster movement and animation timing.
+clock was forced 20 times a second. In two of the classic-lerp runs the
+forcing also left `cl.time` below the previous frame's value once, which
+takes the "time ran backwards" path (`cl_main.c:3627`) and resets every
+entity's animation and movement blend for that frame. Step entities
+(monsters) glide for 100 ms from the previous update's position, starting
+when the datagram is read (`CL_EntityLerpUpdated`, `cl_parse.c:1299`): an update
+that arrives early cuts the glide short and the monster jumps to its end, a
+late one leaves it standing.
 
 **QSS-M.** Identical in substance: `QSS-M cl_main.c:1180–1223` is the same
 function, differing only in not clamping inside the 1 % tolerance, and step
@@ -150,40 +169,55 @@ movement restarts at arrival (`QSS-M r_alias.c:2756`). QSS-M has no jitter
 buffer; this change goes beyond it rather than porting from it.
 
 **Change.** Buffered interpolation, `CL_LerpPointBuffered`
-(`cl_main.c:2071`).
+(`cl_main.c:2075`).
 
 - `cl.time` becomes a steady clock one update interval plus a margin behind
   the newest message. It is steered towards that position by at most 10 % of
   the frame time, jumps forward only when more than 150 ms behind, and is
   never set back.
-- The margin follows the lateness actually seen (a peak that fades over
-  5 s), from 4 ms up to two intervals. On a clean link the extra delay over
-  the classic lerp is a few milliseconds; on a bad link it grows instead of
-  stuttering.
+- Arrivals are compared with the fastest ones seen recently: nothing
+  arrives sooner than the route allows, so those mark the route and every
+  other arrival is late by some amount. The margin is the recent worst
+  lateness (a peak that fades over 5 s), from 4 ms up to two intervals. It
+  includes the wait for the next rendered frame, so on a clean link at
+  90 frames a second it settles near 13 ms; on a bad link it grows instead
+  of stuttering.
+- When the route gets faster, the updates run ahead of the clock. The clock
+  then stays on the oldest kept update and catches up at 10 %, interpolating
+  all the way, instead of stepping.
 - Four updates are kept instead of two (`cl.mtime[4]`, per-entity
-  `msg_old_origins`, `CL_ShiftEntityHistory` `cl_parse.c:1257`), so the
+  `msg_old_origins`, `CL_ShiftEntityHistory` `cl_parse.c:1266`), so the
   clock can sit further back and a datagram can still arrive early.
-  `CL_LerpEntity` (`cl_main.c:3259`) interpolates over whichever pair the
+  `CL_LerpEntity` (`cl_main.c:3265`) interpolates over whichever pair the
   clock is between.
 - When the next update is late beyond the margin, positions continue past
   the newest update for up to `cl_interp_extrapolate` ms, then hold. Turns
   are not extrapolated, nor is anything across a gap longer than 100 ms.
-- Animation and step-movement blends start at the server time of the
-  previous update instead of at arrival (`cl_parse.c:1297`).
+- A step entity's glide starts from where the entity is drawn at that
+  moment instead of from the previous target, and runs 20 ms longer than the
+  nominal step, so an early update only changes its speed slightly and a
+  late one no longer leaves it standing (`CL_EntityLerpUpdated`,
+  `cl_parse.c:1299`). Animation blends are unchanged. A first version
+  that started both at the server time of the previous update was measured
+  to be worse for step entities (a jump and a hold on every step) and was
+  dropped.
 - An entity that just came into view is not drawn until the clock reaches
-  the update that introduced it (`cl_main.c:3817`), instead of appearing and
+  the update that introduced it (`cl_main.c:3823`), instead of appearing and
   then waiting at its first position.
 - Active only on a remote server: not with a local server, not in demos or
-  timedemos (`cl_main.c:2159`). Single player is untouched.
+  timedemos (`cl_main.c:2165`). Single player is untouched.
 
 Cvars: `cl_interp` (1; 0 = classic lerp), `cl_interp_margin` (-1 = follow the
 measured jitter, otherwise ms), `cl_interp_extrapolate` (25 ms).
 
 Risk and side effects:
 
-- Other entities are shown later than before by the margin: about 4–12 ms
-  on good links, up to two update intervals (51 ms at 40 Hz) on links whose
-  jitter is that large. The player's own movement is predicted and is not
+- Other entities are shown later than before. Measured as the mean distance
+  of the clock behind the newest update: 13 ms with the classic lerp in
+  every case; 25 ms on the clean link, 30 ms with 10 ms of jitter and 34 ms
+  with 20 ms of jitter and loss with the buffered clock. The margin can grow
+  to two update intervals (51 ms at 40 Hz) on links whose jitter is that
+  large. The player's own movement is predicted and is not
   delayed.
 - The ping the server shows rises by the same margin, because the private
   command timestamp is the client clock (`sv_user.c:1567`). It was already
@@ -213,7 +247,7 @@ in 16 %.
 **QSS-M.** No equivalent (no tracked pose transport).
 
 **Change.** `Quake/vrik_interp.h`, used by `CL_ParseVRIKPose`
-(`cl_parse.c:656`), `CL_VRIKPlayback` (`cl_parse.c:143`) and the two
+(`cl_parse.c:665`), `CL_VRIKPlayback` (`cl_parse.c:143`) and the two
 samplers (`r_alias.c:675`, `r_alias.c:729`).
 
 - Four poses are kept per player slot (the two on the entity plus a small
@@ -232,17 +266,19 @@ samplers (`r_alias.c:675`, `r_alias.c:729`).
 | 15 ms jitter each way | cv 1.123, 33.3 %, 17.1 % | cv 0.029, 0 %, 0 % |
 | 10 ms jitter, 5 % pose loss | cv 1.090, 32.0 %, 16.2 % | cv 0.223, 1.3 %, 0.6 % |
 
-Risk: low to medium. The logic is isolated and unit-tested, but it could not
-be watched in a headset here. Remote hands are about 10 ms later than before.
-A lost pose still shows as a short hold (last row); covering it needs a
-longer delay or a faster stream (finding 6). There is no cvar: the previous
-behaviour had no case where it was better.
+Risk: medium, because it is verified by the fixture and by compiling only.
+The timing logic is isolated and unit-tested, but `CL_VRIKPlayback`, the
+history shift and the two rewritten samplers have not run with a real pose:
+no headset session was possible here. `cl_vrik_timeline 0` restores the
+previous newest-two sampling. Remote hands are about 10 ms later than
+before. A lost pose still shows as a short hold (last row); covering it
+needs a longer delay or a faster stream (finding 6).
 
 ### 4. A lost reliable fragment stalled the reliable stream for a second
 
 **Evidence here.** Reliable data goes out one fragment at a time and the
 next waits for the acknowledgement; the resend timer was a constant 1.0 s
-(`net_dgrm.c:1266`, `net_dgrm.c:1301`). Any loss of a fragment or of its
+(`net_dgrm.c:1275`, `net_dgrm.c:1310`). Any loss of a fragment or of its
 acknowledgement therefore delays everything behind it by a second: prints,
 centerprints, name and score updates, and each fragment of a map load.
 
@@ -267,7 +303,7 @@ suddenly grows.
 ### 5. Removals are not buffered (recommended)
 
 An entity is dropped as soon as a message no longer contains it
-(`cl_main.c:3597`), while its drawn position is one interval plus the margin
+(`cl_main.c:3602`), while its drawn position is one interval plus the margin
 in the past. A rocket therefore vanishes before it reaches the wall while
 the explosion appears at the wall: about 25 units short with the classic
 lerp, 30–40 with the buffered clock on a good link. QSS-M behaves like the
@@ -315,13 +351,14 @@ The local copy of the co-op server cfg sets `sv_maxpacketsize`,
 `sv_trustedmovement`, `sv_predict_nqmovement`, `sv_inputtimeout`,
 `sv_pmove_legacy_preserve_qc_velocity`, `net_sameip_stale_timeout` and the
 `net_lagdebug*` cvars. None of them is registered by this engine (of its
-network settings only `sv_netsort` is). The datagram limit is the
+network settings only `sv_netsort` is; the server prints "Unknown command"
+for the others). The datagram limit is the
 compile-time `DATAGRAM_MTU 1400` (`quakedef.h:89`, same as
 `QSS-M quakedef.h:112`), and a snapshot that does not fit is continued in
 further datagrams the same frame (`sv_main.c:4935`, as in
-`QSS-M sv_main.c:3447`), so no entity is starved. Predictive movement is
-selected by the server's admission policy, not by a cvar. The lines are
-harmless but misleading.
+`QSS-M sv_main.c:3447`), so no entity is starved. Predictive movement was
+selected for every test client without `sv_pmove_mode` existing. The lines
+are harmless but misleading.
 
 ### 10. Smaller notes
 
@@ -362,13 +399,29 @@ Runtime, same binary with the cvars switched:
 
   | Link | cv | stall+jump | jerk p95 | clock forced per second |
   |---|---|---|---|---|
-  | clean, before | 0.276 | 0.0 % | 0.604 | 0.1 |
-  | clean, after | 0.042 | 0.0 % | 0.068 | 0.0 |
-  | both clients impaired, before | 0.552 | 21.3 % | 1.432 | 18.9 |
-  | both clients impaired, after | 0.046 | 0.0 % | 0.088 | 0.0 |
+  | clean, before | 0.274 | 0.0 % | 0.603 | 0.0 |
+  | clean, after | 0.026 | 0.0 % | 0.062 | 0.0 |
+  | both clients impaired, before | 0.566 | 17.5 % | 1.405 | 18.8 |
+  | both clients impaired, after | 0.048 | 0.0 % | 0.085 | 0.0 |
 
-  The mover's true speed varies more on this map, so the floor of `cv` is
-  about 0.04.
+- A walking monster in view of an idle observer on `tcj_bisquit` (one step
+  entity, about 2600 frames per run). Its speed changes with every
+  animation frame, so `cv` has a high floor here; `jump` and the jerk are the
+  telling columns.
+
+  | Link | cv | stall | jump | jerk mean | jerk p95 |
+  |---|---|---|---|---|---|
+  | clean, before | 0.356 | 3.3 % | 0.7 % | 0.093 | 0.336 |
+  | clean, after | 0.219 | 1.7 % | 0.0 % | 0.025 | 0.230 |
+  | 40 ms, 0–10 ms jitter, before | 0.452 | 6.1 % | 4.2 % | 0.291 | 1.136 |
+  | 40 ms, 0–10 ms jitter, after | 0.235 | 1.8 % | 0.0 % | 0.029 | 0.245 |
+
+- Mixed versions, with the installed build of the parent commit as the other
+  side, 40 ms and 0–10 ms jitter on the observer: a parent server with a
+  parent mover and a new observer (cv 0.186, no stalls or jumps, clock never
+  forced: the buffered clock alone, as the parent server has no carry), and
+  a new server with a parent mover and a new observer (cv 0.063, jerk p95
+  0.057). Both stayed connected with no errors on either side.
 - Own predicted view: finding 8.
 - Connecting on tcj `start` at 50 ms and 20 % inbound loss, six seeds per
   setting (about 2.7 s without loss):
@@ -382,9 +435,10 @@ Runtime, same binary with the cvars switched:
 
 - No headset was used. The pose timeline is verified by the fixture and by
   compiling and running the desktop client, not by watching a remote avatar.
-- Monsters and other step entities: the blend start was moved from arrival
-  time to server time, but the test maps gave no moving step entity in view
-  of a scripted client, so this part is unmeasured.
+- Step entities were measured on one monster on one map. Animation timing
+  was left as it was.
 - Real internet paths, more than two clients, and the ARM64 server build.
+- Riding a lift or standing on a moving door, where the predicted player
+  meets a delayed world.
 - Maps large enough to split a snapshot over many datagrams were loaded only
   as far as the tcj start map.
