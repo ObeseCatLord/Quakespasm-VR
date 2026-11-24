@@ -51,7 +51,7 @@ enum ActionId {
 	ACT_GRIP_POSE, ACT_HAPTIC, ACT_TRIGGER, ACT_GRIP, ACT_STICK, ACT_PAD,
 	ACT_TRIGGER_CLICK, ACT_GRIP_CLICK, ACT_STICK_CLICK, ACT_PAD_CLICK,
 	ACT_PRIMARY, ACT_SECONDARY, ACT_MENU, ACT_TRIGGER_TOUCH, ACT_GRIP_TOUCH,
-	ACT_STICK_TOUCH, ACT_PAD_TOUCH, ACT_COUNT
+	ACT_STICK_TOUCH, ACT_PAD_TOUCH, ACT_BUMPER, ACT_COUNT
 };
 
 struct Api {
@@ -541,7 +541,7 @@ static void input_for_hand(vrxr_input_t *input, int hand) {
 		{ACT_PRIMARY,VRXR_BUTTON_PRIMARY,false},{ACT_SECONDARY,VRXR_BUTTON_SECONDARY,false},
 		{ACT_MENU,VRXR_BUTTON_MENU,false},{ACT_TRIGGER_TOUCH,VRXR_BUTTON_TRIGGER,true},
 		{ACT_GRIP_TOUCH,VRXR_BUTTON_GRIP,true},{ACT_STICK_TOUCH,VRXR_BUTTON_STICK,true},
-		{ACT_PAD_TOUCH,VRXR_BUTTON_PAD,true}
+		{ACT_PAD_TOUCH,VRXR_BUTTON_PAD,true},{ACT_BUMPER,VRXR_BUTTON_EXTRA1,false}
 	};
 	for (size_t i=0; i<sizeof(buttons)/sizeof(buttons[0]); ++i) {
 		bool buttonActive=false, down=bool_action(buttons[i].action, hand, &buttonActive);
@@ -552,14 +552,14 @@ static void input_for_hand(vrxr_input_t *input, int hand) {
 }
 static bool path(const char *text, XrPath *out) { return ok("xrStringToPath", g.xr.StringToPath(g.instance, text, out)); }
 struct Binding { ActionId action; const char *path; };
-static void suggest(const char *profile, const Binding *bindings, size_t count) {
+static bool suggest(const char *profile, const Binding *bindings, size_t count) {
 	XrPath profilePath;
-	if (!path(profile, &profilePath)) return;
+	if (!path(profile, &profilePath)) return false;
 	std::vector<XrActionSuggestedBinding> suggested; suggested.reserve(count);
 	for (size_t i=0; i<count; ++i) { XrPath binding; if (path(bindings[i].path, &binding)) { XrActionSuggestedBinding b={g.action[bindings[i].action],binding}; suggested.push_back(b); } }
 	XrInteractionProfileSuggestedBinding info = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
 	info.interactionProfile=profilePath; info.countSuggestedBindings=(uint32_t)suggested.size(); info.suggestedBindings=suggested.data();
-	if (!suggested.empty()) ok("xrSuggestInteractionProfileBindings", g.xr.SuggestBindings(g.instance, &info));
+	return !suggested.empty() && ok("xrSuggestInteractionProfileBindings", g.xr.SuggestBindings(g.instance, &info));
 }
 static bool create_action(ActionId id, XrActionType type, const char *name, bool handScoped) {
 	XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
@@ -762,7 +762,8 @@ static bool create_actions() {
 		{ACT_STICK_CLICK,XR_ACTION_TYPE_BOOLEAN_INPUT,"stick_click"},{ACT_PAD_CLICK,XR_ACTION_TYPE_BOOLEAN_INPUT,"pad_click"},
 		{ACT_PRIMARY,XR_ACTION_TYPE_BOOLEAN_INPUT,"primary"},{ACT_SECONDARY,XR_ACTION_TYPE_BOOLEAN_INPUT,"secondary"},{ACT_MENU,XR_ACTION_TYPE_BOOLEAN_INPUT,"menu"},
 		{ACT_TRIGGER_TOUCH,XR_ACTION_TYPE_BOOLEAN_INPUT,"trigger_touch"},{ACT_GRIP_TOUCH,XR_ACTION_TYPE_BOOLEAN_INPUT,"grip_touch"},
-		{ACT_STICK_TOUCH,XR_ACTION_TYPE_BOOLEAN_INPUT,"stick_touch"},{ACT_PAD_TOUCH,XR_ACTION_TYPE_BOOLEAN_INPUT,"pad_touch"}
+		{ACT_STICK_TOUCH,XR_ACTION_TYPE_BOOLEAN_INPUT,"stick_touch"},{ACT_PAD_TOUCH,XR_ACTION_TYPE_BOOLEAN_INPUT,"pad_touch"},
+		{ACT_BUMPER,XR_ACTION_TYPE_BOOLEAN_INPUT,"bumper"}
 	};
 	for (size_t i=0;i<sizeof(defs)/sizeof(defs[0]);++i) if (!create_action(defs[i].id,defs[i].type,defs[i].name,true)) return false;
 	Binding simple[]={{ACT_GRIP_POSE,"/user/hand/left/input/grip/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/grip/pose"},{ACT_HAPTIC,"/user/hand/left/output/haptic"},{ACT_HAPTIC,"/user/hand/right/output/haptic"},{ACT_TRIGGER_CLICK,"/user/hand/left/input/select/click"},{ACT_TRIGGER_CLICK,"/user/hand/right/input/select/click"},{ACT_MENU,"/user/hand/left/input/menu/click"},{ACT_MENU,"/user/hand/right/input/menu/click"}};
@@ -811,7 +812,23 @@ static bool create_actions() {
 		say("OpenXR: eye tracking unavailable; continuing without gaze input");
 		disable_gaze_actions();
 	}
-	if (g.frameSupported) suggest("/interaction_profiles/valve/frame_controller_valve",frame,sizeof(frame)/sizeof(frame[0]));
+	if (g.frameSupported) {
+		/* The Frame bumper is alternate fire. Its component name is not in the
+		 * references available here, so try the likely ones and fall back to the
+		 * bindings without it: a rejected path would lose the whole profile. */
+		static const char *const bumper[] = {"bumper/click", "shoulder/click"};
+		const size_t base = sizeof(frame)/sizeof(frame[0]);
+		bool bound = false;
+		for (size_t c=0; c<sizeof(bumper)/sizeof(bumper[0]) && !bound; ++c) {
+			std::vector<Binding> with(frame, frame+base);
+			char left[64], right[64];
+			std::snprintf(left,sizeof(left),"/user/hand/left/input/%s",bumper[c]);
+			std::snprintf(right,sizeof(right),"/user/hand/right/input/%s",bumper[c]);
+			with.push_back({ACT_BUMPER,left}); with.push_back({ACT_BUMPER,right});
+			bound = suggest("/interaction_profiles/valve/frame_controller_valve",with.data(),with.size());
+		}
+		if (!bound) suggest("/interaction_profiles/valve/frame_controller_valve",frame,base);
+	}
 	if(g.htcxSupported && !create_htcx_actions()) {
 		say("OpenXR: HTCX action setup failed; tracker extension disabled");
 		disable_htcx_trackers();

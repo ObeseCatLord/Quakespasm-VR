@@ -5319,6 +5319,8 @@ static void M_Keys_AddCustomEntry (const char *command, const char *description)
 	VEC_PUSH (custom_bindnames, item);
 }
 
+static const char *M_KeyBindingCommand (const char *binding);
+
 static void M_Keys_AddItem (const menukeybind_t *item)
 {
 	if (item->command && item->command[0])
@@ -5380,7 +5382,8 @@ static void M_Keys_Populate (void)
 	{
 		if (!keybindings[key] || !keybindings[key][0])
 			continue;
-		const menukeybind_t item = {keybindings[key], keybindings[key]};
+		const char *command = M_KeyBindingCommand (keybindings[key]);
+		const menukeybind_t item = {command, command};
 		M_Keys_AddItem (&item);
 	}
 	M_Keys_AddItem (&keys_command_action);
@@ -5423,6 +5426,23 @@ void M_Menu_Keys_f (void)
 	first_key = 0;
 }
 
+/* "+vr_mod <slot> <command>" runs <command> outside mods that remap that
+ * control, so the controls menu lists such a key under <command>. */
+static const char *M_KeyBindingCommand (const char *binding)
+{
+	const char *p;
+	if (!binding || strncmp (binding, "+vr_mod ", 8))
+		return binding;
+	p = binding + 8;
+	while (*p == ' ')
+		++p;
+	while (*p && *p != ' ')
+		++p; /* slot */
+	while (*p == ' ')
+		++p;
+	return *p ? p : binding;
+}
+
 void M_FindKeysForCommand (const char *command, int *twokeys)
 {
 	int	  count;
@@ -5437,7 +5457,7 @@ void M_FindKeysForCommand (const char *command, int *twokeys)
 		b = keybindings[j];
 		if (!b)
 			continue;
-		if (!strcmp (b, command))
+		if (!strcmp (M_KeyBindingCommand (b), command))
 		{
 			twokeys[count] = j;
 			count++;
@@ -5457,7 +5477,7 @@ void M_UnbindCommand (const char *command)
 		b = keybindings[j];
 		if (!b)
 			continue;
-		if (!strcmp (b, command))
+		if (!strcmp (M_KeyBindingCommand (b), command))
 			Key_SetBinding (j, NULL);
 	}
 	VR_InputDefaultCommandCleared (command);
@@ -5467,7 +5487,7 @@ static int M_Keys_CountBindings (const char *command)
 {
 	int count = 0;
 	for (int key = 0; key < MAX_KEYS; ++key)
-		if (keybindings[key] && !strcmp (keybindings[key], command))
+		if (keybindings[key] && !strcmp (M_KeyBindingCommand (keybindings[key]), command))
 			++count;
 	return count;
 }

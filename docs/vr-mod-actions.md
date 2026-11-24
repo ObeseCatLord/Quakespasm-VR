@@ -106,3 +106,12 @@ the per-mod actions apply.
 Key names follow the legacy layout rather than the controller labels: the right
 hand's A sends `VR_XBUTTON` (previous weapon), right B sends `VR_BBUTTON` (next
 weapon), left X sends `VR_ABUTTON` (the `left_x` slot), and left Y is the menu.
+
+## Which physical control is alt-fire
+
+`VR_ALTFIRE` (the `altfire` slot) is the Index right trackpad press, the Steam
+Frame right bumper, and the right grip on controllers that have neither (Quest
+Touch, Pico, Vive, WMR). The right stick click opens the weapon wheel on every
+controller; Index also opens it by pushing the right stick up. The Index and
+Frame right grips are the `grip_r` slot. The menu is always the left hand's
+second button (Y, Index left B) or the menu/view button and cannot be rebound.

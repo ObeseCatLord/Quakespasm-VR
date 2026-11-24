@@ -4344,31 +4344,31 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 	 * maps that composed click to LTHUMB on the logical left, and on the logical
 	 * right to Index ALTFIRE or otherwise RTHUMB. Index PAD is legacy Axis2 and
 	 * both logical hands map it to YBUTTON. */
+	/* Stick clicks: left runs, right opens the weapon wheel on every controller. */
 	if (pressed & selected_click)
 		VR_InputAddKey (desired, hand,
-			VR_InputBindingKey (logical_left ? K_LTHUMB :
-				(state->profile == VRXR_PROFILE_INDEX ? K_VR_ALTFIRE : K_RTHUMB), context));
-	/* The same right-thumb wheel binding uses Index pad touch. Preserve its
-	 * stick-click alternate fire and pad-click mapping as independent sources. */
-	if (!logical_left && state->profile == VRXR_PROFILE_INDEX &&
-		!state->wheel_touch_wait_release && (input->touched & VRXR_BUTTON_PAD) &&
-		(context->destination == key_game || context->binding_capture))
-		VR_InputAddKey (desired, hand, K_VR_RTHUMB);
-	/* Index only: pushing the right stick up also opens the wheel (stick
-	 * click is Index alternate fire). Other controllers use the stick click. */
+			VR_InputBindingKey (logical_left ? K_LTHUMB : K_RTHUMB, context));
+	/* Index only: pushing the right stick up also opens the wheel. */
 	if (!logical_left && state->profile == VRXR_PROFILE_INDEX &&
 		context->destination == key_game && !context->binding_capture &&
 		VR_InputFilteredAxis (input, 1, 0.0f) > 0.6f)
 		VR_InputAddKey (desired, hand, K_VR_RTHUMB);
+	/* Alternate fire: the Index right trackpad press, the Frame right bumper,
+	 * and the right grip on controllers that have neither. The Index left pad
+	 * press keeps YBUTTON (scoreboard). */
 	if (state->profile == VRXR_PROFILE_INDEX && (pressed & VRXR_BUTTON_PAD))
-		VR_InputAddKey (desired, hand, VR_InputBindingKey (K_YBUTTON, context));
+		VR_InputAddKey (desired, hand, logical_left ?
+			VR_InputBindingKey (K_YBUTTON, context) : K_VR_ALTFIRE);
+	if (!logical_left && state->profile == VRXR_PROFILE_FRAME && (pressed & VRXR_BUTTON_EXTRA1))
+		VR_InputAddKey (desired, hand, K_VR_ALTFIRE);
 	if (pressed & VRXR_BUTTON_GRIP)
 	{
 		if (logical_left)
 			VR_InputAddKey (desired, hand, VR_InputBindingKey (K_LSHOULDER, context));
 		else
 			VR_InputAddKey (desired, hand, VR_InputBindingKey (
-				state->profile == VRXR_PROFILE_INDEX ? K_RSHOULDER : K_VR_ALTFIRE, context));
+				state->profile == VRXR_PROFILE_INDEX || state->profile == VRXR_PROFILE_FRAME ?
+					K_RSHOULDER : K_VR_ALTFIRE, context));
 	}
 
 	VR_InputUpdateTrigger (state, input);
@@ -4401,8 +4401,7 @@ static void VR_InputBuildHandDesired (qboolean desired[2][MAX_KEYS], int hand,
 	if (!logical_left && (context->destination == key_game || context->destination == key_menu))
 		VR_InputAddAxis (desired, hand, input, 1, K_VR_RIGHT_STICK_DOWN, K_VR_RIGHT_STICK_UP, axis_extra);
 
-	/* VRXR exposes EXTRA1/EXTRA2 for future backends, but this key table has no
-	 * JOY1..JOY4 keycodes. Do not fabricate a native source or substitute keys. */
+	/* EXTRA1 is the Frame bumper (alternate fire, above); EXTRA2 is unused. */
 }
 
 static qboolean VR_InputEmitDesired (qboolean desired[2][MAX_KEYS],
