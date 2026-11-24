@@ -360,6 +360,13 @@ int M_MenuCanvasHeight (void)
 	return m_state == m_mods ? MOD_BROWSER_CANVAS_HEIGHT : 200;
 }
 
+/* Right edge of the displayed CANVAS_MENU area, in menu units. */
+static float M_MenuCanvasVisibleRight (void)
+{
+	const float s = M_MenuCanvasScale ();
+	return 320.0f + (glwidth - 320.0f * s) / (2.0f * s);
+}
+
 /*
 ================
 M_PixelToMenuCanvasCoord
@@ -6410,6 +6417,47 @@ static void M_Mods_KeyboardDraw (cb_context_t *cbx)
 	}
 }
 
+/* Control under the pointer for hover feedback. Computed from geometry every
+ * frame (not from the sticky hover-registration cursor) so the highlight
+ * tracks the desktop mouse and the VR laser exactly. */
+static int M_Mods_PointerControl (void)
+{
+	if (scrollbar_grab || slider_grab)
+		return MOD_BROWSER_CONTROL_NONE;
+	if (mods_catalogue_view && mods_catalogue_details)
+		return ModBrowser_DetailButtonAt (m_mouse_x, m_mouse_y, AddonCatalog_State () == ADDON_CATALOG_INSTALLING);
+	return ModBrowser_ControlAt (m_mouse_x, m_mouse_y);
+}
+
+/* Register a control with the shared hover gate so a VR trigger pull over it
+ * is delivered as a pointer click instead of the Enter fallback. */
+static void M_Mods_RegisterControl (mod_browser_control_rect_t r, int control)
+{
+	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, r.left, r.right, r.top, r.bottom - r.top, control);
+}
+
+/* Filled button; a hovered one takes the on-screen keyboard's highlighted
+ * key fill, with the label in the menu's gold so it stays readable on it. */
+static void M_Mods_DrawButton (cb_context_t *cbx, int x, int y, int w, int h, int label_dx, qboolean hover, const char *label)
+{
+	Draw_Fill (cbx, x, y, w, h, hover ? 14 : 4, hover ? 0.9f : 0.85f);
+	if (hover)
+		M_Print (cbx, x + label_dx, y + (h - CHARACTER_SIZE) / 2, label);
+	else
+		M_PrintWhite (cbx, x + label_dx, y + (h - CHARACTER_SIZE) / 2, label);
+}
+
+static void M_Mods_DrawDetailButton (cb_context_t *cbx, int control, qboolean installing, const char *label)
+{
+	const mod_browser_control_rect_t r = ModBrowser_DetailButtonRect (control, installing);
+
+	/* Start one pixel down so the fill clears the status line above; the
+	 * label stays on its former y=184 baseline. */
+	M_Mods_DrawButton (cbx, r.left, r.top + 1, r.right - r.left + 1, r.bottom - r.top, 4,
+		M_Mods_PointerControl () == control, label);
+	M_Mods_RegisterControl (r, control);
+}
+
 static void M_Mods_Draw (cb_context_t *cbx)
 {
 	const mod_browser_layout_t layout = ModBrowser_Layout ();
@@ -6465,8 +6513,7 @@ static void M_Mods_Draw (cb_context_t *cbx)
 				bytes, mods_catalogue_approved.size);
 			M_PrintWhite (cbx, 16, 168, line);
 			M_PrintScroll (cbx, 16, 176, 288, AddonCatalog_Message (), realtime * 0.25, false);
-			M_PrintWhite (cbx, 16, 184, "Cancel and return");
-			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 312, 182, 10, 3);
+			M_Mods_DrawDetailButton (cbx, MOD_BROWSER_CONTROL_BACK, true, "Cancel and return");
 		}
 		else
 		{
@@ -6474,10 +6521,8 @@ static void M_Mods_Draw (cb_context_t *cbx)
 				(state == ADDON_CATALOG_ERROR ? AddonCatalog_Message () : "");
 			if (*status)
 				M_PrintScroll (cbx, 16, 176, 288, status, realtime * 0.25, false);
-			M_PrintWhite (cbx, 16, 184, "Confirm install");
-			M_PrintWhite (cbx, 208, 184, "Back");
-			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 199, 182, 10, 2);
-			M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 200, 312, 182, 10, 3);
+			M_Mods_DrawDetailButton (cbx, MOD_BROWSER_CONTROL_CONFIRM, false, "Confirm install");
+			M_Mods_DrawDetailButton (cbx, MOD_BROWSER_CONTROL_BACK, false, "Back");
 		}
 		return;
 	}
@@ -6495,17 +6540,14 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	// to trigger scroll faster
 	M_Ticker_Update (&m_mods_ticker);
 
-	Draw_Fill (cbx, 12, layout.controls_y, 164, CHARACTER_SIZE, 4, 0.85f);
-	Draw_Fill (cbx, 176, layout.controls_y, 136, CHARACTER_SIZE, 4, 0.85f);
-	if (mods_catalogue_view)
 	{
-		M_PrintWhite (cbx, 16, layout.controls_y, vr ? "Offhand <: installed" : "Installed: Tab/L3");
-		M_PrintWhite (cbx, 184, layout.controls_y, vr ? "Trigger: refresh" : "Refresh: X/F1");
-	}
-	else
-	{
-		M_PrintWhite (cbx, 16, layout.controls_y, vr ? "Offhand >: downloads" : "Downloads: Tab/L3");
-		M_PrintWhite (cbx, 184, layout.controls_y, vr ? "Trigger: scan" : "Scan: X/F1");
+		const int hover = M_Mods_PointerControl ();
+		const char *tab = mods_catalogue_view ? (vr ? "Offhand <: installed" : "Installed: Tab/L3") :
+			(vr ? "Offhand >: downloads" : "Downloads: Tab/L3");
+		const char *refresh = mods_catalogue_view ? (vr ? "Trigger: refresh" : "Refresh: X/F1") :
+			(vr ? "Trigger: scan" : "Scan: X/F1");
+		M_Mods_DrawButton (cbx, 12, layout.controls_y, 164, CHARACTER_SIZE, 4, hover == MOD_BROWSER_CONTROL_TAB, tab);
+		M_Mods_DrawButton (cbx, 176, layout.controls_y, 136, CHARACTER_SIZE, 8, hover == MOD_BROWSER_CONTROL_REFRESH, refresh);
 	}
 
 	for (int i = 0; i < mods_height; ++i)
@@ -6545,12 +6587,14 @@ static void M_Mods_Draw (cb_context_t *cbx)
 				M_PrintScroll (cbx, MENU_LABEL_X, layout.list_top, 32 * CHARACTER_SIZE,
 					AddonCatalog_Message (), 0.0, true);
 			else
-				M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, vr ? "Aim + trigger: refresh downloads" : "F1/X or click Refresh to download.");
+				M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, vr ? "Aim at Refresh + trigger." : "F1/X or click Refresh to download.");
 		}
 		else
 			M_PrintWhite (cbx, MENU_LABEL_X, layout.list_top, mods_search[0] ? "No installed mods match." : "No installed mods found.");
 	}
 	M_PrintWhite (cbx, 16, layout.search_text_y, vr ? "Filter:" : "Filter (Y):");
+	if (M_Mods_PointerControl () == MOD_BROWSER_CONTROL_SEARCH)
+		Draw_Character (cbx, 4, layout.search_text_y, 12 + ((int)(realtime * 4) & 1));
 	M_DrawTextBox (cbx, 96, layout.search_box_y, MODS_SEARCH_FIELD_WIDTH, 1);
 	{
 		const int length = (int)strlen (mods_search);
@@ -6564,14 +6608,14 @@ static void M_Mods_Draw (cb_context_t *cbx)
 	M_Mouse_UpdateListCursor (&mods_cursor, 12, layout.list_right, layout.list_top, layout.row_height, mods_height, first_mod);
 	/* Register the labelled controls with the common hover gate so the VR
 	 * pointer can activate them as well as an ordinary mouse click. */
-	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 175, layout.controls_y, CHARACTER_SIZE - 1, 0);
-	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 176, 312, layout.controls_y, CHARACTER_SIZE - 1, 1);
-	M_Mouse_UpdateCursor (&mods_catalogue_control_hover, 12, 312, layout.search_box_y, 23, 2);
+	for (int control = MOD_BROWSER_CONTROL_TAB; control <= MOD_BROWSER_CONTROL_SEARCH; ++control)
+		M_Mods_RegisterControl (ModBrowser_ControlRect (control), control);
 	M_PrintWhite (cbx, 16, layout.search_box_y + 24, vr ? "Trigger: select  Menu/secondary: back" : "Enter/A: select  Esc/B: back");
 	if (num_mods > 0)
 		Draw_Character (cbx, MENU_CURSOR_X, layout.list_top + (mods_cursor - first_mod) * layout.row_height, 12 + ((int)(realtime * 4) & 1));
 	if (num_mods > MAX_MODS_ON_SCREEN)
-		M_DrawScrollbar (cbx, MENU_SCROLLBAR_X, layout.list_top + CHARACTER_SIZE,
+		M_DrawScrollbar (cbx, ModBrowser_ScrollbarX (MENU_SCROLLBAR_X, CHARACTER_SIZE, M_MenuCanvasVisibleRight ()),
+			layout.list_top + CHARACTER_SIZE,
 			(float)(first_mod) / (float)(num_mods - MAX_MODS_ON_SCREEN), MAX_MODS_ON_SCREEN - 2);
 }
 
@@ -6589,8 +6633,9 @@ static void M_Mods_Key (int key)
 		key = K_PGDN;
 	if (mods_catalogue_view && mods_catalogue_details)
 	{
+		const int button = ModBrowser_DetailButtonAt (m_mouse_x, m_mouse_y, AddonCatalog_State () == ADDON_CATALOG_INSTALLING);
 		if (key == K_MOUSE2 || key == K_ESCAPE || key == K_BBUTTON ||
-			(key == K_MOUSE1 && mods_catalogue_control_hover == 3 && M_Mouse_InRect (12, 312, 182, 192)))
+			(key == K_MOUSE1 && button == MOD_BROWSER_CONTROL_BACK))
 		{
 			if (AddonCatalog_State () == ADDON_CATALOG_INSTALLING)
 				AddonCatalog_Cancel ();
@@ -6600,8 +6645,7 @@ static void M_Mods_Key (int key)
 		}
 		if (key == K_MOUSE1)
 		{
-			if (mods_catalogue_control_hover == 2 && M_Mouse_InRect (12, 199, 182, 192) &&
-				AddonCatalog_State () != ADDON_CATALOG_INSTALLING)
+			if (button == MOD_BROWSER_CONTROL_CONFIRM && AddonCatalog_State () != ADDON_CATALOG_INSTALLING)
 				M_Mods_ConfirmCatalogueInstall ();
 			return;
 		}
@@ -6615,16 +6659,19 @@ static void M_Mods_Key (int key)
 	}
 
 	if (key == K_YBUTTON || (key == K_MOUSE1 && !scrollbar_grab &&
-		M_Mouse_InRect (12, 312, layout.search_box_y, layout.search_box_y + 23)))
+		ModBrowser_ControlAt (m_mouse_x, m_mouse_y) == MOD_BROWSER_CONTROL_SEARCH))
 	{
 		M_Mods_KeyboardSet (true);
 		return;
 	}
 
-	if (key == K_MOUSE1 && m_mouse_y >= layout.controls_y && m_mouse_y < layout.controls_y + CHARACTER_SIZE)
+	/* A scrollbar drag re-sends Mouse1 every frame; never let it wander into
+	 * the controls row and toggle the tab or refresh repeatedly. */
+	if (key == K_MOUSE1 && !scrollbar_grab && m_mouse_y >= layout.controls_y && m_mouse_y < layout.controls_y + CHARACTER_SIZE)
 	{
-		if (m_mouse_x >= 12 && m_mouse_x <= 312)
-			M_Mods_ActivateControl (m_mouse_x >= 176 ? 1 : 0);
+		const int control = ModBrowser_ControlAt (m_mouse_x, m_mouse_y);
+		if (control == MOD_BROWSER_CONTROL_TAB || control == MOD_BROWSER_CONTROL_REFRESH)
+			M_Mods_ActivateControl (control);
 		return;
 	}
 
@@ -6691,8 +6738,7 @@ static void M_Mods_Key (int key)
 		break;
 
 	case K_MOUSE1:
-		if (m_mouse_x < 12 || m_mouse_x > layout.list_right || m_mouse_y < layout.list_top ||
-			m_mouse_y >= layout.list_top + q_min (MAX_MODS_ON_SCREEN, q_max (0, num_mods - first_mod)) * layout.row_height)
+		if (ModBrowser_RowAt (m_mouse_x, m_mouse_y, q_min (MAX_MODS_ON_SCREEN, q_max (0, num_mods - first_mod))) < 0)
 			break;
 		if (mods_catalogue_view)
 		{
@@ -8918,7 +8964,14 @@ void M_UpdateMouse (void)
 
 	if (scrollbar_grab)
 	{
-		if (keydown[K_MOUSE1] && M_InScrollbar ())
+		/* A laser that briefly leaves the panel mid-drag reports (-1,-1);
+		 * hold the list where it is instead of snapping it to the top. */
+		const qboolean vr_ray_lost = m_vr_pointer_override && !m_vr_pointer_valid;
+		if (keydown[K_MOUSE1] && vr_ray_lost)
+		{
+			/* keep the grab; resume when the ray returns */
+		}
+		else if (keydown[K_MOUSE1] && M_InScrollbar ())
 			M_Keydown (K_MOUSE1, false);
 		else
 			scrollbar_grab = false;
