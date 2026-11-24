@@ -1227,6 +1227,39 @@ void SV_CoopRespawnRefreshClientInventory (edict_t *ent)
 	SV_CoopRespawnRememberAliveInventory (ent, num);
 }
 
+/* The console "kill" runs QuakeC ClientKill outside the frame bracket that
+ * restores inventory after a death, and co-op mods respawn the player from the
+ * level-start parms right there.  Give suicide the same inventory rules as any
+ * other co-op death so it does not silently discard the level's weapons. */
+void SV_CoopRespawnRunClientKill (edict_t *ent)
+{
+	coop_respawn_inventory_t inventory;
+	qboolean keep;
+	int num;
+
+	if (!ent || ent->free)
+		return;
+	num = NUM_FOR_EDICT (ent);
+	keep = coop.value && !deathmatch.value && num >= 1 && num <= svs.maxclients &&
+		SV_CoopFeatureEnabled (&sv_coop_respawn_keep_weapons_ammo, true) &&
+		SV_CoopRespawnIsAliveClient (ent);
+	if (keep)
+		SV_CoopRespawnSaveInventory (ent, &inventory);
+	pr_global_struct->time = qcvm->time;
+	pr_global_struct->self = EDICT_TO_PROG (ent);
+	PR_ExecuteProgram (pr_global_struct->ClientKill);
+	/* A mod that leaves the player dead respawns through the normal path. */
+	if (!coop.value || deathmatch.value || ent->free || num < 1 ||
+		num > svs.maxclients || svs.clients[num - 1].edict != ent ||
+		!svs.clients[num - 1].active || !SV_CoopRespawnIsAliveClient (ent))
+		return;
+	if (keep)
+		SV_CoopRespawnRestoreInventory (ent, &inventory);
+	/* As after any co-op respawn, independent of weapon/ammo retention. */
+	SV_CoopSharedApplyTeamWeapons (ent);
+	SV_CoopRespawnRememberAliveInventory (ent, num);
+}
+
 static void SV_CoopRespawnRememberSafeOrigin (edict_t *ent, int num)
 {
 	int index = num - 1;
@@ -6477,6 +6510,8 @@ static void SV_CoopRespawnEndPostThink (edict_t *ent, int num,
 					return;
 				}
 			}
+			/* Weapons the team picked up while this player was dead. */
+			SV_CoopSharedApplyTeamWeapons (ent);
 			const qboolean relocated = isfinite (sv_coop_respawn_near_player.value) &&
 				SV_CoopFeatureEnabled (&sv_coop_respawn_near_player, true) &&
 				SV_CoopRespawnFindSpot (ent, state->death_origin, &anchor, spot,

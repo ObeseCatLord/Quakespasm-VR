@@ -998,6 +998,13 @@ static sv_coop_shared_inventory_t sv_coop_shared_level_progress;
 static qboolean sv_coop_shared_level_progress_valid;
 static string_t sv_coop_shared_ckey_names[4];
 static float sv_coop_shared_ckey_skins[4];
+/* Weapons the team accepted from pickups on this level.  The per-pickup share
+ * only reaches clients present at that moment; this union is what spawns,
+ * respawns and late joiners inherit.  It starts empty on every map, so the
+ * mod's own level-start loadout rules (e.g. no_axestart/take_weapons) apply
+ * unchanged before anything is picked up. */
+static int sv_coop_shared_team_weapon_items;
+static int sv_coop_shared_team_weapon_extra[SV_COOP_SHARED_FIELD_COUNT];
 
 /* wwheel.txt is a declarative weapon-ownership list supplied by modern mods.
  * Keep one server-side interpretation beside the coop inventory bridge so
@@ -1136,6 +1143,9 @@ void SV_CoopSharedResetState (void)
 	memset(sv_coop_shared_ckey_skins, 0,
 		sizeof(sv_coop_shared_ckey_skins));
 	sv_coop_shared_level_progress_valid = false;
+	sv_coop_shared_team_weapon_items = 0;
+	memset(sv_coop_shared_team_weapon_extra, 0,
+		sizeof(sv_coop_shared_team_weapon_extra));
 }
 
 static int SV_CoopSharedItemMask (void)
@@ -1717,6 +1727,150 @@ static void SV_CoopSharedApplyJumpBoots (edict_t *player,
 	else moditems->_float = (float)bits;
 }
 
+typedef struct
+{
+	qboolean	valid;	/* fields exist */
+	qboolean	owned;	/* moditems boots bit */
+	float		values[6]; /* finished, time, airmax, height, forward, airlvl */
+} sv_coop_boots_touch_t;
+
+static qboolean SV_CoopBootsTouchFields (edict_t *player, eval_t **values,
+	eval_t **moditems, int *type)
+{
+	return coop.value && !deathmatch.value && player && !player->free &&
+		SV_CoopSharedJumpBootFields(player, values) &&
+		SV_CoopSharedGetField(player, SV_COOP_MODITEMS_INDEX, moditems, type);
+}
+
+static void SV_CoopBootsTouchCapture (edict_t *player, sv_coop_boots_touch_t *state)
+{
+	eval_t *values[countof(sv_coop_jumpboots_fields)], *moditems;
+	int type, bits;
+
+	memset(state, 0, sizeof(*state));
+	if (!SV_CoopBootsTouchFields(player, values, &moditems, &type))
+		return;
+	bits = type == ev_ext_integer ? moditems->_int : (int)moditems->_float;
+	state->valid = true;
+	state->owned = (bits & SV_COOP_JUMPBOOTS_BIT) != 0;
+	for (int i = 0; i < countof(state->values); ++i)
+		state->values[i] = values[i]->_float;
+}
+
+/*
+ * AD co-op backpacks copy the dead player's whole moditems word, but copy the
+ * jump boot parameters only when coop_artifacts is on (off by default).  The
+ * player is reset to "no boots" by death before the pack is touched, so a pack
+ * hands out the boots bit with airmax 0 and no timer: the boots click on every
+ * air jump and never expire.  The engine respawns players beside their death
+ * spot, which makes picking up one's own pack the usual case.  A pickup can
+ * never legitimately produce that tuple (artifacts give airmax >= 1 or -1), so
+ * repair it from the toucher's own boots, else the team's boots, else drop it.
+ */
+static void SV_CoopBootsTouchRepair (edict_t *player, const sv_coop_boots_touch_t *before)
+{
+	eval_t *values[countof(sv_coop_jumpboots_fields)], *moditems;
+	int type, bits, i;
+	const sv_coop_jumpboots_t *team = &sv_coop_shared_level_progress.jumpboots;
+
+	if (!before->valid || !SV_CoopBootsTouchFields(player, values, &moditems, &type))
+		return;
+	bits = type == ev_ext_integer ? moditems->_int : (int)moditems->_float;
+	if (!(bits & SV_COOP_JUMPBOOTS_BIT) || values[2]->_float != 0 ||
+	    values[0]->_float != 0)
+		return;
+	if (before->owned && before->values[2] != 0)
+	{
+		for (i = 0; i < countof(before->values); ++i)
+			values[i]->_float = before->values[i];
+		Con_DPrintf("coop: kept existing jump boots over a backpack copy\n");
+		return;
+	}
+	if (sv_coop_shared_level_progress_valid && SV_CoopSharedJumpBootLive(team) &&
+	    team->config[2] != 0)
+	{
+		for (i = 0; i < countof(team->config); ++i)
+			values[i]->_float = team->config[i];
+		values[5]->_float = 0;
+		Con_DPrintf("coop: restored team jump boots over a backpack copy\n");
+		return;
+	}
+	bits &= ~SV_COOP_JUMPBOOTS_BIT;
+	if (type == ev_ext_integer) moditems->_int = bits;
+	else moditems->_float = (float)bits;
+	Con_DPrintf("coop: dropped jump boots bit without boot parameters\n");
+}
+
+#define SV_COOP_AD_UPGRADE_SSG 2
+#define SV_COOP_AD_UPGRADE_LG 64
+#define SV_COOP_AD_UPGRADE_GHOOK 128
+#define SV_COOP_AD_UPGRADE_AXE 4096
+#define SV_COOP_AD_UPGRADE_BITS (SV_COOP_AD_UPGRADE_SSG | SV_COOP_AD_UPGRADE_LG | \
+	SV_COOP_AD_UPGRADE_GHOOK | SV_COOP_AD_UPGRADE_AXE)
+
+/* AD keeps weapon upgrades (Widowmaker, Plasma Gun, Shadow Axe, Grapple) in
+ * moditems beside timed artifacts.  Only those ownership bits are weapons. */
+static qboolean SV_CoopSharedHasADUpgrades (void)
+{
+	static dprograms_t	*cached_progs;
+	static unsigned short	cached_crc;
+	static qboolean		cached_result;
+
+	if (cached_progs != qcvm->progs || cached_crc != qcvm->progscrc)
+	{
+		cached_progs = qcvm->progs;
+		cached_crc = qcvm->progscrc;
+		cached_result = ED_FindFunction("weapon_upgrade_ssg") != NULL &&
+			ED_FindFunction("weapon_upgrade_axe") != NULL;
+	}
+	return cached_result;
+}
+
+/* Weapon-ownership bits of an extra inventory field, or 0 for fields that are
+ * not weapon rosters (keys, artifacts, perms and progression stay separate). */
+static int SV_CoopSharedTeamWeaponExtraMask (int index)
+{
+	const char *name = sv_coop_shared_fields[index].name;
+
+	if (!q_strcasecmp(name, "weapons") || !q_strcasecmp(name, "weapon2") ||
+	    !q_strcasecmp(name, "weapons2") || !q_strcasecmp(name, "items_dwell"))
+		return sv_coop_shared_fields[index].mask;
+	if (index == SV_COOP_MODITEMS_INDEX && SV_CoopSharedHasADUpgrades())
+		return SV_COOP_AD_UPGRADE_BITS;
+	return 0;
+}
+
+static int SV_CoopSharedTeamWeaponItemMask (void)
+{
+	return SV_CoopSharedItemMask() & ~SV_CoopSharedStockKeyMask();
+}
+
+/* Give a (re)spawned or joining player every weapon the team has picked up on
+ * this level.  Additive only: the mod's own spawn inventory is never reduced. */
+void SV_CoopSharedApplyTeamWeapons (edict_t *player)
+{
+	int	i, type;
+	eval_t	*val;
+
+	if (!coop.value || deathmatch.value ||
+	    !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
+	    !SV_IsCoopInventoryClient(player))
+		return;
+	if (sv_coop_shared_team_weapon_items)
+		player->v.items = CoopInventoryPolicy_UnionBits((int)player->v.items,
+			sv_coop_shared_team_weapon_items &
+			SV_CoopSharedTeamWeaponItemMask());
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		int bits = sv_coop_shared_team_weapon_extra[i] &
+			SV_CoopSharedTeamWeaponExtraMask(i);
+		if (!bits || !SV_CoopSharedGetField(player, i, &val, &type))
+			continue;
+		SV_CoopSharedSetExtraBitMask(val, type,
+			SV_CoopSharedGetExtraBitMask(val, type) | bits);
+	}
+}
+
 static void SV_CoopSharedCopyNamedField (edict_t *source, edict_t *target,
 	const char *name, int expected_type)
 {
@@ -2087,6 +2241,8 @@ void SV_CoopSharedApplyToJoiningClient (edict_t *player)
 	if (!coop.value || !SV_CoopFeatureEnabled(&sv_coop_shared_pickups, true) ||
 	    !player || player->free)
 		return;
+	/* Weapons picked up on this level before the player arrived. */
+	SV_CoopSharedApplyTeamWeapons(player);
 	if (!sv_coop_shared_level_progress_valid)
 	{
 		sv_coop_shared_inventory_t current;
@@ -2757,6 +2913,60 @@ void SV_CoopSharedEndClientTouch (edict_t *client)
 	sv_coop_shared_touch_valid[index] = false;
 }
 
+/* Fold one accepted pickup's weapon gain into the level's team weapon set.
+ * Uses the same confirmation rules as SV_CoopSharedApplyInventoryGain, so the
+ * set never contains a weapon that was not actually shared with peers. */
+static void SV_CoopSharedRememberTeamWeapons (
+	const sv_coop_shared_inventory_t *before,
+	const sv_coop_shared_inventory_t *after,
+	const sv_coop_shared_inventory_t *declared,
+	int declared_weapon_bits,
+	qboolean direct_weapon_touch)
+{
+	int		i, gain, mask;
+	qboolean	confirmed;
+
+	confirmed = direct_weapon_touch &&
+		SV_CoopSharedInventoryHasAmmoGain(before, after);
+	mask = SV_CoopSharedTeamWeaponItemMask();
+	gain = CoopInventoryPolicy_AddedBits(before->items, after->items);
+	if (confirmed)
+	{
+		gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(after->items,
+			declared->items, mask);
+		gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(after->items,
+			declared_weapon_bits, mask);
+	}
+	sv_coop_shared_team_weapon_items |= gain & mask;
+
+	for (i = 0; i < SV_COOP_SHARED_FIELD_COUNT; ++i)
+	{
+		int before_bits;
+
+		mask = SV_CoopSharedTeamWeaponExtraMask(i);
+		if (!mask || !after->extra[i].valid)
+			continue;
+		before_bits = before->extra[i].valid ? before->extra[i].bits : 0;
+		gain = CoopInventoryPolicy_AddedBits(before_bits, after->extra[i].bits);
+		if (confirmed && declared->extra[i].valid)
+			gain |= CoopInventoryPolicy_ConfirmedDeclaredBits(
+				after->extra[i].bits, declared->extra[i].bits,
+				SV_COOP_SHARED_ALL_BITS);
+		gain &= mask;
+		if (!gain)
+			continue;
+		/* AD: the Shadow Axe and the Grapple Hook replace each other. */
+		if (i == SV_COOP_MODITEMS_INDEX && SV_CoopSharedHasADUpgrades())
+		{
+			if (gain & SV_COOP_AD_UPGRADE_AXE)
+				sv_coop_shared_team_weapon_extra[i] &= ~SV_COOP_AD_UPGRADE_GHOOK;
+			if (gain & SV_COOP_AD_UPGRADE_GHOOK)
+				sv_coop_shared_team_weapon_extra[i] &= ~SV_COOP_AD_UPGRADE_AXE;
+		}
+		sv_coop_shared_team_weapon_extra[i] |= gain;
+	}
+}
+
 static void SV_ShareCoopPickupInventory (
 	edict_t *pickup,
 	edict_t *source,
@@ -2797,6 +3007,8 @@ static void SV_ShareCoopPickupInventory (
 			SV_CoopSharedApplyJumpBoots(client, &after->jumpboots);
 	}
 
+	SV_CoopSharedRememberTeamWeapons(before, after, declared,
+		declared_weapon_bits, direct_weapon_touch);
 	if (key_gain)
 		SV_CoopSharedRebuildTeamKeys(source);
 	else if (SV_CoopSharedHasPersistentProgressGain(before, after))
@@ -2918,8 +3130,11 @@ static void SV_TouchLinks (edict_t *ent)
 		VectorCopy (ent->v.origin, origin_before);
 		if (coop_inventory_client)
 		{
+			sv_coop_boots_touch_t boots_before;
+			SV_CoopBootsTouchCapture (ent, &boots_before);
 			if (!SV_CoopPickupTouch (touch, ent))
 				break;
+			SV_CoopBootsTouchRepair (ent, &boots_before);
 		}
 		else
 			PR_ExecuteProgram (touch->v.touch);

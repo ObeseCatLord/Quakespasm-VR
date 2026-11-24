@@ -625,6 +625,8 @@ qboolean SV_CoopGiveKeys (edict_t *player, int key_flags);
 int SV_DeclaredWeaponBits (void);
 qboolean SV_CoopUsesCountedKeys (void);
 void SV_CoopSharedApplyToJoiningClient (edict_t *player);
+void SV_CoopSharedApplyTeamWeapons (edict_t *player);
+void SV_CoopRespawnRunClientKill (edict_t *ent);
 void SV_CoopSharedMergeRestoredClient (edict_t *source);
 void SV_CoopSharedRebuildGrantedKeys (edict_t *source);
 void SV_CoopSharedReconcileClientDeath (edict_t *player);

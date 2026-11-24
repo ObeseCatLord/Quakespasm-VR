@@ -4299,9 +4299,7 @@ static void Host_Kill_f (void)
 		return;
 	}
 
-	pr_global_struct->time = qcvm->time;
-	pr_global_struct->self = EDICT_TO_PROG (sv_player);
-	PR_ExecuteProgram (pr_global_struct->ClientKill);
+	SV_CoopRespawnRunClientKill (sv_player);
 }
 
 /*
