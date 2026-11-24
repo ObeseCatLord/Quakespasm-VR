@@ -1081,6 +1081,8 @@ void		   GL_BeginUIPanel (cb_context_t *cbx, const float world_from_ndc[16]);
 void		   GL_EndUIPanel (cb_context_t *cbx);
 void		   GL_SetUIPanelSourceClip (cb_context_t *cbx, float x, float y, float width, float height);
 void		   GL_ClearUIPanelSourceClip (cb_context_t *cbx);
+void		   GL_ExtendUIPanelClip (cb_context_t *cbx, float left, float top, float right, float bottom);
+void		   GL_ResetUIPanelClip (cb_context_t *cbx);
 extern vrect_t r_scene_vrect;
 void		   R_BindGraphicsPipeline (cb_context_t *cbx, graphics_pipeline_t pipeline);
 bool		   R_HasGraphicsPipeline (const cb_context_t *cbx, graphics_pipeline_t pipeline);

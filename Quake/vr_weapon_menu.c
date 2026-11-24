@@ -2787,6 +2787,37 @@ static void VR_WeaponMenu_LayoutPlayspaceActions (
 	}
 }
 
+/* The pointer cursor draws on the wheel's UI panel, which clips to its canvas.
+ * Playspace action rows sit outside that canvas, so the cursor may draw over
+ * the canvas and every action rectangle, grown by the cursor's own arm. */
+static void VR_WeaponMenu_CursorClipRect (const vr_weapon_menu_action_t *actions,
+	int count, float cursor_extent, float rect[4])
+{
+	rect[0] = 0.0f;
+	rect[1] = 0.0f;
+	rect[2] = (float)glwidth;
+	rect[3] = (float)glheight;
+	for (int i = 0; i < count; ++i)
+	{
+		const vr_weapon_menu_action_t *action = &actions[i];
+		if (!(action->width > 0.0f) || !(action->height > 0.0f) ||
+			!isfinite (action->left) || !isfinite (action->top) ||
+			!isfinite (action->width) || !isfinite (action->height))
+			continue;
+		rect[0] = q_min (rect[0], action->left);
+		rect[1] = q_min (rect[1], action->top);
+		rect[2] = q_max (rect[2], action->left + action->width);
+		rect[3] = q_max (rect[3], action->top + action->height);
+	}
+	if (isfinite (cursor_extent) && cursor_extent > 0.0f)
+	{
+		rect[0] -= cursor_extent;
+		rect[1] -= cursor_extent;
+		rect[2] += cursor_extent;
+		rect[3] += cursor_extent;
+	}
+}
+
 /* One geometry and hit-test path keeps every action rectangle aligned with
  * drawing for both the desktop mouse and the OpenXR pointer. */
 static int VR_WeaponMenu_Actions (struct cb_context_s *context,
@@ -4092,10 +4123,20 @@ void VR_WeaponMenu_DrawCatalog (struct cb_context_s *context,
 	}
 	if (!vr_weapon_menu_open_vr || vr_weapon_menu_pointer_valid)
 	{
+		/* The VR panel clips to its canvas; let the cursor follow the
+		 * pointer onto action rows placed past it, as over the weapons. */
+		if (vr_weapon_menu_open_vr)
+		{
+			float clip[4];
+			VR_WeaponMenu_CursorClipRect (actions, action_count, 6.0f * scale, clip);
+			GL_ExtendUIPanelClip (cbx, clip[0], clip[1], clip[2], clip[3]);
+		}
 		Draw_Fill (cbx, pointer_x - 5.0f * scale, pointer_y - scale,
 			11.0f * scale, 2.0f * scale, 15, 0.95f);
 		Draw_Fill (cbx, pointer_x - scale, pointer_y - 5.0f * scale,
 			2.0f * scale, 11.0f * scale, 15, 0.95f);
+		if (vr_weapon_menu_open_vr)
+			GL_ResetUIPanelClip (cbx);
 	}
 	GL_SetCanvasColor (1.0f, 1.0f, 1.0f, 1.0f);
 }

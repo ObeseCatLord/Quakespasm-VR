@@ -35,6 +35,7 @@ def harness():
         "typedef struct {\n\tvr_weapon_menu_action_kind_t kind;"))
     helpers = "\n".join(definition(source, start) for start in (
         "static void VR_WeaponMenu_LayoutPlayspaceActions (",
+        "static void VR_WeaponMenu_CursorClipRect (",
         "static void VR_WeaponMenu_SlotWorldOrigin (",
         "static qboolean VR_WeaponMenu_PanelBasis (",
         "static qboolean VR_WeaponMenu_CenteredModelOrigin (",
@@ -57,6 +58,8 @@ typedef int qboolean;
 #define MAX_SCOREBOARDNAME 32
 #define DEG2RAD(x) ((x) * (3.14159265358979323846f / 180.0f))
 #define CLAMP(lo,x,hi) ((x)<(lo)?(lo):((x)>(hi)?(hi):(x)))
+#define q_min(a,b) ((a)<(b)?(a):(b))
+#define q_max(a,b) ((a)>(b)?(a):(b))
 #define q_snprintf snprintf
 #define VectorCopy(a,b) memcpy((b),(a),sizeof(vec3_t))
 #define VectorSubtract(a,b,c) do { for(int k=0;k<3;++k) (c)[k]=(a)[k]-(b)[k]; } while(0)
@@ -107,6 +110,30 @@ static void centering(void) {
     model.mins[0]=NAN;
     assert(!VR_WeaponMenu_CenteredModelOrigin(&model,0,0.07f,slot,center,origin));
 }
+/* Regression: the pointer cursor must be drawable over every action row, not
+ * only over the in-canvas weapons. Playspace rows sit past the canvas. */
+static void cursor(const vr_weapon_menu_action_t *a, int n) {
+    const float arm=6.0f;
+    float clip[4];
+    int outside=0;
+    VR_WeaponMenu_CursorClipRect(a,n,arm,clip);
+    assert(clip[0]<=0 && clip[1]<=0 && clip[2]>=glwidth && clip[3]>=glheight);
+    for(int i=0;i<n;++i) {
+        const float xs[3]={a[i].left,a[i].left+a[i].width*0.5f,a[i].left+a[i].width};
+        const float ys[3]={a[i].top,a[i].top+a[i].height*0.5f,a[i].top+a[i].height};
+        if(a[i].left<0 || a[i].left+a[i].width>glwidth) ++outside;
+        for(int x=0;x<3;++x) for(int y=0;y<3;++y) {
+            assert(xs[x]-arm>=clip[0] && xs[x]+arm<=clip[2]);
+            assert(ys[y]-arm>=clip[1] && ys[y]+arm<=clip[3]);
+        }
+    }
+    assert(outside>0); /* the canvas clip alone would hide the cursor here */
+    vr_weapon_menu_action_t bad[2]={0};
+    bad[0].left=NAN; bad[0].width=bad[0].height=10;
+    bad[1].left=-1e6f; bad[1].width=0; bad[1].height=10;
+    VR_WeaponMenu_CursorClipRect(bad,2,0,clip);
+    assert(clip[0]==0 && clip[1]==0 && clip[2]==glwidth && clip[3]==glheight);
+}
 static void actions(void) {
     for(int mode=0;mode<2;++mode) {
         glwidth=mode?2160:1280; glheight=mode?2160:720;
@@ -123,18 +150,20 @@ static void actions(void) {
         assert(a[2].kind==VR_WEAPON_MENU_ACTION_COOP_SPAWN && a[2].id==50);
         assert(a[3].slot==3 && a[3].id==30 && a[4].slot==4 && a[4].id==40);
         assert(strlen(a[4].label)==33); /* full name plus prefix */
-        near((a[0].left+a[0].width-glwidth*0.5f)*scale-0.28f,-radius-6);
-        near((a[3].left-glwidth*0.5f)*scale+0.28f,radius+6);
+        const float pad=VR_WEAPON_MENU_PLAYSPACE_ACTION_OUTLINE, glyph=VR_WEAPON_MENU_PLAYSPACE_ACTION_GLYPH;
+        near((a[0].left+a[0].width-glwidth*0.5f)*scale-pad,-radius-6);
+        near((a[3].left-glwidth*0.5f)*scale+pad,radius+6);
         near((a[1].top-a[0].top)*scale,3);
         near((a[3].top-a[2].top)*scale,3);
         near((a[4].top-a[3].top)*scale,3);
         for(int i=0;i<5;++i) {
-            near(a[i].height*scale,1.44f+0.56f);
-            near(a[i].width*scale,strlen(a[i].label)*1.44f+0.56f);
+            near(a[i].height*scale,glyph+2*pad);
+            near(a[i].width*scale,strlen(a[i].label)*glyph+2*pad);
         }
         vr_weapon_menu_action_t spawn={0}; spawn.kind=VR_WEAPON_MENU_ACTION_COOP_SPAWN;
         VR_WeaponMenu_LayoutPlayspaceActions(&spawn,1,radius/scale,scale);
         near(spawn.top+spawn.height*0.5f,glheight*0.5f);
+        cursor(a,5);
     }
 }
 static void picking(void) {
