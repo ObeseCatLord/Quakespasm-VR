@@ -1478,6 +1478,53 @@ static void Tests_Init ()
 #endif
 }
 
+qboolean Host_IsSteamFrame (void)
+{
+#if defined(__linux__) && defined(__aarch64__)
+	static int frame = -1;
+	if (frame < 0)
+	{
+		FILE *f = fopen ("/etc/os-release", "r");
+		char line[256];
+		frame = 0;
+		if (f)
+		{
+			while (fgets (line, sizeof (line), f))
+				if (!strncmp (line, "ID=steamos", 10) || !strncmp (line, "ID=\"steamos\"", 12))
+					frame = 1;
+			fclose (f);
+		}
+	}
+	return frame == 1;
+#else
+	return false;
+#endif
+}
+
+/* Mobile-class GPU in a headset: maximum frame rate over effects. These become
+ * the defaults (so "reset to defaults" keeps them); saved configs still win. */
+static void Host_ApplyPlatformDefaults (void)
+{
+	static const char *const frame_defaults[][2] = {
+		{"r_dynamic", "0"},	   {"r_rtshadows", "0"}, {"r_ssao", "0"},
+		{"vid_fsaa", "0"},	   {"r_particles", "1"}, {"r_waterwarp", "0"},
+	};
+	if (!Host_IsSteamFrame ())
+		return;
+	for (size_t i = 0; i < countof (frame_defaults); ++i)
+	{
+		cvar_t *var = Cvar_FindVar (frame_defaults[i][0]);
+		if (!var)
+			continue;
+		Cvar_SetQuick (var, frame_defaults[i][1]);
+		/* Make it the default too, so "reset to defaults" keeps it. */
+		if (var->default_string)
+			Mem_Free ((void *)var->default_string);
+		var->default_string = q_strdup (frame_defaults[i][1]);
+	}
+	Con_Printf ("Steam Frame detected: performance defaults applied.\n");
+}
+
 /*
 ====================
 Host_Init
@@ -1562,6 +1609,9 @@ void Host_Init (void)
 	// the folder from the selection dialog is only remembered now,
 	// with the game data proven to actually work
 	COM_WriteSelectedBaseDir ();
+
+	if (cls.state != ca_dedicated)
+		Host_ApplyPlatformDefaults ();
 
 	if (cls.state != ca_dedicated)
 	{

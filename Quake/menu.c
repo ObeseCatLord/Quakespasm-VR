@@ -3533,7 +3533,7 @@ static void M_VoiceOptions_Draw (cb_context_t *cbx)
 //=============================================================================
 /* VR OPTIONS MENU */
 
-extern cvar_t vr_hud_scale, vr_menu_scale, vr_menu_follow;
+extern cvar_t vr_hud_scale, vr_hud_hand, vr_menu_scale, vr_menu_follow;
 extern cvar_t vr_weaponmenu_mode;
 extern cvar_t vr_crosshair, vr_crosshair_depth, vr_crosshair_size, vr_crosshair_alpha, vr_crosshairy;
 extern cvar_t vr_haptic;
@@ -3550,6 +3550,7 @@ enum
 	VR_OPT_GORILLA,
 	VR_OPT_MENU_SCALE,
 	VR_OPT_HUD_SCALE,
+	VR_OPT_HUD_HAND,
 	VR_OPT_MENU_FOLLOW,
 	VR_OPT_WEAPON_MENU_MODE,
 	VR_OPT_CROSSHAIR_MODE,
@@ -4554,6 +4555,9 @@ static void M_VROptions_Adjust (int dir)
 		Cvar_SetValueQuick (&vr_hud_scale, CLAMP (0.01f, roundf ((current + dir * 0.005f) * 200.0f) / 200.0f, 0.1f));
 		break;
 	}
+	case VR_OPT_HUD_HAND:
+		Cvar_SetValueQuick (&vr_hud_hand, vr_hud_hand.value == 1.0f ? 0.0f : 1.0f);
+		break;
 	case VR_OPT_MENU_FOLLOW:
 	{
 		const int mode = isfinite (vr_menu_follow.value) && vr_menu_follow.value >= 0 &&
@@ -4781,6 +4785,10 @@ static void M_VROptions_Draw (cb_context_t *cbx)
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_HUD_SCALE, "HUD Scale");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_HUD_SCALE, va ("%.3f", vr_hud_scale.value));
+
+	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_HUD_HAND, "HUD Hand");
+	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_HUD_HAND,
+		vr_hud_hand.value == 1.0f ? "Other Hand" : "Weapon Hand");
 
 	M_Print (cbx, MENU_LABEL_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, "Menu Follow");
 	M_Print (cbx, MENU_VALUE_X, top + CHARACTER_SIZE * VR_OPT_MENU_FOLLOW, follow_modes[follow]);

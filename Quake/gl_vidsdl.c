@@ -934,8 +934,9 @@ static void GL_OpenXRUnlockQueue (void *owner)
 	SDL_UnlockMutex ((SDL_Mutex *)owner);
 }
 
-/* VR starts with -openxr, or by default when an OpenXR runtime is active and
- * running; -novr always keeps the desktop. Decided once per process. */
+/* VR starts with -openxr (or -vr), on the Steam Frame, or by default when an
+ * OpenXR runtime is active and running; -novr always keeps the desktop.
+ * Decided once per process. */
 qboolean GL_OpenXRStartupRequested (void)
 {
 	static int requested = -1;
@@ -947,8 +948,10 @@ qboolean GL_OpenXRStartupRequested (void)
 				Con_Printf ("OpenXR bootstrap skipped: -novr takes precedence over -openxr.\n");
 			requested = 0;
 		}
-		else if (COM_CheckParm ("-openxr"))
+		else if (COM_CheckParm ("-openxr") || COM_CheckParm ("-vr"))
 			requested = 1;
+		else if (Host_IsSteamFrame ())
+			requested = 1; /* a headset: VR is the only sensible start */
 		else
 			requested = VRXR_RuntimeLikelyActive (GL_OpenXRLog) ? 1 : 0;
 	}

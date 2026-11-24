@@ -87,6 +87,8 @@ cvar_t vr_floor_offset = {"vr_floor_offset", "-16", CVAR_ARCHIVE};
  * (Ancient Dungeon VR lowers its rig to a 0.58m head height). */
 static cvar_t vr_gorilla_drop = {"vr_gorilla_drop", "1.0", CVAR_ARCHIVE};
 cvar_t vr_hud_scale = {"vr_hud_scale", "0.025", CVAR_ARCHIVE};
+/* 0: the HUD rides the weapon (dominant) hand; 1: the other hand. */
+cvar_t vr_hud_hand = {"vr_hud_hand", "0", CVAR_ARCHIVE};
 /* Request eye mode on capable runtimes; policy keeps full-rate shading until
  * gaze is valid and stable. Fixed foveation remains an explicit menu choice. */
 cvar_t vr_foveation = {"vr_foveation", "2", CVAR_ARCHIVE};
@@ -2683,6 +2685,7 @@ void V_Init (void)
 	Cvar_RegisterVariable (&vr_floor_offset);
 	Cvar_RegisterVariable (&vr_gorilla_drop);
 	Cvar_RegisterVariable (&vr_hud_scale);
+	Cvar_RegisterVariable (&vr_hud_hand);
 	Cvar_RegisterVariable (&vr_foveation);
 	Cvar_RegisterVariable (&vr_mirror);
 	Cvar_RegisterVariable (&vr_hidden_area);

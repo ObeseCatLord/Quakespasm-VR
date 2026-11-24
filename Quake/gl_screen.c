@@ -137,7 +137,7 @@ cvar_t scr_relcrosshairscale = {"scr_relcrosshairscale", "1", CVAR_ARCHIVE};
 cvar_t scr_relconscale = {"scr_relconscale", "1", CVAR_ARCHIVE};
 
 extern cvar_t vr_aimmode;
-extern cvar_t vr_hud_scale;
+extern cvar_t vr_hud_scale, vr_hud_hand;
 extern void R_PrepareVRCrosshair (void);
 extern qboolean sb_showscores;
 extern qboolean scr_drawdialog;
@@ -2423,6 +2423,8 @@ static qboolean SCR_VRHUDPose (vec3_t target, vec3_t right, vec3_t down, vec3_t 
 	if (vr_aimmode.value == VR_AIMMODE_CONTROLLER)
 	{
 		dominant = VR_InputDominantPhysicalHand ();
+		if (vr_hud_hand.value == 1.0f && (dominant == 0 || dominant == 1))
+			dominant = 1 - dominant;
 		if (!R_TrackedControllerRay (dominant, hand_origin, hand_direction) ||
 			!V_TrackedMovementAngles (VR_MOVEMENT_MODE_FOLLOW_HAND, dominant, aim_angles))
 			return false;

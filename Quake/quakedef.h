@@ -524,6 +524,8 @@ void			   Host_ClearMemory (void);
 void			   Host_ServerFrame (void);
 void			   Host_InitCommands (void);
 void			   Host_Init (void);
+/* True on the Steam Frame (SteamOS on aarch64): VR by default, performance defaults. */
+qboolean		   Host_IsSteamFrame (void);
 void			   Host_Shutdown (void);
 void			   Host_Callback_Notify (cvar_t *var); /* callback function for CVAR_NOTIFY */
 FUNC_NORETURN void Host_Error (const char *error, ...) FUNC_PRINTF (1, 2);
