@@ -4015,19 +4015,74 @@ static qboolean VR_InputRoomscaleCommandAccepted (const vec3_t move)
 /* Mod-specific actions for controls a mod needs but the shared layout uses for
  * something else. A control bound to "+vr_mod <slot> <fallback...>" runs the
  * active game's action for that slot, or its ordinary fallback elsewhere, so
- * nothing game-specific is saved into the shared configuration. */
+ * nothing game-specific is saved into the shared configuration.
+ *
+ * Slots: grip_l (left grip), altfire (Index right stick click, other
+ * controllers' right grip), grip_r (Index right grip; always the same action
+ * as altfire because other controllers never produce it), stick_l (left stick
+ * click) and xbutton (VR_XBUTTON). Policy: altfire carries the mod's MOUSE2
+ * action (hook, secondary fire) or its flashlight, grip_l the use/hold action,
+ * xbutton a mode or inventory toggle. Mods of one family share the mapping;
+ * docs/vr-mod-actions.md records the evidence for each row. */
 typedef struct
 {
 	const char *game, *slot, *command;
 } vr_mod_action_t;
 
+#define VR_MOD_ALTFIRE(game, command) {game, "altfire", command}, {game, "grip_r", command}
+/* Arcane Dimensions-based progs: impulse 175 shows the arcane key inventory
+ * the maps tell players to check. The grapple replaces the axe and fires with
+ * attack, and jump boots work through jump, so neither needs a control. */
+#define VR_MOD_AD(game) {game, "xbutton", "impulse 175"}
+/* Drake: impulse 20 activates worn special armor (also double-press jump). */
+#define VR_MOD_DRAKE(game) {game, "grip_l", "impulse 20"}
+
 static const vr_mod_action_t vr_mod_actions[] = {
 	/* Minecraft Texture Jam 2: build mode, place block, wind charge dash. */
 	{"mcj2", "grip_l", "impulse 109"},
-	{"mcj2", "grip_r", "impulse 130"},
-	{"mcj2", "altfire", "impulse 130"},
+	VR_MOD_ALTFIRE ("mcj2", "impulse 130"),
 	{"mcj2", "stick_l", "impulse 127"},
+
+	VR_MOD_AD ("ad"),
+	VR_MOD_AD ("gibtropolis"),
+	VR_MOD_AD ("hwjam2"),
+	VR_MOD_AD ("hwjam4"),
+	VR_MOD_AD ("mc_hj26"),
+	VR_MOD_AD ("peril3.0"),
+	VR_MOD_AD ("q30a1024"),
+	VR_MOD_AD ("quake_rooftop_jam_v2"),
+	VR_MOD_AD ("ravenkeep"),
+	VR_MOD_AD ("tcj"),
+
+	VR_MOD_DRAKE ("nyarlathotep"),
+	VR_MOD_DRAKE ("something_wicked"),
+	VR_MOD_DRAKE ("tershibboleth"),
+
+	/* Mjolnir (bindlist.lst): use/purchase, flashlight, power shield. */
+	{"mjolnir", "grip_l", "impulse 159"},
+	VR_MOD_ALTFIRE ("mjolnir", "impulse 146"),
+	{"mjolnir", "xbutton", "impulse 59"},
+	{"mjolnir1.0", "grip_l", "impulse 159"},
+	VR_MOD_ALTFIRE ("mjolnir1.0", "impulse 146"),
+	{"mjolnir1.0", "xbutton", "impulse 59"},
+
+	/* Immortal Lock: flashlight (readme, quake.rc alias). */
+	VR_MOD_ALTFIRE ("immortal", "impulse 13"),
+
+	/* Re:Mobilize and Sacrilege (progs_dump): offhand light hook, held (quake.rc). */
+	VR_MOD_ALTFIRE ("rm1.2", "+hook"),
+	VR_MOD_ALTFIRE ("sacrilege", "+hook"),
+
+	/* Violent Rumble (readme, quake.rc): secondary fire, held quick grapple,
+	 * firing mode / ammo type. */
+	VR_MOD_ALTFIRE ("vr", "impulse 228"),
+	{"vr", "grip_l", "+qgrap"},
+	{"vr", "xbutton", "impulse 227"},
 };
+
+#undef VR_MOD_ALTFIRE
+#undef VR_MOD_AD
+#undef VR_MOD_DRAKE
 
 static const char *VR_InputModActionFor (const char *slot)
 {
@@ -4410,7 +4465,8 @@ typedef struct
  * and physical desktop-gamepad bindings remain authoritative. */
 /* Right A/B cycle weapons (previous/next), left X/Y and the grips show the
  * scoreboard. No control defaults to a 180-degree turn. Grips, left stick
- * click and alt-fire go through +vr_mod so mods with extra actions use them. */
+ * click, alt-fire and VR_XBUTTON go through +vr_mod so mods with extra
+ * actions use them (docs/vr-mod-actions.md lists them per game). */
 static const vr_default_binding_t vr_default_bindings[] = {
 	{K_VR_LTRIGGER, "+jump"},
 	{K_VR_RTRIGGER, "+attack"},
@@ -4421,7 +4477,7 @@ static const vr_default_binding_t vr_default_bindings[] = {
 	{K_VR_ALTFIRE, "+vr_mod altfire +button3"},
 	{K_VR_LSHOULDER, "+vr_mod grip_l +showscores"},
 	{K_VR_RSHOULDER, "+vr_mod grip_r +showscores"},
-	{K_VR_XBUTTON, "+showscores"},
+	{K_VR_XBUTTON, "+vr_mod xbutton +showscores"},
 	{K_VR_YBUTTON, "+showscores"},
 };
 

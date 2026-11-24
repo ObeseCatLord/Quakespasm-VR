@@ -10,6 +10,13 @@ static qboolean fixture_vr_active;
 static int fixture_bind_count;
 
 int q_strcasecmp (const char *left, const char *right) { return strcasecmp (left, right); }
+char com_gamedir[MAX_OSPATH];
+
+const char *COM_SkipPath (const char *pathname)
+{
+	const char *last = strrchr (pathname, '/');
+	return last ? last + 1 : pathname;
+}
 
 qboolean V_TrackedSessionActive (void)
 {
@@ -146,8 +153,46 @@ static void game_change_with_active_session (void)
 	assert_all_defaults_filled (-1);
 }
 
+/* The per-game table: known slots only, the Index-only right grip always
+ * mirrors alt-fire, no default reaches a 180-degree turn, and lookup follows
+ * the game directory name case-insensitively. */
+static void mod_actions (void)
+{
+	static const char *const slots[] = {"grip_l", "grip_r", "altfire", "stick_l", "xbutton"};
+	for (size_t i = 0; i < countof (vr_mod_actions); ++i)
+	{
+		const vr_mod_action_t *row = &vr_mod_actions[i];
+		qboolean known = false, mirrored = false;
+		for (size_t s = 0; s < countof (slots); ++s)
+			known |= !strcmp (row->slot, slots[s]);
+		assert (known && row->command[0] && !strstr (row->command, "turn180"));
+		for (size_t j = 0; j < countof (vr_mod_actions); ++j)
+			if (!q_strcasecmp (vr_mod_actions[j].game, row->game) &&
+				!strcmp (vr_mod_actions[j].slot, !strcmp (row->slot, "altfire") ? "grip_r" : "altfire"))
+				mirrored |= !strcmp (vr_mod_actions[j].command, row->command);
+		assert (mirrored || (strcmp (row->slot, "altfire") && strcmp (row->slot, "grip_r")));
+		for (size_t j = 0; j < i; ++j)
+			assert (q_strcasecmp (vr_mod_actions[j].game, row->game) ||
+				strcmp (vr_mod_actions[j].slot, row->slot));
+	}
+	snprintf (com_gamedir, sizeof (com_gamedir), "%s", "/q/Tershibboleth");
+	assert (!strcmp (VR_InputModActionFor ("grip_l"), "impulse 20"));
+	assert (!VR_InputModActionFor ("altfire"));
+	snprintf (com_gamedir, sizeof (com_gamedir), "%s", "/q/sacrilege");
+	assert (!strcmp (VR_InputModActionFor ("altfire"), "+hook"));
+	assert (!strcmp (VR_InputModActionFor ("grip_r"), "+hook"));
+	snprintf (com_gamedir, sizeof (com_gamedir), "%s", "/q/ad");
+	assert (!strcmp (VR_InputModActionFor ("xbutton"), "impulse 175"));
+	assert (!VR_InputModActionFor ("stick_l"));
+	snprintf (com_gamedir, sizeof (com_gamedir), "%s", "/q/id1");
+	for (size_t s = 0; s < countof (slots); ++s)
+		assert (!VR_InputModActionFor (slots[s]));
+	com_gamedir[0] = 0;
+}
+
 int main (void)
 {
+	mod_actions ();
 	/* The explicit requests below arrive after the startup chain settled. */
 	vr_default_bindings_phase = VR_DEFAULT_BINDINGS_APPLIED;
 	vr_default_bindings_configs_ready = true;
@@ -171,7 +216,7 @@ int main (void)
 	assert (!strcmp (keybindings[K_VR_ALTFIRE], "+vr_mod altfire +button3"));
 	assert (!strcmp (keybindings[K_VR_RSHOULDER], "+vr_mod grip_r +showscores"));
 	assert (!strcmp (keybindings[K_VR_ABUTTON], "impulse 12"));
-	assert (!strcmp (keybindings[K_VR_XBUTTON], "+showscores"));
+	assert (!strcmp (keybindings[K_VR_XBUTTON], "+vr_mod xbutton +showscores"));
 	assert (!strcmp (keybindings[K_VR_YBUTTON], "+showscores"));
 	assert (!keybindings[K_VR_RIGHT_STICK_UP]);
 	assert (!keybindings[K_VR_RIGHT_STICK_DOWN]);
