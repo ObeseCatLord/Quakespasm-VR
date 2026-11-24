@@ -103,6 +103,11 @@ typedef struct entity_s
 	vec3_t			 origin;
 	vec3_t			 msg_angles[2]; // last two updates (0 is newest)
 	vec3_t			 angles;
+	vec3_t			 msg_old_origins[2]; // the updates before msg_origins[1] (0 is the newer), for buffered interpolation
+	vec3_t			 msg_old_angles[2];
+	double			 msg_old_times[2];	  // server time of each; valid only while it equals cl.mtime[2] and cl.mtime[3]
+	double			 msg_appear_time;	  // server time of the update that brought the entity into view
+	double			 msg_appear_realtime; // when that update arrived
 	struct qmodel_s *model; // NULL = no model
 	struct efrag_s	*efrag; // linked list of efrags
 	int				 frame;

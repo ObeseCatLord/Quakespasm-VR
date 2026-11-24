@@ -671,11 +671,11 @@ static float R_VRIKLerpAngle (float from, float to, float blend)
 	return from + delta * blend;
 }
 
-/* Sample the newest usable head/hand pose without changing the entity cache. */
+/* Sample the usable head/hand pose without changing the entity cache. */
 qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out)
 {
-	const vrik_pose_t *newest, *older;
-	double newesttime, oldertime, sampletime;
+	const vrik_pose_t *newest, *older, *newer;
+	double newesttime;
 	float blend;
 	int tracker, axis;
 
@@ -689,48 +689,48 @@ qboolean R_VRIKSampleEntityPose (const entity_t *entity, vrik_pose_t *out)
 		return false;
 
 	*out = *newest;
-	if (entity->vrik_pose_count < 2)
+	/* Poses arrive bunched by the server's frames; the playback timeline
+	 * chooses the pair to draw between and where. */
+	if (!CL_VRIKPlayback (entity, &older, &newer, NULL, NULL, &blend) ||
+		!(newer->flags & VRIK_FLAG_ACTIVE))
 		return true;
-	older = &entity->vrik_poses[1];
-	oldertime = entity->vrik_pose_times[1];
-	if (!(older->flags & VRIK_FLAG_ACTIVE) || newesttime <= oldertime)
-		return true;
-
-	/* Delay by 75 ms to absorb the natural 20 Hz pose cadence. */
-	sampletime = realtime - 0.075;
-	blend = (float)((sampletime - oldertime) / (newesttime - oldertime));
-	blend = CLAMP (0.0f, blend, 1.0f);
+	if (!(older->flags & VRIK_FLAG_ACTIVE))
+	{
+		older = newer;
+		blend = 0;
+	}
 	for (tracker = 0; tracker < VRIK_TRACKER_COUNT; tracker++)
 		for (axis = 0; axis < 3; axis++)
 		{
 			out->position[tracker][axis] = older->position[tracker][axis] +
-				(newest->position[tracker][axis] - older->position[tracker][axis]) * blend;
+				(newer->position[tracker][axis] - older->position[tracker][axis]) * blend;
 			out->orientation[tracker][axis] = R_VRIKLerpAngle (
-				older->orientation[tracker][axis], newest->orientation[tracker][axis], blend);
+				older->orientation[tracker][axis], newer->orientation[tracker][axis], blend);
 		}
 	{
 		unsigned char dominanttracked =
 			(newest->flags & VRIK_FLAG_DOMINANT_LEFT) ?
 			VRIK_FLAG_LEFT_HAND_TRACKED : VRIK_FLAG_RIGHT_HAND_TRACKED;
 		if (!((older->flags ^ newest->flags) & VRIK_FLAG_DOMINANT_LEFT) &&
+			!((newer->flags ^ newest->flags) & VRIK_FLAG_DOMINANT_LEFT) &&
 			(older->flags & dominanttracked) &&
-			(newest->flags & dominanttracked))
+			(newer->flags & dominanttracked))
 			for (axis = 0; axis < 3; axis++)
 				out->aim_orientation[axis] = R_VRIKLerpAngle (
-					older->aim_orientation[axis], newest->aim_orientation[axis], blend);
+					older->aim_orientation[axis], newer->aim_orientation[axis], blend);
 	}
-	out->body_yaw = R_VRIKLerpAngle (older->body_yaw, newest->body_yaw, blend);
+	out->body_yaw = R_VRIKLerpAngle (older->body_yaw, newer->body_yaw, blend);
 	return true;
 }
 
 /* Keep v3 lower roles independent from the legacy head/hand compatibility
  * sample.  A present-but-untracked value is a usable sender prediction, while
- * only two consecutive tracked values are interpolated. */
+ * only two tracked values are interpolated. */
 qboolean R_VRIKSampleEntityLowerTargets (const entity_t *entity,
 	r_vrik_lowerbody_targets_t *out)
 {
-	const vrik_codec_pose_t *newest, *older = NULL;
-	double newesttime, oldertime, sampletime;
+	const vrik_codec_pose_t *newest, *older = NULL, *newer = NULL;
+	double newesttime;
 	float blend = 1.0f;
 	int role;
 
@@ -744,18 +744,9 @@ qboolean R_VRIKSampleEntityLowerTargets (const entity_t *entity,
 	if (!(newest->flags & VRIK_V3_FLAG_ACTIVE) ||
 		realtime - newesttime > VRIK_POSE_STALE_TIME)
 		return false;
-	if (entity->vrik_pose_count >= 2)
-	{
-		const vrik_codec_pose_t *candidate = &entity->vrik_v3_poses[1];
-		oldertime = entity->vrik_pose_times[1];
-		if ((candidate->flags & VRIK_V3_FLAG_ACTIVE) && newesttime > oldertime)
-		{
-			older = candidate;
-			sampletime = realtime - 0.075;
-			blend = CLAMP (0.0f,
-				(float)((sampletime - oldertime) / (newesttime - oldertime)), 1.0f);
-		}
-	}
+	if (!CL_VRIKPlayback (entity, NULL, NULL, &older, &newer, &blend) ||
+		!(older->flags & VRIK_V3_FLAG_ACTIVE) || !(newer->flags & VRIK_V3_FLAG_ACTIVE))
+		older = newer = NULL;
 	for (role = 0; role < R_VRIK_LOWER_ROLE_COUNT; role++)
 	{
 		const int target = VRIK_TARGET_HIP + role;
@@ -776,15 +767,17 @@ qboolean R_VRIKSampleEntityLowerTargets (const entity_t *entity,
 		}
 		out->tracked_mask |= destinationbit;
 		if (older && (older->present_mask & sourcebit) &&
-			(older->tracked_mask & sourcebit))
+			(older->tracked_mask & sourcebit) &&
+			(newer->present_mask & sourcebit) &&
+			(newer->tracked_mask & sourcebit))
 			for (axis = 0; axis < 3; axis++)
 			{
 				out->position[role][axis] = older->targets[target].position[axis] +
-					(newest->targets[target].position[axis] -
+					(newer->targets[target].position[axis] -
 					 older->targets[target].position[axis]) * blend;
 				out->orientation[role][axis] = R_VRIKLerpAngle (
 					older->targets[target].orientation[axis],
-					newest->targets[target].orientation[axis], blend);
+					newer->targets[target].orientation[axis], blend);
 			}
 	}
 	return out->present_mask != 0;
