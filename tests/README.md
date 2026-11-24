@@ -2639,6 +2639,25 @@ held-key rebinding, clears, actual menu binding capture, submenu boundaries
 and modal input-grab transitions. It kills its owned
 inferior after checking rather than saving a probe configuration.
 
+`vr_input_game_change_smoke.gdb` covers an in-process game change while an XR
+session stays attached, as a server-requested game change does. It writes a
+test game directory and a post-config into the disposable basedir: the game's
+`quake.rc` runs `default.cfg` (whose `vr_defaultbindings` executes with the
+session flag set), a `config.cfg` and a post-config that both start with
+`unbindall` and bind no XR controls, then opens the main menu. Completed XR
+samples are injected between chain commands. It requires every dedicated XR
+control to hold its filled default after the chain, the trigger to select in
+the main menu, and the trigger to fire after reconnecting to a map:
+
+```sh
+QSVR_INPUT_BASEDIR="$INPUT_TEST_ROOT" \
+QSVR_INPUT_GAME_CHANGE_RESULT="$INPUT_TEST_ROOT/game-change-result.json" \
+  timeout --signal=TERM 150s gdb -nx --batch \
+  -x tests/vr_input_game_change_smoke.gdb "$INPUT_TEST_BINARY"
+```
+
+Require `QSVR_INPUT_GAME_CHANGE_PASSED`.
+
 `vr_input_modal_smoke.gdb` additionally requires the isolated simulated Monado
 setup described under **Local OpenXR GPU smoke**, with matching private
 `XDG_RUNTIME_DIR`, configuration/data paths and `XR_RUNTIME_JSON`. It uses the

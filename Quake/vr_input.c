@@ -4419,10 +4419,12 @@ static void VR_InputFinishDefaultBindings (void)
 void VR_InputConfigsPending (void)
 {
 	vr_default_bindings_configs_ready = false;
-	/* A completed fill is armed again: the new chain may unbind dedicated XR
-	 * controls, and filling still respects every binding the chain sets. */
-	if (vr_default_bindings_phase == VR_DEFAULT_BINDINGS_APPLIED)
-		vr_default_bindings_phase = VR_DEFAULT_BINDINGS_STARTUP_PENDING;
+	/* Any earlier fill or detached request is armed again as the chain's own
+	 * fill: the new chain may unbind dedicated XR controls (its unbindall must
+	 * not count as excluding them), and filling still respects every binding
+	 * the chain sets. */
+	vr_default_bindings_phase = VR_DEFAULT_BINDINGS_STARTUP_PENDING;
+	vr_default_bindings_excluded = 0;
 }
 
 /* The first completed XR frame after the configuration chain fills missing
@@ -4442,6 +4444,14 @@ static void VR_InputConfigsExecuted_f (void)
 
 static void VR_InputDefaultBindings_f (void)
 {
+	/* default.cfg itself requests the defaults while startup or a game change
+	 * is still executing its configuration chain. An in-process game change
+	 * keeps the XR session attached, so filling here would be erased by the
+	 * unbindall of the config.cfg or post-config that follows, and would also
+	 * retire the fill armed for the end of the chain. Leave that fill in charge. */
+	if (!vr_default_bindings_configs_ready &&
+		vr_default_bindings_phase == VR_DEFAULT_BINDINGS_STARTUP_PENDING)
+		return;
 	vr_default_bindings_excluded = 0;
 	if (!V_TrackedSessionActive ())
 	{
