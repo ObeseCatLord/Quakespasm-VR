@@ -3,7 +3,10 @@
 
 The bucket holds exactly one set of files: the `latest` channel. Its manifest is
 the staged build's runtime rows plus the channel's other rows (shared content),
-carried forward from the live manifest or replaced with --extras. After the new
+carried forward from the live manifest or replaced with --extras. Only objects
+that are new or changed against the live manifest are read back publicly, and
+--content-only skips the build entirely when it is already the live release
+(use it to change shared content). After the new
 metadata is live, every object the new release does not reference is deleted,
 including the previous build."""
 import argparse
@@ -252,8 +255,10 @@ def publish(args):
     out = args.stage.resolve()
     release = json.loads((out / 'release.json').read_text())
     revision = release['revision']
-    remote_revision = subprocess.check_output(['git', 'ls-remote', 'origin', 'refs/heads/main'], text=True).split()[0]
-    require(remote_revision == revision, 'Publishing requires source revision on origin/main')
+    # A new build must be origin/main; content-only keeps the build already live.
+    if not args.content_only:
+        remote_revision = subprocess.check_output(['git', 'ls-remote', 'origin', 'refs/heads/main'], text=True).split()[0]
+        require(remote_revision == revision, 'Publishing requires source revision on origin/main')
     require(args.remote.rstrip('/').endswith('/' + CHANNEL) and args.public.rstrip('/').endswith('/' + CHANNEL),
             'Publisher only writes the single %s channel' % CHANNEL)
     actual = scan(out)
@@ -264,11 +269,21 @@ def publish(args):
         return
     prefix = 'builds/' + revision
     # The channel's other rows (shared content), never a build.
+    live = subprocess.run(['rclone', 'cat', args.remote.rstrip('/') + '/manifest.tsv'], capture_output=True, text=True)
+    live_rows = parse_manifest(live.stdout) if live.returncode == 0 else []
+    # Objects already live under the same source and hash were verified when
+    # they were published; only new or changed ones are read back below.
+    live_objects = {(row['source'], row['sha256']) for row in live_rows}
+    if args.content_only:
+        live_release = subprocess.run(['rclone', 'cat', args.remote.rstrip('/') + '/release.json'],
+                                      capture_output=True)
+        require(live_release.returncode == 0 and
+                hashlib.sha256(live_release.stdout).hexdigest() == sha(out / 'release.json'),
+                '--content-only needs this exact build to be the live release')
     if args.extras:
         extras = parse_manifest(args.extras.read_text())
     else:
-        live = subprocess.run(['rclone', 'cat', args.remote.rstrip('/') + '/manifest.tsv'], capture_output=True, text=True)
-        extras = parse_manifest(live.stdout) if live.returncode == 0 else []
+        extras = live_rows
     extras = [row for row in extras if not row['source'].startswith('builds/')]
     if args.extras_root:
         root = args.extras_root.resolve()
@@ -283,8 +298,9 @@ def publish(args):
     manifest_text = ('# sha256\taction\tsource_path\tdestination_path\n' +
                      ''.join(format_row(row) for row in extras + build_rows))
     bucket, channel = args.remote.rstrip('/').rsplit('/', 1)
-    remote_files = json.loads(subprocess.check_output(['rclone', 'lsjson', bucket, '--recursive', '--files-only',
-        '--include', channel + '/' + prefix + '/**'], text=True))
+    remote_files = [] if args.content_only else json.loads(subprocess.check_output(
+        ['rclone', 'lsjson', bucket, '--recursive', '--files-only',
+         '--include', channel + '/' + prefix + '/**'], text=True))
     # A revision namespace is immutable. Verify every existing object before
     # uploading anything, so a failed/repeated run cannot damage a live build.
     for entry in remote_files:
@@ -294,11 +310,13 @@ def publish(args):
             digest = hashlib.file_digest(stream.stdout, 'sha256').hexdigest()
             require(stream.wait() == 0, 'Cannot verify existing revision object')
         require(digest == release['files'][name], 'Refusing to replace a differing revision object: ' + name)
-    subprocess.run(['rclone', 'copy', str(out / prefix), args.remote.rstrip('/') + '/' + prefix,
-                    '--s3-no-check-bucket', '--immutable'], check=True)
+    if not args.content_only:
+        subprocess.run(['rclone', 'copy', str(out / prefix), args.remote.rstrip('/') + '/' + prefix,
+                        '--s3-no-check-bucket', '--immutable'], check=True)
     # Read public bytes before exposing the manifest. No runtime logs/configs or
     # user game data are staged. R2 credentials remain in the existing rclone owner.
-    for name, digest in release['files'].items():
+    # A content-only publish keeps the live build, which was verified then.
+    for name, digest in ([] if args.content_only else release['files'].items()):
         if name == 'manifest.tsv':
             continue
         url = args.public.rstrip('/') + '/' + name + '?sha256=' + digest
@@ -307,7 +325,7 @@ def publish(args):
     if args.extras_root:
         subprocess.run(['rclone', 'copy', str(args.extras_root), args.remote.rstrip('/'),
                         '--s3-no-check-bucket', '--immutable'], check=True)
-    for source, digest in sorted({(row['source'], row['sha256']) for row in extras}):
+    for source, digest in sorted({(row['source'], row['sha256']) for row in extras} - live_objects):
         actual = public_sha256(args.public.rstrip('/') + '/' + source + '?sha256=' + digest, timeout=120)
         require(actual == digest, 'Public extra object mismatch: ' + source)
     with tempfile.TemporaryDirectory() as temporary:
@@ -347,5 +365,7 @@ p.add_argument('--public', required=True, help='public HTTPS URL of the same cha
 p.add_argument('--extras', type=Path, help='non-build manifest rows (default: keep the live ones)')
 p.add_argument('--extras-root', type=Path, help='new extra files to upload, laid out at their source paths')
 p.add_argument('--check', action='store_true')
+p.add_argument('--content-only', action='store_true',
+               help='the staged build is already live: skip re-verifying it, publish only the extras')
 args = parser.parse_args()
 stage(args) if args.command == 'stage' else publish(args)
