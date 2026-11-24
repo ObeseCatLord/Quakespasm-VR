@@ -22,6 +22,7 @@
 #endif
 #include "vr_openxr_vulkan.h"
 #include "vr_openxr.h"
+#include "vr_openxr_math.h"
 #include "vr_foveation_stability.h"
 #include "sha256.h"
 #include <string>
@@ -470,11 +471,14 @@ static void vector_action(ActionId action, int hand, float out[2], bool *active)
 }
 /* Optional controller profiles: each is suggested only when its extension is
  * enabled. Paths are limited to each extension's first revision. */
-enum { PROFILE_EXT_HP, PROFILE_EXT_ODYSSEY, PROFILE_EXT_COSMOS, PROFILE_EXT_FOCUS3, PROFILE_EXT_ML2, PROFILE_EXT_COUNT };
+enum { PROFILE_EXT_HP, PROFILE_EXT_ODYSSEY, PROFILE_EXT_COSMOS, PROFILE_EXT_FOCUS3, PROFILE_EXT_ML2,
+	PROFILE_EXT_TOUCH_PLUS, PROFILE_EXT_TOUCH_PRO, PROFILE_EXT_PICO, PROFILE_EXT_HAND, PROFILE_EXT_MSFT_HAND, PROFILE_EXT_COUNT };
 static const char *const kProfileExtensions[PROFILE_EXT_COUNT]={
 	XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME, XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME,
 	XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME, XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
-	XR_ML_ML2_CONTROLLER_INTERACTION_EXTENSION_NAME};
+	XR_ML_ML2_CONTROLLER_INTERACTION_EXTENSION_NAME, XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME,
+	XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME,
+	XR_EXT_HAND_INTERACTION_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME};
 static bool g_profileExtension[PROFILE_EXT_COUNT];
 /* Layout groups drive grip offsets and a few profile-specific controls.
  * Match whole profile paths: several vendor profiles share name fragments. */
@@ -489,7 +493,18 @@ static int profile_layout(const char *path) {
 		{"/interaction_profiles/samsung/odyssey_controller",VRXR_PROFILE_GENERIC},
 		{"/interaction_profiles/hp/mixed_reality_controller",VRXR_PROFILE_GENERIC},
 		{"/interaction_profiles/htc/vive_cosmos_controller",VRXR_PROFILE_GENERIC},
-		{"/interaction_profiles/htc/vive_focus3_controller",VRXR_PROFILE_GENERIC}};
+		{"/interaction_profiles/htc/vive_focus3_controller",VRXR_PROFILE_GENERIC},
+		/* Touch Plus/Pro report a Touch layout and the standard grip; the
+		 * second spelling of each is the OpenXR 1.1 promoted path. */
+		{"/interaction_profiles/meta/touch_controller_plus",VRXR_PROFILE_TOUCH},
+		{"/interaction_profiles/meta/touch_plus_controller",VRXR_PROFILE_TOUCH},
+		{"/interaction_profiles/facebook/touch_controller_pro",VRXR_PROFILE_TOUCH},
+		{"/interaction_profiles/meta/touch_pro_controller",VRXR_PROFILE_TOUCH},
+		{"/interaction_profiles/bytedance/pico4_controller",VRXR_PROFILE_GENERIC},
+		{"/interaction_profiles/bytedance/pico4s_controller",VRXR_PROFILE_GENERIC},
+		{"/interaction_profiles/bytedance/pico_neo3_controller",VRXR_PROFILE_GENERIC},
+		{"/interaction_profiles/ext/hand_interaction_ext",VRXR_PROFILE_HAND},
+		{"/interaction_profiles/microsoft/hand_interaction",VRXR_PROFILE_HAND}};
 	for(size_t i=0;i<sizeof(layouts)/sizeof(layouts[0]);++i) if(!std::strcmp(path,layouts[i].path)) return layouts[i].layout;
 	return VRXR_PROFILE_SIMPLE;
 }
@@ -773,6 +788,25 @@ static bool create_actions() {
 	if (g_profileExtension[PROFILE_EXT_COSMOS]) suggest("/interaction_profiles/htc/vive_cosmos_controller",cosmos,sizeof(cosmos)/sizeof(cosmos[0]));
 	if (g_profileExtension[PROFILE_EXT_FOCUS3]) suggest("/interaction_profiles/htc/vive_focus3_controller",focus3,sizeof(focus3)/sizeof(focus3[0]));
 	if (g_profileExtension[PROFILE_EXT_ML2]) suggest("/interaction_profiles/ml/ml2_controller",ml2,sizeof(ml2)/sizeof(ml2[0]));
+	/* Touch Plus (Quest 3/3S) and Touch Pro: Touch buttons. Runtimes that know
+	 * these controllers otherwise fall back to whatever profile they find first. */
+	if (g_profileExtension[PROFILE_EXT_TOUCH_PLUS]) suggest("/interaction_profiles/meta/touch_controller_plus",touch,sizeof(touch)/sizeof(touch[0]));
+	if (g_profileExtension[PROFILE_EXT_TOUCH_PRO]) suggest("/interaction_profiles/facebook/touch_controller_pro",touch,sizeof(touch)/sizeof(touch[0]));
+	/* Pico 4 / Neo 3: X/Y and A/B face buttons, menu on the left controller. */
+	Binding pico[]={{ACT_GRIP_POSE,"/user/hand/left/input/grip/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/grip/pose"},{ACT_HAPTIC,"/user/hand/left/output/haptic"},{ACT_HAPTIC,"/user/hand/right/output/haptic"},{ACT_TRIGGER,"/user/hand/left/input/trigger/value"},{ACT_TRIGGER,"/user/hand/right/input/trigger/value"},{ACT_TRIGGER_CLICK,"/user/hand/left/input/trigger/click"},{ACT_TRIGGER_CLICK,"/user/hand/right/input/trigger/click"},{ACT_TRIGGER_TOUCH,"/user/hand/left/input/trigger/touch"},{ACT_TRIGGER_TOUCH,"/user/hand/right/input/trigger/touch"},{ACT_GRIP,"/user/hand/left/input/squeeze/value"},{ACT_GRIP,"/user/hand/right/input/squeeze/value"},{ACT_GRIP_CLICK,"/user/hand/left/input/squeeze/click"},{ACT_GRIP_CLICK,"/user/hand/right/input/squeeze/click"},{ACT_STICK,"/user/hand/left/input/thumbstick"},{ACT_STICK,"/user/hand/right/input/thumbstick"},{ACT_STICK_CLICK,"/user/hand/left/input/thumbstick/click"},{ACT_STICK_CLICK,"/user/hand/right/input/thumbstick/click"},{ACT_STICK_TOUCH,"/user/hand/left/input/thumbstick/touch"},{ACT_STICK_TOUCH,"/user/hand/right/input/thumbstick/touch"},{ACT_PRIMARY,"/user/hand/left/input/x/click"},{ACT_PRIMARY,"/user/hand/right/input/a/click"},{ACT_SECONDARY,"/user/hand/left/input/y/click"},{ACT_SECONDARY,"/user/hand/right/input/b/click"},{ACT_MENU,"/user/hand/left/input/menu/click"}};
+	if (g_profileExtension[PROFILE_EXT_PICO]) {
+		suggest("/interaction_profiles/bytedance/pico4_controller",pico,sizeof(pico)/sizeof(pico[0]));
+		suggest("/interaction_profiles/bytedance/pico_neo3_controller",pico,sizeof(pico)/sizeof(pico[0]));
+	}
+	/* Tracked bare hands. A hand's grip -Z runs little finger to thumb, about
+	 * 90 degrees from where the hand points, so the pose action takes the aim
+	 * ray here and locate_frame converts it (VRXR_HandAimToGrip). Without
+	 * these, runtimes may hand a tracked hand to the simple profile with its
+	 * grip pose instead. */
+	Binding hands[]={{ACT_GRIP_POSE,"/user/hand/left/input/aim/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/aim/pose"},{ACT_TRIGGER,"/user/hand/left/input/pinch_ext/value"},{ACT_TRIGGER,"/user/hand/right/input/pinch_ext/value"},{ACT_GRIP,"/user/hand/left/input/grasp_ext/value"},{ACT_GRIP,"/user/hand/right/input/grasp_ext/value"},{ACT_GRIP_CLICK,"/user/hand/left/input/grasp_ext/value"},{ACT_GRIP_CLICK,"/user/hand/right/input/grasp_ext/value"}};
+	Binding msftHands[]={{ACT_GRIP_POSE,"/user/hand/left/input/aim/pose"},{ACT_GRIP_POSE,"/user/hand/right/input/aim/pose"},{ACT_TRIGGER,"/user/hand/left/input/select/value"},{ACT_TRIGGER,"/user/hand/right/input/select/value"},{ACT_GRIP,"/user/hand/left/input/squeeze/value"},{ACT_GRIP,"/user/hand/right/input/squeeze/value"},{ACT_GRIP_CLICK,"/user/hand/left/input/squeeze/value"},{ACT_GRIP_CLICK,"/user/hand/right/input/squeeze/value"}};
+	if (g_profileExtension[PROFILE_EXT_HAND]) suggest("/interaction_profiles/ext/hand_interaction_ext",hands,sizeof(hands)/sizeof(hands[0]));
+	if (g_profileExtension[PROFILE_EXT_MSFT_HAND]) suggest("/interaction_profiles/microsoft/hand_interaction",msftHands,sizeof(msftHands)/sizeof(msftHands[0]));
 	if (g.gazeSupported && !create_gaze_actions()) {
 		say("OpenXR: eye tracking unavailable; continuing without gaze input");
 		disable_gaze_actions();
@@ -1062,6 +1096,7 @@ static bool locate_frame(vrxr_frame_t *frame) {
 		if (ok("xrGetActionStatePose",g.xr.PoseState(g.session,&info,&state)) && state.isActive) device_from_space(&frame->devices[hand+1],g.handSpace[hand],VRXR_DEVICE_HAND,hand);
 		else { std::memset(&frame->devices[hand+1],0,sizeof(frame->devices[hand+1])); frame->devices[hand+1].kind=VRXR_DEVICE_HAND; frame->devices[hand+1].hand=hand; }
 		input_for_hand(&frame->hands[hand],hand);
+		if (frame->hands[hand].profile==VRXR_PROFILE_HAND) VRXR_HandAimToGrip(&frame->devices[hand+1]);
 		frame->devices[hand+1].connected |= frame->hands[hand].active;
 	}
 	locate_trackers(frame,focused);

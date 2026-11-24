@@ -133,6 +133,14 @@ static void controller_layouts() {
  const char *generic[]={"/interaction_profiles/microsoft/motion_controller","/interaction_profiles/samsung/odyssey_controller",
   "/interaction_profiles/hp/mixed_reality_controller","/interaction_profiles/htc/vive_cosmos_controller","/interaction_profiles/htc/vive_focus3_controller"};
  for(const char *path:generic) assert(profile_layout(path)==VRXR_PROFILE_GENERIC);
+ const char *touch[]={"/interaction_profiles/meta/touch_controller_plus","/interaction_profiles/meta/touch_plus_controller",
+  "/interaction_profiles/facebook/touch_controller_pro","/interaction_profiles/meta/touch_pro_controller"};
+ for(const char *path:touch) assert(profile_layout(path)==VRXR_PROFILE_TOUCH);
+ const char *pico[]={"/interaction_profiles/bytedance/pico4_controller","/interaction_profiles/bytedance/pico4s_controller",
+  "/interaction_profiles/bytedance/pico_neo3_controller"};
+ for(const char *path:pico) assert(profile_layout(path)==VRXR_PROFILE_GENERIC);
+ assert(profile_layout("/interaction_profiles/ext/hand_interaction_ext")==VRXR_PROFILE_HAND);
+ assert(profile_layout("/interaction_profiles/microsoft/hand_interaction")==VRXR_PROFILE_HAND);
  assert(profile_layout("/interaction_profiles/khr/simple_controller")==VRXR_PROFILE_SIMPLE);
  assert(profile_layout("/interaction_profiles/oculus/touch_controller_unknown")==VRXR_PROFILE_SIMPLE);
 }
