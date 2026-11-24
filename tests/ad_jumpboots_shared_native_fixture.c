@@ -510,6 +510,153 @@ static void RestoredBundleCases (void)
 	for (int i = 0; i < 2; ++i) Mem_Free(payload[i]);
 }
 
+static void NativeResetBoots (edict_t *ent)
+{
+	/* player_death's own ResetPowerSystem(self,0,TRUE) boot step: clears the
+	 * bit and timer but leaves the remaining tuple, exactly as QC does. */
+	float saved[6];
+	int argc = qcvm->argc;
+	memcpy(saved, &qcvm->globals[OFS_PARM0], sizeof(saved));
+	G_INT(OFS_PARM0) = EDICT_TO_PROG(ent);
+	G_FLOAT(OFS_PARM1) = 0;
+	qcvm->argc = 2;
+	BootsQC("ResetPowerJumpBoots", ent);
+	qcvm->argc = argc;
+	memcpy(&qcvm->globals[OFS_PARM0], saved, sizeof(saved));
+	assert(!HasBoots(ent));
+}
+
+static edict_t *NativeDeathBackpack (edict_t *owner)
+{
+	/* Native co-op death order: DropBackpack, then the power reset. */
+	BootsQC("DropBackpack", owner);
+	NativeResetBoots(owner);
+	edict_t *pack = NULL;
+	for (int i = qcvm->num_edicts - 1; i >= 1 && !pack; --i)
+	{
+		edict_t *ent = EDICT_NUM(i);
+		if (!ent->free && ent->v.classname &&
+		    !strcmp(PR_GetString(ent->v.classname), "item_backpack"))
+			pack = ent;
+	}
+	assert(pack && pack->v.solid == SOLID_TRIGGER && pack->v.touch);
+	return pack;
+}
+
+static void BackpackCases (void)
+{
+	/* AD co-op backpacks copy moditems (with the boots bit) but leave the boot
+	 * tuple at zero unless coop_artifacts is on. Picking one up must not turn
+	 * working boots into "click but no jump" boots (airmax 0, no timer). */
+	edict_t *actor = boots_peers[0]->edict, *peer = boots_peers[1]->edict;
+	BootsCase(false, "-1");
+	edict_t *item = SpawnBoots(-1, 1, 360, 0);
+	TouchBoots(item);
+	RetireBoots(item);
+	edict_t *pack = NativeDeathBackpack(peer);
+	assert(HasBoots(pack) && BootsFloat(pack, "jumpboots_airmax")->_float == 0);
+	TouchBoots(pack); /* Owner of working boots walks over the pack. */
+	assert(HasBoots(actor));
+	assert(BootsFloat(actor, "jumpboots_finished")->_float == -1);
+	assert(BootsFloat(actor, "jumpboots_airmax")->_float == 1);
+	FunctionalBootJump(actor, 360, 0);
+	RetireBoots(pack);
+
+	/* Pack picked up by a player without boots: the team's boots, not a bit. */
+	SV_CoopSharedApplyToJoiningClient(peer);
+	assert(HasBoots(peer));
+	pack = NativeDeathBackpack(peer);
+	ClearBoots(actor);
+	TouchBoots(pack);
+	assert(HasBoots(actor) && BootsFloat(actor, "jumpboots_airmax")->_float == 1);
+	FunctionalBootJump(actor, 360, 0);
+	RetireBoots(pack);
+
+	/* No team boots on this level: the parameterless bit is dropped. */
+	BootsCase(false, "-1");
+	item = SpawnBoots(-1, 1, 360, 0);
+	TouchBoots(item);
+	RetireBoots(item);
+	pack = NativeDeathBackpack(peer);
+	SV_CoopSharedResetState();
+	ClearBoots(actor);
+	TouchBoots(pack);
+	assert(!HasBoots(actor));
+	RetireBoots(pack);
+}
+
+static edict_t *SpawnNativeWeapon (const char *spawnfunc)
+{
+	edict_t *item = ED_Alloc();
+	item->v.classname = PR_SetEngineString(spawnfunc);
+	item->v.spawnflags = 32; /* Native ITEM_FLOATING, avoiding a staged floor. */
+	VectorCopy(boots_peers[0]->edict->v.origin, item->v.origin);
+	sv.state = ss_loading;
+	BootsQC(spawnfunc, item);
+	sv.state = ss_active;
+	for (int i = 0; i < 4 && item->v.solid != SOLID_TRIGGER; ++i)
+	{
+		assert(!item->free && item->v.think && item->v.nextthink > 0);
+		BootsClock(q_max(qcvm->time, item->v.nextthink));
+		func_t think = item->v.think;
+		item->v.nextthink = 0;
+		BootsQC(PR_GetString(qcvm->functions[think].s_name), item);
+	}
+	assert(!item->free && item->v.solid == SOLID_TRIGGER && item->v.touch);
+	return item;
+}
+
+static void DropWeaponBits (edict_t *ent, int items, int moditems)
+{
+	ent->v.items = (int)ent->v.items & ~items;
+	BootsFloat(ent, "moditems")->_float =
+		(int)BootsFloat(ent, "moditems")->_float & ~moditems;
+}
+
+static void TeamWeaponCases (void)
+{
+	/* Weapons picked up on a level reach players who were dead at the time,
+	 * who respawn from level-start parms, or who join later. */
+	edict_t *actor = boots_peers[0]->edict, *dead = boots_peers[1]->edict;
+	edict_t *late = boots_peers[2]->edict;
+	BootsCase(false, "-1");
+	for (int i = 0; i < countof(boots_peers); ++i)
+		if (boots_peers[i])
+			DropWeaponBits(boots_peers[i]->edict, IT_NAILGUN | IT_SUPER_SHOTGUN, 2);
+	dead->v.health = -10;
+	dead->v.deadflag = DEAD_DEAD;
+	edict_t *item = SpawnNativeWeapon("weapon_nailgun");
+	TouchBoots(item);
+	RetireBoots(item);
+	assert((int)actor->v.items & IT_NAILGUN);
+	/* QC respawn rebuilds the inventory from level-start parms. */
+	DropWeaponBits(dead, IT_NAILGUN, 0);
+	dead->v.health = 100;
+	dead->v.deadflag = DEAD_NO;
+	SV_CoopSharedApplyTeamWeapons(dead);
+	assert((int)dead->v.items & IT_NAILGUN);
+	SV_CoopSharedApplyToJoiningClient(late);
+	assert((int)late->v.items & IT_NAILGUN);
+	/* AD's Widowmaker upgrade lives in moditems beside timed artifacts. */
+	item = SpawnNativeWeapon("weapon_upgrade_ssg");
+	TouchBoots(item);
+	RetireBoots(item);
+	DropWeaponBits(late, IT_SUPER_SHOTGUN, 2);
+	SV_CoopSharedApplyToJoiningClient(late);
+	assert(((int)late->v.items & IT_SUPER_SHOTGUN) &&
+		((int)BootsFloat(late, "moditems")->_float & 2));
+	/* Console suicide respawns from parms in QC; it keeps the level's weapons. */
+	SV_CoopRespawnRunClientKill(actor);
+	assert(actor->v.health > 0 && actor->v.deadflag == DEAD_NO);
+	assert(((int)actor->v.items & (IT_NAILGUN | IT_SUPER_SHOTGUN)) ==
+		(IT_NAILGUN | IT_SUPER_SHOTGUN));
+	/* A new level starts empty: the mod's own start loadout rules apply. */
+	SV_CoopSharedResetState();
+	DropWeaponBits(late, IT_NAILGUN | IT_SUPER_SHOTGUN, 2);
+	SV_CoopSharedApplyToJoiningClient(late);
+	assert(!((int)late->v.items & (IT_NAILGUN | IT_SUPER_SHOTGUN)));
+}
+
 int main (int argc, char **argv)
 {
 	const char *map = "start";
@@ -547,8 +694,11 @@ int main (int argc, char **argv)
 	UnrelatedTriggerCases();
 	LateJoinAndExpiryCases(public_offer);
 	RestoredBundleCases();
+	BackpackCases();
+	TeamWeaponCases();
 	printf("AD_JUMPBOOTS_SHARED_NATIVE_PASSED qc_sha256=%s regular/classic/overrides "
-		"finite/infinite/tier/independent-charges/rejected/noop/warning/hazard/typed/latejoin/expiry/restore/functional-jump\n",
+		"finite/infinite/tier/independent-charges/rejected/noop/warning/hazard/typed/latejoin/expiry/restore/functional-jump/"
+		"death-backpack/team-weapons/kill\n",
 		loaded_hash);
 	return 0;
 }
