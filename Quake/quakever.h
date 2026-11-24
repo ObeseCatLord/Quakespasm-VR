@@ -56,7 +56,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 /* Quakespasm VR release number, shown in the window title. Release tags are
  * v<QSVR_VERSION>; bump it with each release. */
-#define QSVR_VERSION "2.3.5"
+#define QSVR_VERSION "2.3.6"
 #define QSVR_TITLE	 "Quakespasm VR " QSVR_VERSION
 
 #ifdef QSS_DATE
