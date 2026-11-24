@@ -49,6 +49,13 @@ cvar_t cl_bottomcolor = {"bottomcolor", "0", CVAR_ARCHIVE_GAME | CVAR_USERINFO};
 
 cvar_t cl_shownet = {"cl_shownet", "0", CVAR_NONE}; // can be 0, 1, or 2
 cvar_t cl_nolerp = {"cl_nolerp", "0", CVAR_NONE};
+// Buffered interpolation of a remote server's updates: 0 keeps the classic two-message lerp.
+cvar_t cl_interp = {"cl_interp", "1", CVAR_NONE};
+cvar_t cl_interp_margin = {"cl_interp_margin", "-1", CVAR_NONE};		   // ms of slack behind one update interval; negative follows the measured jitter
+cvar_t cl_interp_extrapolate = {"cl_interp_extrapolate", "25", CVAR_NONE}; // ms an entity may continue past the newest update when the next one is late
+cvar_t	 cl_vrik_timeline = {"cl_vrik_timeline", "1", CVAR_NONE}; // 0 draws a remote tracked pose between the newest two samples by arrival time, as before
+qboolean cl_lerp_buffered;
+cvar_t cl_lerpdebug_log = {"cl_lerpdebug_log", "", CVAR_NONE}; // development aid: file in the game directory receiving per-frame displayed entity positions
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_ARCHIVE};
 cvar_t cl_predict_smooth = {"cl_predict_smooth", "0", CVAR_NONE};
 cvar_t cl_predict_smooth_time = {"cl_predict_smooth_time", "0.10", CVAR_NONE};
@@ -1957,6 +1964,70 @@ void CL_DecayLights (void)
 	}
 }
 
+// development aid: how often the client clock had to be forced back into the message window
+static struct
+{
+	int snap_back;	  // clock was ahead of the newest message
+	int snap_forward; // clock was behind the older message
+	int time_reversed;
+} cl_lerpstats;
+
+/*
+===============
+CL_LerpDebugLog
+
+Writes what is actually displayed, once per rendered frame, so stalls and
+jumps can be measured instead of judged by eye. Off unless cl_lerpdebug_log
+names a file.
+===============
+*/
+#define CL_LERPDEBUG_ENTITIES 4096
+static void CL_LerpDebugLog (float frac)
+{
+	static FILE	 *file;
+	static char	  filename[MAX_QPATH];
+	static vec3_t last[CL_LERPDEBUG_ENTITIES];
+	static byte	  present[CL_LERPDEBUG_ENTITIES];
+	int			  i, limit;
+
+	if (strcmp (filename, cl_lerpdebug_log.string))
+	{
+		if (file)
+			fclose (file);
+		file = NULL;
+		q_strlcpy (filename, cl_lerpdebug_log.string, sizeof (filename));
+		memset (present, 0, sizeof (present));
+		if (filename[0] && !strstr (filename, "..") && !strchr (filename, '/') && !strchr (filename, '\\') && !strchr (filename, ':'))
+			file = fopen (va ("%s/%s", com_gamedir, filename), "w");
+	}
+	if (!file || !cl.entities || cls.signon != SIGNONS)
+		return;
+
+	fprintf (
+		file, "F %.6f %.6f %.6f %.6f %.4f %d %d %d %d\n", realtime, cl.time, cl.mtime[0], cl.mtime[1], frac, cl_lerpstats.snap_back,
+		cl_lerpstats.snap_forward, cl_lerpstats.time_reversed, cl.viewentity);
+	limit = q_min (cl.num_entities, CL_LERPDEBUG_ENTITIES);
+	for (i = 1; i < limit; i++)
+	{
+		entity_t *ent = &cl.entities[i];
+		vec3_t	  origin, angles;
+
+		if (!ent->model || ent->msgtime != cl.mtime[0])
+		{
+			if (present[i])
+				fprintf (file, "R %d\n", i);
+			present[i] = false;
+			continue;
+		}
+		R_GetEntityLerpedTransform (ent, origin, angles);
+		if (present[i] && VectorCompare (origin, last[i]))
+			continue;
+		present[i] = true;
+		VectorCopy (origin, last[i]);
+		fprintf (file, "E %d %d %.3f %.3f %.3f %.2f\n", i, ent->lerp.movestep ? 1 : 0, origin[0], origin[1], origin[2], angles[1]);
+	}
+}
+
 /*
 ===============
 CL_LerpPoint
@@ -1965,11 +2036,144 @@ Determines the fraction between the last two messages that the objects
 should be put at.
 ===============
 */
+
+/*
+===============
+CL_LerpPointBuffered
+
+The classic lerp keeps cl.time between the last two messages by force: a late
+datagram freezes every entity and an early one skips it forward, and no link
+delivers exactly on the tick. Here cl.time is a steady clock that runs one
+update interval plus a margin behind the newest message, steered gently
+towards that position and never set back. Four updates are kept, so the
+margin can grow to cover the lateness actually seen.
+
+Arrivals are compared with the fastest ones seen recently: nothing arrives
+sooner than the route allows, so those mark the route and everything else is
+late by some amount. The margin is the recent worst lateness.
+
+The value is the classic fraction over an extended range: below 0 the
+position lies between older updates (-1 is the update before the classic
+pair, -2 the one before that), above 1 it continues past the newest one.
+===============
+*/
+#define CL_INTERP_RESYNC	  0.15	// seconds of clock error that are jumped instead of steered away
+#define CL_INTERP_MAX_RATE	  0.1	// largest fraction the clock is sped up or slowed down by
+#define CL_INTERP_MIN_MARGIN  0.004 // seconds
+#define CL_INTERP_LATE_DECAY  5.0	// seconds for a remembered late arrival to fade
+#define CL_INTERP_ROUTE_DRIFT 0.02	// share of a late arrival's lateness the route estimate gives way by, per update
+
+static struct
+{
+	qboolean valid;
+	double	 newest;	// cl.mtime[0] of the last update seen
+	double	 offset;	// server time minus local time for the fastest recent arrivals
+	double	 interval;	// smoothed spacing of updates
+	double	 late;		// recent worst lateness against that
+	double	 lastframe; // local time of the previous evaluation
+} cl_interp_state;
+
+static float CL_LerpPointBuffered (void)
+{
+	double spacing = cl.mtime[0] - cl.mtime[1];
+	double elapsed = CLAMP (0.0, realtime - cl_interp_state.lastframe, 0.25);
+	double margin, target, error, limit, oldest, frametime;
+	float  frac;
+
+	cl_interp_state.lastframe = realtime;
+	if (cl_interp_state.newest != cl.mtime[0])
+	{
+		double sample = cl.mtime[0] - realtime;
+		double jump = cl.mtime[0] - cl_interp_state.newest;
+
+		if (spacing > 0.002 && spacing < 0.25)
+			cl_interp_state.interval += (spacing - cl_interp_state.interval) * (cl_interp_state.valid ? 0.1 : 1.0);
+		if (!cl_interp_state.valid || jump < 0 || fabs (sample - cl_interp_state.offset) > 0.25)
+		{
+			cl_interp_state.offset = sample;
+			cl_interp_state.late = 0;
+			if (!cl_interp_state.valid)
+				cl_interp_state.interval = (spacing > 0.002 && spacing < 0.25) ? spacing : 0.05;
+			cl_interp_state.valid = true;
+		}
+		else if (sample > cl_interp_state.offset)
+			cl_interp_state.offset = sample; // sooner than anything recent: the route is this fast
+		else
+		{
+			cl_interp_state.late = q_max (cl_interp_state.late, cl_interp_state.offset - sample);
+			cl_interp_state.offset += (sample - cl_interp_state.offset) * CL_INTERP_ROUTE_DRIFT;
+		}
+		cl_interp_state.newest = cl.mtime[0];
+	}
+	cl_interp_state.late -= cl_interp_state.late * q_min (1.0, elapsed / CL_INTERP_LATE_DECAY);
+
+	if (cl_interp_margin.value >= 0)
+		margin = cl_interp_margin.value / 1000.0;
+	else
+		margin = q_max (CL_INTERP_MIN_MARGIN, cl_interp_state.late + 0.002);
+	margin = q_min (margin, 2 * cl_interp_state.interval); // the oldest kept update is three intervals back
+
+	// cl.time was advanced by this frame already
+	frametime = q_max (0.0, cl.time - cl.oldtime);
+	target = realtime + cl_interp_state.offset - cl_interp_state.interval - margin;
+	error = target - cl.time;
+	if (error > CL_INTERP_RESYNC)
+		cl.time = target;
+	else
+		cl.time += CLAMP (-CL_INTERP_MAX_RATE * frametime, error * q_min (1.0, frametime * 4.0), CL_INTERP_MAX_RATE * frametime);
+
+	// When the route gets faster the updates run ahead of the clock. Stay on the
+	// oldest one kept and catch up from there, still interpolating.
+	oldest = cl.mtime[1];
+	if (cl.mtime[2] > 0 && cl.mtime[2] < oldest)
+	{
+		oldest = cl.mtime[2];
+		if (cl.mtime[3] > 0 && cl.mtime[3] < oldest)
+			oldest = cl.mtime[3];
+	}
+	if (cl.time < oldest)
+	{
+		cl.time = oldest;
+		cl_lerpstats.snap_forward++;
+	}
+
+	// never run further past the newest update than entities may be carried, and never backwards
+	limit = cl.mtime[0];
+	if (!cl.paused)
+		limit += CLAMP (0.0f, cl_interp_extrapolate.value, 100.0f) / 1000.0;
+	if (cl.time > limit)
+	{
+		cl.time = q_max (limit, cl.oldtime);
+		cl_lerpstats.snap_back++;
+	}
+
+	if (cl.time >= cl.mtime[1])
+	{
+		frac = (cl.time - cl.mtime[1]) / spacing;
+		if (spacing > 0.1)
+			frac = q_min (frac, 1.0f); // a hole in the stream says nothing about where things go next
+	}
+	else if (cl.time >= cl.mtime[2])
+		frac = (cl.time - cl.mtime[2]) / (cl.mtime[1] - cl.mtime[2]) - 1;
+	else
+		frac = (cl.time - cl.mtime[3]) / (cl.mtime[2] - cl.mtime[3]) - 2;
+
+	if (cl_nolerp.value)
+		return 1;
+	return frac;
+}
+
 float CL_LerpPoint (void)
 {
 	float f, frac;
 
 	f = cl.mtime[0] - cl.mtime[1];
+
+	// a remote server's updates arrive unevenly: buffer them. Local games and demos keep the classic lerp.
+	cl_lerp_buffered = f > 0 && cl_interp.value && !sv.active && !cls.demoplayback && !cls.timedemo && cls.state == ca_connected;
+	if (cl_lerp_buffered)
+		return CL_LerpPointBuffered ();
+	cl_interp_state.valid = false;
 
 	if (!f || cls.timedemo || (sv.active && !host_netinterval))
 	{
@@ -1988,13 +2192,19 @@ float CL_LerpPoint (void)
 	if (frac < 0)
 	{
 		if (frac < -0.01)
+		{
 			cl.time = cl.mtime[1];
+			cl_lerpstats.snap_forward++;
+		}
 		frac = 0;
 	}
 	else if (frac > 1)
 	{
 		if (frac > 1.01)
+		{
 			cl.time = cl.mtime[0];
+			cl_lerpstats.snap_back++;
+		}
 		frac = 1;
 	}
 
@@ -3066,6 +3276,58 @@ static qboolean CL_LerpEntity (entity_t *ent, vec3_t org, vec3_t ang, float frac
 		VectorCopy (ent->msg_origins[0], org);
 		VectorCopy (ent->msg_angles[0], ang);
 	}
+	else if (frac < 0)
+	{ // buffered interpolation: between two of the older updates
+		const float *from_origin, *to_origin, *from_angles, *to_angles;
+
+		if (ent->msg_old_times[0] == 0 || ent->msg_old_times[0] != cl.mtime[2])
+		{ // it has only been known since msg_origins[1]
+			from_origin = to_origin = ent->msg_origins[1];
+			from_angles = to_angles = ent->msg_angles[1];
+			f = 1;
+		}
+		else if (frac >= -1)
+		{
+			from_origin = ent->msg_old_origins[0];
+			from_angles = ent->msg_old_angles[0];
+			to_origin = ent->msg_origins[1];
+			to_angles = ent->msg_angles[1];
+			f = frac + 1;
+		}
+		else if (ent->msg_old_times[1] == 0 || ent->msg_old_times[1] != cl.mtime[3])
+		{
+			from_origin = to_origin = ent->msg_old_origins[0];
+			from_angles = to_angles = ent->msg_old_angles[0];
+			f = 1;
+		}
+		else
+		{
+			from_origin = ent->msg_old_origins[1];
+			from_angles = ent->msg_old_angles[1];
+			to_origin = ent->msg_old_origins[0];
+			to_angles = ent->msg_old_angles[0];
+			f = frac + 2;
+		}
+		for (j = 0; j < 3; j++)
+		{
+			delta[j] = to_origin[j] - from_origin[j];
+			if (delta[j] > 100 || delta[j] < -100)
+			{
+				f = 1;
+				teleported = true;
+			}
+		}
+		for (j = 0; j < 3; j++)
+		{
+			org[j] = from_origin[j] + f * delta[j];
+			d = to_angles[j] - from_angles[j];
+			if (d > 180)
+				d -= 360;
+			else if (d < -180)
+				d += 360;
+			ang[j] = from_angles[j] + f * d;
+		}
+	}
 	else
 	{ // if the delta is large, assume a teleport and don't lerp
 		f = frac;
@@ -3079,7 +3341,7 @@ static qboolean CL_LerpEntity (entity_t *ent, vec3_t org, vec3_t ang, float frac
 			}
 		}
 
-		a = f;
+		a = q_min (f, 1.0f); // positions may run a little past the newest update, turns do not
 
 		// johnfitz -- don't cl_lerp entities that will be r_lerped
 		if (r_lerpmove.value && ent->lerp.movestep)
@@ -3277,6 +3539,8 @@ void CL_RelinkEntities (void)
 
 	// determine partial update time
 	frac = CL_LerpPoint ();
+	if (cl.time < cl.oldtime)
+		cl_lerpstats.time_reversed++;
 
 	frametime = cl.time - cl.oldtime;
 	if (frametime < 0)
@@ -3296,7 +3560,7 @@ void CL_RelinkEntities (void)
 	// interpolate player info
 	//
 	for (i = 0; i < 3; i++)
-		cl.velocity[i] = cl.mvelocity[1][i] + frac * (cl.mvelocity[0][i] - cl.mvelocity[1][i]);
+		cl.velocity[i] = cl.mvelocity[1][i] + CLAMP (0.0f, frac, 1.0f) * (cl.mvelocity[0][i] - cl.mvelocity[1][i]);
 
 	SCR_UpdateZoom ();
 
@@ -3555,6 +3819,11 @@ void CL_RelinkEntities (void)
 		if (i == cl.viewentity && !chase_active.value)
 			continue;
 
+		// the buffered clock has not reached the update that brought this entity into view:
+		// drawing it now would show it waiting at its first position
+		if (cl_lerp_buffered && ent->msg_appear_time > cl.time && realtime - ent->msg_appear_realtime < 0.2 && realtime >= ent->msg_appear_realtime)
+			continue;
+
 		if (cl_numvisedicts < cl_maxvisedicts)
 		{
 			R_AllocateEntityBLAS (ent);
@@ -3563,6 +3832,8 @@ void CL_RelinkEntities (void)
 		}
 	}
 
+	if (cl_lerpdebug_log.string[0])
+		CL_LerpDebugLog (frac);
 }
 
 int CL_GenerateRandomParticlePrecache (const char *pname)
@@ -4364,6 +4635,11 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_anglespeedkey);
 	Cvar_RegisterVariable (&cl_shownet);
 	Cvar_RegisterVariable (&cl_nolerp);
+	Cvar_RegisterVariable (&cl_interp);
+	Cvar_RegisterVariable (&cl_interp_margin);
+	Cvar_RegisterVariable (&cl_interp_extrapolate);
+	Cvar_RegisterVariable (&cl_vrik_timeline);
+	Cvar_RegisterVariable (&cl_lerpdebug_log);
 	Cvar_RegisterVariable (&cl_nopred);
 	Cvar_RegisterVariable (&cl_predict_smooth);
 	Cvar_RegisterVariable (&cl_predict_smooth_time);

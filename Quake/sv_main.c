@@ -178,6 +178,8 @@ static cvar_t sv_netsort = {"sv_netsort", "1", CVAR_NONE};
 /* Rendering skyrooms is deferred; do not expand entity visibility by default. */
 static cvar_t sv_skyroom_pvs = {"sv_skyroom_pvs", "0", CVAR_NONE};
 static cvar_t sv_smoothplatformlerps = {"sv_smoothplatformlerps", "1", CVAR_NONE};
+// ms of owed command time by which a command-driven player is carried forward in what other clients are sent; 0 disables
+static cvar_t sv_playercarry = {"sv_playercarry", "60", CVAR_NONE};
 static cvar_t sv_qsvr_private = {"sv_qsvr_private", "1", CVAR_NONE};
 static cvar_t sv_private_pmove_walk = {"sv_private_pmove_walk", "1", CVAR_SERVERINFO};
 extern cvar_t sv_gameplayfix_elevators;
@@ -2649,6 +2651,84 @@ void SV_BuildEntityState (edict_t *ent, entity_state_t *state)
 #endif
 }
 
+/*
+=============
+SV_CarryPlayerOrigin
+
+A command-driven player only moves when one of its commands is run, and a
+whole number of them fits in each server frame: at 72 commands a second
+against 40 frames, some frames run one and most run two, so other clients see
+the player alternate between roughly half and full speed, and worse when its
+commands arrive unevenly. The unspent command time says how far the player is
+behind the server clock. It carries a standing reserve as well, so only the
+part above its recent minimum counts. For everyone else the player's position
+is carried forward along its velocity by that much. The player's own state,
+collision and all game logic keep the true origin.
+=============
+*/
+#define SV_PLAYERCARRY_FLOOR_RISE 10.0 // ms per second the remembered minimum creeps up, to follow a changed route
+
+static void SV_CarryPlayerOrigin (unsigned int entnum, edict_t *ent, vec3_t origin)
+{
+	static struct
+	{
+		struct qsocket_s *connection;
+		double			  time;	 // server time of the cached result
+		double			  floor; // recent minimum of the unspent command time, ms
+		qboolean		  carried;
+		vec3_t			  origin;
+	} state[MAX_SCOREBOARD], *slot;
+	client_t *owner;
+	double	  unspent, owed, elapsed;
+	vec3_t	  velocity, end;
+	trace_t	  trace;
+
+	if (sv_playercarry.value <= 0 || entnum < 1 || entnum > (unsigned int)svs.maxclients || entnum > MAX_SCOREBOARD || sv.paused)
+		return;
+	owner = &svs.clients[entnum - 1];
+	slot = &state[entnum - 1];
+	if (!owner->active || !owner->spawned || owner->edict != ent || !owner->netconnection || owner->protocol_qsvr != QSVR_PROTOCOL_PINNED ||
+		!SV_PrivateWalkTrialSelected (owner) || owner->private_move_native_frame || owner->private_input_phase != PRIVATE_INPUT_RUNNING)
+		return;
+	unspent = owner->private_pmove_credit_msec;
+	if (!isfinite (unspent) || unspent < 0)
+		return;
+	if (slot->connection == owner->netconnection && slot->time == qcvm->time)
+	{
+		if (slot->carried)
+			VectorCopy (slot->origin, origin);
+		return;
+	}
+
+	// first use this server frame: follow the minimum, then work out the carried origin once for all recipients
+	elapsed = qcvm->time - slot->time;
+	if (slot->connection != owner->netconnection || elapsed < 0 || elapsed > 0.5)
+		slot->floor = unspent;
+	else
+		slot->floor = q_min (unspent, slot->floor + elapsed * SV_PLAYERCARRY_FLOOR_RISE);
+	slot->connection = owner->netconnection;
+	slot->time = qcvm->time;
+	slot->carried = false;
+
+	if (ent->v.movetype != MOVETYPE_WALK || ent->v.health <= 0 || ent->v.deadflag != DEAD_NO || ent->v.solid != SOLID_SLIDEBOX)
+		return;
+	owed = q_min (unspent - slot->floor, (double)sv_playercarry.value) / 1000.0;
+	if (owed < 0.0005)
+		return;
+	VectorCopy (ent->v.velocity, velocity);
+	if (((int)ent->v.flags & FL_ONGROUND) && velocity[2] < 0)
+		velocity[2] = 0;
+	if (!isfinite (velocity[0]) || !isfinite (velocity[1]) || !isfinite (velocity[2]) || DotProduct (velocity, velocity) < 1)
+		return;
+	VectorMA (ent->v.origin, (float)owed, velocity, end);
+	trace = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, end, MOVE_NORMAL, ent);
+	if (trace.startsolid || trace.allsolid)
+		return;
+	VectorCopy (trace.endpos, slot->origin);
+	slot->carried = true;
+	VectorCopy (slot->origin, origin);
+}
+
 static qboolean SVFTE_BuildSnapshotForClient (client_t *client)
 {
 	struct qsocket_s *socket = client->netconnection;
@@ -2771,6 +2851,8 @@ static qboolean SVFTE_BuildSnapshotForClient (client_t *client)
 
 		ents[numents].num = e;
 		SV_BuildEntityState (ent, &ents[numents].state);
+		if (ent != clent && e <= (unsigned int)svs.maxclients)
+			SV_CarryPlayerOrigin (e, ent, ents[numents].state.origin);
 		if (!parent) // The mandatory owner survives an invalid attachment without mutating QC.
 			ents[numents].state.tagentity = ents[numents].state.tagindex = 0;
 		if (client->protocol_qsvr == QSVR_PROTOCOL_PINNED)
@@ -3138,6 +3220,7 @@ void SV_Init (void)
 	Cvar_RegisterVariable (&sv_netsort);
 	Cvar_RegisterVariable (&sv_skyroom_pvs);
 	Cvar_RegisterVariable (&sv_smoothplatformlerps);
+	Cvar_RegisterVariable (&sv_playercarry);
 	Cvar_RegisterVariable (&sv_qsvr_private);
 	Cvar_RegisterVariable (&sv_private_pmove_walk);
 	Cvar_RegisterVariable (&sv_gorilla);

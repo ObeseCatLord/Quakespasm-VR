@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_parse.c  -- parse a message received from the server
 
 #include "quakedef.h"
+#include "vrik_interp.h"
 #include "snd_spatial_world.h"
 #include "pmove.h"
 #include "bgmusic.h"
@@ -112,8 +113,71 @@ static const char *CL_ServerCommandName (int cmd)
 	return "unknown";
 }
 
+/* Poses older than the two kept on the entity, and the playback timeline of
+ * all of them. Only player slots receive poses, so this is not per entity. */
+typedef struct
+{
+	vrik_timeline_t	  timeline;
+	vrik_pose_t		  poses[VRIK_TIMELINE_SAMPLES - 2];
+	vrik_codec_pose_t v3_poses[VRIK_TIMELINE_SAMPLES - 2];
+} cl_vrik_history_t;
+
+static cl_vrik_history_t cl_vrik_history[MAX_SCOREBOARD];
+
+static cl_vrik_history_t *CL_VRIKHistory (const entity_t *ent)
+{
+	if (!cl.entities || ent <= cl.entities || ent > cl.entities + MAX_SCOREBOARD || ent >= cl.entities + cl.num_entities)
+		return NULL;
+	return &cl_vrik_history[ent - cl.entities - 1];
+}
+
+/*
+==================
+CL_VRIKPlayback
+
+The two received poses a remote player's tracked pose is currently drawn
+between, and the blend from older (0) to newer (1). Both are the same pose
+when there is nothing to blend. False when the entity has no pose at all.
+==================
+*/
+qboolean CL_VRIKPlayback (
+	const entity_t *ent, const vrik_pose_t **older, const vrik_pose_t **newer, const vrik_codec_pose_t **older_v3, const vrik_codec_pose_t **newer_v3,
+	float *blend)
+{
+	const cl_vrik_history_t *history = CL_VRIKHistory (ent);
+	int						 from = 0, to = 0;
+
+	if (!ent || ent->vrik_pose_count < 1)
+		return false;
+	*blend = 0;
+	if (!cl_vrik_timeline.value)
+	{ // previous behaviour: newest two, by arrival, a fixed 75 ms back
+		if (ent->vrik_pose_count >= 2 && ent->vrik_pose_times[0] > ent->vrik_pose_times[1])
+		{
+			from = 1;
+			*blend = (float)(((realtime - 0.075) - ent->vrik_pose_times[1]) / (ent->vrik_pose_times[0] - ent->vrik_pose_times[1]));
+			*blend = CLAMP (0.0f, *blend, 1.0f);
+		}
+	}
+	// the timeline follows every accepted pose; anything else means it was cleared without the entity, so show the newest
+	else if (history && history->timeline.count >= 1 && history->timeline.arrival[0] == ent->vrik_pose_times[0])
+		VRIK_TimelineSample (&history->timeline, realtime, &from, &to, blend);
+	if (older)
+		*older = from < 2 ? &ent->vrik_poses[from] : &history->poses[from - 2];
+	if (newer)
+		*newer = to < 2 ? &ent->vrik_poses[to] : &history->poses[to - 2];
+	if (older_v3)
+		*older_v3 = from < 2 ? &ent->vrik_v3_poses[from] : &history->v3_poses[from - 2];
+	if (newer_v3)
+		*newer_v3 = to < 2 ? &ent->vrik_v3_poses[to] : &history->v3_poses[to - 2];
+	return true;
+}
+
 static void CL_ClearEntityVRIKSamples (entity_t *ent)
 {
+	cl_vrik_history_t *history = CL_VRIKHistory (ent);
+	if (history)
+		VRIK_TimelineClear (&history->timeline);
 	memset (ent->vrik_poses, 0, sizeof (ent->vrik_poses));
 	memset (ent->vrik_v3_poses, 0, sizeof (ent->vrik_v3_poses));
 	memset (ent->vrik_pose_times, 0, sizeof (ent->vrik_pose_times));
@@ -705,6 +769,24 @@ static qboolean CL_ParseVRIKPose (void)
 		/* Don't blend across inactive/stale fallback. */
 		CL_ClearEntityVRIKSamples (ent);
 	}
+	{
+		cl_vrik_history_t *history = CL_VRIKHistory (ent);
+		if (history)
+		{
+			int i;
+			for (i = VRIK_TIMELINE_SAMPLES - 3; i > 0; i--)
+			{
+				history->poses[i] = history->poses[i - 1];
+				history->v3_poses[i] = history->v3_poses[i - 1];
+			}
+			history->poses[0] = ent->vrik_poses[1];
+			history->v3_poses[0] = ent->vrik_v3_poses[1];
+			// a pose count of zero is a new or restarted stream
+			VRIK_TimelinePush (
+				&history->timeline, (ent->vrik_pose_count && ent->vrik_sequence_valid) ? (uint16_t)(pose_v3.sequence - ent->vrik_last_sequence) : 0,
+				realtime);
+		}
+	}
 	if (ent->vrik_pose_count)
 	{
 		ent->vrik_poses[1] = ent->vrik_poses[0];
@@ -1174,6 +1256,34 @@ static void CLFTE_ParseBaseline (entity_state_t *es)
 
 /*
 ==================
+CL_ShiftEntityHistory
+
+Called before msg_origins[0] moves to [1] and ent->msgtime advances: keeps the
+update that is about to fall off the end, and notes when an entity comes into
+view. Only buffered interpolation reads either.
+==================
+*/
+static void CL_ShiftEntityHistory (entity_t *ent)
+{
+	if (ent->msgtime == cl.mtime[1])
+	{
+		VectorCopy (ent->msg_old_origins[0], ent->msg_old_origins[1]);
+		VectorCopy (ent->msg_old_angles[0], ent->msg_old_angles[1]);
+		ent->msg_old_times[1] = ent->msg_old_times[0];
+		VectorCopy (ent->msg_origins[1], ent->msg_old_origins[0]);
+		VectorCopy (ent->msg_angles[1], ent->msg_old_angles[0]);
+		ent->msg_old_times[0] = cl.mtime[2];
+	}
+	else
+	{
+		ent->msg_old_times[0] = ent->msg_old_times[1] = 0;
+		ent->msg_appear_time = cl.mtime[0];
+		ent->msg_appear_realtime = realtime;
+	}
+}
+
+/*
+==================
 CL_EntityLerpUpdated
 
 Single point where entity interpolation state advances. Called by both
@@ -1184,6 +1294,8 @@ snap_anim: this update must not be animation-lerped (new/reused entity slot,
 missed thinks).
 ==================
 */
+#define CL_STEP_MOVE_SLACK 0.02 // seconds a step movement is stretched by under buffered interpolation
+
 static void CL_EntityLerpUpdated (entity_t *ent, int oldframe, qboolean forcelink, qboolean snap_anim)
 {
 	int j;
@@ -1229,13 +1341,34 @@ static void CL_EntityLerpUpdated (entity_t *ent, int oldframe, qboolean forcelin
 			VectorCopy (ent->msg_angles[0], ent->lerp.prev_angles);
 			ent->lerp.move_change_time = 0;
 		}
+		else if (cl_lerp_buffered && ent->lerp.move_change_time > 0 && ent->lerp.move_duration > 0)
+		{
+			// The previous movement may still be under way when this update arrives early.
+			// Start from where the entity is drawn right now instead of from the previous
+			// target, so an early update changes its speed a little and never its position.
+			float blend = CLAMP (0.0, (cl.time - ent->lerp.move_change_time) / ent->lerp.move_duration, 1.0);
+			for (j = 0; j < 3; j++)
+			{
+				float turn = ent->msg_angles[1][j] - ent->lerp.prev_angles[j];
+				if (turn > 180)
+					turn -= 360;
+				else if (turn < -180)
+					turn += 360;
+				ent->lerp.prev_origin[j] += (ent->msg_origins[1][j] - ent->lerp.prev_origin[j]) * blend;
+				ent->lerp.prev_angles[j] += turn * blend;
+			}
+			ent->lerp.move_change_time = change_time;
+		}
 		else
 		{
 			VectorCopy (ent->msg_origins[1], ent->lerp.prev_origin);
 			VectorCopy (ent->msg_angles[1], ent->lerp.prev_angles);
 			ent->lerp.move_change_time = change_time;
 		}
-		ent->lerp.move_duration = duration;
+		// A movement that ends exactly when the next update is due stands still whenever
+		// that update is a little late. Starting from the drawn position makes it safe to
+		// run slightly long instead.
+		ent->lerp.move_duration = cl_lerp_buffered ? duration + CL_STEP_MOVE_SLACK : duration;
 	}
 }
 
@@ -1298,6 +1431,7 @@ static void CL_EntitiesDeltaed (void)
 			if (ent->msgtime + 0.2 < cl.mtime[0]) // more than 0.2 seconds since the last message (most entities think every 0.1 sec)
 				snap_anim = true;				  // if we missed a think, we'd be lerping from the wrong frame
 
+			CL_ShiftEntityHistory (ent);
 			ent->msgtime = cl.mtime[0];
 
 			// shift the known values for interpolation
@@ -1642,6 +1776,8 @@ static void CLFTE_ParseEntitiesUpdate (void)
 		snapshot_time_finite = false;
 	if ((!private_snapshot || snapshot_time_finite) && newtime != cl.mtime[0])
 	{ // don't mess up lerps if the server is splitting entities into multiple packets.
+		cl.mtime[3] = cl.mtime[2];
+		cl.mtime[2] = cl.mtime[1];
 		cl.mtime[1] = cl.mtime[0];
 		cl.mtime[0] = newtime;
 	}
@@ -2574,6 +2710,7 @@ static void CL_ParseUpdate (int bits)
 		snap_anim = true;				  // if we missed a think, we'd be lerping from the wrong frame
 	// johnfitz
 
+	CL_ShiftEntityHistory (ent);
 	ent->msgtime = cl.mtime[0];
 
 	// copy the baseline into the netstate for the rest of the code to use.
@@ -3491,6 +3628,8 @@ void CL_ParseServerMessage (void)
 			break;
 
 		case svc_time:
+			cl.mtime[3] = cl.mtime[2];
+			cl.mtime[2] = cl.mtime[1];
 			cl.mtime[1] = cl.mtime[0];
 			cl.mtime[0] = MSG_ReadFloat ();
 			// The pinned private dialect carries move ACKs separately. Its

@@ -150,6 +150,11 @@ int q_snprintf (char *str, size_t size, const char *format, ...)
 int q_strncasecmp (const char *a, const char *b, size_t n) { return strncasecmp (a, b, n); }
 void Con_Printf (const char *fmt, ...) { (void)fmt; }
 void Con_DPrintf (const char *fmt, ...) { (void)fmt; }
+/* The link impairment cvars stay at zero here, so these are link-only. */
+qboolean isDedicated;
+double Sys_DoubleTime (void) { return net_time; }
+void *Mem_Alloc (const size_t size) { return calloc (1, size); }
+void Mem_Free (const void *ptr) { free ((void *)ptr); }
 void SZ_Clear (sizebuf_t *buf) { buf->cursize = 0; }
 void SZ_Write (sizebuf_t *buf, const void *data, int length)
 {

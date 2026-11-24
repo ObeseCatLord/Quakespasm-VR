@@ -300,7 +300,7 @@ typedef struct
 	int intermission;	// don't change view angle, full screen, etc
 	int completed_time; // latched at intermission start
 
-	double mtime[2]; // the timestamp of last two messages
+	double mtime[4]; // the timestamps of the last messages (0 is newest); [2] and [3] are only used by buffered interpolation
 	double time;	 // clients view of time, should be between
 					 // servertime and oldservertime to generate
 					 // a lerp point for other data
@@ -441,6 +441,11 @@ extern cvar_t cl_autofire;
 
 extern cvar_t cl_shownet;
 extern cvar_t cl_nolerp;
+extern qboolean cl_lerp_buffered; // buffered interpolation is driving cl.time this frame
+extern cvar_t	cl_vrik_timeline;
+qboolean		CL_VRIKPlayback (
+		   const entity_t *ent, const vrik_pose_t **older, const vrik_pose_t **newer, const vrik_codec_pose_t **older_v3, const vrik_codec_pose_t **newer_v3,
+		   float *blend);
 
 extern cvar_t cfg_unbindall;
 
