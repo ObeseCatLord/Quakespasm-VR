@@ -158,7 +158,7 @@ static void game_change_with_active_session (void)
  * the game directory name case-insensitively. */
 static void mod_actions (void)
 {
-	static const char *const slots[] = {"grip_l", "grip_r", "altfire", "stick_l", "xbutton"};
+	static const char *const slots[] = {"grip_l", "grip_r", "altfire", "stick_l", "left_x"};
 	for (size_t i = 0; i < countof (vr_mod_actions); ++i)
 	{
 		const vr_mod_action_t *row = &vr_mod_actions[i];
@@ -182,7 +182,7 @@ static void mod_actions (void)
 	assert (!strcmp (VR_InputModActionFor ("altfire"), "+hook"));
 	assert (!strcmp (VR_InputModActionFor ("grip_r"), "+hook"));
 	snprintf (com_gamedir, sizeof (com_gamedir), "%s", "/q/ad");
-	assert (!strcmp (VR_InputModActionFor ("xbutton"), "impulse 175"));
+	assert (!strcmp (VR_InputModActionFor ("left_x"), "impulse 175"));
 	assert (!VR_InputModActionFor ("stick_l"));
 	snprintf (com_gamedir, sizeof (com_gamedir), "%s", "/q/id1");
 	for (size_t s = 0; s < countof (slots); ++s)
@@ -215,8 +215,8 @@ int main (void)
 	assert (!strcmp (keybindings[K_VR_RTHUMB], "+vr_weaponmenu"));
 	assert (!strcmp (keybindings[K_VR_ALTFIRE], "+vr_mod altfire +button3"));
 	assert (!strcmp (keybindings[K_VR_RSHOULDER], "+vr_mod grip_r +showscores"));
-	assert (!strcmp (keybindings[K_VR_ABUTTON], "impulse 12"));
-	assert (!strcmp (keybindings[K_VR_XBUTTON], "+vr_mod xbutton +showscores"));
+	assert (!strcmp (keybindings[K_VR_XBUTTON], "impulse 12"));
+	assert (!strcmp (keybindings[K_VR_ABUTTON], "+vr_mod left_x +showscores"));
 	assert (!strcmp (keybindings[K_VR_YBUTTON], "+showscores"));
 	assert (!keybindings[K_VR_RIGHT_STICK_UP]);
 	assert (!keybindings[K_VR_RIGHT_STICK_DOWN]);

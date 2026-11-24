@@ -4033,7 +4033,7 @@ typedef struct
 /* Arcane Dimensions-based progs: impulse 175 shows the arcane key inventory
  * the maps tell players to check. The grapple replaces the axe and fires with
  * attack, and jump boots work through jump, so neither needs a control. */
-#define VR_MOD_AD(game) {game, "xbutton", "impulse 175"}
+#define VR_MOD_AD(game) {game, "left_x", "impulse 175"}
 /* Drake: impulse 20 activates worn special armor (also double-press jump). */
 #define VR_MOD_DRAKE(game) {game, "grip_l", "impulse 20"}
 
@@ -4061,10 +4061,10 @@ static const vr_mod_action_t vr_mod_actions[] = {
 	/* Mjolnir (bindlist.lst): use/purchase, flashlight, power shield. */
 	{"mjolnir", "grip_l", "impulse 159"},
 	VR_MOD_ALTFIRE ("mjolnir", "impulse 146"),
-	{"mjolnir", "xbutton", "impulse 59"},
+	{"mjolnir", "left_x", "impulse 59"},
 	{"mjolnir1.0", "grip_l", "impulse 159"},
 	VR_MOD_ALTFIRE ("mjolnir1.0", "impulse 146"),
-	{"mjolnir1.0", "xbutton", "impulse 59"},
+	{"mjolnir1.0", "left_x", "impulse 59"},
 
 	/* Immortal Lock: flashlight (readme, quake.rc alias). */
 	VR_MOD_ALTFIRE ("immortal", "impulse 13"),
@@ -4077,7 +4077,7 @@ static const vr_mod_action_t vr_mod_actions[] = {
 	 * firing mode / ammo type. */
 	VR_MOD_ALTFIRE ("vr", "impulse 228"),
 	{"vr", "grip_l", "+qgrap"},
-	{"vr", "xbutton", "impulse 227"},
+	{"vr", "left_x", "impulse 227"},
 };
 
 #undef VR_MOD_ALTFIRE
@@ -4463,21 +4463,25 @@ typedef struct
 
 /* The inherited VR defaults fill only dedicated XR controls. Existing user
  * and physical desktop-gamepad bindings remain authoritative. */
-/* Right A/B cycle weapons (previous/next), left X/Y and the grips show the
- * scoreboard. No control defaults to a 180-degree turn. Grips, left stick
- * click, alt-fire and VR_XBUTTON go through +vr_mod so mods with extra
+/* Key names follow the legacy layout, not the labels: the RIGHT hand's
+ * primary (A) sends VR_XBUTTON and secondary (B) VR_BBUTTON; the LEFT hand's
+ * primary (X) sends VR_ABUTTON and its secondary (Y) is the menu. VR_YBUTTON
+ * is the Index trackpad press.
+ * Right A/B cycle weapons (previous/next); left X, the grips and the Index pad
+ * show the scoreboard. No control defaults to a 180-degree turn. Grips, left
+ * stick click, alt-fire and left X go through +vr_mod so mods with extra
  * actions use them (docs/vr-mod-actions.md lists them per game). */
 static const vr_default_binding_t vr_default_bindings[] = {
 	{K_VR_LTRIGGER, "+jump"},
 	{K_VR_RTRIGGER, "+attack"},
-	{K_VR_ABUTTON, "impulse 12"},
+	{K_VR_XBUTTON, "impulse 12"},
 	{K_VR_BBUTTON, "impulse 10"},
 	{K_VR_LTHUMB, "+vr_mod stick_l +speed"},
 	{K_VR_RTHUMB, "+vr_weaponmenu"},
 	{K_VR_ALTFIRE, "+vr_mod altfire +button3"},
 	{K_VR_LSHOULDER, "+vr_mod grip_l +showscores"},
 	{K_VR_RSHOULDER, "+vr_mod grip_r +showscores"},
-	{K_VR_XBUTTON, "+vr_mod xbutton +showscores"},
+	{K_VR_ABUTTON, "+vr_mod left_x +showscores"},
 	{K_VR_YBUTTON, "+showscores"},
 };
 
