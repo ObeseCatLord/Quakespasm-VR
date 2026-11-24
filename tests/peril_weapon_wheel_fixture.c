@@ -27,6 +27,8 @@ void GL_SetCanvas (cb_context_t *cbx, canvastype canvas) {}
 void R_BindGraphicsPipeline (cb_context_t *cbx, graphics_pipeline_t pipeline) {}
 void GL_SetCanvasColor (float r, float g, float b, float a) {}
 void Draw_Fill (cb_context_t *cbx, float x, float y, float w, float h, int c, float alpha) {}
+void GL_ExtendUIPanelClip (cb_context_t *cbx, float left, float top, float right, float bottom) {}
+void GL_ResetUIPanelClip (cb_context_t *cbx) {}
 void Draw_SubPic (cb_context_t *cbx, float x, float y, float w, float h, qpic_t *pic,
 	float s1, float t1, float s2, float t2, float *rgb, float alpha)
 {

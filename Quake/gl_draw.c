@@ -1279,6 +1279,27 @@ void GL_ClearUIPanelSourceClip (cb_context_t *cbx)
 	GL_UpdateUIPanelSourceClip (cbx);
 }
 
+/* Widen the current canvas clip to include a source-space rectangle, for UI
+ * that a panel deliberately places past its canvas edges. It applies to the
+ * next pipeline bind and lasts until GL_ResetUIPanelClip or a canvas change.
+ * A requested source clip (CSQC) is never widened. */
+void GL_ExtendUIPanelClip (cb_context_t *cbx, float left, float top, float right, float bottom)
+{
+	if (!cbx || !cbx->ui_panel_active || cbx->ui_panel_source_clip_active || !isfinite (left) || !isfinite (top) ||
+		!isfinite (right) || !isfinite (bottom) || right < left || bottom < top)
+		return;
+	cbx->canvas_ortho_clip_rect[0] = q_min (cbx->canvas_ortho_clip_rect[0], left);
+	cbx->canvas_ortho_clip_rect[1] = q_min (cbx->canvas_ortho_clip_rect[1], top);
+	cbx->canvas_ortho_clip_rect[2] = q_max (cbx->canvas_ortho_clip_rect[2], right);
+	cbx->canvas_ortho_clip_rect[3] = q_max (cbx->canvas_ortho_clip_rect[3], bottom);
+}
+
+void GL_ResetUIPanelClip (cb_context_t *cbx)
+{
+	if (cbx)
+		GL_UpdateUIPanelSourceClip (cbx);
+}
+
 static void GL_SetUIPanelFullScissor (cb_context_t *cbx)
 {
 	const VkRect2D full_scissor = {{0, 0}, {(uint32_t)vid.width, (uint32_t)vid.height}};
