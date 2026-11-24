@@ -111,6 +111,7 @@ static void GL_SynchronizeEndRenderingTask(void) { ++synchronizations; synchroni
 static void R_Particles_KillAllEffects(void) {
     assert(synchronized); ++kills; memset(types,0,sizeof(types));
 }
+static const char *GL_OpenXRFoveationStatus(void) { return "active"; }
 static const char *COM_Parse(const char *text) {
     while(text && *text==' ') ++text;
     if(!text || !*text) return NULL;
@@ -215,21 +216,21 @@ static void particle_reload(void) {
     puts("PARTICLE_TOGGLE_PRESET_RELOAD_ON_OFF_ON_PASSED");
 }
 static void foveation_value(void) {
-    const char *expected_off[]={"off","fixed (off)","eye (off)"};
-    const char *expected_configured[]={"off","fixed (paused)","eye (paused)"};
+    const char *expected_off[]={"off","fixed (unsupported)","eye (unsupported)"};
+    const char *expected_configured[]={"off","fixed (on)","eye (on)"};
     for(int stereo=0;stereo<2;++stereo) for(int backend=0;backend<3;++backend) for(int mode=0;mode<3;++mode) {
         vulkan_globals.stereo_active=stereo;
         vulkan_globals.openxr_fragment_shading_rate_active=backend==1;
         vulkan_globals.openxr_fragment_density_map_active=backend==2;
         vr_foveation.value=mode;
-        char value[16]; M_VROptions_FoveationValue(value,sizeof(value));
+        char value[32]; M_VROptions_FoveationValue(value,sizeof(value));
         assert(!strcmp(value,stereo && backend ? expected_configured[mode] : expected_off[mode]));
-        assert(strlen(value)<=14);
+        assert(strlen(value)<=20);
     }
     const double invalid[]={NAN,INFINITY,-1,.5,3};
     for(size_t i=0;i<sizeof(invalid)/sizeof(invalid[0]);++i) {
         vr_foveation.value=invalid[i];
-        char value[16]; M_VROptions_FoveationValue(value,sizeof(value));
+        char value[32]; M_VROptions_FoveationValue(value,sizeof(value));
         assert(!strcmp(value,"off"));
     }
     puts("FOVEATION_MENU_REQUEST_CURRENT_STATE_PASSED");

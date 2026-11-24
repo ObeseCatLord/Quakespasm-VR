@@ -41,7 +41,7 @@ int main (void)
 	vr_melee_gesture_profile_t out;
 	vr_weapon_calibration_initialized=true;
 	assert (VR_WeaponCalibrationLookupMelee("progs/v_axe.mdl",&out));
-	assert (out.speed==1.5f && !out.has_speed);
+	assert (out.speed==1.75f && !out.has_speed);
 	VR_WeaponOffsetCvar(0,VR_WOFS_ID).string="progs/v_axe.mdl";
 	const float speeds[]={.25f,1.25f,1.5f,3};
 	for (size_t i=0;i<sizeof(speeds)/sizeof(speeds[0]);++i)

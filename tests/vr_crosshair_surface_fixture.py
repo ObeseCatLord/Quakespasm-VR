@@ -166,6 +166,7 @@ static float units=32;
 static qboolean cue_active,calibration_active,prediction_missing;
 static qboolean VR_WeaponCalibrationAdjustMuzzleCue(vec3_t out) { VectorCopy(muzzle_cue,out); return cue_active; }
 static qboolean VR_WeaponCalibrationAdjustActive(void) { return calibration_active; }
+static qboolean VR_InputGestureMeleeActive(void) { return false; }
 static int VR_InputCrosshairAimRays(vec3_t starts[2],vec3_t forwards[2]) {
     ++aim_calls; memcpy(starts,aim_starts,sizeof(aim_starts)); memcpy(forwards,aim_forwards,sizeof(aim_forwards)); return aim_count;
 }
