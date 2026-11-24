@@ -1294,6 +1294,8 @@ snap_anim: this update must not be animation-lerped (new/reused entity slot,
 missed thinks).
 ==================
 */
+#define CL_STEP_MOVE_SLACK 0.02 // seconds a step movement is stretched by under buffered interpolation
+
 static void CL_EntityLerpUpdated (entity_t *ent, int oldframe, qboolean forcelink, qboolean snap_anim)
 {
 	int j;
@@ -1301,9 +1303,7 @@ static void CL_EntityLerpUpdated (entity_t *ent, int oldframe, qboolean forcelin
 	// the finish hint sent with this update belongs to changes recorded from this
 	// update; the duration is frozen here so later hints can't stretch it
 	double duration = (ent->lerp.frame_finish_time > cl.mtime[0]) ? ent->lerp.frame_finish_time - cl.mtime[0] : 0.1;
-	// the buffered clock trails the messages, so a change starts where the previous
-	// state was current instead of whenever its datagram happened to arrive
-	double change_time = cl_lerp_buffered ? cl.mtime[1] : q_min (cl.time, cl.mtime[0]);
+	double change_time = q_min (cl.time, cl.mtime[0]);
 
 	if (ent->frame != oldframe || snap_anim)
 	{
@@ -1341,13 +1341,34 @@ static void CL_EntityLerpUpdated (entity_t *ent, int oldframe, qboolean forcelin
 			VectorCopy (ent->msg_angles[0], ent->lerp.prev_angles);
 			ent->lerp.move_change_time = 0;
 		}
+		else if (cl_lerp_buffered && ent->lerp.move_change_time > 0 && ent->lerp.move_duration > 0)
+		{
+			// The previous movement may still be under way when this update arrives early.
+			// Start from where the entity is drawn right now instead of from the previous
+			// target, so an early update changes its speed a little and never its position.
+			float blend = CLAMP (0.0, (cl.time - ent->lerp.move_change_time) / ent->lerp.move_duration, 1.0);
+			for (j = 0; j < 3; j++)
+			{
+				float turn = ent->msg_angles[1][j] - ent->lerp.prev_angles[j];
+				if (turn > 180)
+					turn -= 360;
+				else if (turn < -180)
+					turn += 360;
+				ent->lerp.prev_origin[j] += (ent->msg_origins[1][j] - ent->lerp.prev_origin[j]) * blend;
+				ent->lerp.prev_angles[j] += turn * blend;
+			}
+			ent->lerp.move_change_time = change_time;
+		}
 		else
 		{
 			VectorCopy (ent->msg_origins[1], ent->lerp.prev_origin);
 			VectorCopy (ent->msg_angles[1], ent->lerp.prev_angles);
 			ent->lerp.move_change_time = change_time;
 		}
-		ent->lerp.move_duration = duration;
+		// A movement that ends exactly when the next update is due stands still whenever
+		// that update is a little late. Starting from the drawn position makes it safe to
+		// run slightly long instead.
+		ent->lerp.move_duration = cl_lerp_buffered ? duration + CL_STEP_MOVE_SLACK : duration;
 	}
 }
 
