@@ -53,6 +53,7 @@ cvar_t cl_nolerp = {"cl_nolerp", "0", CVAR_NONE};
 cvar_t cl_interp = {"cl_interp", "1", CVAR_NONE};
 cvar_t cl_interp_margin = {"cl_interp_margin", "-1", CVAR_NONE};		   // ms of slack behind one update interval; negative follows the measured jitter
 cvar_t cl_interp_extrapolate = {"cl_interp_extrapolate", "25", CVAR_NONE}; // ms an entity may continue past the newest update when the next one is late
+cvar_t	 cl_vrik_timeline = {"cl_vrik_timeline", "1", CVAR_NONE}; // 0 draws a remote tracked pose between the newest two samples by arrival time, as before
 qboolean cl_lerp_buffered;
 cvar_t cl_lerpdebug_log = {"cl_lerpdebug_log", "", CVAR_NONE}; // development aid: file in the game directory receiving per-frame displayed entity positions
 cvar_t cl_nopred = {"cl_nopred", "0", CVAR_ARCHIVE};
@@ -2044,27 +2045,30 @@ datagram freezes every entity and an early one skips it forward, and no link
 delivers exactly on the tick. Here cl.time is a steady clock that runs one
 update interval plus a margin behind the newest message, steered gently
 towards that position and never set back. Four updates are kept, so the
-margin can grow to cover the lateness actually seen and a datagram can still
-arrive early without the clock leaving known ground.
+margin can grow to cover the lateness actually seen.
+
+Arrivals are compared with the fastest ones seen recently: nothing arrives
+sooner than the route allows, so those mark the route and everything else is
+late by some amount. The margin is the recent worst lateness.
 
 The value is the classic fraction over an extended range: below 0 the
 position lies between older updates (-1 is the update before the classic
 pair, -2 the one before that), above 1 it continues past the newest one.
 ===============
 */
-#define CL_INTERP_RESYNC	 0.15  // seconds of clock error that are jumped instead of steered away
-#define CL_INTERP_MAX_RATE	 0.1   // largest fraction the clock is sped up or slowed down by
-#define CL_INTERP_MIN_MARGIN 0.004 // seconds
-#define CL_INTERP_PEAK_DECAY 5.0   // seconds for a remembered late or early arrival to fade
+#define CL_INTERP_RESYNC	  0.15	// seconds of clock error that are jumped instead of steered away
+#define CL_INTERP_MAX_RATE	  0.1	// largest fraction the clock is sped up or slowed down by
+#define CL_INTERP_MIN_MARGIN  0.004 // seconds
+#define CL_INTERP_LATE_DECAY  5.0	// seconds for a remembered late arrival to fade
+#define CL_INTERP_ROUTE_DRIFT 0.02	// share of a late arrival's lateness the route estimate gives way by, per update
 
 static struct
 {
 	qboolean valid;
 	double	 newest;	// cl.mtime[0] of the last update seen
-	double	 offset;	// smoothed server time minus local time, at arrival
+	double	 offset;	// server time minus local time for the fastest recent arrivals
 	double	 interval;	// smoothed spacing of updates
-	double	 late;		// recent worst lateness against the smoothed arrival
-	double	 early;		// recent worst earliness
+	double	 late;		// recent worst lateness against that
 	double	 lastframe; // local time of the previous evaluation
 } cl_interp_state;
 
@@ -2072,7 +2076,7 @@ static float CL_LerpPointBuffered (void)
 {
 	double spacing = cl.mtime[0] - cl.mtime[1];
 	double elapsed = CLAMP (0.0, realtime - cl_interp_state.lastframe, 0.25);
-	double margin, target, error, limit, frametime, fade;
+	double margin, target, error, limit, oldest, frametime;
 	float  frac;
 
 	cl_interp_state.lastframe = realtime;
@@ -2086,30 +2090,27 @@ static float CL_LerpPointBuffered (void)
 		if (!cl_interp_state.valid || jump < 0 || fabs (sample - cl_interp_state.offset) > 0.25)
 		{
 			cl_interp_state.offset = sample;
-			cl_interp_state.late = cl_interp_state.early = 0;
+			cl_interp_state.late = 0;
 			if (!cl_interp_state.valid)
 				cl_interp_state.interval = (spacing > 0.002 && spacing < 0.25) ? spacing : 0.05;
 			cl_interp_state.valid = true;
 		}
+		else if (sample > cl_interp_state.offset)
+			cl_interp_state.offset = sample; // sooner than anything recent: the route is this fast
 		else
 		{
 			cl_interp_state.late = q_max (cl_interp_state.late, cl_interp_state.offset - sample);
-			cl_interp_state.early = q_max (cl_interp_state.early, sample - cl_interp_state.offset);
-			cl_interp_state.offset += (sample - cl_interp_state.offset) * 0.05;
+			cl_interp_state.offset += (sample - cl_interp_state.offset) * CL_INTERP_ROUTE_DRIFT;
 		}
 		cl_interp_state.newest = cl.mtime[0];
 	}
-	fade = q_min (1.0, elapsed / CL_INTERP_PEAK_DECAY);
-	cl_interp_state.late -= cl_interp_state.late * fade;
-	cl_interp_state.early -= cl_interp_state.early * fade;
+	cl_interp_state.late -= cl_interp_state.late * q_min (1.0, elapsed / CL_INTERP_LATE_DECAY);
 
-	// late arrivals need the margin; early ones need the rest of the two spare intervals
 	if (cl_interp_margin.value >= 0)
 		margin = cl_interp_margin.value / 1000.0;
 	else
 		margin = q_max (CL_INTERP_MIN_MARGIN, cl_interp_state.late + 0.002);
-	margin = q_min (margin, 2 * cl_interp_state.interval - q_min (cl_interp_state.early, cl_interp_state.interval));
-	margin = q_max (margin, 0.0);
+	margin = q_min (margin, 2 * cl_interp_state.interval); // the oldest kept update is three intervals back
 
 	// cl.time was advanced by this frame already
 	frametime = q_max (0.0, cl.time - cl.oldtime);
@@ -2119,6 +2120,21 @@ static float CL_LerpPointBuffered (void)
 		cl.time = target;
 	else
 		cl.time += CLAMP (-CL_INTERP_MAX_RATE * frametime, error * q_min (1.0, frametime * 4.0), CL_INTERP_MAX_RATE * frametime);
+
+	// When the route gets faster the updates run ahead of the clock. Stay on the
+	// oldest one kept and catch up from there, still interpolating.
+	oldest = cl.mtime[1];
+	if (cl.mtime[2] > 0 && cl.mtime[2] < oldest)
+	{
+		oldest = cl.mtime[2];
+		if (cl.mtime[3] > 0 && cl.mtime[3] < oldest)
+			oldest = cl.mtime[3];
+	}
+	if (cl.time < oldest)
+	{
+		cl.time = oldest;
+		cl_lerpstats.snap_forward++;
+	}
 
 	// never run further past the newest update than entities may be carried, and never backwards
 	limit = cl.mtime[0];
@@ -2136,18 +2152,8 @@ static float CL_LerpPointBuffered (void)
 		if (spacing > 0.1)
 			frac = q_min (frac, 1.0f); // a hole in the stream says nothing about where things go next
 	}
-	else if (cl.mtime[1] - cl.mtime[2] <= 0)
-	{
-		frac = 0;
-		cl_lerpstats.snap_forward++;
-	}
 	else if (cl.time >= cl.mtime[2])
 		frac = (cl.time - cl.mtime[2]) / (cl.mtime[1] - cl.mtime[2]) - 1;
-	else if (cl.mtime[2] - cl.mtime[3] <= 0 || cl.time < cl.mtime[3])
-	{
-		frac = (cl.mtime[2] - cl.mtime[3] <= 0) ? -1 : -2;
-		cl_lerpstats.snap_forward++;
-	}
 	else
 		frac = (cl.time - cl.mtime[3]) / (cl.mtime[2] - cl.mtime[3]) - 2;
 
@@ -4631,6 +4637,7 @@ void CL_Init (void)
 	Cvar_RegisterVariable (&cl_interp);
 	Cvar_RegisterVariable (&cl_interp_margin);
 	Cvar_RegisterVariable (&cl_interp_extrapolate);
+	Cvar_RegisterVariable (&cl_vrik_timeline);
 	Cvar_RegisterVariable (&cl_lerpdebug_log);
 	Cvar_RegisterVariable (&cl_nopred);
 	Cvar_RegisterVariable (&cl_predict_smooth);

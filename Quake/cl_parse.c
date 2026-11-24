@@ -150,8 +150,17 @@ qboolean CL_VRIKPlayback (
 	if (!ent || ent->vrik_pose_count < 1)
 		return false;
 	*blend = 0;
+	if (!cl_vrik_timeline.value)
+	{ // previous behaviour: newest two, by arrival, a fixed 75 ms back
+		if (ent->vrik_pose_count >= 2 && ent->vrik_pose_times[0] > ent->vrik_pose_times[1])
+		{
+			from = 1;
+			*blend = (float)(((realtime - 0.075) - ent->vrik_pose_times[1]) / (ent->vrik_pose_times[0] - ent->vrik_pose_times[1]));
+			*blend = CLAMP (0.0f, *blend, 1.0f);
+		}
+	}
 	// the timeline follows every accepted pose; anything else means it was cleared without the entity, so show the newest
-	if (history && history->timeline.count >= 1 && history->timeline.arrival[0] == ent->vrik_pose_times[0])
+	else if (history && history->timeline.count >= 1 && history->timeline.arrival[0] == ent->vrik_pose_times[0])
 		VRIK_TimelineSample (&history->timeline, realtime, &from, &to, blend);
 	if (older)
 		*older = from < 2 ? &ent->vrik_poses[from] : &history->poses[from - 2];

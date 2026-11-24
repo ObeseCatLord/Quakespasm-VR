@@ -588,8 +588,10 @@ Only a non-dedicated process on its own outgoing connection is affected.
 net_fakelag      one-way delay in ms, applied to both directions
 net_fakejitter   extra uniform random delay of 0..N ms per datagram
 net_fakeloss     percentage of datagrams dropped (both directions)
-net_fakeburst    "period_ms length_ms": every period, inbound datagrams are
+net_fakeburst    "period_ms,length_ms": every period, inbound datagrams are
                  held for length and then released together (a radio stall)
+net_fakestep     "period_ms,extra_ms": inbound delay is extra ms longer during
+                 the first half of every period (a route that changes)
 net_fakeseed     seed of the generator, so two runs see the same sequence
 ==============================================================================
 */
@@ -597,6 +599,7 @@ static cvar_t net_fakelag = {"net_fakelag", "0", CVAR_NONE};
 static cvar_t net_fakejitter = {"net_fakejitter", "0", CVAR_NONE};
 static cvar_t net_fakeloss = {"net_fakeloss", "0", CVAR_NONE};
 static cvar_t net_fakeburst = {"net_fakeburst", "", CVAR_NONE};
+static cvar_t net_fakestep = {"net_fakestep", "", CVAR_NONE};
 static cvar_t net_fakeseed = {"net_fakeseed", "1", CVAR_NONE};
 
 typedef struct fakelag_packet_s
@@ -623,7 +626,7 @@ static qboolean Datagram_FakeLagActive (qsocket_t *sock)
 {
 	if (isDedicated || sock->isvirtual)
 		return false;
-	return net_fakelag.value > 0 || net_fakejitter.value > 0 || net_fakeloss.value > 0 || net_fakeburst.string[0];
+	return net_fakelag.value > 0 || net_fakejitter.value > 0 || net_fakeloss.value > 0 || net_fakeburst.string[0] || net_fakestep.string[0];
 }
 
 // one generator per direction: the inbound sequence must not depend on how many commands were sent
@@ -672,7 +675,13 @@ static qboolean Datagram_FakeLagEnqueue (fakelag_queue_t *queue, int direction, 
 	release = now + q_max (0.0f, net_fakelag.value) / 1000.0;
 	if (net_fakejitter.value > 0)
 		release += Datagram_FakeLagRandom (direction) * net_fakejitter.value / 1000.0;
-	if (direction == 0 && sscanf (net_fakeburst.string, "%f %f", &period_ms, &length_ms) == 2 && period_ms > 0 && length_ms > 0)
+	if (direction == 0 && sscanf (net_fakestep.string, "%f%*[ ,]%f", &period_ms, &length_ms) == 2 && period_ms > 0 && length_ms > 0)
+	{
+		if (fmod (now, period_ms / 1000.0) < period_ms / 2000.0)
+			release += length_ms / 1000.0;
+	}
+	period_ms = length_ms = 0;
+	if (direction == 0 && sscanf (net_fakeburst.string, "%f%*[ ,]%f", &period_ms, &length_ms) == 2 && period_ms > 0 && length_ms > 0)
 	{
 		double period = period_ms / 1000.0;
 		double phase = fmod (release, period);
@@ -1837,6 +1846,7 @@ int Datagram_Init (void)
 	Cvar_RegisterVariable (&net_fakejitter);
 	Cvar_RegisterVariable (&net_fakeloss);
 	Cvar_RegisterVariable (&net_fakeburst);
+	Cvar_RegisterVariable (&net_fakestep);
 	Cvar_RegisterVariable (&net_fakeseed);
 
 	if (safemode || COM_CheckParm ("-nolan"))

@@ -442,6 +442,7 @@ extern cvar_t cl_autofire;
 extern cvar_t cl_shownet;
 extern cvar_t cl_nolerp;
 extern qboolean cl_lerp_buffered; // buffered interpolation is driving cl.time this frame
+extern cvar_t	cl_vrik_timeline;
 qboolean		CL_VRIKPlayback (
 		   const entity_t *ent, const vrik_pose_t **older, const vrik_pose_t **newer, const vrik_codec_pose_t **older_v3, const vrik_codec_pose_t **newer_v3,
 		   float *blend);
