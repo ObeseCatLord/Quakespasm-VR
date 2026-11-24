@@ -122,6 +122,8 @@ qsocket_t *NET_NewQSocket (void)
 	sock->canSend = true;
 	sock->sendNext = false;
 	sock->lastMessageTime = net_time;
+	sock->reliableRTT = 0;
+	sock->reliableResent = false;
 	sock->ackSequence = 0;
 	sock->sendSequence = 0;
 	sock->unreliableSendSequence = 0;

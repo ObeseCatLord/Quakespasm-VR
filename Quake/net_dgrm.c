@@ -540,6 +540,242 @@ static void NET_Ban_f (void)
 }
 #endif // BAN_TEST
 
+/*
+A reliable message goes out one fragment at a time and the next waits for the
+acknowledgement, so a lost fragment or acknowledgement holds up everything
+behind it until the resend. That wait used to be a flat second. It now follows
+the measured round trip of the connection, between a fifth of a second and the
+old second. A resend the peer did not need is recognised by its sequence
+number and only acknowledged again.
+*/
+static cvar_t net_resend_adaptive = {"net_resend_adaptive", "1", CVAR_NONE};
+
+#define NET_RESEND_MIN 0.2
+#define NET_RESEND_MAX 1.0
+
+static double Datagram_ResendDelay (const qsocket_t *sock)
+{
+	if (!net_resend_adaptive.value || sock->reliableRTT <= 0)
+		return NET_RESEND_MAX;
+	return CLAMP (NET_RESEND_MIN, sock->reliableRTT * 2.0 + 0.1, NET_RESEND_MAX);
+}
+
+// call when the fragment in flight is acknowledged, before the next one is sent
+static void Datagram_ReliableAcked (qsocket_t *sock)
+{
+	if (!sock->reliableResent)
+	{
+		float sample = (float)(net_time - sock->lastSendTime);
+		if (sample >= 0 && sample < 2 * NET_RESEND_MAX)
+		{
+			sample = q_max (sample, 0.001f);
+			sock->reliableRTT = sock->reliableRTT > 0 ? sock->reliableRTT + (sample - sock->reliableRTT) * 0.25f : sample;
+		}
+	}
+	sock->reliableResent = false;
+}
+
+/*
+==============================================================================
+Link impairment for local netcode testing
+
+Development aid, off by default. A connecting client can delay, jitter, hold
+back in bursts and drop the datagrams of its own connection, so a server and
+clients on one machine can reproduce an internet link. It works on raw
+datagrams, below sequencing and acknowledgement, exactly as a real link would.
+Only a non-dedicated process on its own outgoing connection is affected.
+
+net_fakelag      one-way delay in ms, applied to both directions
+net_fakejitter   extra uniform random delay of 0..N ms per datagram
+net_fakeloss     percentage of datagrams dropped (both directions)
+net_fakeburst    "period_ms length_ms": every period, inbound datagrams are
+                 held for length and then released together (a radio stall)
+net_fakeseed     seed of the generator, so two runs see the same sequence
+==============================================================================
+*/
+static cvar_t net_fakelag = {"net_fakelag", "0", CVAR_NONE};
+static cvar_t net_fakejitter = {"net_fakejitter", "0", CVAR_NONE};
+static cvar_t net_fakeloss = {"net_fakeloss", "0", CVAR_NONE};
+static cvar_t net_fakeburst = {"net_fakeburst", "", CVAR_NONE};
+static cvar_t net_fakeseed = {"net_fakeseed", "1", CVAR_NONE};
+
+typedef struct fakelag_packet_s
+{
+	struct fakelag_packet_s *next;
+	double					 release;
+	struct qsockaddr		 addr;
+	int						 length;
+	byte					 data[1];
+} fakelag_packet_t;
+
+typedef struct
+{
+	fakelag_packet_t *head, *tail;
+	double			  last_release;
+} fakelag_queue_t;
+
+static fakelag_queue_t fakelag_in, fakelag_out;
+static qsocket_t	  *fakelag_owner;
+static unsigned int	   fakelag_rng[2];
+static float		   fakelag_rng_seed[2];
+
+static qboolean Datagram_FakeLagActive (qsocket_t *sock)
+{
+	if (isDedicated || sock->isvirtual)
+		return false;
+	return net_fakelag.value > 0 || net_fakejitter.value > 0 || net_fakeloss.value > 0 || net_fakeburst.string[0];
+}
+
+// one generator per direction: the inbound sequence must not depend on how many commands were sent
+static float Datagram_FakeLagRandom (int direction)
+{
+	if (fakelag_rng_seed[direction] != net_fakeseed.value || !fakelag_rng[direction])
+	{
+		fakelag_rng_seed[direction] = net_fakeseed.value;
+		fakelag_rng[direction] = ((unsigned int)net_fakeseed.value * 2654435761u + direction * 40503u) | 1u;
+	}
+	fakelag_rng[direction] ^= fakelag_rng[direction] << 13;
+	fakelag_rng[direction] ^= fakelag_rng[direction] >> 17;
+	fakelag_rng[direction] ^= fakelag_rng[direction] << 5;
+	return (fakelag_rng[direction] & 0xffffff) / (float)0x1000000;
+}
+
+static void Datagram_FakeLagClearQueue (fakelag_queue_t *queue)
+{
+	while (queue->head)
+	{
+		fakelag_packet_t *packet = queue->head;
+		queue->head = packet->next;
+		Mem_Free (packet);
+	}
+	queue->tail = NULL;
+	queue->last_release = 0;
+}
+
+static void Datagram_FakeLagReset (qsocket_t *owner)
+{
+	Datagram_FakeLagClearQueue (&fakelag_in);
+	Datagram_FakeLagClearQueue (&fakelag_out);
+	fakelag_owner = owner;
+}
+
+// returns false when the datagram is lost
+static qboolean Datagram_FakeLagEnqueue (fakelag_queue_t *queue, int direction, const byte *data, int length, struct qsockaddr *addr)
+{
+	fakelag_packet_t *packet;
+	double			  now = Sys_DoubleTime ();
+	double			  release;
+	float			  period_ms = 0, length_ms = 0;
+
+	if (net_fakeloss.value > 0 && Datagram_FakeLagRandom (direction) * 100.0f < net_fakeloss.value)
+		return false;
+	release = now + q_max (0.0f, net_fakelag.value) / 1000.0;
+	if (net_fakejitter.value > 0)
+		release += Datagram_FakeLagRandom (direction) * net_fakejitter.value / 1000.0;
+	if (direction == 0 && sscanf (net_fakeburst.string, "%f %f", &period_ms, &length_ms) == 2 && period_ms > 0 && length_ms > 0)
+	{
+		double period = period_ms / 1000.0;
+		double phase = fmod (release, period);
+		if (phase < length_ms / 1000.0)
+			release += length_ms / 1000.0 - phase;
+	}
+	// one path: datagrams keep their order
+	if (release < queue->last_release)
+		release = queue->last_release;
+	queue->last_release = release;
+
+	packet = (fakelag_packet_t *)Mem_Alloc (sizeof (*packet) + length);
+	packet->next = NULL;
+	packet->release = release;
+	packet->addr = *addr;
+	packet->length = length;
+	memcpy (packet->data, data, length);
+	if (queue->tail)
+		queue->tail->next = packet;
+	else
+		queue->head = packet;
+	queue->tail = packet;
+	return true;
+}
+
+static void Datagram_FakeLagFlushOut (qsocket_t *sock)
+{
+	double now = Sys_DoubleTime ();
+	while (fakelag_out.head && fakelag_out.head->release <= now)
+	{
+		fakelag_packet_t *packet = fakelag_out.head;
+		fakelag_out.head = packet->next;
+		if (!fakelag_out.head)
+			fakelag_out.tail = NULL;
+		sfunc.Write (sock->socket, packet->data, packet->length, &packet->addr);
+		Mem_Free (packet);
+	}
+}
+
+static int Datagram_WriteLagged (qsocket_t *sock, byte *data, int length, struct qsockaddr *addr)
+{
+	if (!Datagram_FakeLagActive (sock))
+	{
+		if (fakelag_owner == sock && fakelag_out.head)
+		{
+			// impairment switched off: nothing may overtake what is queued
+			for (fakelag_packet_t *packet = fakelag_out.head; packet; packet = packet->next)
+				packet->release = 0;
+			Datagram_FakeLagFlushOut (sock);
+		}
+		return sfunc.Write (sock->socket, data, length, addr);
+	}
+	if (fakelag_owner != sock)
+		Datagram_FakeLagReset (sock);
+	Datagram_FakeLagEnqueue (&fakelag_out, 1, data, length, addr);
+	Datagram_FakeLagFlushOut (sock);
+	return length;
+}
+
+static int Datagram_ReadLagged (qsocket_t *sock, byte *data, int maxlength, struct qsockaddr *addr)
+{
+	static byte scratch[NET_DATAGRAMSIZE];
+	double		now;
+
+	if (fakelag_owner != sock)
+	{
+		if (!Datagram_FakeLagActive (sock))
+			return sfunc.Read (sock->socket, data, maxlength, addr);
+		Datagram_FakeLagReset (sock);
+	}
+	Datagram_FakeLagFlushOut (sock);
+	if (Datagram_FakeLagActive (sock))
+	{
+		for (;;)
+		{
+			struct qsockaddr from;
+			int				 length = sfunc.Read (sock->socket, scratch, sizeof (scratch), &from);
+			if (length == -1)
+				return -1;
+			if (length <= 0)
+				break;
+			Datagram_FakeLagEnqueue (&fakelag_in, 0, scratch, length, &from);
+		}
+	}
+	else if (!fakelag_in.head)
+		return sfunc.Read (sock->socket, data, maxlength, addr);
+
+	now = Datagram_FakeLagActive (sock) ? Sys_DoubleTime () : DBL_MAX;
+	if (fakelag_in.head && fakelag_in.head->release <= now && fakelag_in.head->length <= maxlength)
+	{
+		fakelag_packet_t *packet = fakelag_in.head;
+		int				  length = packet->length;
+		fakelag_in.head = packet->next;
+		if (!fakelag_in.head)
+			fakelag_in.tail = NULL;
+		memcpy (data, packet->data, length);
+		*addr = packet->addr;
+		Mem_Free (packet);
+		return length;
+	}
+	return 0;
+}
+
 int Datagram_SendMessage (qsocket_t *sock, sizebuf_t *data)
 {
 	unsigned int packetLen;
@@ -646,6 +882,7 @@ static int ReSendMessage (qsocket_t *sock)
 		return -1;
 
 	sock->lastSendTime = net_time;
+	sock->reliableResent = true;
 	packetsReSent++;
 	return 1;
 }
@@ -681,7 +918,7 @@ int Datagram_SendUnreliableMessage (qsocket_t *sock, sizebuf_t *data)
 	packetBuffer.sequence = BigLong (sock->unreliableSendSequence++);
 	memcpy (packetBuffer.data, data->data, data->cursize);
 
-	if (sfunc.Write (sock->socket, (byte *)&packetBuffer, packetLen, &sock->addr) == -1)
+	if (Datagram_WriteLagged (sock, (byte *)&packetBuffer, packetLen, &sock->addr) == -1)
 		return -1;
 
 	packetsSent++;
@@ -863,6 +1100,7 @@ static int Datagram_ProcessPacket (unsigned int length, qsocket_t *sock, struct 
 		/* An in-order ACK from the session's endpoint is proof of life. Without it a
 		 * client that only ACKs (map loading) looks silent to the rebind heuristic. */
 		sock->lastMessageTime = net_time;
+		Datagram_ReliableAcked (sock);
 		sock->sendMessageLength -= sock->max_datagram;
 		if (sock->sendMessageLength > 0)
 		{
@@ -1025,7 +1263,7 @@ qsocket_t *Datagram_GetAnyMessage (void)
 		if (s->sendNext)
 			SendMessageNext (s);
 		if (!s->canSend)
-			if ((net_time - s->lastSendTime) > 1.0)
+			if ((net_time - s->lastSendTime) > Datagram_ResendDelay (s))
 				ReSendMessage (s);
 
 		if (net_time - s->lastMessageTime > ((!s->ackSequence) ? net_connecttimeout.value : net_messagetimeout.value))
@@ -1060,7 +1298,7 @@ int Datagram_GetMessage (qsocket_t *sock)
 	qboolean		 rebind;
 
 	if (!sock->canSend)
-		if ((net_time - sock->lastSendTime) > 1.0)
+		if ((net_time - sock->lastSendTime) > Datagram_ResendDelay (sock))
 			ReSendMessage (sock);
 
 	while (1)
@@ -1068,7 +1306,7 @@ int Datagram_GetMessage (qsocket_t *sock)
 		from_queue = Datagram_DequeuePacket (sock, &length, &readaddr);
 		if (!from_queue)
 		{
-			length = (unsigned int)sfunc.Read (sock->socket, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &readaddr);
+			length = (unsigned int)Datagram_ReadLagged (sock, (byte *)&packetBuffer, NET_DATAGRAMSIZE, &readaddr);
 
 			//	if ((rand() & 255) > 220)
 			//		continue;
@@ -1175,6 +1413,7 @@ int Datagram_GetMessage (qsocket_t *sock)
 				Con_DPrintf ("Duplicate ACK received\n");
 				continue;
 			}
+			Datagram_ReliableAcked (sock);
 			sock->sendMessageLength -= sock->max_datagram;
 			if (sock->sendMessageLength > 0)
 			{
@@ -1593,6 +1832,12 @@ int Datagram_Init (void)
 	myDriverLevel = net_driverlevel;
 
 	Cmd_AddCommand ("net_stats", NET_Stats_f);
+	Cvar_RegisterVariable (&net_resend_adaptive);
+	Cvar_RegisterVariable (&net_fakelag);
+	Cvar_RegisterVariable (&net_fakejitter);
+	Cvar_RegisterVariable (&net_fakeloss);
+	Cvar_RegisterVariable (&net_fakeburst);
+	Cvar_RegisterVariable (&net_fakeseed);
 
 	if (safemode || COM_CheckParm ("-nolan"))
 		return -1;
@@ -1645,6 +1890,8 @@ void Datagram_Shutdown (void)
 void Datagram_Close (qsocket_t *sock)
 {
 	Datagram_DropQueuedPackets (sock);
+	if (fakelag_owner == sock)
+		Datagram_FakeLagReset (NULL);
 	if (sock->isvirtual)
 	{
 		sock->isvirtual = false;

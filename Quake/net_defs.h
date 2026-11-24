@@ -147,6 +147,8 @@ typedef struct qsocket_s
 	double			  connecttime;
 	double			  lastMessageTime;
 	double			  lastSendTime;
+	float			  reliableRTT;	  // smoothed time from sending a reliable fragment to its acknowledgement; 0 until measured
+	qboolean		  reliableResent; // the fragment in flight was sent more than once, so its acknowledgement times nothing
 
 	qboolean isvirtual; // qsocket is emulated by the network layer (closing will not close any system sockets).
 	qboolean disconnected;
