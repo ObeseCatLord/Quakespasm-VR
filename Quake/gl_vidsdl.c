@@ -659,7 +659,7 @@ static qboolean VID_SetMode (int width, int height, float refreshrate, qboolean 
 	CDAudio_Pause ();
 	BGM_Pause ();
 
-	q_snprintf (caption, sizeof (caption), ENGINE_NAME_AND_VER);
+	q_snprintf (caption, sizeof (caption), QSVR_TITLE);
 
 	/* Create the window if needed, hidden */
 	if (!draw_context)

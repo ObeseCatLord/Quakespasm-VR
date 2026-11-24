@@ -4339,17 +4339,20 @@ typedef struct
 
 /* The inherited VR defaults fill only dedicated XR controls. Existing user
  * and physical desktop-gamepad bindings remain authoritative. */
+/* Right A/B cycle weapons (previous/next), left X/Y and the grips show the
+ * scoreboard. No control defaults to a 180-degree turn. */
 static const vr_default_binding_t vr_default_bindings[] = {
 	{K_VR_LTRIGGER, "+jump"},
 	{K_VR_RTRIGGER, "+attack"},
+	{K_VR_ABUTTON, "impulse 12"},
 	{K_VR_BBUTTON, "impulse 10"},
 	{K_VR_LTHUMB, "+speed"},
 	{K_VR_RTHUMB, "+vr_weaponmenu"},
 	{K_VR_ALTFIRE, "+button3"},
 	{K_VR_LSHOULDER, "+showscores"},
 	{K_VR_RSHOULDER, "+showscores"},
-	{K_VR_ABUTTON, "+showscores"},
-	{K_VR_XBUTTON, "impulse 12"},
+	{K_VR_XBUTTON, "+showscores"},
+	{K_VR_YBUTTON, "+showscores"},
 };
 
 typedef enum

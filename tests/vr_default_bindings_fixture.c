@@ -77,13 +77,14 @@ int main (void)
 	assert (!strcmp (keybindings[K_VR_RTHUMB], "+vr_weaponmenu"));
 	assert (!strcmp (keybindings[K_VR_ALTFIRE], "+button3"));
 	assert (!strcmp (keybindings[K_VR_RSHOULDER], "+showscores"));
-	assert (!strcmp (keybindings[K_VR_ABUTTON], "+showscores"));
-	assert (!strcmp (keybindings[K_VR_XBUTTON], "impulse 12"));
+	assert (!strcmp (keybindings[K_VR_ABUTTON], "impulse 12"));
+	assert (!strcmp (keybindings[K_VR_XBUTTON], "+showscores"));
+	assert (!strcmp (keybindings[K_VR_YBUTTON], "+showscores"));
 	assert (!keybindings[K_VR_RIGHT_STICK_UP]);
 	assert (!keybindings[K_VR_RIGHT_STICK_DOWN]);
-	assert (fixture_bind_count == 8);
+	assert (fixture_bind_count == 9);
 	VR_InputDefaultBindings_f ();
-	assert (fixture_bind_count == 8); /* No replacement on repeat. */
+	assert (fixture_bind_count == 9); /* No replacement on repeat. */
 	/* Defaults fill absent controls, rather than enforcing policy over choices. */
 	keybindings[K_VR_RTHUMB] = "+jump";
 	keybindings[K_VR_RIGHT_STICK_UP] = "+vr_weaponmenu";
@@ -92,7 +93,7 @@ int main (void)
 	assert (!strcmp (keybindings[K_VR_RTHUMB], "+jump"));
 	assert (!strcmp (keybindings[K_VR_RIGHT_STICK_UP], "+vr_weaponmenu"));
 	assert (!strcmp (keybindings['t'], "vr_turn180"));
-	assert (fixture_bind_count == 8);
+	assert (fixture_bind_count == 9);
 	startup_order ();
 	puts ("VR default bindings: ok");
 	return 0;
