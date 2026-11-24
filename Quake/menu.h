@@ -73,6 +73,7 @@ void	 M_Charinput (int key);
 qboolean M_TextEntry (void);
 qboolean M_WaitingForKeyBinding (void);
 void	 M_ToggleMenu_f (void);
+void	 M_CloseMainMenuForGame (void);
 float	 M_GetScale ();
 float	 M_MenuCanvasScale (void);
 int	 M_MenuCanvasHeight (void);

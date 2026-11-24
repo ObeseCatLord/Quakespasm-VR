@@ -647,6 +647,19 @@ static qboolean M_CancelPendingConnection (void)
 	return true;
 }
 
+/* A mod's quake.rc may end with menu_main. A local map closes it, but a
+ * remote connect or a server-driven game switch did not, so the main menu kept
+ * every controller and key press after joining. Close only that menu. */
+void M_CloseMainMenuForGame (void)
+{
+	if (key_dest != key_menu || m_state != m_main)
+		return;
+	M_MenuChanged ();
+	IN_Activate ();
+	key_dest = key_game;
+	m_state = m_none;
+}
+
 /*
 ================
 M_ToggleMenu_f

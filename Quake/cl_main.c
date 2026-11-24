@@ -1812,6 +1812,7 @@ void CL_SignonReply (void)
 
 	case 4:
 		SCR_EndLoadingPlaque (); // allow normal screen updates
+		M_CloseMainMenuForGame ();
 		break;
 	}
 }
