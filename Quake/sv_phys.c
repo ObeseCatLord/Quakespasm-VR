@@ -12899,6 +12899,15 @@ void SV_Physics (void)
 			ent->v.movetype == MOVETYPE_TOSS || ent->v.movetype == MOVETYPE_GIB || ent->v.movetype == MOVETYPE_BOUNCE || ent->v.movetype == MOVETYPE_FLY ||
 			ent->v.movetype == MOVETYPE_FLYMISSILE)
 			SV_Physics_Toss (ent, false);
+		else if (ent->v.movetype == MOVETYPE_WALK)
+		{
+			/* A body copied from a player who used noclip while dead (or any QC
+			 * that copies a client's movetype) keeps MOVETYPE_WALK, which only
+			 * clients can run. Let it fall like a tossed body instead of ending
+			 * the game for every player. */
+			ent->v.movetype = MOVETYPE_TOSS;
+			SV_Physics_Toss (ent, false);
+		}
 		else
 			Host_EndGame ("SV_Physics: bad movetype %i", (int)ent->v.movetype);
 
