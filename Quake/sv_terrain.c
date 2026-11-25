@@ -25,6 +25,9 @@ static cvar_t terrain_slope = {"terrain_slope", "0.55", CVAR_NONE};					   // le
 static cvar_t terrain_vault = {"terrain_vault", "1", CVAR_NONE};					   // hold jump at a ledge to climb onto it
 static cvar_t terrain_vault_height = {"terrain_vault_height", "76", CVAR_NONE};		   // highest ledge above the feet
 static cvar_t terrain_crawlers = {"terrain_crawlers", "4", CVAR_NONE};				   // surface-crawling fiends added to a drg* map
+// Which monsters crawl: a comma list of classname[:scale[:health[:speed[:spawnflags]]]], used in
+// turn. The classname must be a spawn function of the running progs.dat.
+static cvar_t terrain_crawler_types = {"terrain_crawler_types", "monster_demon1", CVAR_NONE};
 static cvar_t terrain_crawler_speed = {"terrain_crawler_speed", "210", CVAR_NONE};
 static cvar_t terrain_crawler_sense = {"terrain_crawler_sense", "900", CVAR_NONE}; // crawlers wake for a player this close, seen or not
 static cvar_t terrain_monsterstep = {"terrain_monsterstep", "1", CVAR_NONE};		   // slope-tolerant monster steps on terrain
@@ -41,14 +44,15 @@ static struct
 } sv_terrain_vaults[MAX_SCOREBOARD + 1];
 
 #define MAX_CRAWLERS   32
-#define CRAWLER_FEET   24.0f // model origin above its feet
-#define CRAWLER_MODEL  "monster_demon1"
 typedef struct
 {
 	edict_t *ent;
 	int		 attached;
 	float	 normal[3], forward[3];
 	double	 air_since;
+	float	 scale, speed, want_health;
+	float	 feet, half_width, height; // from the monster's own box, times scale, once QuakeC has set it
+	int		 sized;
 } terrain_crawler_t;
 static terrain_crawler_t sv_terrain_crawlers[MAX_CRAWLERS];
 static int				 sv_terrain_num_crawlers;
@@ -377,7 +381,7 @@ static void CrawlerPose (terrain_crawler_t *c, const float feet[3])
 		CrossProduct (n, any, f);
 		VectorNormalize (f);
 	}
-	VectorMA (feet, CRAWLER_FEET, n, ent->v.origin);
+	VectorMA (feet, c->feet, n, ent->v.origin);
 	// model angles: positive pitch looks up; roll brings the model's up onto the surface normal
 	const float yaw = atan2f (f[1], f[0]), pitch = atan2f (f[2], sqrtf (f[0] * f[0] + f[1] * f[1]));
 	vec3_t		view = {-pitch * 180.0f / M_PI, yaw * 180.0f / M_PI, 0}, fw, right0, up0;
@@ -387,14 +391,17 @@ static void CrawlerPose (terrain_crawler_t *c, const float feet[3])
 	ent->v.angles[2] = atan2f (DotProduct (n, right0), DotProduct (n, up0)) * 180.0f / M_PI;
 	ent->v.ideal_yaw = ent->v.angles[1];
 	// the hit box follows the body, which hangs off the surface along the normal
-	for (int a = 0; a < 3; ++a)
+	for (int a = 0; c->sized && a < 3; ++a)
 	{
-		const float centre = (44.0f - CRAWLER_FEET) * n[a];
-		const float half = a == 2 ? 36.0f : 30.0f;
+		const float centre = (c->height * 0.5f - c->feet) * n[a];
+		const float half = a == 2 ? q_max (c->height * 0.42f, c->half_width) : c->half_width;
 		ent->v.mins[a] = centre - half;
 		ent->v.maxs[a] = centre + half;
 		ent->v.size[a] = half * 2.0f;
 	}
+	eval_t *scale = GetEdictFieldValue (ent, qcvm->extfields.scale);
+	if (scale && c->scale != 1.0f)
+		scale->_float = c->scale;
 	ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
 	ent->v.groundentity = EDICT_TO_PROG (qcvm->edicts);
 	ent->v.velocity[0] = ent->v.velocity[1] = ent->v.velocity[2] = 0;
@@ -409,13 +416,23 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 	terrain_crawler_t *c = CrawlerFind (ent);
 	if (!c)
 		return 0;
-	if (ent->free || ent->v.health <= 0)
+	if (ent->free || (ent->v.health <= 0 && c->sized))
 	{
 		// dead: let go of the wall and fall like any corpse
 		ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
 		ent->v.angles[0] = ent->v.angles[2] = 0;
 		*c = sv_terrain_crawlers[--sv_terrain_num_crawlers];
 		return 0;
+	}
+	if (!c->sized && ent->v.takedamage && ent->v.maxs[2] - ent->v.mins[2] > 1.0f)
+	{
+		// QuakeC has finished its (possibly delayed) start: take the box it chose
+		c->feet = -ent->v.mins[2] * c->scale;
+		c->half_width = ent->v.maxs[0] * c->scale;
+		c->height = (ent->v.maxs[2] - ent->v.mins[2]) * c->scale;
+		c->sized = 1;
+		if (c->want_health > 0)
+			ent->v.health = ent->v.max_health = c->want_health;
 	}
 	float feet[3];
 	if (!c->attached)
@@ -433,11 +450,11 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 		if (!landed)
 		{
 			// the leap never reached a floor, so QuakeC is still waiting for its touch
-			dfunction_t *run = ED_FindFunction ("demon1_run1");
+			eval_t *run = GetEdictFieldValue (ent, ED_FindFieldOffset ("th_run"));
 			ent->v.touch = 0;
-			if (run)
+			if (run && run->function)
 			{
-				ent->v.think = run - qcvm->functions;
+				ent->v.think = run->function;
 				ent->v.nextthink = qcvm->time + 0.1;
 			}
 		}
@@ -450,14 +467,14 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 		c->air_since = qcvm->time;
 		ent->v.angles[0] = ent->v.angles[2] = 0;
 		VectorCopy (ent->v.origin, feet);
-		ent->v.mins[0] = ent->v.mins[1] = -32;
-		ent->v.mins[2] = -24;
-		ent->v.maxs[0] = ent->v.maxs[1] = 32;
-		ent->v.maxs[2] = 64;
+		ent->v.mins[0] = ent->v.mins[1] = -c->half_width;
+		ent->v.mins[2] = -c->feet;
+		ent->v.maxs[0] = ent->v.maxs[1] = c->half_width;
+		ent->v.maxs[2] = c->height - c->feet;
 		VectorSubtract (ent->v.maxs, ent->v.mins, ent->v.size);
 		return 0;
 	}
-	VectorMA (ent->v.origin, -CRAWLER_FEET, c->normal, feet);
+	VectorMA (ent->v.origin, -c->feet, c->normal, feet);
 	edict_t *enemy = PROG_TO_EDICT (ent->v.enemy);
 	if (enemy == qcvm->edicts && qcvm->time > 2.0 && ent->v.takedamage)
 	{
@@ -491,7 +508,8 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 	if (enemy != qcvm->edicts && !enemy->free && enemy->v.health > 0)
 	{
 		float to[3], body[3];
-		VectorMA (feet, 44.0f, c->normal, body);
+		const float reach = 52.0f + c->half_width; // stop here and let QuakeC attack
+		VectorMA (feet, c->height * 0.5f, c->normal, body);
 		VectorSubtract (enemy->v.origin, body, to);
 		const float dist = sqrtf (DotProduct (to, to));
 		// Far off, follow the flow field through the cave; close by, go straight at them.
@@ -506,7 +524,7 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 		// way it was heading, which carries it round the curve of a passage.
 		if (sqrtf (DotProduct (to, to)) < want * 0.25f)
 			VectorCopy (c->forward, to);
-		const qboolean chase = dist > 84.0f && VectorNormalize (to) > 0.01f;
+		const qboolean chase = dist > reach && VectorNormalize (to) > 0.01f;
 		if (!chase)
 		{
 			VectorCopy (to, c->forward); // in reach: face them and let QuakeC attack
@@ -520,10 +538,11 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 			float					 away[3], other[3];
 			if (o == c || !o->attached)
 				continue;
-			VectorMA (o->ent->v.origin, 44.0f - CRAWLER_FEET, o->normal, other);
+			VectorMA (o->ent->v.origin, o->height * 0.5f - o->feet, o->normal, other);
 			VectorSubtract (body, other, away);
-			float gap = sqrtf (DotProduct (away, away));
-			if (gap >= 76.0f)
+			float		gap = sqrtf (DotProduct (away, away));
+			const float room = (c->half_width + o->half_width) * 1.2f;
+			if (gap >= room)
 				continue;
 			if (gap < 1.0f)
 			{
@@ -533,7 +552,7 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 				away[2] = 0;
 				gap = 1.0f;
 			}
-			VectorMA (push, (76.0f - gap) / 76.0f / gap, away, push);
+			VectorMA (push, (room - gap) / room / gap, away, push);
 		}
 		VectorMA (push, -DotProduct (push, c->normal), c->normal, push);
 		VectorMA (to, 1.5f, push, to);
@@ -541,7 +560,7 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 		if (rate > 0.05f)
 		{
 			float next[3], n[3];
-			VectorMA (feet, terrain_crawler_speed.value * q_min (rate, 1.0f) / rate * (float)host_frametime, to, next);
+			VectorMA (feet, terrain_crawler_speed.value * c->speed * q_min (rate, 1.0f) / rate * (float)host_frametime, to, next);
 			if (CrawlerProject (t, next, n))
 			{
 				VectorCopy (next, feet);
@@ -562,18 +581,54 @@ static qboolean PlaceFindFloor (uint32_t *rng, const float mins[3], const float 
 
 static void CrawlerSpawnAll (uint32_t *rng, const float start[3])
 {
-	dfunction_t *func = ED_FindFunction (CRAWLER_MODEL);
-	const int	 want = q_min ((int)terrain_crawlers.value, MAX_CRAWLERS);
-	if (!func || want <= 0)
-		return;
-	const float mins[3] = {-32, -32, -24}, maxs[3] = {32, 32, 64};
-	for (int i = 0; i < want; ++i)
+	const int want = q_min ((int)terrain_crawlers.value, MAX_CRAWLERS);
+	char	  types[512];
+	q_strlcpy (types, terrain_crawler_types.string, sizeof (types));
+	const char *spec[16];
+	int			num_specs = 0;
+	for (char *tok = strtok (types, ", "); tok && num_specs < 16; tok = strtok (NULL, ", "))
+		spec[num_specs++] = tok;
+	for (int i = 0; i < want && num_specs; ++i)
 	{
-		float spot[3];
-		if (!PlaceFindFloor (rng, mins, maxs, start, 1100.0f, 4096.0f, spot))
+		char  name[64] = "";
+		float scale = 1.0f, health = 0.0f, speed = 1.0f;
+		int	  spawnflags = 0;
+		sscanf (spec[i % num_specs], "%63[^:]:%f:%f:%f:%d", name, &scale, &health, &speed, &spawnflags);
+		dfunction_t *func = ED_FindFunction (name);
+		if (!func)
+		{
+			Con_Printf ("terrain: this progs.dat has no %s to crawl\n", name);
+			continue;
+		}
+		scale = q_max (0.2f, q_min (scale, 4.0f));
+		// big ones only need a spot a mid-sized box fits: they cling to the surface, they don't stand in a room
+		const float hw = q_min (32.0f * scale, 56.0f), up = q_min (64.0f * scale, 112.0f);
+		const float mins[3] = {-hw, -hw, -24 * scale}, maxs[3] = {hw, hw, up};
+		float		spot[3];
+		qboolean	clear = false;
+		// not on top of another monster: mods telefrag whatever spawns inside something
+		for (int attempt = 0; attempt < 12 && !clear; ++attempt)
+		{
+			if (!PlaceFindFloor (rng, mins, maxs, start, 1100.0f, 4096.0f, spot))
+				break;
+			clear = true;
+			for (int e = svs.maxclients + 1; clear && e < qcvm->num_edicts; ++e)
+			{
+				edict_t *other = EDICT_NUM (e);
+				vec3_t	 d;
+				if (other->free || !((int)other->v.flags & FL_MONSTER))
+					continue;
+				VectorSubtract (other->v.origin, spot, d);
+				clear = sqrtf (DotProduct (d, d)) > 64.0f * scale + 80.0f;
+			}
+		}
+		if (!clear)
 			continue;
 		edict_t *ed = ED_Alloc ();
-		ed->v.classname = PR_SetEngineString (CRAWLER_MODEL);
+		ed->v.classname = PR_SetEngineString (func->s_name ? PR_GetString (func->s_name) : name);
+		ed->v.spawnflags = spawnflags;
+		if (health > 0)
+			ed->v.health = health; // some mods keep a preset health
 		VectorCopy (spot, ed->v.origin);
 		pr_global_struct->self = EDICT_TO_PROG (ed);
 		PR_ExecuteProgram (func - qcvm->functions);
@@ -585,6 +640,12 @@ static void CrawlerSpawnAll (uint32_t *rng, const float start[3])
 		c->normal[2] = 1.0f;
 		c->forward[0] = 1.0f;
 		c->attached = 1;
+		c->scale = scale;
+		c->speed = speed > 0 ? speed : 1.0f;
+		c->want_health = health;
+		c->feet = 24.0f * scale;
+		c->half_width = 30.0f * scale;
+		c->height = 72.0f * scale;
 	}
 	Con_Printf ("terrain: %d crawlers\n", sv_terrain_num_crawlers);
 }
@@ -891,6 +952,7 @@ void SV_Terrain_Init (void)
 	Cvar_RegisterVariable (&terrain_vault_height);
 	Cvar_RegisterVariable (&terrain_crawlers);
 	Cvar_RegisterVariable (&terrain_crawler_speed);
+	Cvar_RegisterVariable (&terrain_crawler_types);
 	Cvar_RegisterVariable (&terrain_crawler_sense);
 	Cvar_RegisterVariable (&terrain_monsterstep);
 	Cmd_AddCommand ("terrain_ents", SV_Terrain_Ents_f);

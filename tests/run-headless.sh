@@ -2,6 +2,7 @@
 # Runs a gdb-driven engine script with no visible window, on the machine's real GPU, inside a
 # headless sway (wlroots) session. Used for the scripted terrain checks.
 #   tests/run-headless.sh tests/terrain_play.gdb [basedir]     (basedir defaults to ./run)
+# DRG_ARGS holds extra engine arguments placed before the map loads, e.g. "-game ad".
 # Output: <basedir>/id1/condump.txt, screenshots beside it, engine log in $TMPDIR/drg-headless.log
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,7 +16,7 @@ cd "$repo"
 export SDL_VIDEODRIVER=wayland
 unset DISPLAY
 timeout 300 nix develop -c nix shell nixpkgs#gdb -c gdb -q -batch -x "$script" --args ./build-drg/vkquake \\
-  -basedir "$base" -novr -nosound -window -width 1280 -height 720 +skill 1 +map drgbox > "$log" 2>&1
+  -basedir "$base" -novr -nosound -window -width 1280 -height 720 ${DRG_ARGS:-} +skill 1 +map drgbox > "$log" 2>&1
 echo "exit \$?" >> "$log"
 swaymsg exit
 J

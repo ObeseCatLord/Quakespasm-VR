@@ -55,6 +55,7 @@ before the entities spawn, then moves the player start, items and monsters onto 
 | `terrain_monsterstep` | 1 | slope-tolerant monster steps |
 | `terrain_crawlers` | 4 | crawlers added at map load |
 | `terrain_crawler_sense`, `terrain_crawler_speed` | 900, 210 | |
+| `terrain_crawler_types` | `monster_demon1` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
 | `r_terrain_ambient`, `r_terrain_lamp`, `r_terrain_dlights`, `r_terrain_biome` | | look |
 
 Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, `terrain_fill`,
