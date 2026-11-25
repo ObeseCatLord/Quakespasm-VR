@@ -1,61 +1,272 @@
-// Shell map for the cave prototype: a sealed hollow box with the player start at its centre.
-// The engine fills maps named drg* with a generated cave region around the centre.
+// Shell map for the cave prototype: a sealed hollow box. The engine fills maps named drg* with a
+// generated cave and moves the player start, items and monsters listed here onto its floor, so
+// their origins below do not matter.
 // Build: qbsp drgbox.map (ericw-tools), then put drgbox.bsp in <game>/maps.
 {
 "classname" "worldspawn"
 "message" "Under the workshop"
 "worldtype" "0"
 {
-( -1280 0 0 ) ( -1280 1 0 ) ( -1280 0 1 ) CITY4_2 0 0 0 1 1
-( -1216 0 0 ) ( -1216 0 1 ) ( -1216 1 0 ) CITY4_2 0 0 0 1 1
-( 0 -1280 0 ) ( 0 -1280 1 ) ( 1 -1280 0 ) CITY4_2 0 0 0 1 1
-( 0 1280 0 ) ( 1 1280 0 ) ( 0 1280 1 ) CITY4_2 0 0 0 1 1
-( 0 0 -1024 ) ( 1 0 -1024 ) ( 0 1 -1024 ) CITY4_2 0 0 0 1 1
-( 0 0 1024 ) ( 0 1 1024 ) ( 1 0 1024 ) CITY4_2 0 0 0 1 1
+( -1728 0 0 ) ( -1728 1 0 ) ( -1728 0 1 ) CITY4_2 0 0 0 1 1
+( -1664 0 0 ) ( -1664 0 1 ) ( -1664 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1728 0 ) ( 0 -1728 1 ) ( 1 -1728 0 ) CITY4_2 0 0 0 1 1
+( 0 1728 0 ) ( 1 1728 0 ) ( 0 1728 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -960 ) ( 1 0 -960 ) ( 0 1 -960 ) CITY4_2 0 0 0 1 1
+( 0 0 960 ) ( 0 1 960 ) ( 1 0 960 ) CITY4_2 0 0 0 1 1
 }
 {
-( 1216 0 0 ) ( 1216 1 0 ) ( 1216 0 1 ) CITY4_2 0 0 0 1 1
-( 1280 0 0 ) ( 1280 0 1 ) ( 1280 1 0 ) CITY4_2 0 0 0 1 1
-( 0 -1280 0 ) ( 0 -1280 1 ) ( 1 -1280 0 ) CITY4_2 0 0 0 1 1
-( 0 1280 0 ) ( 1 1280 0 ) ( 0 1280 1 ) CITY4_2 0 0 0 1 1
-( 0 0 -1024 ) ( 1 0 -1024 ) ( 0 1 -1024 ) CITY4_2 0 0 0 1 1
-( 0 0 1024 ) ( 0 1 1024 ) ( 1 0 1024 ) CITY4_2 0 0 0 1 1
+( 1664 0 0 ) ( 1664 1 0 ) ( 1664 0 1 ) CITY4_2 0 0 0 1 1
+( 1728 0 0 ) ( 1728 0 1 ) ( 1728 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1728 0 ) ( 0 -1728 1 ) ( 1 -1728 0 ) CITY4_2 0 0 0 1 1
+( 0 1728 0 ) ( 1 1728 0 ) ( 0 1728 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -960 ) ( 1 0 -960 ) ( 0 1 -960 ) CITY4_2 0 0 0 1 1
+( 0 0 960 ) ( 0 1 960 ) ( 1 0 960 ) CITY4_2 0 0 0 1 1
 }
 {
-( -1216 0 0 ) ( -1216 1 0 ) ( -1216 0 1 ) CITY4_2 0 0 0 1 1
-( 1216 0 0 ) ( 1216 0 1 ) ( 1216 1 0 ) CITY4_2 0 0 0 1 1
-( 0 -1280 0 ) ( 0 -1280 1 ) ( 1 -1280 0 ) CITY4_2 0 0 0 1 1
-( 0 -1216 0 ) ( 1 -1216 0 ) ( 0 -1216 1 ) CITY4_2 0 0 0 1 1
-( 0 0 -1024 ) ( 1 0 -1024 ) ( 0 1 -1024 ) CITY4_2 0 0 0 1 1
-( 0 0 1024 ) ( 0 1 1024 ) ( 1 0 1024 ) CITY4_2 0 0 0 1 1
+( -1664 0 0 ) ( -1664 1 0 ) ( -1664 0 1 ) CITY4_2 0 0 0 1 1
+( 1664 0 0 ) ( 1664 0 1 ) ( 1664 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1728 0 ) ( 0 -1728 1 ) ( 1 -1728 0 ) CITY4_2 0 0 0 1 1
+( 0 -1664 0 ) ( 1 -1664 0 ) ( 0 -1664 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -960 ) ( 1 0 -960 ) ( 0 1 -960 ) CITY4_2 0 0 0 1 1
+( 0 0 960 ) ( 0 1 960 ) ( 1 0 960 ) CITY4_2 0 0 0 1 1
 }
 {
-( -1216 0 0 ) ( -1216 1 0 ) ( -1216 0 1 ) CITY4_2 0 0 0 1 1
-( 1216 0 0 ) ( 1216 0 1 ) ( 1216 1 0 ) CITY4_2 0 0 0 1 1
-( 0 1216 0 ) ( 0 1216 1 ) ( 1 1216 0 ) CITY4_2 0 0 0 1 1
-( 0 1280 0 ) ( 1 1280 0 ) ( 0 1280 1 ) CITY4_2 0 0 0 1 1
-( 0 0 -1024 ) ( 1 0 -1024 ) ( 0 1 -1024 ) CITY4_2 0 0 0 1 1
-( 0 0 1024 ) ( 0 1 1024 ) ( 1 0 1024 ) CITY4_2 0 0 0 1 1
+( -1664 0 0 ) ( -1664 1 0 ) ( -1664 0 1 ) CITY4_2 0 0 0 1 1
+( 1664 0 0 ) ( 1664 0 1 ) ( 1664 1 0 ) CITY4_2 0 0 0 1 1
+( 0 1664 0 ) ( 0 1664 1 ) ( 1 1664 0 ) CITY4_2 0 0 0 1 1
+( 0 1728 0 ) ( 1 1728 0 ) ( 0 1728 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -960 ) ( 1 0 -960 ) ( 0 1 -960 ) CITY4_2 0 0 0 1 1
+( 0 0 960 ) ( 0 1 960 ) ( 1 0 960 ) CITY4_2 0 0 0 1 1
 }
 {
-( -1216 0 0 ) ( -1216 1 0 ) ( -1216 0 1 ) CITY4_2 0 0 0 1 1
-( 1216 0 0 ) ( 1216 0 1 ) ( 1216 1 0 ) CITY4_2 0 0 0 1 1
-( 0 -1216 0 ) ( 0 -1216 1 ) ( 1 -1216 0 ) CITY4_2 0 0 0 1 1
-( 0 1216 0 ) ( 1 1216 0 ) ( 0 1216 1 ) CITY4_2 0 0 0 1 1
-( 0 0 -1024 ) ( 1 0 -1024 ) ( 0 1 -1024 ) CITY4_2 0 0 0 1 1
-( 0 0 -960 ) ( 0 1 -960 ) ( 1 0 -960 ) CITY4_2 0 0 0 1 1
+( -1664 0 0 ) ( -1664 1 0 ) ( -1664 0 1 ) CITY4_2 0 0 0 1 1
+( 1664 0 0 ) ( 1664 0 1 ) ( 1664 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1664 0 ) ( 0 -1664 1 ) ( 1 -1664 0 ) CITY4_2 0 0 0 1 1
+( 0 1664 0 ) ( 1 1664 0 ) ( 0 1664 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -960 ) ( 1 0 -960 ) ( 0 1 -960 ) CITY4_2 0 0 0 1 1
+( 0 0 -896 ) ( 0 1 -896 ) ( 1 0 -896 ) CITY4_2 0 0 0 1 1
 }
 {
-( -1216 0 0 ) ( -1216 1 0 ) ( -1216 0 1 ) CITY4_2 0 0 0 1 1
-( 1216 0 0 ) ( 1216 0 1 ) ( 1216 1 0 ) CITY4_2 0 0 0 1 1
-( 0 -1216 0 ) ( 0 -1216 1 ) ( 1 -1216 0 ) CITY4_2 0 0 0 1 1
-( 0 1216 0 ) ( 1 1216 0 ) ( 0 1216 1 ) CITY4_2 0 0 0 1 1
-( 0 0 960 ) ( 1 0 960 ) ( 0 1 960 ) CITY4_2 0 0 0 1 1
-( 0 0 1024 ) ( 0 1 1024 ) ( 1 0 1024 ) CITY4_2 0 0 0 1 1
+( -1664 0 0 ) ( -1664 1 0 ) ( -1664 0 1 ) CITY4_2 0 0 0 1 1
+( 1664 0 0 ) ( 1664 0 1 ) ( 1664 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1664 0 ) ( 0 -1664 1 ) ( 1 -1664 0 ) CITY4_2 0 0 0 1 1
+( 0 1664 0 ) ( 1 1664 0 ) ( 0 1664 1 ) CITY4_2 0 0 0 1 1
+( 0 0 896 ) ( 1 0 896 ) ( 0 1 896 ) CITY4_2 0 0 0 1 1
+( 0 0 960 ) ( 0 1 960 ) ( 1 0 960 ) CITY4_2 0 0 0 1 1
 }
 }
 {
 "classname" "info_player_start"
 "origin" "0 0 0"
+"angle" "0"
+}
+{
+"classname" "weapon_supershotgun"
+"origin" "-472 -600 0"
+"angle" "0"
+}
+{
+"classname" "weapon_nailgun"
+"origin" "-344 -600 0"
+"angle" "0"
+}
+{
+"classname" "weapon_grenadelauncher"
+"origin" "-216 -600 0"
+"angle" "0"
+}
+{
+"classname" "weapon_rocketlauncher"
+"origin" "-88 -600 0"
+"angle" "0"
+}
+{
+"classname" "item_shells"
+"origin" "40 -600 0"
+"angle" "0"
+}
+{
+"classname" "item_shells"
+"origin" "168 -600 0"
+"angle" "0"
+}
+{
+"classname" "item_shells"
+"origin" "296 -600 0"
+"angle" "0"
+}
+{
+"classname" "item_spikes"
+"origin" "424 -600 0"
+"angle" "0"
+}
+{
+"classname" "item_spikes"
+"origin" "552 -600 0"
+"angle" "0"
+}
+{
+"classname" "item_rockets"
+"origin" "-600 -472 0"
+"angle" "0"
+}
+{
+"classname" "item_rockets"
+"origin" "-472 -472 0"
+"angle" "0"
+}
+{
+"classname" "item_rockets"
+"origin" "-344 -472 0"
+"angle" "0"
+}
+{
+"classname" "item_health"
+"origin" "-216 -472 0"
+"angle" "0"
+}
+{
+"classname" "item_health"
+"origin" "-88 -472 0"
+"angle" "0"
+}
+{
+"classname" "item_health"
+"origin" "40 -472 0"
+"angle" "0"
+}
+{
+"classname" "item_health"
+"origin" "168 -472 0"
+"angle" "0"
+}
+{
+"classname" "item_armor2"
+"origin" "296 -472 0"
+"angle" "0"
+}
+{
+"classname" "monster_army"
+"origin" "424 -472 0"
+"angle" "0"
+}
+{
+"classname" "monster_army"
+"origin" "552 -472 0"
+"angle" "0"
+}
+{
+"classname" "monster_army"
+"origin" "-600 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_army"
+"origin" "-472 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_army"
+"origin" "-344 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_army"
+"origin" "-216 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_army"
+"origin" "-88 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_army"
+"origin" "40 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_dog"
+"origin" "168 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_dog"
+"origin" "296 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_dog"
+"origin" "424 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_dog"
+"origin" "552 -344 0"
+"angle" "0"
+}
+{
+"classname" "monster_dog"
+"origin" "-600 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_ogre"
+"origin" "-472 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_ogre"
+"origin" "-344 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_ogre"
+"origin" "-216 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_knight"
+"origin" "-88 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_knight"
+"origin" "40 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_knight"
+"origin" "168 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_knight"
+"origin" "296 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_demon1"
+"origin" "424 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_demon1"
+"origin" "552 -216 0"
+"angle" "0"
+}
+{
+"classname" "monster_zombie"
+"origin" "-600 -88 0"
+"angle" "0"
+}
+{
+"classname" "monster_zombie"
+"origin" "-472 -88 0"
+"angle" "0"
+}
+{
+"classname" "monster_shambler"
+"origin" "-344 -88 0"
 "angle" "0"
 }

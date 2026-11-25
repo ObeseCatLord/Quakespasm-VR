@@ -14,7 +14,7 @@
 #include <time.h>
 
 #ifndef TERRAIN_FIXTURE_GOLDEN
-#define TERRAIN_FIXTURE_GOLDEN 0xe37369ba533a5e02ull // seed 1; same under gcc -O0/-O2 and clang -O3 -ffast-math
+#define TERRAIN_FIXTURE_GOLDEN 0x6a1673dea18502c6ull // seed 1; same under gcc -O0/-O2 and clang -O3 -ffast-math
 #endif
 
 static double Now (void)

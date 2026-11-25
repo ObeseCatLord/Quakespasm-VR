@@ -1,13 +1,13 @@
 /*
- * Client side of the editable terrain prototype: owns one terrain region,
- * the console commands that create and edit it, and its draw.
+ * Client side of the editable terrain prototype: meshes and draws the region the server owns
+ * (terrain_active, see sv_terrain.c), plus the console commands for trying it.
  * GPL-2.0-or-later, as the rest of the engine.
  *
- * Scope so far: the region is local to this process (a listen server and its own client share it),
- * with no networking. Collision reads it through terrain_active. Lighting is computed per vertex
- * on the CPU (ambient occlusion plus a lamp at the eye) and drawn through the
- * untextured basic shader; a terrain shader with triplanar textures and the
- * clustered dynamic lights is later work.
+ * Only a listen server's own client sees terrain so far. This file never edits the field: its
+ * commands go through SV_Terrain_Edit, the same path a networked edit will take.
+ * Lighting is computed per vertex on the CPU (ambient occlusion plus a lamp at the eye) and drawn
+ * through the untextured basic shader; a terrain shader with triplanar textures and the clustered
+ * dynamic lights is later work.
  */
 #include "quakedef.h"
 #include "terrain.h"
@@ -16,8 +16,9 @@ typedef struct
 {
 	float pos[3];
 	float normal[3];
-	byte  rgb[3];
+	byte  material;
 	byte  ao;
+	byte  up; // how much the surface faces up, 0-255; snow settles on it in the ice look
 } terrain_drawvert_t;
 
 typedef struct
@@ -27,7 +28,9 @@ typedef struct
 	vec3_t				mins, maxs;
 } terrain_draw_t;
 
-static terrain_t	  *terrain;
+static terrain_t	  *terrain; // the region the draws below were built for; equals terrain_active once R_Terrain_Update ran
+static unsigned		   terrain_draw_epoch;
+static int			   terrain_draw_count;
 static terrain_draw_t *terrain_draws;
 static terrain_mesh_t  terrain_scratch;
 static double		   terrain_last_remesh_ms;
@@ -35,27 +38,34 @@ static int			   terrain_last_remesh_chunks;
 
 static cvar_t r_terrain = {"r_terrain", "1", CVAR_NONE};
 static cvar_t r_terrain_lamp = {"r_terrain_lamp", "700", CVAR_ARCHIVE};		// reach of the eye lamp in units; 0 turns it off
-static cvar_t terrain_seed = {"terrain_seed", "1", CVAR_NONE}; // used when a drg* map spawns its cave
+static cvar_t r_terrain_biome = {"r_terrain_biome", "1", CVAR_ARCHIVE};		// 0 rock cave, 1 ice cave
 static cvar_t r_terrain_ambient = {"r_terrain_ambient", "0.3", CVAR_ARCHIVE};
 
-static const float terrain_colors[TERRAIN_MAT_COUNT][3] = {
-	{0.44f, 0.41f, 0.39f}, // rock
-	{0.46f, 0.31f, 0.19f}, // dirt
-	{0.95f, 0.72f, 0.18f}, // gold
-	{0.62f, 0.64f, 0.60f}, // player fill
+static const float terrain_colors[2][TERRAIN_MAT_COUNT][3] = {
+	{
+		{0.44f, 0.41f, 0.39f}, // rock
+		{0.46f, 0.31f, 0.19f}, // dirt
+		{0.95f, 0.72f, 0.18f}, // gold
+		{0.62f, 0.64f, 0.60f}, // player fill
+	},
+	{
+		{0.50f, 0.74f, 0.93f}, // glacier ice
+		{0.90f, 0.94f, 1.00f}, // packed snow
+		{0.16f, 0.34f, 0.66f}, // old blue ice
+		{0.80f, 0.90f, 0.98f}, // cut ice
+	},
 };
+static const float terrain_snow[3] = {0.94f, 0.97f, 1.0f};
+static const float terrain_deep_ice[3] = {0.05f, 0.22f, 0.45f}; // what shadowed ice falls to instead of black
 
-static void Terrain_Clear (void)
+static void Terrain_FreeDraws (void)
 {
-	if (!terrain)
-		return;
-	const int count = terrain->size[0] * terrain->size[1] * terrain->size[2];
-	for (int i = 0; i < count; ++i)
+	for (int i = 0; i < terrain_draw_count; ++i)
 		free (terrain_draws[i].verts);
 	free (terrain_draws);
 	terrain_draws = NULL;
-	Terrain_Free (terrain);
-	terrain = terrain_active = NULL;
+	terrain_draw_count = 0;
+	terrain = NULL;
 }
 
 // Expands a chunk's indexed mesh to unshared triangles: rock keeps one normal per face so it
@@ -85,12 +95,11 @@ static void Terrain_BuildDraw (int index, const terrain_mesh_t *mesh)
 		for (int i = 0; i < 3; ++i)
 		{
 			terrain_drawvert_t *out = &draw->verts[k + i];
-			const float		   *color = terrain_colors[v[i]->material < TERRAIN_MAT_COUNT ? v[i]->material : 0];
 			VectorCopy (v[i]->pos, out->pos);
 			VectorCopy (smooth ? v[i]->normal : face, out->normal);
-			for (int c = 0; c < 3; ++c)
-				out->rgb[c] = (byte)(color[c] * 255.0f);
+			out->material = v[i]->material < TERRAIN_MAT_COUNT ? v[i]->material : 0;
 			out->ao = v[i]->ao;
+			out->up = (byte)(CLAMP (0.0f, v[i]->normal[2], 1.0f) * 255.0f);
 		}
 	}
 }
@@ -115,35 +124,43 @@ static void Terrain_RemeshDirty (void)
 	terrain_last_remesh_chunks = remeshed;
 }
 
-static void Terrain_SpawnAt (const vec3_t center, uint32_t seed, const int32_t size[3])
+/*
+Main thread, once per frame before drawing: follow the server's region and remesh what changed.
+*/
+void R_Terrain_Update (void)
 {
-	int32_t origin[3];
-	Terrain_Clear ();
-	for (int i = 0; i < 3; ++i)
-		origin[i] = (int)floorf (center[i] / TERRAIN_CELL + 0.5f) * TERRAIN_CELL - size[i] * TERRAIN_CHUNK_UNITS / 2;
-	terrain = Terrain_Create (origin, size, seed);
-	const int count = size[0] * size[1] * size[2];
-	terrain_draws = (terrain_draw_t *)calloc (count, sizeof (*terrain_draws));
-	for (int i = 0; i < count; ++i)
+	if (terrain_draw_epoch != terrain_epoch)
 	{
-		const int cell[3] = {i % size[0], i / size[0] % size[1], i / (size[0] * size[1])};
-		for (int a = 0; a < 3; ++a)
+		terrain_draw_epoch = terrain_epoch;
+		Terrain_FreeDraws ();
+		terrain = terrain_active;
+		if (terrain)
 		{
-			terrain_draws[i].mins[a] = (float)(origin[a] + cell[a] * TERRAIN_CHUNK_UNITS - TERRAIN_CELL);
-			terrain_draws[i].maxs[a] = (float)(origin[a] + (cell[a] + 1) * TERRAIN_CHUNK_UNITS + TERRAIN_CELL);
+			terrain_draw_count = terrain->size[0] * terrain->size[1] * terrain->size[2];
+			terrain_draws = (terrain_draw_t *)calloc (terrain_draw_count, sizeof (*terrain_draws));
+			for (int i = 0; i < terrain_draw_count; ++i)
+			{
+				const int cell[3] = {i % terrain->size[0], i / terrain->size[0] % terrain->size[1], i / (terrain->size[0] * terrain->size[1])};
+				for (int a = 0; a < 3; ++a)
+				{
+					terrain_draws[i].mins[a] = (float)(terrain->origin[a] + cell[a] * TERRAIN_CHUNK_UNITS - TERRAIN_CELL);
+					terrain_draws[i].maxs[a] = (float)(terrain->origin[a] + (cell[a] + 1) * TERRAIN_CHUNK_UNITS + TERRAIN_CELL);
+				}
+			}
 		}
 	}
-	const double start = Sys_DoubleTime ();
-	Terrain_Generate (terrain);
-	const double generated = Sys_DoubleTime ();
+	if (!terrain)
+		return;
 	Terrain_RemeshDirty ();
-	terrain_active = terrain;
-	int tris = 0;
-	for (int i = 0; i < count; ++i)
-		tris += terrain_draws[i].num_verts / 3;
-	Con_Printf (
-		"terrain: seed %u, %dx%dx%d chunks, %d triangles; generate %.1f ms, mesh %.1f ms (%d chunks), hash %016llx\n", seed, size[0], size[1], size[2], tris,
-		(generated - start) * 1000.0, terrain_last_remesh_ms, terrain_last_remesh_chunks, (unsigned long long)Terrain_Hash (terrain));
+	if (terrain_last_remesh_chunks > 8)
+	{
+		int tris = 0;
+		for (int i = 0; i < terrain_draw_count; ++i)
+			tris += terrain_draws[i].num_verts / 3;
+		Con_Printf ("terrain: meshed %d chunks in %.1f ms, %d triangles\n", terrain_last_remesh_chunks, terrain_last_remesh_ms, tris);
+	}
+	else if (terrain_last_remesh_chunks)
+		Con_DPrintf ("terrain: remesh %.3f ms over %d chunks\n", terrain_last_remesh_ms, terrain_last_remesh_chunks);
 }
 
 /*
@@ -152,12 +169,17 @@ Creates a cave region centred on the view position; its start room surrounds the
 */
 static void Terrain_Spawn_f (void)
 {
-	const uint32_t seed = Cmd_Argc () > 1 ? (uint32_t)atoi (Cmd_Argv (1)) : (uint32_t)terrain_seed.value;
+	if (!sv.active)
+	{
+		Con_Printf ("terrain_spawn: needs a local server\n");
+		return;
+	}
+	const uint32_t seed = Cmd_Argc () > 1 ? (uint32_t)atoi (Cmd_Argv (1)) : 1;
 	int32_t		   size[3] = {4, 4, 3};
 	if (Cmd_Argc () > 4)
 		for (int i = 0; i < 3; ++i)
 			size[i] = CLAMP (1, atoi (Cmd_Argv (2 + i)), 16);
-	Terrain_SpawnAt (r_refdef.vieworg, seed, size);
+	SV_Terrain_SpawnAt (r_refdef.vieworg, seed, size);
 }
 
 /*
@@ -166,17 +188,18 @@ Prints where the local player is relative to the terrain; the scripted collision
 */
 static void Terrain_Probe_f (void)
 {
-	if (!terrain || !sv.active || !sv_player)
+	if (!terrain_active || !sv.active || !sv_player)
 	{
 		Con_Printf ("terrain_probe: needs a terrain and a local server\n");
 		return;
 	}
+	const terrain_op_t *ops;
 	const float *o = sv_player->v.origin;
 	const vec3_t center = {o[0], o[1], o[2] + 4.0f};
 	Con_Printf (
-		"terrain_probe: origin %.1f %.1f %.1f vel %.0f %.0f %.0f onground %d field %.1f overlap %d\n", o[0], o[1], o[2], sv_player->v.velocity[0],
-		sv_player->v.velocity[1], sv_player->v.velocity[2], ((int)sv_player->v.flags & FL_ONGROUND) != 0, Terrain_SampleWorld (terrain, center),
-		Terrain_BoxOverlaps (terrain, o, sv_player->v.mins, sv_player->v.maxs));
+		"terrain_probe: origin %.1f %.1f %.1f vel %.0f %.0f %.0f onground %d field %.1f overlap %d ops %d\n", o[0], o[1], o[2], sv_player->v.velocity[0],
+		sv_player->v.velocity[1], sv_player->v.velocity[2], ((int)sv_player->v.flags & FL_ONGROUND) != 0, Terrain_SampleWorld (terrain_active, center),
+		Terrain_BoxOverlaps (terrain_active, o, sv_player->v.mins, sv_player->v.maxs), SV_Terrain_OpLog (&ops));
 }
 
 // Marches the view ray through the field. Returns false when nothing is hit within range.
@@ -188,7 +211,7 @@ static qboolean Terrain_ViewTrace (vec3_t hit)
 	while (travelled < 4096.0f)
 	{
 		VectorMA (r_refdef.vieworg, travelled, forward, hit);
-		const float d = Terrain_SampleWorld (terrain, hit);
+		const float d = Terrain_SampleWorld (terrain_active, hit);
 		if (d <= 1.0f)
 			return true; // also true at once when the eye is inside solid, so a buried player can dig out
 		travelled += q_max (d * 0.8f, 2.0f);
@@ -202,32 +225,20 @@ Applies one sphere op where the view ray meets the terrain. Radius is in Quake u
 */
 static void Terrain_Edit (int kind)
 {
-	if (!terrain)
+	if (!terrain_active || !sv.active)
 	{
-		Con_Printf ("no terrain; use terrain_spawn first\n");
+		Con_Printf ("no terrain on a local server; use terrain_spawn or a drg* map\n");
 		return;
 	}
-	const float radius = Cmd_Argc () > 1 ? CLAMP (8.0f, (float)atof (Cmd_Argv (1)), 512.0f) : 56.0f;
+	const float radius = Cmd_Argc () > 1 ? (float)atof (Cmd_Argv (1)) : 56.0f;
 	vec3_t		hit;
 	if (!Terrain_ViewTrace (hit))
 	{
 		Con_Printf ("terrain: nothing in view\n");
 		return;
 	}
-	// The op is quantized here; the quantized op is what a server would send and every peer replay.
-	terrain_op_t op;
-	op.kind = (uint8_t)kind;
-	op.material = TERRAIN_MAT_FILL;
-	op.radius = (uint16_t)(radius * TERRAIN_SUB / TERRAIN_CELL);
-	for (int i = 0; i < 3; ++i)
-		op.center[i] = (int32_t)floorf ((hit[i] - (float)terrain->origin[i]) * TERRAIN_SUB / TERRAIN_CELL + 0.5f);
-	const double start = Sys_DoubleTime ();
-	const int	 changed = Terrain_ApplyOp (terrain, &op);
-	const double applied = Sys_DoubleTime ();
-	Terrain_RemeshDirty ();
-	Con_DPrintf (
-		"terrain: %s r=%g changed %d samples; op %.3f ms, remesh %.3f ms over %d chunks\n", kind == TERRAIN_OP_DIG ? "dig" : "fill", radius, changed,
-		(applied - start) * 1000.0, terrain_last_remesh_ms, terrain_last_remesh_chunks);
+	const int changed = SV_Terrain_Edit (kind, hit, radius);
+	Con_DPrintf ("terrain: %s r=%g changed %d samples\n", kind == TERRAIN_OP_DIG ? "dig" : "fill", radius, changed);
 }
 
 static void Terrain_Dig_f (void)
@@ -242,7 +253,7 @@ static void Terrain_Fill_f (void)
 
 static void Terrain_Clear_f (void)
 {
-	Terrain_Clear ();
+	SV_Terrain_Clear ();
 }
 
 /*
@@ -276,26 +287,15 @@ static void Terrain_Bench_f (void)
 		Con_Printf ("terrain_bench: %d surface chunks, mean %.3f ms, worst %.3f ms per chunk remesh\n", surface / 4, total / surface, worst);
 }
 
-// A map whose file name starts with "drg" is a shell for a cave: the region fills the middle of the
-// map, and the map's player start is expected to sit at its centre, inside the generated start room.
-void R_Terrain_NewMap (void)
-{
-	Terrain_Clear ();
-	if (!cl.worldmodel || strncmp (COM_SkipPath (cl.worldmodel->name), "drg", 3))
-		return;
-	vec3_t		  center;
-	const int32_t size[3] = {4, 4, 3};
-	for (int i = 0; i < 3; ++i)
-		center[i] = (cl.worldmodel->mins[i] + cl.worldmodel->maxs[i]) * 0.5f;
-	Terrain_SpawnAt (center, (uint32_t)terrain_seed.value, size);
-}
+// The server replaces the region on map load (sv_terrain.c); R_Terrain_Update picks that up.
+void R_Terrain_NewMap (void) {}
 
 void R_Terrain_Init (void)
 {
 	Cvar_RegisterVariable (&r_terrain);
 	Cvar_RegisterVariable (&r_terrain_lamp);
 	Cvar_RegisterVariable (&r_terrain_ambient);
-	Cvar_RegisterVariable (&terrain_seed);
+	Cvar_RegisterVariable (&r_terrain_biome);
 	Cmd_AddCommand ("terrain_spawn", Terrain_Spawn_f);
 	Cmd_AddCommand ("terrain_dig", Terrain_Dig_f);
 	Cmd_AddCommand ("terrain_fill", Terrain_Fill_f);
@@ -306,7 +306,7 @@ void R_Terrain_Init (void)
 
 void R_DrawTerrain (cb_context_t *cbx)
 {
-	if (!terrain || !r_terrain.value)
+	if (!terrain_draw_count || !r_terrain.value)
 		return;
 
 	R_BeginDebugUtilsLabel (cbx, "terrain");
@@ -315,8 +315,8 @@ void R_DrawTerrain (cb_context_t *cbx)
 	const float lamp = r_terrain_lamp.value;
 	const float lamp_falloff = lamp > 0.0f ? 1.0f / (lamp * lamp * 0.08f) : 0.0f; // half brightness at about 0.28 of the reach
 	const float ambient = r_terrain_ambient.value;
-	const int	count = terrain->size[0] * terrain->size[1] * terrain->size[2];
-	for (int i = 0; i < count; ++i)
+	const int	ice = r_terrain_biome.value != 0.0f;
+	for (int i = 0; i < terrain_draw_count; ++i)
 	{
 		const terrain_draw_t *draw = &terrain_draws[i];
 		if (!draw->num_verts || R_CullBox ((float *)draw->mins, (float *)draw->maxs))
@@ -331,6 +331,7 @@ void R_DrawTerrain (cb_context_t *cbx)
 			const float				  ao = 0.25f + 0.75f * (float)v->ao / 255.0f;
 			// sky-ish hemisphere term so floors, walls and ceilings separate even without the lamp
 			float light = ambient * (0.75f + 0.25f * v->normal[2]);
+			float shine = 0.0f;
 			if (lamp > 0.0f)
 			{
 				vec3_t to_eye;
@@ -338,14 +339,35 @@ void R_DrawTerrain (cb_context_t *cbx)
 				const float dist2 = DotProduct (to_eye, to_eye);
 				const float facing = DotProduct (to_eye, v->normal) / sqrtf (dist2 + 1.0f);
 				if (facing > 0.0f)
-					light += 0.85f * facing / (1.0f + dist2 * lamp_falloff);
+				{
+					const float reach = 1.0f / (1.0f + dist2 * lamp_falloff);
+					light += 0.85f * facing * reach;
+					if (ice)
+					{
+						const float f4 = facing * facing * facing * facing;
+						shine = 0.55f * f4 * f4 * f4 * reach; // tight glint where the ice faces the lamp
+					}
+				}
 			}
-			light = q_min (light * ao, 1.0f);
+			float rgb[3];
+			VectorCopy (terrain_colors[ice][v->material], rgb);
+			if (ice)
+			{
+				// snow settles on what faces up; shadowed ice goes deep blue instead of black
+				const float snow = CLAMP (0.0f, ((float)v->up / 255.0f - 0.55f) * 3.0f, 1.0f);
+				for (int c = 0; c < 3; ++c)
+				{
+					rgb[c] += (terrain_snow[c] - rgb[c]) * snow;
+					rgb[c] = terrain_deep_ice[c] * (1.0f - ao) * (1.0f - snow) + rgb[c] * (snow + (1.0f - snow) * ao);
+				}
+				light = q_min (light, 1.0f);
+			}
+			else
+				light = q_min (light * ao, 1.0f);
 			VectorCopy (v->pos, out[k].position);
 			out[k].texcoord[0] = out[k].texcoord[1] = 0.0f;
-			out[k].color[0] = (byte)(v->rgb[0] * light);
-			out[k].color[1] = (byte)(v->rgb[1] * light);
-			out[k].color[2] = (byte)(v->rgb[2] * light);
+			for (int c = 0; c < 3; ++c)
+				out[k].color[c] = (byte)(q_min (rgb[c] * light + shine, 1.0f) * 255.0f);
 			out[k].color[3] = 255;
 		}
 		vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);

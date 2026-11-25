@@ -289,6 +289,7 @@ srcs = [
     'Quake/gl_rmisc.c',
     'Quake/r_passes.c',
     'Quake/r_terrain.c',
+    'Quake/sv_terrain.c',
     'Quake/terrain.c',
     'Quake/r_ssao.c',
     'Quake/gl_screen.c',

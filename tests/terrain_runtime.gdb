@@ -1,6 +1,6 @@
 # Drives a windowed client through spawn, dig, fill and screenshots, one console line per N frames.
 # gdb -q -batch -x tests/terrain_runtime.gdb --args <vkquake> -basedir <dir with id1> -novr -nosound -window +map start
-# Expect "terrain:" lines with hash e37369ba533a5e02 for seed 1 and five "Wrote" screenshots in id1.
+# Expect "terrain:" lines with hash 6a1673dea18502c6 for seed 1 and five "Wrote" screenshots in id1.
 set pagination off
 set confirm off
 set debuginfod enabled off

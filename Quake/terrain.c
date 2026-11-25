@@ -255,21 +255,23 @@ void Terrain_Generate (terrain_t *t)
 		extent[a] = t->size[a] * TERRAIN_CHUNK * TERRAIN_SUB;
 		pos[a] = extent[a] / 2;
 	}
-	terrain_op_t op = {TERRAIN_OP_DIG, 0, 7 * TERRAIN_SUB, {pos[0], pos[1], pos[2]}};
+	terrain_op_t op = {TERRAIN_OP_DIG, 0, 11 * TERRAIN_SUB, {pos[0], pos[1], pos[2]}};
 	Terrain_ApplyOp (t, &op); // start room at the region centre
-	const int margin = 8 * TERRAIN_SUB;
-	const int worms = 3 + t->size[0] * t->size[1] * t->size[2] / 8;
+	// Sized for Quake: passages 130-260 units across (a player is 32 by 56), chambers about 450.
+	// The margin keeps every dig inside the region, so the cave never opens onto the map shell.
+	const int margin = 16 * TERRAIN_SUB;
+	const int worms = 3 + t->size[0] * t->size[1] * t->size[2] / 10;
 	for (int w = 0; w < worms; ++w)
 	{
 		int32_t p[3] = {pos[0], pos[1], pos[2]};
 		int32_t dir[3] = {(int32_t)(XorShift (&rng) % 257) - 128, (int32_t)(XorShift (&rng) % 257) - 128, (int32_t)(XorShift (&rng) % 129) - 64};
-		int		radius = 3 * TERRAIN_SUB;
-		for (int step = 0; step < 48; ++step)
+		int		radius = 6 * TERRAIN_SUB;
+		for (int step = 0; step < 40; ++step)
 		{
 			for (int a = 0; a < 3; ++a)
 			{
 				// wander: nudge the heading, keep vertical travel gentler than horizontal
-				dir[a] = Clamp (dir[a] + (int32_t)(XorShift (&rng) % 97) - 48, a == 2 ? -80 : -128, a == 2 ? 80 : 128);
+				dir[a] = Clamp (dir[a] + (int32_t)(XorShift (&rng) % 97) - 48, a == 2 ? -56 : -128, a == 2 ? 56 : 128);
 				p[a] += dir[a] * radius / 160;
 				if (p[a] < margin || p[a] > extent[a] - margin)
 				{
@@ -277,9 +279,9 @@ void Terrain_Generate (terrain_t *t)
 					p[a] = Clamp (p[a], margin, extent[a] - margin);
 				}
 			}
-			radius = Clamp (radius + (int)(XorShift (&rng) % 49) - 24, 2 * TERRAIN_SUB, 5 * TERRAIN_SUB);
-			if (XorShift (&rng) % 16 == 0)
-				radius = 7 * TERRAIN_SUB; // occasional chamber
+			radius = Clamp (radius + (int)(XorShift (&rng) % 65) - 32, 4 * TERRAIN_SUB, 8 * TERRAIN_SUB);
+			if (XorShift (&rng) % 14 == 0)
+				radius = 14 * TERRAIN_SUB; // occasional chamber
 			op.radius = (uint16_t)radius;
 			op.center[0] = p[0];
 			op.center[1] = p[1];

@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include <errno.h>
 #include "quakedef.h"
+#include "terrain.h"
 #include "skyroom_metadata.h"
 #include "pmove.h"
 #include "vr_weapon_calibration.h"
@@ -3099,6 +3100,8 @@ void SV_Init (void)
 	extern cvar_t com_protocolname;
 	extern cvar_t net_masters[];
 	extern cvar_t rcon_password;
+
+	SV_Terrain_Init ();
 
 	// FTE optimized world geometry checks
 	extern cvar_t sv_fte_recursivehullckeck;
@@ -6478,7 +6481,9 @@ void SV_SpawnServer (const char *server)
 	// serverflags are for cross level information (sigils)
 	pr_global_struct->serverflags = svs.serverflags;
 
+	SV_Terrain_NewMap ();
 	ED_LoadFromFile (qcvm->worldmodel->entities);
+	SV_Terrain_PlaceEntities ();
 
 	sv.active = true;
 

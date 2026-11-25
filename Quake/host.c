@@ -23,6 +23,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // host.c -- coordinates spawning and killing of local servers
 
 #include "quakedef.h"
+#include "terrain.h"
 #include "addon_catalog.h"
 #include "bgmusic.h"
 #include "steam.h"
@@ -1395,6 +1396,7 @@ static void _Host_Frame (double time)
 	if (host_speeds.value)
 		time1 = Sys_DoubleTime ();
 
+	R_Terrain_Update ();
 	SCR_UpdateScreen (true);
 
 	CL_RunParticles (); // johnfitz -- seperated from rendering

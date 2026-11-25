@@ -104,5 +104,18 @@ int Terrain_PointSolid (const terrain_t *t, const float p[3]);
 
 // The one terrain region the running game collides with, or NULL. Owned by the client module for now.
 extern terrain_t *terrain_active;
+extern unsigned	  terrain_epoch; // changes whenever terrain_active is replaced or freed
+
+/* Server side (sv_terrain.c). Engine code only; the offline fixture does not link these. */
+struct edict_s;
+void SV_Terrain_Init (void);
+void SV_Terrain_NewMap (void);
+void SV_Terrain_PlaceEntities (void);
+void SV_Terrain_Clear (void);
+void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t size[3]);
+int	 SV_Terrain_Edit (int kind, const float pos[3], float radius);
+int	 SV_Terrain_OpLog (const terrain_op_t **ops);
+void SV_Terrain_PlayerFrame (struct edict_s *ent, int num);
+void R_Terrain_Update (void);
 
 #endif

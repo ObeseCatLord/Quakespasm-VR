@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // sv_phys.c
 
 #include "quakedef.h"
+#include "terrain.h"
 #include "pmove.h"
 #include "vr_gorilla.h"
 #include "vr_weapon_calibration.h"
@@ -12364,6 +12365,7 @@ static void SV_Physics_Client (edict_t *ent, int num)
 
 	if (!client->active)
 		return; // unconnected slot
+	SV_Terrain_PlayerFrame (ent, num);
 	client->private_pmove_pusher_interaction = false;
 	if (ent->free || ent->v.health <= 0 || ent->v.deadflag != DEAD_NO)
 		SV_ClearRecentInstantTeleportTriggerForClientSlot (num - 1);
