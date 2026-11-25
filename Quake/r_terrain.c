@@ -34,7 +34,7 @@ static int			   terrain_last_remesh_chunks;
 
 static cvar_t r_terrain = {"r_terrain", "1", CVAR_NONE};
 static cvar_t r_terrain_lamp = {"r_terrain_lamp", "700", CVAR_ARCHIVE};		// reach of the eye lamp in units; 0 turns it off
-static cvar_t r_terrain_ambient = {"r_terrain_ambient", "0.22", CVAR_ARCHIVE};
+static cvar_t r_terrain_ambient = {"r_terrain_ambient", "0.12", CVAR_ARCHIVE};
 
 static const float terrain_colors[TERRAIN_MAT_COUNT][3] = {
 	{0.44f, 0.41f, 0.39f}, // rock
@@ -277,7 +277,7 @@ void R_DrawTerrain (cb_context_t *cbx)
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.terrain_pipeline[cbx->pipeline_variant]);
 
 	const float lamp = r_terrain_lamp.value;
-	const float lamp_falloff = lamp > 0.0f ? 1.0f / (lamp * lamp * 0.25f) : 0.0f;
+	const float lamp_falloff = lamp > 0.0f ? 1.0f / (lamp * lamp * 0.08f) : 0.0f; // half brightness at about 0.28 of the reach
 	const float ambient = r_terrain_ambient.value;
 	const int	count = terrain->size[0] * terrain->size[1] * terrain->size[2];
 	for (int i = 0; i < count; ++i)
@@ -302,7 +302,7 @@ void R_DrawTerrain (cb_context_t *cbx)
 				const float dist2 = DotProduct (to_eye, to_eye);
 				const float facing = DotProduct (to_eye, v->normal) / sqrtf (dist2 + 1.0f);
 				if (facing > 0.0f)
-					light += facing / (1.0f + dist2 * lamp_falloff);
+					light += 0.85f * facing / (1.0f + dist2 * lamp_falloff);
 			}
 			light = q_min (light * ao, 1.0f);
 			VectorCopy (v->pos, out[k].position);
