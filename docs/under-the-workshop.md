@@ -1,0 +1,77 @@
+# Under the Workshop: diggable cave prototype
+
+Branch `drg-terrain`. A Deep Rock Galactic style cave inside the engine: a generated, fully
+diggable ice cave that Quake's weapons, monsters and physics work in. Working title for the
+total conversion: "Under the Workshop" (a tunnel is found under Santa's workshop).
+
+This is a prototype. Nothing here is networked yet, and nothing has been run in a headset.
+
+## Run it
+
+1. Compile `tests/maps/drgbox.map` with `qbsp` from ericw-tools and put `drgbox.bsp` in
+   `<basedir>/id1/maps/`. The map is only a sealed box with a player start, weapons, ammo and
+   25 vanilla monsters.
+2. `vkquake -basedir <basedir> -novr +map drgbox +bind f terrain_flare`
+
+Any map whose name starts with `drg` gets a cave: the server generates it at the map centre
+before the entities spawn, then moves the player start, items and monsters onto the cave floor.
+
+- Axe: digs.
+- Rocket and grenade explosions (anyone's): dig.
+- Hold jump in the air: jetpack (a stopgap for traversal).
+- Hold jump against a ledge: vault onto it.
+- `terrain_flare`: throws a bouncing light.
+- Four fiends crawl on floors, walls and ceilings and hunt by a flow field.
+
+## Where things are
+
+| File | What |
+| --- | --- |
+| `Quake/terrain.c`, `terrain.h` | Sparse signed-distance field (16-unit cells, 32^3 chunks), cave generator, surface-nets mesher, swept-box collision against triangles made on the fly. No engine dependencies; `tests/terrain_fixture.c` builds it alone. |
+| `Quake/sv_terrain.c` | Server side: owns the region and the op log, entity placement, axe, jetpack, vault, explosion digging, flares, crawlers and their flow field. |
+| `Quake/r_terrain.c` | Client side: meshes and draws the region (untextured, CPU vertex lighting plus the client's dynamic lights). |
+| `Quake/world.c`, `pmove.c`, `sv_move.c`, `sv_phys.c`, `pr_cmds.c` | Small hooks: traces, point contents, player movement, monster steps, explosion sniffing. |
+
+## Design rules so far
+
+- **The server owns the terrain.** State is seed + size + origin + an ordered list of sphere
+  ops (`SV_Terrain_OpLog`). Every change goes through `SV_Terrain_Edit`. The generator and the
+  ops are integer and deterministic: the seed-1 hash in the fixture is the same under gcc and
+  clang at any optimisation level. A client that has the seed and the op log has the cave.
+- **The client only draws.** Today it reads the server's region through `terrain_active`, which
+  works for a listen server only. Sending seed and ops over the wire is the missing piece.
+- **No QuakeC changes.** Everything works with a stock `progs.dat`: abilities read buttons and
+  weapon fields, explosion digging watches the `TE_EXPLOSION` broadcasts, crawlers are spawned
+  through the progs' own `monster_demon1` function.
+
+## Cvars and commands
+
+| Name | Default | |
+| --- | --- | --- |
+| `terrain_seed` | 1 | cave seed for drg* maps |
+| `terrain_axedig`, `terrain_jetpack`, `terrain_vault` | 1 | abilities |
+| `terrain_blast` | 64 | radius an explosion digs; 0 is off |
+| `terrain_slope` | 0.55 | least walkable floor normal z on terrain |
+| `terrain_monsterstep` | 1 | slope-tolerant monster steps |
+| `terrain_crawlers` | 4 | crawlers added at map load |
+| `terrain_crawler_sense`, `terrain_crawler_speed` | 900, 210 | |
+| `r_terrain_ambient`, `r_terrain_lamp`, `r_terrain_dlights`, `r_terrain_biome` | | look |
+
+Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, `terrain_fill`,
+`terrain_spawn`, `terrain_bench`.
+
+## Tests
+
+- `gcc -O2 -std=c11 -IQuake tests/terrain_fixture.c Quake/terrain.c -lm && ./a.out` prints
+  `TERRAIN_FIXTURE_PASSED`.
+- `tests/run-headless.sh tests/terrain_<name>.gdb [basedir]` drives the engine with gdb inside a
+  headless sway session (Linux, real GPU, no window) and leaves `id1/condump.txt`. Each script's
+  header says what to expect.
+
+## Known gaps
+
+- No netsync, no headset pass, no VR-hand digging.
+- The region edge is a flat wall that cannot be dug.
+- Vanilla monsters have no pathfinding and walk into cave walls.
+- Crawlers ignore each other's bodies beyond a simple spacing push, and ignore BSP.
+- Meshing is synchronous on the main thread; vertices are re-uploaded every frame.
