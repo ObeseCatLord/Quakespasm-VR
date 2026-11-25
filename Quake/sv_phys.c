@@ -12799,6 +12799,9 @@ void SV_Physics (void)
 		PR_ExecuteProgram (pr_global_struct->StartFrame);
 	}
 
+	if (qcvm == &sv.qcvm)
+		SV_Terrain_WormFrame ();
+
 	// SV_CheckAllEnts ();
 
 	//

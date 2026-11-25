@@ -123,6 +123,10 @@ int	 SV_Terrain_CrawlerFrame (struct edict_s *ent); // 1 when the edict is a sur
 int	 SV_Terrain_IsCrawler (struct edict_s *ent);
 int	 SV_Terrain_RelaxedSteps (void);
 extern int sv_terrain_step_stats[6]; // monster steps: ok, blocked, edge, bad footing
+void SV_Terrain_WormInit (void);
+void SV_Terrain_WormReset (void);
+void SV_Terrain_WormMapLoad (const float start[3]); // precache; spawn one when terrain_worm is set
+void SV_Terrain_WormFrame (void);					// once per server frame, before entities run
 void R_Terrain_Update (void);
 
 #endif
