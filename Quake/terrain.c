@@ -291,6 +291,88 @@ void Terrain_Generate (terrain_t *t)
 	}
 }
 
+// Lattice height of the first solid sample above (dir 1) or below (dir -1) z, or -1 within limit.
+static int SolidAlong (const terrain_t *t, int x, int y, int z, int dir, int limit)
+{
+	for (int k = 1; k <= limit; ++k)
+		if (Terrain_Sample (t, x, y, z + dir * k, NULL) < 0)
+			return z + dir * k;
+	return -1;
+}
+
+static void FillColumn (terrain_t *t, int x, int y, int z0, int z1, int r0, int r1, int bulge)
+{
+	// a stack of fill spheres from z0 to z1 (lattice), radius r0 at z0 to r1 at z1 (TERRAIN_SUB units),
+	// plus `bulge` extra at both ends so columns flare into floor and ceiling
+	terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_GOLD, 0, {x * TERRAIN_SUB + TERRAIN_SUB / 2, y * TERRAIN_SUB + TERRAIN_SUB / 2, 0}};
+	const int	 len = (z1 - z0) * TERRAIN_SUB;
+	const int	 dir = len < 0 ? -1 : 1;
+	for (int d = 0; d * dir <= len * dir;)
+	{
+		const int f = len ? d * 256 / len : 0; // 0..256 along the column
+		const int edge = (f < 128 ? 128 - f : f - 128);
+		int		  r = r0 + (r1 - r0) * f / 256 + bulge * edge * edge / (128 * 128);
+		if (r < TERRAIN_SUB / 3)
+			r = TERRAIN_SUB / 3;
+		op.radius = (uint16_t)r;
+		op.center[2] = z0 * TERRAIN_SUB + d;
+		Terrain_ApplyOp (t, &op);
+		d += dir * (r / 2 > 4 ? r / 2 : 4);
+	}
+}
+
+int Terrain_GenerateIce (terrain_t *t)
+{
+	uint32_t rng = t->seed * 0x9e3779b9u + 0x1ce1ce1u;
+	if (!rng)
+		rng = 1;
+	const int nx = t->size[0] * TERRAIN_CHUNK, ny = t->size[1] * TERRAIN_CHUNK, nz = t->size[2] * TERRAIN_CHUNK;
+	const int want = 6 + t->size[0] * t->size[1] * t->size[2] / 2;
+	int		  made = 0;
+	for (int attempt = 0; attempt < want * 60 && made < want; ++attempt)
+	{
+		const int x = 4 + (int)(XorShift (&rng) % (uint32_t)(nx - 8)), y = 4 + (int)(XorShift (&rng) % (uint32_t)(ny - 8));
+		const int z = 4 + (int)(XorShift (&rng) % (uint32_t)(nz - 8));
+		const int dx = x - nx / 2, dy = y - ny / 2, dz = z - nz / 2;
+		if (dx * dx + dy * dy + dz * dz < 16 * 16) // keep the start room clear
+			continue;
+		if (Terrain_Sample (t, x, y, z, NULL) < TERRAIN_SDF_MAX) // well clear of every wall
+			continue;
+		const int floor = SolidAlong (t, x, y, z, -1, 40), ceil = SolidAlong (t, x, y, z, 1, 40);
+		if (floor < 0 || ceil < 0)
+			continue;
+		const int height = ceil - floor;
+		if (height < 8)
+			continue;
+		const uint32_t kind = XorShift (&rng) % 8;
+		if (kind < 3 && height <= 26)
+		{
+			// a full pillar, waisted in the middle
+			const int r = (int)(TERRAIN_SUB * 3 / 2 + XorShift (&rng) % TERRAIN_SUB);
+			FillColumn (t, x, y, floor, ceil, r, r, r);
+		}
+		else
+		{
+			// icicles hanging from the ceiling, sometimes with a stub growing up to meet one
+			const int n = 1 + (int)(XorShift (&rng) % 3);
+			for (int i = 0; i < n; ++i)
+			{
+				const int ix = x + (int)(XorShift (&rng) % 7) - 3, iy = y + (int)(XorShift (&rng) % 7) - 3;
+				const int top = SolidAlong (t, ix, iy, z, 1, 40);
+				if (top < 0)
+					continue;
+				const int length = height * (25 + (int)(XorShift (&rng) % 30)) / 100;
+				const int r = (int)(TERRAIN_SUB + XorShift (&rng) % TERRAIN_SUB);
+				FillColumn (t, ix, iy, top + 1, top - length, r, TERRAIN_SUB / 4, 0);
+			}
+			if (kind == 7)
+				FillColumn (t, x, y, floor - 1, floor + height / 4, TERRAIN_SUB * 2, TERRAIN_SUB / 3, 0);
+		}
+		++made;
+	}
+	return made;
+}
+
 uint64_t Terrain_Hash (const terrain_t *t)
 {
 	uint64_t  h = 0xcbf29ce484222325ull;

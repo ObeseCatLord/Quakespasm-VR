@@ -81,6 +81,7 @@ typedef struct
 terrain_t *Terrain_Create (const int32_t origin[3], const int32_t size_chunks[3], uint32_t seed);
 void	   Terrain_Free (terrain_t *t);
 void	   Terrain_Generate (terrain_t *t); // carves the seed's cave with ordinary dig ops
+int		   Terrain_GenerateIce (terrain_t *t); // optional: ice pillars and icicles grown with fill ops; returns how many
 int		   Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op); // returns samples changed
 int		   Terrain_Sample (const terrain_t *t, int x, int y, int z, uint8_t *mat); // lattice coordinates; outside is solid
 float	   Terrain_SampleWorld (const terrain_t *t, const float p[3]); // trilinear distance in Quake units
