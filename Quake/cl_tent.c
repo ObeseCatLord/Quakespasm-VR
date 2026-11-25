@@ -353,6 +353,7 @@ void CL_UpdateTEnts (void)
 	const qboolean tracked = V_TrackedSessionActive ();
 
 	num_temp_entities = 0;
+	R_Terrain_AddEntities (); // the terrain styles' props and their lights (r_terrain_props.c)
 
 	if (cl.paused)
 		COM_SeedRand ((uint64_t)(cl.time * 1000)); // johnfitz -- freeze beams when paused
