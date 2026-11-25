@@ -576,7 +576,7 @@ trace_t PM_TraceLine (vec3_t start, vec3_t end)
 	return PM_PlayerTrace(start, end, MASK_PLAYERSOLID);
 }
 
-#define	MIN_STEP_NORMAL	0.7		// roughly 45 degrees
+#define	MIN_STEP_NORMAL	SV_Terrain_WalkNormal ()	// 0.7, roughly 45 degrees; steeper on cave terrain
 
 #define	STOP_EPSILON	0.1
 #define BLOCKED_FLOOR	1
@@ -1426,6 +1426,7 @@ void PM_CategorizePosition (void)
 	gorilla_airborne_brace = PM_GorillaGroundContact() && !pmove.onground &&
 		DotProduct(pmove.gravitydir, pmove.velocity) <= 0 &&
 		(pmove.gorilla_braced || pmove.gorilla.touching);
+	qboolean terrain_wedged = false;
 	VectorAdd(pmove.origin, pmove.gravitydir, point);
 	trace.startsolid = trace.allsolid = true;
 	VectorClear(trace.endpos);
@@ -1442,16 +1443,21 @@ void PM_CategorizePosition (void)
 		trace = PM_PlayerTrace (pmove.origin, point, MASK_PLAYERSOLID);
 		if (!trace.startsolid && trace.fraction < 1 && -DotProduct(pmove.gravitydir, trace.plane.normal) < MIN_STEP_NORMAL)
 		{	//if the trace hit a slope, slide down the slope to see if we can find ground below. this should fix the 'base-of-slope-is-slide' bug.
-			vec3_t bounce;
+			vec3_t bounce, first;
+			VectorCopy (trace.plane.normal, first);
 			PM_ClipVelocity (pmove.gravitydir, trace.plane.normal, bounce, 2);
 			VectorMA(trace.endpos, 1-trace.fraction, bounce, point);
 			trace = PM_PlayerTrace (trace.endpos, point, MASK_PLAYERSOLID);
+			/* Terrain crevice: the slide is stopped at once by a second steep face, so the
+			 * player hangs between two walls with nothing to push off. Count that as ground. */
+			if (terrain_active && !trace.startsolid && trace.fraction < 1 && DotProduct (first, trace.plane.normal) < 0.98f)
+				terrain_wedged = true;
 		}
 
 		/* Retain a real hand-created lift across command boundaries, but a
 		 * stationary grounded brace still follows ordinary support snapping.
 		 * A trace starting at support (fraction zero) must ground us again. */
-		if (!trace.startsolid && (trace.fraction == 1 || -DotProduct(pmove.gravitydir, trace.plane.normal) < MIN_STEP_NORMAL ||
+		if (!terrain_wedged && !trace.startsolid && (trace.fraction == 1 || -DotProduct(pmove.gravitydir, trace.plane.normal) < MIN_STEP_NORMAL ||
 			(gorilla_airborne_brace && trace.fraction > .0001f)))
 			pmove.onground = false;
 		else

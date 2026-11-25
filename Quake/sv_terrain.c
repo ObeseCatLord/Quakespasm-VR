@@ -21,11 +21,38 @@ static cvar_t terrain_axedig = {"terrain_axedig", "1", CVAR_NONE};		   // the ax
 static cvar_t terrain_jetpack = {"terrain_jetpack", "1", CVAR_NONE};	   // hold jump in the air to climb
 static cvar_t terrain_jetpack_thrust = {"terrain_jetpack_thrust", "1500", CVAR_NONE}; // units/s^2, against sv_gravity
 static cvar_t terrain_blast = {"terrain_blast", "64", CVAR_NONE};				   // radius an explosion digs; 0 turns it off
+static cvar_t terrain_slope = {"terrain_slope", "0.55", CVAR_NONE};					   // least walkable floor normal z on terrain (BSP: 0.7)
+static cvar_t terrain_vault = {"terrain_vault", "1", CVAR_NONE};					   // hold jump at a ledge to climb onto it
+static cvar_t terrain_vault_height = {"terrain_vault_height", "76", CVAR_NONE};		   // highest ledge above the feet
+static cvar_t terrain_crawlers = {"terrain_crawlers", "4", CVAR_NONE};				   // surface-crawling fiends added to a drg* map
+static cvar_t terrain_crawler_speed = {"terrain_crawler_speed", "210", CVAR_NONE};
+static cvar_t terrain_crawler_sense = {"terrain_crawler_sense", "900", CVAR_NONE}; // crawlers wake for a player this close, seen or not
+static cvar_t terrain_monsterstep = {"terrain_monsterstep", "1", CVAR_NONE};		   // slope-tolerant monster steps on terrain
 static cvar_t terrain_jetpack_speed = {"terrain_jetpack_speed", "260", CVAR_NONE};	  // fastest climb
 
 #define FLARE_MODEL "progs/s_light.spr"
 #define MAX_FLARES	8
 static edict_t *sv_terrain_flares[MAX_FLARES];
+
+static struct
+{
+	double until, next;
+	float  top_z, dir[2];
+} sv_terrain_vaults[MAX_SCOREBOARD + 1];
+
+#define MAX_CRAWLERS   32
+#define CRAWLER_FEET   24.0f // model origin above its feet
+#define CRAWLER_MODEL  "monster_demon1"
+typedef struct
+{
+	edict_t *ent;
+	int		 attached;
+	float	 normal[3], forward[3];
+	double	 air_since;
+} terrain_crawler_t;
+static terrain_crawler_t sv_terrain_crawlers[MAX_CRAWLERS];
+static int				 sv_terrain_num_crawlers;
+static int				 nav_ops_seen = -1; // op count the crawler flow field was built for
 static int		sv_terrain_next_flare;
 static int		sv_terrain_sniff_state, sv_terrain_sniff_count;
 static float	sv_terrain_sniff_pos[3];
@@ -57,6 +84,10 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 	++terrain_epoch;
 	memset (sv_terrain_next_dig, 0, sizeof (sv_terrain_next_dig));
 	memset (sv_terrain_flares, 0, sizeof (sv_terrain_flares));
+	memset (sv_terrain_vaults, 0, sizeof (sv_terrain_vaults));
+	sv_terrain_num_crawlers = 0;
+	nav_ops_seen = -1;
+	memset (sv_terrain_step_stats, 0, sizeof (sv_terrain_step_stats));
 	sv_terrain_sniff_state = 0;
 	Con_Printf (
 		"terrain: seed %u, %dx%dx%d chunks, generate %.1f ms, hash %016llx\n", seed, size[0], size[1], size[2], (Sys_DoubleTime () - start) * 1000.0,
@@ -150,6 +181,414 @@ static qboolean PlaceFindFloor (uint32_t *rng, const float mins[3], const float 
 	return false;
 }
 
+int SV_Terrain_RelaxedSteps (void)
+{
+	return terrain_active && terrain_monsterstep.value;
+}
+
+float SV_Terrain_WalkNormal (void)
+{
+	return terrain_active ? terrain_slope.value : 0.7f;
+}
+
+/*
+Surface crawler prototype. The edict is an ordinary QuakeC fiend (its think, pain, death and melee
+all still run), but its position is owned here: it is glued to the zero surface of the terrain
+field, on floors, walls and ceilings alike, and walks straight at its enemy along that surface.
+There is no pathfinding. A leap (QuakeC clears FL_ONGROUND and sets a velocity) lets go of the
+surface until it lands or a second passes.
+*/
+static terrain_crawler_t *CrawlerFind (edict_t *ent)
+{
+	for (int i = 0; i < sv_terrain_num_crawlers; ++i)
+		if (sv_terrain_crawlers[i].ent == ent)
+			return &sv_terrain_crawlers[i];
+	return NULL;
+}
+
+int SV_Terrain_IsCrawler (edict_t *ent)
+{
+	terrain_crawler_t *c = sv_terrain_num_crawlers ? CrawlerFind (ent) : NULL;
+	return c && c->attached;
+}
+
+/*
+Flow field for the crawlers: a coarse grid over the region, each open cell holding its walking
+distance (through open cells) to the nearest living player. Stepping to the neighbour with the
+smallest number is the way through the cave, whatever shape digging has left it in. The open-cell
+mask is rebuilt at most once a second after an edit, the distances four times a second.
+*/
+#define NAV_CELL 32.0f
+#define NAV_FAR	 0xffff
+static uint8_t	*nav_air;
+static uint16_t *nav_dist;
+static int		*nav_queue;
+static int		 nav_dim[3];
+static double	 nav_air_time, nav_dist_time;
+
+static int NavIndex (const terrain_t *t, const float p[3])
+{
+	int c[3];
+	for (int a = 0; a < 3; ++a)
+	{
+		c[a] = (int)floorf ((p[a] - (float)t->origin[a]) / NAV_CELL);
+		if (c[a] < 0 || c[a] >= nav_dim[a])
+			return -1;
+	}
+	return (c[2] * nav_dim[1] + c[1]) * nav_dim[0] + c[0];
+}
+
+static void NavUpdate (const terrain_t *t)
+{
+	int dim[3];
+	for (int a = 0; a < 3; ++a)
+		dim[a] = (int)((float)(t->size[a] * TERRAIN_CHUNK_UNITS) / NAV_CELL);
+	const int count = dim[0] * dim[1] * dim[2];
+	if (!nav_air || dim[0] != nav_dim[0] || dim[1] != nav_dim[1] || dim[2] != nav_dim[2])
+	{
+		free (nav_air);
+		free (nav_dist);
+		free (nav_queue);
+		nav_air = (uint8_t *)malloc (count);
+		nav_dist = (uint16_t *)malloc (count * sizeof (uint16_t));
+		nav_queue = (int *)malloc (count * sizeof (int));
+		memcpy (nav_dim, dim, sizeof (dim));
+		nav_ops_seen = -1;
+	}
+	if (nav_ops_seen < 0 || (nav_ops_seen != sv_terrain_num_ops && qcvm->time > nav_air_time + 1.0))
+	{
+		int i = 0;
+		for (int z = 0; z < dim[2]; ++z)
+			for (int y = 0; y < dim[1]; ++y)
+				for (int x = 0; x < dim[0]; ++x, ++i)
+				{
+					const float p[3] = {
+						(float)t->origin[0] + ((float)x + 0.5f) * NAV_CELL, (float)t->origin[1] + ((float)y + 0.5f) * NAV_CELL,
+						(float)t->origin[2] + ((float)z + 0.5f) * NAV_CELL};
+					nav_air[i] = Terrain_SampleWorld (t, p) > 6.0f;
+				}
+		nav_ops_seen = sv_terrain_num_ops;
+		nav_air_time = qcvm->time;
+		nav_dist_time = -1.0;
+	}
+	if (nav_dist_time >= 0.0 && qcvm->time < nav_dist_time + 0.25 && qcvm->time >= nav_dist_time)
+		return;
+	nav_dist_time = qcvm->time;
+	memset (nav_dist, 0xff, count * sizeof (uint16_t));
+	int head = 0, tail = 0;
+	for (int i = 1; i <= svs.maxclients; ++i)
+	{
+		edict_t *pl = EDICT_NUM (i);
+		if (!svs.clients[i - 1].active || pl->v.health <= 0)
+			continue;
+		const int cell = NavIndex (t, pl->v.origin);
+		if (cell >= 0 && nav_dist[cell] == NAV_FAR)
+		{
+			nav_dist[cell] = 0; // seeded even when the cell reads solid: the player is in it
+			nav_queue[tail++] = cell;
+		}
+	}
+	const int step[6] = {1, -1, dim[0], -dim[0], dim[0] * dim[1], -dim[0] * dim[1]};
+	while (head < tail)
+	{
+		const int cell = nav_queue[head++];
+		const int x = cell % dim[0], y = (cell / dim[0]) % dim[1], z = cell / (dim[0] * dim[1]);
+		const int ok[6] = {x + 1 < dim[0], x > 0, y + 1 < dim[1], y > 0, z + 1 < dim[2], z > 0};
+		for (int n = 0; n < 6; ++n)
+		{
+			const int next = cell + step[n];
+			if (!ok[n] || !nav_air[next] || nav_dist[next] != NAV_FAR || nav_dist[cell] >= NAV_FAR - 1)
+				continue;
+			nav_dist[next] = nav_dist[cell] + 1;
+			nav_queue[tail++] = next;
+		}
+	}
+}
+
+// Direction from p toward the neighbouring cell nearest a player; false when p is cut off.
+static qboolean NavDirection (const terrain_t *t, const float p[3], float dir[3], int *cells_away)
+{
+	int base[3], best = NAV_FAR, best_off[3] = {0, 0, 0};
+	for (int a = 0; a < 3; ++a)
+		base[a] = (int)floorf ((p[a] - (float)t->origin[a]) / NAV_CELL);
+	for (int dz = -1; dz <= 1; ++dz)
+		for (int dy = -1; dy <= 1; ++dy)
+			for (int dx = -1; dx <= 1; ++dx)
+			{
+				const int x = base[0] + dx, y = base[1] + dy, z = base[2] + dz;
+				if (x < 0 || y < 0 || z < 0 || x >= nav_dim[0] || y >= nav_dim[1] || z >= nav_dim[2])
+					continue;
+				const int d = nav_dist[(z * nav_dim[1] + y) * nav_dim[0] + x];
+				if (d < best)
+				{
+					best = d;
+					best_off[0] = dx;
+					best_off[1] = dy;
+					best_off[2] = dz;
+				}
+			}
+	if (best == NAV_FAR)
+		return false;
+	*cells_away = best;
+	for (int a = 0; a < 3; ++a)
+		dir[a] = (float)t->origin[a] + ((float)(base[a] + best_off[a]) + 0.5f) * NAV_CELL - p[a];
+	return true;
+}
+
+static float CrawlerGradient (const terrain_t *t, const float p[3], float g[3])
+{
+	const float h = 8.0f;
+	for (int a = 0; a < 3; ++a)
+	{
+		float hi[3] = {p[0], p[1], p[2]}, lo[3] = {p[0], p[1], p[2]};
+		hi[a] += h;
+		lo[a] -= h;
+		g[a] = Terrain_SampleWorld (t, hi) - Terrain_SampleWorld (t, lo);
+	}
+	const float len = sqrtf (DotProduct (g, g));
+	if (len > 1e-4f)
+		VectorScale (g, 1.0f / len, g);
+	return len;
+}
+
+// Pulls p onto the surface; false when the field is flat here (too far from any surface).
+static qboolean CrawlerProject (const terrain_t *t, float p[3], float normal[3])
+{
+	for (int i = 0; i < 4; ++i)
+	{
+		float g[3];
+		if (CrawlerGradient (t, p, g) < 0.05f)
+			return false;
+		const float d = Terrain_SampleWorld (t, p);
+		VectorMA (p, -d, g, p);
+	}
+	return CrawlerGradient (t, p, normal) >= 0.05f;
+}
+
+static void CrawlerPose (terrain_crawler_t *c, const float feet[3])
+{
+	edict_t *ent = c->ent;
+	float	*n = c->normal, *f = c->forward;
+	// forward stays in the surface
+	VectorMA (f, -DotProduct (f, n), n, f);
+	if (VectorNormalize (f) < 0.01f)
+	{
+		const float any[3] = {n[2], n[0], n[1]};
+		CrossProduct (n, any, f);
+		VectorNormalize (f);
+	}
+	VectorMA (feet, CRAWLER_FEET, n, ent->v.origin);
+	// model angles: positive pitch looks up; roll brings the model's up onto the surface normal
+	const float yaw = atan2f (f[1], f[0]), pitch = atan2f (f[2], sqrtf (f[0] * f[0] + f[1] * f[1]));
+	vec3_t		view = {-pitch * 180.0f / M_PI, yaw * 180.0f / M_PI, 0}, fw, right0, up0;
+	AngleVectors (view, fw, right0, up0);
+	ent->v.angles[0] = pitch * 180.0f / M_PI;
+	ent->v.angles[1] = yaw * 180.0f / M_PI;
+	ent->v.angles[2] = atan2f (DotProduct (n, right0), DotProduct (n, up0)) * 180.0f / M_PI;
+	ent->v.ideal_yaw = ent->v.angles[1];
+	// the hit box follows the body, which hangs off the surface along the normal
+	for (int a = 0; a < 3; ++a)
+	{
+		const float centre = (44.0f - CRAWLER_FEET) * n[a];
+		const float half = a == 2 ? 36.0f : 30.0f;
+		ent->v.mins[a] = centre - half;
+		ent->v.maxs[a] = centre + half;
+		ent->v.size[a] = half * 2.0f;
+	}
+	ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
+	ent->v.groundentity = EDICT_TO_PROG (qcvm->edicts);
+	ent->v.velocity[0] = ent->v.velocity[1] = ent->v.velocity[2] = 0;
+	SV_LinkEdict (ent, true);
+}
+
+int SV_Terrain_CrawlerFrame (edict_t *ent)
+{
+	const terrain_t *t = terrain_active;
+	if (!t || !sv_terrain_num_crawlers)
+		return 0;
+	terrain_crawler_t *c = CrawlerFind (ent);
+	if (!c)
+		return 0;
+	if (ent->free || ent->v.health <= 0)
+	{
+		// dead: let go of the wall and fall like any corpse
+		ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+		ent->v.angles[0] = ent->v.angles[2] = 0;
+		*c = sv_terrain_crawlers[--sv_terrain_num_crawlers];
+		return 0;
+	}
+	float feet[3];
+	if (!c->attached)
+	{
+		const float speed2 = DotProduct (ent->v.velocity, ent->v.velocity);
+		const qboolean landed = ((int)ent->v.flags & FL_ONGROUND) != 0;
+		if (!landed && speed2 > 60.0f * 60.0f && qcvm->time - c->air_since < 1.0)
+			return 0; // still in the air: ordinary monster physics
+		VectorCopy (ent->v.origin, feet);
+		float n[3];
+		if (!CrawlerProject (t, feet, n))
+			return 0;
+		VectorCopy (n, c->normal);
+		c->attached = 1;
+		if (!landed)
+		{
+			// the leap never reached a floor, so QuakeC is still waiting for its touch
+			dfunction_t *run = ED_FindFunction ("demon1_run1");
+			ent->v.touch = 0;
+			if (run)
+			{
+				ent->v.think = run - qcvm->functions;
+				ent->v.nextthink = qcvm->time + 0.1;
+			}
+		}
+		CrawlerPose (c, feet);
+		return 1;
+	}
+	if (!((int)ent->v.flags & FL_ONGROUND) && DotProduct (ent->v.velocity, ent->v.velocity) > 100.0f * 100.0f)
+	{
+		c->attached = 0; // QuakeC started a leap
+		c->air_since = qcvm->time;
+		ent->v.angles[0] = ent->v.angles[2] = 0;
+		VectorCopy (ent->v.origin, feet);
+		ent->v.mins[0] = ent->v.mins[1] = -32;
+		ent->v.mins[2] = -24;
+		ent->v.maxs[0] = ent->v.maxs[1] = 32;
+		ent->v.maxs[2] = 64;
+		VectorSubtract (ent->v.maxs, ent->v.mins, ent->v.size);
+		return 0;
+	}
+	VectorMA (ent->v.origin, -CRAWLER_FEET, c->normal, feet);
+	edict_t *enemy = PROG_TO_EDICT (ent->v.enemy);
+	if (enemy == qcvm->edicts && qcvm->time > 2.0 && ent->v.takedamage)
+	{
+		// A swarm does not wait to see you: wake for the nearest living player in range.
+		dfunction_t *found = ED_FindFunction ("FoundTarget");
+		float		 best = terrain_crawler_sense.value;
+		edict_t		*pick = NULL;
+		for (int i = 1; i <= svs.maxclients; ++i)
+		{
+			edict_t *pl = EDICT_NUM (i);
+			vec3_t	 d;
+			if (!svs.clients[i - 1].active || pl->v.health <= 0 || ((int)pl->v.flags & FL_NOTARGET))
+				continue;
+			VectorSubtract (pl->v.origin, ent->v.origin, d);
+			const float dist = sqrtf (DotProduct (d, d));
+			if (dist < best)
+			{
+				best = dist;
+				pick = pl;
+			}
+		}
+		if (pick && found)
+		{
+			ent->v.enemy = EDICT_TO_PROG (pick);
+			pr_global_struct->self = EDICT_TO_PROG (ent);
+			pr_global_struct->time = qcvm->time;
+			PR_ExecuteProgram (found - qcvm->functions);
+			enemy = pick;
+		}
+	}
+	if (enemy != qcvm->edicts && !enemy->free && enemy->v.health > 0)
+	{
+		float to[3], body[3];
+		VectorMA (feet, 44.0f, c->normal, body);
+		VectorSubtract (enemy->v.origin, body, to);
+		const float dist = sqrtf (DotProduct (to, to));
+		// Far off, follow the flow field through the cave; close by, go straight at them.
+		int	  cells = 0;
+		float flow[3];
+		NavUpdate (t);
+		if (dist > 160.0f && NavDirection (t, body, flow, &cells) && cells > 3)
+			VectorCopy (flow, to);
+		const float want = sqrtf (DotProduct (to, to));
+		VectorMA (to, -DotProduct (to, c->normal), c->normal, to);
+		// Straight above or below the enemy the surface offers no direction; keep going the
+		// way it was heading, which carries it round the curve of a passage.
+		if (sqrtf (DotProduct (to, to)) < want * 0.25f)
+			VectorCopy (c->forward, to);
+		const qboolean chase = dist > 84.0f && VectorNormalize (to) > 0.01f;
+		if (!chase)
+		{
+			VectorCopy (to, c->forward); // in reach: face them and let QuakeC attack
+			to[0] = to[1] = to[2] = 0;
+		}
+		// keep a body's width from the other crawlers, moving or not
+		float push[3] = {0, 0, 0};
+		for (int i = 0; i < sv_terrain_num_crawlers; ++i)
+		{
+			const terrain_crawler_t *o = &sv_terrain_crawlers[i];
+			float					 away[3], other[3];
+			if (o == c || !o->attached)
+				continue;
+			VectorMA (o->ent->v.origin, 44.0f - CRAWLER_FEET, o->normal, other);
+			VectorSubtract (body, other, away);
+			float gap = sqrtf (DotProduct (away, away));
+			if (gap >= 76.0f)
+				continue;
+			if (gap < 1.0f)
+			{
+				// exactly stacked: split by slot order
+				away[0] = o < c ? 1.0f : -1.0f;
+				away[1] = o < c ? 0.5f : -0.5f;
+				away[2] = 0;
+				gap = 1.0f;
+			}
+			VectorMA (push, (76.0f - gap) / 76.0f / gap, away, push);
+		}
+		VectorMA (push, -DotProduct (push, c->normal), c->normal, push);
+		VectorMA (to, 1.5f, push, to);
+		const float rate = sqrtf (DotProduct (to, to));
+		if (rate > 0.05f)
+		{
+			float next[3], n[3];
+			VectorMA (feet, terrain_crawler_speed.value * q_min (rate, 1.0f) / rate * (float)host_frametime, to, next);
+			if (CrawlerProject (t, next, n))
+			{
+				VectorCopy (next, feet);
+				for (int a = 0; a < 3; ++a)
+					c->normal[a] = c->normal[a] * 0.7f + n[a] * 0.3f;
+				VectorNormalize (c->normal);
+				if (chase)
+					for (int a = 0; a < 3; ++a)
+						c->forward[a] = c->forward[a] * 0.8f + to[a] / rate * 0.2f;
+			}
+		}
+	}
+	CrawlerPose (c, feet);
+	return 1;
+}
+
+static qboolean PlaceFindFloor (uint32_t *rng, const float mins[3], const float maxs[3], const float near[3], float min_dist, float max_dist, float out[3]);
+
+static void CrawlerSpawnAll (uint32_t *rng, const float start[3])
+{
+	dfunction_t *func = ED_FindFunction (CRAWLER_MODEL);
+	const int	 want = q_min ((int)terrain_crawlers.value, MAX_CRAWLERS);
+	if (!func || want <= 0)
+		return;
+	const float mins[3] = {-32, -32, -24}, maxs[3] = {32, 32, 64};
+	for (int i = 0; i < want; ++i)
+	{
+		float spot[3];
+		if (!PlaceFindFloor (rng, mins, maxs, start, 1100.0f, 4096.0f, spot))
+			continue;
+		edict_t *ed = ED_Alloc ();
+		ed->v.classname = PR_SetEngineString (CRAWLER_MODEL);
+		VectorCopy (spot, ed->v.origin);
+		pr_global_struct->self = EDICT_TO_PROG (ed);
+		PR_ExecuteProgram (func - qcvm->functions);
+		if (ed->free)
+			continue;
+		terrain_crawler_t *c = &sv_terrain_crawlers[sv_terrain_num_crawlers++];
+		memset (c, 0, sizeof (*c));
+		c->ent = ed;
+		c->normal[2] = 1.0f;
+		c->forward[0] = 1.0f;
+		c->attached = 1;
+	}
+	Con_Printf ("terrain: %d crawlers\n", sv_terrain_num_crawlers);
+}
+
 /*
 Called right after the map's entities spawn and before any of them think. A drg* map lists its
 monsters and items at arbitrary spots; this moves them onto the generated cave floor: the player
@@ -215,6 +654,7 @@ void SV_Terrain_PlaceEntities (void)
 		SV_LinkEdict (ed, false);
 	}
 	Con_Printf ("terrain: placed %d monsters and %d items on the cave floor (%d found no spot)\n", monsters, items, failed);
+	CrawlerSpawnAll (&rng, start);
 }
 
 /*
@@ -231,7 +671,64 @@ void SV_Terrain_PlayerFrame (edict_t *ent, int num)
 	// client's latest command instead.
 	const int buttons = svs.clients[num - 1].cmd.buttons | (ent->v.button0 ? 1 : 0) | (ent->v.button2 ? 2 : 0);
 
-	if (terrain_jetpack.value && (buttons & 2) && !((int)ent->v.flags & FL_ONGROUND) && ent->v.movetype == MOVETYPE_WALK)
+	// Ledge vault: hold jump against a ledge no higher than terrain_vault_height above the feet
+	// and the player is lifted over its lip. Detection: blocked ahead, a walkable top a little
+	// further on, and room for the body above where it stands now.
+	qboolean vaulting = false;
+	if (terrain_vault.value && ent->v.movetype == MOVETYPE_WALK)
+	{
+		__typeof__ (sv_terrain_vaults[0]) *vs = &sv_terrain_vaults[num];
+		if (vs->until > qcvm->time && (buttons & 2))
+		{
+			vaulting = true;
+			ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+			if (ent->v.origin[2] < vs->top_z)
+			{
+				ent->v.velocity[0] = vs->dir[0] * 40.0f;
+				ent->v.velocity[1] = vs->dir[1] * 40.0f;
+				ent->v.velocity[2] = 260.0f;
+			}
+			else
+			{
+				ent->v.velocity[0] = vs->dir[0] * 190.0f;
+				ent->v.velocity[1] = vs->dir[1] * 190.0f;
+				ent->v.velocity[2] = 40.0f;
+				vs->until = 0;
+				vs->next = qcvm->time + 0.3;
+			}
+		}
+		else if ((buttons & 2) && qcvm->time >= vs->next)
+		{
+			vs->until = 0;
+			const float yaw = ent->v.v_angle[1] * M_PI / 180.0f;
+			vec3_t		dir = {cosf (yaw), sinf (yaw), 0}, ahead;
+			VectorMA (ent->v.origin, 16.0f, dir, ahead);
+			trace_t wall = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, ahead, MOVE_NOMONSTERS, ent);
+			for (float reach = 24.0f; wall.fraction < 1.0f && !vs->until && reach <= 40.0f; reach += 8.0f)
+			{
+				vec3_t top, bottom, above;
+				VectorMA (ent->v.origin, reach, dir, top);
+				VectorCopy (top, bottom);
+				top[2] += terrain_vault_height.value;
+				bottom[2] += 19.0f; // anything lower is an ordinary step
+				trace_t ledge = SV_Move (top, ent->v.mins, ent->v.maxs, bottom, MOVE_NOMONSTERS, ent);
+				if (ledge.startsolid || ledge.allsolid || ledge.fraction == 1.0f || ledge.plane.normal[2] < SV_Terrain_WalkNormal ())
+					continue;
+				VectorCopy (ent->v.origin, above);
+				above[2] = ledge.endpos[2] + 2.0f;
+				trace_t rise = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, above, MOVE_NOMONSTERS, ent);
+				if (rise.fraction < 1.0f || rise.startsolid)
+					continue;
+				vs->top_z = above[2];
+				vs->dir[0] = dir[0];
+				vs->dir[1] = dir[1];
+				vs->until = qcvm->time + 0.25 + (above[2] - ent->v.origin[2]) / 200.0;
+				Con_DPrintf ("terrain: vault %.0f up\n", above[2] - ent->v.origin[2]);
+			}
+		}
+	}
+
+	if (!vaulting && terrain_jetpack.value && (buttons & 2) && !((int)ent->v.flags & FL_ONGROUND) && ent->v.movetype == MOVETYPE_WALK)
 	{
 		const float top = terrain_jetpack_speed.value;
 		if (ent->v.velocity[2] < top)
@@ -331,6 +828,29 @@ static void SV_Terrain_Flare_f (void)
 terrain_ents
 Lists the monsters with where they stand relative to the terrain; the scripted check reads it.
 */
+// Debug: every monster hunts the first player now, seen or not, so footing can be measured.
+static void SV_Terrain_Wake_f (void)
+{
+	if (!terrain_active || !sv.active)
+		return;
+	PR_SwitchQCVM (&sv.qcvm);
+	dfunction_t *found = ED_FindFunction ("FoundTarget");
+	int			 woke = 0;
+	for (int i = svs.maxclients + 1; found && i < qcvm->num_edicts; ++i)
+	{
+		edict_t *ed = EDICT_NUM (i);
+		if (ed->free || ed->v.health <= 0 || !((int)ed->v.flags & FL_MONSTER) || ed->v.enemy)
+			continue;
+		ed->v.enemy = EDICT_TO_PROG (EDICT_NUM (1));
+		pr_global_struct->self = EDICT_TO_PROG (ed);
+		pr_global_struct->time = qcvm->time;
+		PR_ExecuteProgram (found - qcvm->functions);
+		++woke;
+	}
+	Con_Printf ("terrain_wake: %d monsters\n", woke);
+	PR_SwitchQCVM (NULL);
+}
+
 static void SV_Terrain_Ents_f (void)
 {
 	if (!terrain_active || !sv.active)
@@ -352,6 +872,9 @@ static void SV_Terrain_Ents_f (void)
 			ed->v.health, ((int)ed->v.flags & FL_ONGROUND) != 0, Terrain_BoxOverlaps (terrain_active, o, ed->v.mins, ed->v.maxs),
 			sqrtf (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
 	}
+	Con_Printf (
+		"terrain_steps: ok %d blocked %d edge %d footing %d (mid %d corners %d) crawlers %d\n", sv_terrain_step_stats[0], sv_terrain_step_stats[1],
+		sv_terrain_step_stats[2], sv_terrain_step_stats[3], sv_terrain_step_stats[4], sv_terrain_step_stats[5], sv_terrain_num_crawlers);
 	PR_SwitchQCVM (NULL);
 }
 
@@ -363,6 +886,14 @@ void SV_Terrain_Init (void)
 	Cvar_RegisterVariable (&terrain_jetpack_thrust);
 	Cvar_RegisterVariable (&terrain_jetpack_speed);
 	Cvar_RegisterVariable (&terrain_blast);
+	Cvar_RegisterVariable (&terrain_slope);
+	Cvar_RegisterVariable (&terrain_vault);
+	Cvar_RegisterVariable (&terrain_vault_height);
+	Cvar_RegisterVariable (&terrain_crawlers);
+	Cvar_RegisterVariable (&terrain_crawler_speed);
+	Cvar_RegisterVariable (&terrain_crawler_sense);
+	Cvar_RegisterVariable (&terrain_monsterstep);
 	Cmd_AddCommand ("terrain_ents", SV_Terrain_Ents_f);
+	Cmd_AddCommand ("terrain_wake", SV_Terrain_Wake_f);
 	Cmd_AddCommand ("terrain_flare", SV_Terrain_Flare_f);
 }

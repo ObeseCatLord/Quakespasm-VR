@@ -23,7 +23,50 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 
+#include "terrain.h"
+
 #define STEPSIZE 18
+
+int sv_terrain_step_stats[6];
+
+/*
+Cave floors are never flat, so the BSP rule (every corner within a stair's height of the middle)
+freezes wide monsters on any slope. On terrain: ground under the middle, and under at least three
+corners within the drop a 45 degree slope gives a box this wide.
+*/
+static qboolean SV_CheckBottomTerrain (edict_t *ent)
+{
+	vec3_t	mins, maxs, start, stop;
+	trace_t trace;
+	VectorAdd (ent->v.origin, ent->v.mins, mins);
+	VectorAdd (ent->v.origin, ent->v.maxs, maxs);
+	const float width = q_max (maxs[0] - mins[0], maxs[1] - mins[1]);
+	start[2] = mins[2] + 1;
+	start[0] = stop[0] = (mins[0] + maxs[0]) * 0.5;
+	start[1] = stop[1] = (mins[1] + maxs[1]) * 0.5;
+	stop[2] = mins[2] - 2 * STEPSIZE - width * 0.5f;
+	trace = SV_Move (start, vec3_origin, vec3_origin, stop, true, ent);
+	if (trace.fraction == 1.0)
+	{
+		++sv_terrain_step_stats[4];
+		return false;
+	}
+	const float mid = trace.endpos[2];
+	int			missing = 0;
+	for (int x = 0; x <= 1; x++)
+		for (int y = 0; y <= 1; y++)
+		{
+			start[0] = stop[0] = x ? maxs[0] : mins[0];
+			start[1] = stop[1] = y ? maxs[1] : mins[1];
+			stop[2] = mid - STEPSIZE - width;
+			trace = SV_Move (start, vec3_origin, vec3_origin, stop, true, ent);
+			if (trace.fraction == 1.0)
+				++missing;
+		}
+	if (missing > 1)
+		++sv_terrain_step_stats[5];
+	return missing <= 1;
+}
 
 /*
 =============
@@ -42,6 +85,9 @@ qboolean SV_CheckBottom (edict_t *ent)
 	trace_t trace;
 	int		x, y;
 	float	mid, bottom;
+
+	if (SV_Terrain_RelaxedSteps ())
+		return SV_CheckBottomTerrain (ent);
 
 	VectorAdd (ent->v.origin, ent->v.mins, mins);
 	VectorAdd (ent->v.origin, ent->v.maxs, maxs);
@@ -118,6 +164,14 @@ qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink)
 
 	assert_always (!ent->free);
 
+	if (SV_Terrain_IsCrawler (ent))
+		return true; // moved along the cave surface by SV_Terrain_CrawlerFrame instead
+
+	// On terrain a step also has to cover the rise or fall of a 45 degree slope over its length.
+	float stepsize = STEPSIZE;
+	if (SV_Terrain_RelaxedSteps ())
+		stepsize += q_min (sqrtf (move[0] * move[0] + move[1] * move[1]), 24.0f);
+
 	// try the move
 	VectorCopy (ent->v.origin, oldorg);
 	VectorAdd (ent->v.origin, move, neworg);
@@ -159,21 +213,44 @@ qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink)
 	}
 
 	// push down from a step height above the wished position
-	neworg[2] += STEPSIZE;
+	neworg[2] += stepsize;
 	VectorCopy (neworg, end);
-	end[2] -= STEPSIZE * 2;
+	end[2] -= stepsize * 2;
 
 	trace = SV_Move (neworg, ent->v.mins, ent->v.maxs, end, false, ent);
 
+	if (SV_Terrain_RelaxedSteps () && (trace.allsolid || trace.startsolid))
+	{
+		// Cave walls lean in, so the lifted box often starts inside one. Try smaller lifts
+		// before giving up on the direction.
+		static const float lifts[] = {STEPSIZE, 12, 6, 2};
+		for (int l = 0; l < 4 && (trace.allsolid || trace.startsolid); ++l)
+		{
+			neworg[2] = ent->v.origin[2] + lifts[l];
+			trace = SV_Move (neworg, ent->v.mins, ent->v.maxs, end, false, ent);
+		}
+		if (trace.allsolid || trace.startsolid)
+		{
+			++sv_terrain_step_stats[1];
+			return false;
+		}
+	}
+
 	if (trace.allsolid)
+	{
+		++sv_terrain_step_stats[1];
 		return false;
+	}
 
 	if (trace.startsolid)
 	{
-		neworg[2] -= STEPSIZE;
+		neworg[2] -= stepsize;
 		trace = SV_Move (neworg, ent->v.mins, ent->v.maxs, end, false, ent);
 		if (trace.allsolid || trace.startsolid)
+		{
+			++sv_terrain_step_stats[1];
 			return false;
+		}
 	}
 	if (trace.fraction == 1)
 	{
@@ -188,6 +265,7 @@ qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink)
 			return true;
 		}
 
+		++sv_terrain_step_stats[2];
 		return false; // walked off an edge
 	}
 
@@ -204,8 +282,10 @@ qboolean SV_movestep (edict_t *ent, vec3_t move, qboolean relink)
 			return true;
 		}
 		VectorCopy (oldorg, ent->v.origin);
+		++sv_terrain_step_stats[3];
 		return false;
 	}
+	++sv_terrain_step_stats[0];
 
 	if ((int)ent->v.flags & FL_PARTIALGROUND)
 	{

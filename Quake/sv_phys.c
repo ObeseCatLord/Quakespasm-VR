@@ -6123,7 +6123,7 @@ static qboolean SV_CoopRespawnRelocatePolicy (edict_t *ent, edict_t *anchor,
 	if (state)
 		pr_global_struct->force_retouch = state->old_force_retouch;
 	VectorCopy (spot, ent->v.origin);
-	VectorClear (ent->v.velocity);
+	ent->v.velocity[0] = ent->v.velocity[1] = ent->v.velocity[2] = 0;
 	if (anchor)
 	{
 		VectorCopy (angles, ent->v.angles);
@@ -12672,9 +12672,18 @@ static void SV_Physics_Step (edict_t *ent)
 	qboolean hitsound;
 	vec3_t	 move_velocity;
 
+	if (SV_Terrain_CrawlerFrame (ent))
+	{
+		if (SV_RunThink (ent))
+			SV_CheckWaterTransition (ent);
+		return;
+	}
+
 	// freefall if not onground
 	if (!((int)ent->v.flags & (FL_ONGROUND | FL_FLY | FL_SWIM)))
 	{
+		vec3_t terrain_before;
+		VectorCopy (ent->v.origin, terrain_before);
 		if (ent->v.velocity[2] < sv_gravity.value * -0.1)
 			hitsound = true;
 		else
@@ -12697,6 +12706,20 @@ static void SV_Physics_Step (edict_t *ent)
 
 		if (ent->free)
 			return;
+
+		// Cave crevice: held between steep faces, the fall never ends and the monster never walks
+		// again. When a falling step made no progress at all, call it landed.
+		if (terrain_active && !((int)ent->v.flags & FL_ONGROUND))
+		{
+			vec3_t moved;
+			VectorSubtract (ent->v.origin, terrain_before, moved);
+			if (DotProduct (moved, moved) < 0.02f * 0.02f && Terrain_BoxOverlaps (terrain_active, (float[3]){ent->v.origin[0], ent->v.origin[1], ent->v.origin[2] - 2.0f}, ent->v.mins, ent->v.maxs))
+			{
+				ent->v.flags = (int)ent->v.flags | FL_ONGROUND;
+				ent->v.groundentity = EDICT_TO_PROG (qcvm->edicts);
+				ent->v.velocity[0] = ent->v.velocity[1] = ent->v.velocity[2] = 0;
+			}
+		}
 
 		if ((int)ent->v.flags & FL_ONGROUND) // just hit ground
 		{
