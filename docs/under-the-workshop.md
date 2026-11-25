@@ -24,13 +24,46 @@ before the entities spawn, then moves the player start, items and monsters onto 
 - Four fiends crawl on floors, walls and ceilings and hunt by a flow field.
 - Vanilla monsters walk a route through the cave to the player they are chasing.
 
+`tests/drg-desktop.sh` does step 2 from a `nix develop` build in `build-drg` with `run/` as the
+basedir, and binds the keys below.
+
+### Looks
+
+Four looks for the cave, switched live. They are variants to choose between, not a final design.
+
+- F7 (`terrain_style next`, or `r_terrain_style 0`-`3`): 0 the original untextured ice,
+  1 workshop (snow, trees, presents, strings of lights), 2 glacier (veined blue ice, fog),
+  3 Agartha (dark masonry, glowing glyphs, plinths and statues).
+- F8 (`toggle r_terrain_props`): props and their lights on or off.
+- F6: flare.
+- `terrain_ice 0` then a map restart: the cave without ice pillars, icicles and floor stubs.
+
+The textures are generated in code (`Quake/r_terrain_tex.c`). The prop models are not in the
+repository: they come from the Twisted Christmas Jam 2022 pack (which includes Arcane
+Dimensions). With your own copy of it,
+`uv run --no-project python -I tests/link-tcj-props.py <tcj dir> <basedir>/id1` puts the models
+the styles use where the engine finds them. Without them the looks still work, with no props.
+
+### Spider crawlers
+
+The crawler code drives any walking monster the loaded `progs.dat` has. With the same jam pack
+as a mod directory (`<basedir>/tcj`):
+
+    vkquake -basedir <basedir> -novr -game tcj +terrain_crawlers 10 \
+      +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:1:40,monster_spider:1.8:150:0.8,monster_spider:3:500:0.6 \
+      +map drgbox +bind f terrain_flare
+
+Each entry is `classname:scale:health:speed multiplier`; the list is cycled over the crawlers.
+Put these arguments before `+map`: the crawlers are made while the map loads.
+
 ## Where things are
 
 | File | What |
 | --- | --- |
 | `Quake/terrain.c`, `terrain.h` | Sparse signed-distance field (16-unit cells, 32^3 chunks), cave generator, surface-nets mesher, swept-box collision against triangles made on the fly, and the walking navigation grid (32-unit cells a body can stand in, joined where the climb is at most 45 degrees, plus one-way drops of up to four cells off a ledge). No engine dependencies; `tests/terrain_fixture.c` builds it alone. |
 | `Quake/sv_terrain.c` | Server side: owns the region and the op log, entity placement, axe, jetpack, vault, explosion digging, flares, crawlers and their flow field, and walking routes for ordinary monsters (the grid follows the op log and marks cells inside the map's brushes closed; one distance field per chased player and body size). |
-| `Quake/r_terrain.c` | Client side: meshes and draws the region (untextured, CPU vertex lighting plus the client's dynamic lights). |
+| `Quake/r_terrain.c` | Client side: meshes and draws the region (CPU vertex lighting plus the client's dynamic lights). |
+| `Quake/r_terrain_tex.c`, `r_terrain_props.c`, `r_terrain_style.h`, `Shaders/terrain.*` | The looks: generated texture atlas, box-projected nearest-sampled shading, props and light strings placed from the seed. |
 | `Quake/world.c`, `pmove.c`, `sv_move.c`, `sv_phys.c`, `pr_cmds.c` | Small hooks: traces, point contents, player movement, monster steps and `movetogoal` routes, explosion sniffing. |
 
 ## Design rules so far
@@ -58,6 +91,8 @@ before the entities spawn, then moves the player start, items and monsters onto 
 | `terrain_crawlers` | 4 | crawlers added at map load |
 | `terrain_crawler_sense`, `terrain_crawler_speed` | 900, 210 | |
 | `terrain_crawler_types` | `monster_demon1` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
+| `terrain_ice` | 1 | ice pillars, icicles and floor stubs in new caves |
+| `r_terrain_style`, `r_terrain_props` | 1, 1 | look 0-3 and its props |
 | `r_terrain_ambient`, `r_terrain_lamp`, `r_terrain_dlights`, `r_terrain_biome` | | look |
 
 Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, `terrain_fill`,
@@ -81,6 +116,9 @@ Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, 
   units high but cannot climb anything steeper than 45 degrees or jump a gap, so a player who
   jetpacks onto a high ledge is out of reach on foot. Some monsters still stall on steps the slope
   rules refuse, or wedge into a wall.
+- Crawlers stop at the surface point nearest the player when the player is not touching a
+  surface they can reach (standing mid-floor under a wall they are on, or in the air). The flow
+  field is through open cells, not along surfaces, and only the fiend has a leap to close the gap.
 - Crawlers ignore each other's bodies beyond a simple spacing push. Their flow field avoids the map's
   brushes, but their movement along the surface does not.
 - Meshing is synchronous on the main thread; vertices are re-uploaded every frame.

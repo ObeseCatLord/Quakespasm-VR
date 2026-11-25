@@ -2632,6 +2632,8 @@ typedef struct pipeline_create_infos_s
 
 static VkVertexInputAttributeDescription basic_vertex_input_attribute_descriptions[3];
 static VkVertexInputBindingDescription	 basic_vertex_binding_description;
+static VkVertexInputAttributeDescription terrain_vertex_input_attribute_descriptions[3];
+static VkVertexInputBindingDescription	 terrain_vertex_binding_description;
 static VkVertexInputAttributeDescription draw_pic_vertex_input_attribute_descriptions[4];
 static VkVertexInputBindingDescription	 draw_pic_vertex_binding_description;
 static VkVertexInputAttributeDescription world_vertex_input_attribute_descriptions[3];
@@ -2676,6 +2678,9 @@ DECLARE_SHADER_MODULE (basic_mboit_composite_msaa_frag);
 DECLARE_SHADER_MODULE (basic_alphatest_frag);
 DECLARE_SHADER_MODULE (basic_alphatest_ui_frag);
 DECLARE_SHADER_MODULE (basic_notex_frag);
+DECLARE_SHADER_MODULE (terrain_vert);
+DECLARE_SHADER_MODULE (terrain_stereo_vert);
+DECLARE_SHADER_MODULE (terrain_frag);
 DECLARE_SHADER_MODULE (basic_notex_ui_frag);
 DECLARE_SHADER_MODULE (draw_pic_frag);
 DECLARE_SHADER_MODULE (draw_pic_ui_frag);
@@ -2863,6 +2868,25 @@ static void R_InitVertexAttributes ()
 		basic_vertex_binding_description.binding = 0;
 		basic_vertex_binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 		basic_vertex_binding_description.stride = 24;
+	}
+
+	{
+		// textured terrain (r_terrain.c terrain_gpuvert_t): position, light rgb + snow, axis/material/flags
+		terrain_vertex_input_attribute_descriptions[0].binding = 0;
+		terrain_vertex_input_attribute_descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+		terrain_vertex_input_attribute_descriptions[0].location = 0;
+		terrain_vertex_input_attribute_descriptions[0].offset = 0;
+		terrain_vertex_input_attribute_descriptions[1].binding = 0;
+		terrain_vertex_input_attribute_descriptions[1].format = VK_FORMAT_R8G8B8A8_UNORM;
+		terrain_vertex_input_attribute_descriptions[1].location = 1;
+		terrain_vertex_input_attribute_descriptions[1].offset = 12;
+		terrain_vertex_input_attribute_descriptions[2].binding = 0;
+		terrain_vertex_input_attribute_descriptions[2].format = VK_FORMAT_R8G8B8A8_UINT;
+		terrain_vertex_input_attribute_descriptions[2].location = 2;
+		terrain_vertex_input_attribute_descriptions[2].offset = 16;
+		terrain_vertex_binding_description.binding = 0;
+		terrain_vertex_binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+		terrain_vertex_binding_description.stride = 20;
 	}
 
 	{
@@ -3180,6 +3204,8 @@ static VkShaderModule R_StereoVertexShaderModule (VkShaderModule module)
 {
 	if (module == basic_vert_module)
 		return basic_stereo_vert_module;
+	if (module == terrain_vert_module)
+		return terrain_stereo_vert_module;
 	if (module == world_vert_module)
 		return world_stereo_vert_module;
 	if (module == alias_vert_module)
@@ -4114,6 +4140,16 @@ static void R_CreateShowTrisPipelines ()
 		infos.depth_stencil_state.depthWriteEnable = VK_TRUE;
 		R_CreateGraphicsPipeline (&vulkan_globals.terrain_pipeline[variant], &infos, vulkan_globals.basic_pipeline_layout, va ("terrain%s", pass_suffix));
 
+		// textured terrain styles: world-space nearest-texel atlas, same layout as basic
+		infos.vertex_input_state.vertexAttributeDescriptionCount = countof (terrain_vertex_input_attribute_descriptions);
+		infos.vertex_input_state.pVertexAttributeDescriptions = terrain_vertex_input_attribute_descriptions;
+		infos.vertex_input_state.vertexBindingDescriptionCount = 1;
+		infos.vertex_input_state.pVertexBindingDescriptions = &terrain_vertex_binding_description;
+		infos.shader_stages[0].module = terrain_vert_module;
+		infos.shader_stages[1].module = terrain_frag_module;
+		R_CreateGraphicsPipeline (
+			&vulkan_globals.terrain_tex_pipeline[variant], &infos, vulkan_globals.basic_pipeline_layout, va ("terrain_tex%s", pass_suffix));
+
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
 		infos.vertex_input_state.vertexAttributeDescriptionCount = 0;
@@ -4918,6 +4954,9 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (basic_alphatest_frag);
 	CREATE_SHADER_MODULE_COND (basic_alphatest_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (basic_notex_frag);
+	CREATE_SHADER_MODULE (terrain_vert);
+	CREATE_SHADER_MODULE_COND (terrain_stereo_vert, vulkan_globals.stereo_active);
+	CREATE_SHADER_MODULE (terrain_frag);
 	CREATE_SHADER_MODULE_COND (basic_notex_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (draw_pic_frag);
 	CREATE_SHADER_MODULE_COND (draw_pic_ui_frag, vulkan_globals.stereo_active);
@@ -5065,6 +5104,9 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (basic_alphatest_frag);
 	DESTROY_SHADER_MODULE (basic_alphatest_ui_frag);
 	DESTROY_SHADER_MODULE (basic_notex_frag);
+	DESTROY_SHADER_MODULE (terrain_vert);
+	DESTROY_SHADER_MODULE (terrain_stereo_vert);
+	DESTROY_SHADER_MODULE (terrain_frag);
 	DESTROY_SHADER_MODULE (basic_notex_ui_frag);
 	DESTROY_SHADER_MODULE (draw_pic_frag);
 	DESTROY_SHADER_MODULE (draw_pic_ui_frag);
@@ -5415,6 +5457,8 @@ void R_DestroyPipelines (void)
 		vulkan_globals.debug_lines_pipeline[variant].handle = VK_NULL_HANDLE;
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.terrain_pipeline[variant].handle, NULL);
 		vulkan_globals.terrain_pipeline[variant].handle = VK_NULL_HANDLE;
+		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.terrain_tex_pipeline[variant].handle, NULL);
+		vulkan_globals.terrain_tex_pipeline[variant].handle = VK_NULL_HANDLE;
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.md5_debug_pipeline[variant].handle, NULL);
 		vulkan_globals.md5_debug_pipeline[variant].handle = VK_NULL_HANDLE;
 	}

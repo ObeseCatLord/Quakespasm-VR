@@ -568,6 +568,7 @@ typedef struct
 	vulkan_pipeline_t		 showtris_indirect_depth_test_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 debug_lines_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 terrain_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
+	vulkan_pipeline_t		 terrain_tex_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 md5_debug_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 update_lightmap_pipeline;
 	vulkan_pipeline_t		 update_lightmap_rt_pipeline;
@@ -880,6 +881,7 @@ void		  R_UpdateEntityDlights (void);			// keeps the parsed entity dlights alive
 void R_InitParticles (void);
 
 void R_Terrain_Init (void);
+void R_Terrain_AddEntities (void);
 void R_Terrain_NewMap (void);
 void R_DrawTerrain (cb_context_t *cbx);
 void R_DrawParticles (cb_context_t *cbx);

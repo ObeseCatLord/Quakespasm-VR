@@ -33,6 +33,7 @@ static cvar_t terrain_crawler_sense = {"terrain_crawler_sense", "900", CVAR_NONE
 static cvar_t terrain_monsterstep = {"terrain_monsterstep", "1", CVAR_NONE};		   // slope-tolerant monster steps on terrain
 static cvar_t terrain_jetpack_speed = {"terrain_jetpack_speed", "260", CVAR_NONE};	  // fastest climb
 static cvar_t terrain_pathfind = {"terrain_pathfind", "1", CVAR_NONE};				  // walking monsters follow a route through the cave
+static cvar_t terrain_ice = {"terrain_ice", "1", CVAR_NONE}; // grow ice pillars and icicles in new caves; 0 is the plain worm cave
 
 #define FLARE_MODEL "progs/s_light.spr"
 #define MAX_FLARES	8
@@ -88,6 +89,7 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 	terrain_t	*t = Terrain_Create (origin, size, seed);
 	const double start = Sys_DoubleTime ();
 	Terrain_Generate (t);
+	const int ice = terrain_ice.value ? Terrain_GenerateIce (t) : 0;
 	terrain_active = t;
 	++terrain_epoch;
 	memset (sv_terrain_next_dig, 0, sizeof (sv_terrain_next_dig));
@@ -98,7 +100,7 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 	memset (sv_terrain_step_stats, 0, sizeof (sv_terrain_step_stats));
 	sv_terrain_sniff_state = 0;
 	Con_Printf (
-		"terrain: seed %u, %dx%dx%d chunks, generate %.1f ms, hash %016llx\n", seed, size[0], size[1], size[2], (Sys_DoubleTime () - start) * 1000.0,
+		"terrain: seed %u, %dx%dx%d chunks, %d ice features, generate %.1f ms, hash %016llx\n", seed, size[0], size[1], size[2], ice, (Sys_DoubleTime () - start) * 1000.0,
 		(unsigned long long)Terrain_Hash (t));
 }
 
@@ -1159,6 +1161,7 @@ void SV_Terrain_Init (void)
 	Cvar_RegisterVariable (&terrain_jetpack);
 	Cvar_RegisterVariable (&terrain_jetpack_thrust);
 	Cvar_RegisterVariable (&terrain_jetpack_speed);
+	Cvar_RegisterVariable (&terrain_ice);
 	Cvar_RegisterVariable (&terrain_blast);
 	Cvar_RegisterVariable (&terrain_slope);
 	Cvar_RegisterVariable (&terrain_vault);

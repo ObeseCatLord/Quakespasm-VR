@@ -5,12 +5,16 @@
  *
  * Only a listen server's own client sees terrain so far. This file never edits the field: its
  * commands go through SV_Terrain_Edit, the same path a networked edit will take.
- * Lighting is computed per vertex on the CPU (ambient occlusion plus a lamp at the eye) and drawn
- * through the untextured basic shader; a terrain shader with triplanar textures and the clustered
- * dynamic lights is later work.
+ * Lighting is computed per vertex on the CPU (ambient occlusion, a lamp at the eye, cl_dlights).
+ * r_terrain_style 0 draws it through the untextured basic shader (the original ice look); styles
+ * 1-3 draw through the terrain shader with a procedural nearest-texel atlas (r_terrain_tex.c) and
+ * add their own props (r_terrain_props.c).
  */
 #include "quakedef.h"
 #include "terrain.h"
+#include "r_terrain_style.h"
+
+static void R_DrawTerrainTextured (cb_context_t *cbx);
 
 typedef struct
 {
@@ -19,6 +23,7 @@ typedef struct
 	byte  material;
 	byte  ao;
 	byte  up; // how much the surface faces up, 0-255; snow settles on it in the ice look
+	byte  axis; // dominant axis of the face normal: the textured styles project the atlas along it
 } terrain_drawvert_t;
 
 typedef struct
@@ -41,6 +46,8 @@ static cvar_t r_terrain_lamp = {"r_terrain_lamp", "450", CVAR_NONE};		// reach o
 static cvar_t r_terrain_biome = {"r_terrain_biome", "1", CVAR_NONE};		// 0 rock cave, 1 ice cave
 static cvar_t r_terrain_ambient = {"r_terrain_ambient", "0.16", CVAR_NONE};
 static cvar_t r_terrain_dlights = {"r_terrain_dlights", "1.4", CVAR_NONE}; // strength of rockets, explosions, flares on the terrain; 0 off
+cvar_t		  r_terrain_style = {"r_terrain_style", "1", CVAR_ARCHIVE}; // 0 original untextured ice, 1 workshop, 2 glacier, 3 Agartha
+cvar_t		  r_terrain_props = {"r_terrain_props", "1", CVAR_NONE};	 // 0 hides the styles' props and their lights
 
 static const float terrain_colors[2][TERRAIN_MAT_COUNT][3] = {
 	{
@@ -101,6 +108,7 @@ static void Terrain_BuildDraw (int index, const terrain_mesh_t *mesh)
 			out->material = v[i]->material < TERRAIN_MAT_COUNT ? v[i]->material : 0;
 			out->ao = v[i]->ao;
 			out->up = (byte)(CLAMP (0.0f, v[i]->normal[2], 1.0f) * 255.0f);
+			out->axis = fabsf (face[0]) >= fabsf (face[1]) && fabsf (face[0]) >= fabsf (face[2]) ? 0 : (fabsf (face[1]) >= fabsf (face[2]) ? 1 : 2);
 		}
 	}
 }
@@ -153,6 +161,7 @@ void R_Terrain_Update (void)
 	if (!terrain)
 		return;
 	Terrain_RemeshDirty ();
+	R_TerrainStyle_Update (terrain, terrain_draw_epoch);
 	if (terrain_last_remesh_chunks > 8)
 	{
 		int tris = 0;
@@ -298,6 +307,9 @@ void R_Terrain_Init (void)
 	Cvar_RegisterVariable (&r_terrain_ambient);
 	Cvar_RegisterVariable (&r_terrain_biome);
 	Cvar_RegisterVariable (&r_terrain_dlights);
+	Cvar_RegisterVariable (&r_terrain_style);
+	Cvar_RegisterVariable (&r_terrain_props);
+	R_TerrainStyle_Init ();
 	Cmd_AddCommand ("terrain_spawn", Terrain_Spawn_f);
 	Cmd_AddCommand ("terrain_dig", Terrain_Dig_f);
 	Cmd_AddCommand ("terrain_fill", Terrain_Fill_f);
@@ -310,6 +322,11 @@ void R_DrawTerrain (cb_context_t *cbx)
 {
 	if (!terrain_draw_count || !r_terrain.value)
 		return;
+	if (R_TerrainStyle_Current () > 0)
+	{
+		R_DrawTerrainTextured (cbx);
+		return;
+	}
 
 	R_BeginDebugUtilsLabel (cbx, "terrain");
 	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.terrain_pipeline[cbx->pipeline_variant]);
@@ -428,5 +445,125 @@ void R_DrawTerrain (cb_context_t *cbx)
 		vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
 		vulkan_globals.vk_cmd_draw (cbx->cb, draw->num_verts, 1, 0, 0);
 	}
+	R_EndDebugUtilsLabel (cbx);
+}
+
+/*
+ * Textured styles. Same CPU lighting terms as above, but the vertex carries light only (the atlas
+ * supplies the colour), at half scale so the shader can overbright it 2x like Quake's lightmaps.
+ */
+static void R_DrawTerrainTextured (cb_context_t *cbx)
+{
+	const terrain_style_t *st = R_TerrainStyle_Get ();
+	if (!R_TerrainStyle_Bind (cbx))
+		return;
+	R_BeginDebugUtilsLabel (cbx, "terrain_tex");
+
+	const float lamp = r_terrain_lamp.value * st->lamp_reach;
+	const float lamp_falloff = lamp > 0.0f ? 1.0f / (lamp * lamp * 0.08f) : 0.0f;
+	const float ambient = r_terrain_ambient.value;
+
+	const dlight_t *lights[MAX_DLIGHTS];
+	float			light_rgb[MAX_DLIGHTS][3];
+	int				num_lights = 0;
+	if (r_terrain_dlights.value > 0.0f)
+		for (int i = 0; i < MAX_DLIGHTS; ++i)
+		{
+			const dlight_t *dl = &cl_dlights[i];
+			if (dl->die < cl.time || dl->radius <= 0.0f)
+				continue;
+			const qboolean white = fabsf (dl->color[0] - dl->color[1]) < 0.05f && fabsf (dl->color[1] - dl->color[2]) < 0.05f;
+			const float	   level = white ? (dl->color[0] > 0.0f ? dl->color[0] : 1.0f) : 1.0f;
+			light_rgb[num_lights][0] = (white ? level : dl->color[0]) * r_terrain_dlights.value;
+			light_rgb[num_lights][1] = (white ? level * 0.74f : dl->color[1]) * r_terrain_dlights.value;
+			light_rgb[num_lights][2] = (white ? level * 0.42f : dl->color[2]) * r_terrain_dlights.value;
+			lights[num_lights++] = dl;
+		}
+
+	for (int i = 0; i < terrain_draw_count; ++i)
+	{
+		const terrain_draw_t *draw = &terrain_draws[i];
+		if (!draw->num_verts || R_CullBox ((float *)draw->mins, (float *)draw->maxs))
+			continue;
+		int near_lights[MAX_DLIGHTS], num_near = 0;
+		for (int l = 0; l < num_lights; ++l)
+		{
+			float gap2 = 0.0f;
+			for (int a = 0; a < 3; ++a)
+			{
+				const float o = lights[l]->origin[a];
+				const float d = o < draw->mins[a] ? draw->mins[a] - o : o > draw->maxs[a] ? o - draw->maxs[a] : 0.0f;
+				gap2 += d * d;
+			}
+			if (gap2 < lights[l]->radius * lights[l]->radius)
+				near_lights[num_near++] = l;
+		}
+
+		VkBuffer			buffer;
+		VkDeviceSize		buffer_offset;
+		terrain_gpuvert_t *out = (terrain_gpuvert_t *)R_VertexAllocate (draw->num_verts * sizeof (terrain_gpuvert_t), &buffer, &buffer_offset);
+		for (int k = 0; k < draw->num_verts; ++k)
+		{
+			const terrain_drawvert_t *v = &draw->verts[k];
+			const float				  ao = (float)v->ao / 255.0f;
+			const float				  hemi = ambient * (0.75f + 0.25f * v->normal[2]);
+			float					  lit[3];
+			for (int c = 0; c < 3; ++c)
+				lit[c] = st->ambient[c] * hemi;
+			float shine = 0.0f;
+			if (lamp > 0.0f)
+			{
+				vec3_t to_eye;
+				VectorSubtract (r_origin, v->pos, to_eye);
+				const float dist2 = DotProduct (to_eye, to_eye);
+				const float facing = DotProduct (to_eye, v->normal) / sqrtf (dist2 + 1.0f);
+				if (facing > 0.0f)
+				{
+					const float reach = 1.0f / (1.0f + dist2 * lamp_falloff);
+					for (int c = 0; c < 3; ++c)
+						lit[c] += st->lamp[c] * 0.85f * facing * reach;
+					const float f4 = facing * facing * facing * facing;
+					shine = st->shine * f4 * f4 * f4 * reach;
+				}
+			}
+			const float occlusion = 0.3f + 0.7f * ao;
+			for (int c = 0; c < 3; ++c)
+				lit[c] = lit[c] * occlusion + st->shadow[c] * (1.0f - ao);
+			for (int n = 0; n < num_near; ++n)
+			{
+				const dlight_t *dl = lights[near_lights[n]];
+				vec3_t			to_light;
+				VectorSubtract (dl->origin, v->pos, to_light);
+				const float dist2 = DotProduct (to_light, to_light);
+				if (dist2 >= dl->radius * dl->radius)
+					continue;
+				const float dist = sqrtf (dist2);
+				float		fall = 1.0f - dist / dl->radius;
+				const float wrap = 0.45f; // ice passes some light through
+				const float facing = (DotProduct (to_light, v->normal) / (dist + 1.0f) + wrap) / (1.0f + wrap);
+				if (facing <= 0.0f)
+					continue;
+				fall *= fall * facing;
+				for (int c = 0; c < 3; ++c)
+					lit[c] += light_rgb[near_lights[n]][c] * fall;
+			}
+			float snow = CLAMP (0.0f, ((float)v->up / 255.0f - st->snow_from) * 3.0f, 1.0f);
+			if (v->material == TERRAIN_MAT_DIRT)
+				snow = q_min (snow + st->strata_snow, 1.0f); // packed-snow strata show on the walls too
+			else if (v->material == TERRAIN_MAT_FILL)
+				snow = 1.0f;
+			VectorCopy (v->pos, out[k].pos);
+			for (int c = 0; c < 3; ++c)
+				out[k].light[c] = (byte)(CLAMP (0.0f, (lit[c] + shine) * 0.5f, 1.0f) * 255.0f);
+			out[k].light[3] = (byte)(snow * 255.0f);
+			out[k].params[0] = v->axis;
+			out[k].params[1] = v->material;
+			out[k].params[2] = 0;
+			out[k].params[3] = v->ao;
+		}
+		vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
+		vulkan_globals.vk_cmd_draw (cbx->cb, draw->num_verts, 1, 0, 0);
+	}
+	R_TerrainProps_Draw (cbx);
 	R_EndDebugUtilsLabel (cbx);
 }
