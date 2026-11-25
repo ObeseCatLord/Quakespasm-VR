@@ -7,6 +7,7 @@
 #define _POSIX_C_SOURCE 199309L
 #include "terrain.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -186,6 +187,80 @@ int main (int argc, char **argv)
 		Terrain_ApplyOp (t2, &ops[i]);
 	CHECK (Terrain_Hash (t) == Terrain_Hash (t2), "two peers replaying the same ops diverged");
 	printf ("field hash after 200 ops: %016llx\n", (unsigned long long)Terrain_Hash (t));
+
+	// 6. collision: swept boxes through the pristine seed-2 cave
+	{
+		static const float boxes[2][2][3] = {{{-16, -16, -24}, {16, 16, 32}}, {{0, 0, 0}, {0, 0, 0}}};
+		uint32_t		   r = 777;
+		int				   traces = 0, hits = 0, end_overlaps = 0, tunnelled = 0, phantom = 0;
+		double			   box_ms = 0, ray_ms = 0;
+		int				   box_n = 0, ray_n = 0;
+#define RND() ((r = r * 1664525u + 1013904223u) >> 8)
+		while (traces < 4000)
+		{
+			float start[3], end[3], dir[3], len2 = 0;
+			for (int a = 0; a < 3; ++a)
+			{
+				start[a] = (float)origin[a] + (float)(RND () % (uint32_t)(size[a] * TERRAIN_CHUNK_UNITS));
+				dir[a] = (float)(RND () % 2001) / 1000.0f - 1.0f;
+				len2 += dir[a] * dir[a];
+			}
+			if (len2 < 0.01f || Terrain_SampleWorld (t3, start) < 45.0f)
+				continue;
+			const int	kind = traces & 1;
+			const float length = kind ? 200.0f + (float)(RND () % 1800) : 8.0f + (float)(RND () % 300);
+			for (int a = 0; a < 3; ++a)
+				end[a] = start[a] + dir[a] * length / sqrtf (len2);
+			terrain_hit_t hit;
+			const double  t0 = Now ();
+			Terrain_TraceBox (t3, start, boxes[kind][0], boxes[kind][1], end, &hit);
+			const double ms = Now () - t0;
+			if (kind)
+				ray_ms += ms, ++ray_n;
+			else
+				box_ms += ms, ++box_n;
+			++traces;
+			CHECK (!hit.startsolid, "trace %d started solid from open space", traces);
+			float pos[3];
+			for (int a = 0; a < 3; ++a)
+				pos[a] = start[a] + (end[a] - start[a]) * hit.fraction;
+			// A ray has no volume to overlap with, so rays are judged against the field instead. The drawn
+			// surface and the field's zero level differ by a fraction of a cell, hence the tolerances.
+			if (kind)
+				end_overlaps += Terrain_SampleWorld (t3, pos) < -6.0f;
+			else
+				end_overlaps += Terrain_BoxOverlaps (t3, pos, boxes[0][0], boxes[0][1]);
+			// brute force: no position on the way there may be inside either
+			const int steps = (int)(length * hit.fraction);
+			for (int k = 0; k < steps; ++k)
+			{
+				float p[3];
+				for (int a = 0; a < 3; ++a)
+					p[a] = start[a] + (end[a] - start[a]) * ((float)k / length);
+				if (kind ? Terrain_SampleWorld (t3, p) < -10.0f : Terrain_BoxOverlaps (t3, p, boxes[0][0], boxes[0][1]))
+				{
+					++tunnelled;
+					break;
+				}
+			}
+			if (hit.fraction < 1.0f)
+			{
+				// the stop is real: a ray ends near the zero level; a box nudged a quarter unit into the
+				// reported plane overlaps
+				++hits;
+				float p[3];
+				for (int a = 0; a < 3; ++a)
+					p[a] = pos[a] - hit.normal[a] * 0.25f;
+				phantom += kind ? Terrain_SampleWorld (t3, pos) > 8.0f : !Terrain_BoxOverlaps (t3, p, boxes[0][0], boxes[0][1]);
+			}
+		}
+		printf ("traces %d (hits %d): end overlaps %d, tunnelled %d, phantom stops %d\n", traces, hits, end_overlaps, tunnelled, phantom);
+		printf ("trace cost: player box (8-308 units) %.4f ms, ray (200-2000 units) %.4f ms\n", box_ms / box_n, ray_ms / ray_n);
+		CHECK (hits > traces / 4, "too few traces hit anything");
+		CHECK (end_overlaps == 0, "%d traces ended overlapping the surface", end_overlaps);
+		CHECK (tunnelled == 0, "%d traces passed through the surface", tunnelled);
+		CHECK (phantom * 100 <= hits, "%d of %d stops had nothing behind them", phantom, hits);
+	}
 
 	if (argc > 1)
 	{

@@ -3,7 +3,8 @@
  * the console commands that create and edit it, and its draw.
  * GPL-2.0-or-later, as the rest of the engine.
  *
- * Round 1 scope: no collision, no networking. Lighting is computed per vertex
+ * Scope so far: the region is local to this process (a listen server and its own client share it),
+ * with no networking. Collision reads it through terrain_active. Lighting is computed per vertex
  * on the CPU (ambient occlusion plus a lamp at the eye) and drawn through the
  * untextured basic shader; a terrain shader with triplanar textures and the
  * clustered dynamic lights is later work.
@@ -34,7 +35,8 @@ static int			   terrain_last_remesh_chunks;
 
 static cvar_t r_terrain = {"r_terrain", "1", CVAR_NONE};
 static cvar_t r_terrain_lamp = {"r_terrain_lamp", "700", CVAR_ARCHIVE};		// reach of the eye lamp in units; 0 turns it off
-static cvar_t r_terrain_ambient = {"r_terrain_ambient", "0.12", CVAR_ARCHIVE};
+static cvar_t terrain_seed = {"terrain_seed", "1", CVAR_NONE}; // used when a drg* map spawns its cave
+static cvar_t r_terrain_ambient = {"r_terrain_ambient", "0.3", CVAR_ARCHIVE};
 
 static const float terrain_colors[TERRAIN_MAT_COUNT][3] = {
 	{0.44f, 0.41f, 0.39f}, // rock
@@ -53,7 +55,7 @@ static void Terrain_Clear (void)
 	free (terrain_draws);
 	terrain_draws = NULL;
 	Terrain_Free (terrain);
-	terrain = NULL;
+	terrain = terrain_active = NULL;
 }
 
 // Expands a chunk's indexed mesh to unshared triangles: rock keeps one normal per face so it
@@ -113,23 +115,12 @@ static void Terrain_RemeshDirty (void)
 	terrain_last_remesh_chunks = remeshed;
 }
 
-/*
-terrain_spawn [seed] [chunks_x chunks_y chunks_z]
-Creates a cave region centred on the view position; its start room surrounds the player.
-*/
-static void Terrain_Spawn_f (void)
+static void Terrain_SpawnAt (const vec3_t center, uint32_t seed, const int32_t size[3])
 {
-	const uint32_t seed = Cmd_Argc () > 1 ? (uint32_t)atoi (Cmd_Argv (1)) : 1;
-	int32_t		   size[3] = {4, 4, 3}, origin[3];
-	if (Cmd_Argc () > 4)
-		for (int i = 0; i < 3; ++i)
-			size[i] = CLAMP (1, atoi (Cmd_Argv (2 + i)), 16);
+	int32_t origin[3];
 	Terrain_Clear ();
 	for (int i = 0; i < 3; ++i)
-	{
-		const int center = (int)floorf (r_refdef.vieworg[i] / TERRAIN_CELL + 0.5f) * TERRAIN_CELL;
-		origin[i] = center - size[i] * TERRAIN_CHUNK_UNITS / 2;
-	}
+		origin[i] = (int)floorf (center[i] / TERRAIN_CELL + 0.5f) * TERRAIN_CELL - size[i] * TERRAIN_CHUNK_UNITS / 2;
 	terrain = Terrain_Create (origin, size, seed);
 	const int count = size[0] * size[1] * size[2];
 	terrain_draws = (terrain_draw_t *)calloc (count, sizeof (*terrain_draws));
@@ -146,12 +137,46 @@ static void Terrain_Spawn_f (void)
 	Terrain_Generate (terrain);
 	const double generated = Sys_DoubleTime ();
 	Terrain_RemeshDirty ();
+	terrain_active = terrain;
 	int tris = 0;
 	for (int i = 0; i < count; ++i)
 		tris += terrain_draws[i].num_verts / 3;
 	Con_Printf (
 		"terrain: seed %u, %dx%dx%d chunks, %d triangles; generate %.1f ms, mesh %.1f ms (%d chunks), hash %016llx\n", seed, size[0], size[1], size[2], tris,
 		(generated - start) * 1000.0, terrain_last_remesh_ms, terrain_last_remesh_chunks, (unsigned long long)Terrain_Hash (terrain));
+}
+
+/*
+terrain_spawn [seed] [chunks_x chunks_y chunks_z]
+Creates a cave region centred on the view position; its start room surrounds the player.
+*/
+static void Terrain_Spawn_f (void)
+{
+	const uint32_t seed = Cmd_Argc () > 1 ? (uint32_t)atoi (Cmd_Argv (1)) : (uint32_t)terrain_seed.value;
+	int32_t		   size[3] = {4, 4, 3};
+	if (Cmd_Argc () > 4)
+		for (int i = 0; i < 3; ++i)
+			size[i] = CLAMP (1, atoi (Cmd_Argv (2 + i)), 16);
+	Terrain_SpawnAt (r_refdef.vieworg, seed, size);
+}
+
+/*
+terrain_probe
+Prints where the local player is relative to the terrain; the scripted collision check reads it.
+*/
+static void Terrain_Probe_f (void)
+{
+	if (!terrain || !sv.active || !sv_player)
+	{
+		Con_Printf ("terrain_probe: needs a terrain and a local server\n");
+		return;
+	}
+	const float *o = sv_player->v.origin;
+	const vec3_t center = {o[0], o[1], o[2] + 4.0f};
+	Con_Printf (
+		"terrain_probe: origin %.1f %.1f %.1f vel %.0f %.0f %.0f onground %d field %.1f overlap %d\n", o[0], o[1], o[2], sv_player->v.velocity[0],
+		sv_player->v.velocity[1], sv_player->v.velocity[2], ((int)sv_player->v.flags & FL_ONGROUND) != 0, Terrain_SampleWorld (terrain, center),
+		Terrain_BoxOverlaps (terrain, o, sv_player->v.mins, sv_player->v.maxs));
 }
 
 // Marches the view ray through the field. Returns false when nothing is hit within range.
@@ -251,9 +276,18 @@ static void Terrain_Bench_f (void)
 		Con_Printf ("terrain_bench: %d surface chunks, mean %.3f ms, worst %.3f ms per chunk remesh\n", surface / 4, total / surface, worst);
 }
 
+// A map whose file name starts with "drg" is a shell for a cave: the region fills the middle of the
+// map, and the map's player start is expected to sit at its centre, inside the generated start room.
 void R_Terrain_NewMap (void)
 {
 	Terrain_Clear ();
+	if (!cl.worldmodel || strncmp (COM_SkipPath (cl.worldmodel->name), "drg", 3))
+		return;
+	vec3_t		  center;
+	const int32_t size[3] = {4, 4, 3};
+	for (int i = 0; i < 3; ++i)
+		center[i] = (cl.worldmodel->mins[i] + cl.worldmodel->maxs[i]) * 0.5f;
+	Terrain_SpawnAt (center, (uint32_t)terrain_seed.value, size);
 }
 
 void R_Terrain_Init (void)
@@ -261,11 +295,13 @@ void R_Terrain_Init (void)
 	Cvar_RegisterVariable (&r_terrain);
 	Cvar_RegisterVariable (&r_terrain_lamp);
 	Cvar_RegisterVariable (&r_terrain_ambient);
+	Cvar_RegisterVariable (&terrain_seed);
 	Cmd_AddCommand ("terrain_spawn", Terrain_Spawn_f);
 	Cmd_AddCommand ("terrain_dig", Terrain_Dig_f);
 	Cmd_AddCommand ("terrain_fill", Terrain_Fill_f);
 	Cmd_AddCommand ("terrain_clear", Terrain_Clear_f);
 	Cmd_AddCommand ("terrain_bench", Terrain_Bench_f);
+	Cmd_AddCommand ("terrain_probe", Terrain_Probe_f);
 }
 
 void R_DrawTerrain (cb_context_t *cbx)

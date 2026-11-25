@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "pmove.h"
+#include "terrain.h"
 #include "vr_gorilla.h"
 #include "vr_gorilla_swim.h"
 #include <limits.h>
@@ -255,6 +256,9 @@ int PM_PointContents (vec3_t p)
 		}
 	}
 
+	if (terrain_active && Terrain_PointSolid (terrain_active, p))
+		pc |= CONTENTBIT_SOLID;
+
 	return pc;
 }
 
@@ -365,6 +369,9 @@ qboolean PM_TestPlayerPosition (vec3_t pos)
 	hull_t		*hull;
 	trace_t		trace;
 
+	if (terrain_active && Terrain_BoxOverlaps (terrain_active, pos, pmove.player_mins, pmove.player_maxs))
+		return false;
+
 	for (i=0 ; i<pmove.numphysent ; i++)
 	{
 		pe = &pmove.physents[i];
@@ -456,6 +463,31 @@ static trace_t PM_PlayerTraceFiltered (vec3_t start, vec3_t end,
 		{
 			total = trace;
 			total_entnum = i;
+		}
+	}
+
+	if (terrain_active)
+	{
+		/* Same terrain sweep as SV_Move, so prediction and the server agree. */
+		terrain_hit_t hit;
+		if (Terrain_TraceBox (terrain_active, start, pmove.player_mins, pmove.player_maxs, end, &hit))
+		{
+			if (hit.startsolid)
+			{
+				total.startsolid = true;
+				if (hit.startsolid == 2)
+					total.allsolid = true;
+				total_entnum = 0;
+			}
+			else if (hit.fraction < total.fraction)
+			{
+				total.fraction = hit.fraction;
+				for (i = 0; i < 3; i++)
+					total.endpos[i] = start[i] + hit.fraction * (end[i] - start[i]);
+				VectorCopy (hit.normal, total.plane.normal);
+				total.plane.dist = DotProduct (total.endpos, hit.normal);
+				total_entnum = 0;
+			}
 		}
 	}
 

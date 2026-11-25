@@ -24,6 +24,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 #include "quakedef.h"
 #include "pmove.h"
+#include "terrain.h"
 #include "coop_inventory_policy.h"
 /* world.c defines its own legacy VectorNegate macro below. */
 #undef VectorNegate
@@ -3329,6 +3330,8 @@ int SV_PointContents (vec3_t p)
 {
 	int cont;
 
+	if (terrain_active && Terrain_PointSolid (terrain_active, p))
+		return CONTENTS_SOLID;
 	cont = SV_HullPointContents (&qcvm->worldmodel->hulls[0], 0, p);
 	if (cont <= CONTENTS_CURRENT_0 && cont >= CONTENTS_CURRENT_DOWN)
 		cont = CONTENTS_WATER;
@@ -3337,6 +3340,8 @@ int SV_PointContents (vec3_t p)
 
 int SV_TruePointContents (vec3_t p)
 {
+	if (terrain_active && Terrain_PointSolid (terrain_active, p))
+		return CONTENTS_SOLID;
 	return SV_HullPointContents (&qcvm->worldmodel->hulls[0], 0, p);
 }
 
@@ -4024,6 +4029,34 @@ boxmaxs[0] = boxmaxs[1] = boxmaxs[2] = 9999;
 SV_Move
 ==================
 */
+// Editable terrain is one more solid the world edict owns: keep whichever stop comes first.
+static void SV_ClipMoveToTerrain (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, trace_t *trace)
+{
+	terrain_hit_t hit;
+	if (!terrain_active || trace->allsolid || !Terrain_TraceBox (terrain_active, start, mins, maxs, end, &hit))
+		return;
+	if (hit.startsolid)
+	{
+		trace->startsolid = true;
+		if (hit.startsolid == 2)
+			trace->allsolid = true;
+		trace->fraction = 0.0f;
+		VectorCopy (start, trace->endpos);
+	}
+	else if (hit.fraction < trace->fraction)
+	{
+		trace->fraction = hit.fraction;
+		for (int i = 0; i < 3; i++)
+			trace->endpos[i] = start[i] + hit.fraction * (end[i] - start[i]);
+		VectorCopy (hit.normal, trace->plane.normal);
+		trace->plane.dist = DotProduct (trace->endpos, hit.normal);
+	}
+	else
+		return;
+	trace->ent = qcvm->edicts;
+	trace->contents = CONTENTS_SOLID;
+}
+
 trace_t SV_MoveWithEdictIgnoreMask (vec3_t start, vec3_t mins, vec3_t maxs, vec3_t end, int type, edict_t *passedict, const sv_ignore_edicts_t *ignore_edicts)
 {
 	moveclip_t clip;
@@ -4038,6 +4071,7 @@ trace_t SV_MoveWithEdictIgnoreMask (vec3_t start, vec3_t mins, vec3_t maxs, vec3
 
 	// clip to world
 	clip.trace = SV_ClipMoveToEntity (qcvm->edicts, start, mins, maxs, end, clip.hitcontents);
+	SV_ClipMoveToTerrain (start, mins, maxs, end, &clip.trace);
 
 	clip.start = start;
 	clip.end = end;

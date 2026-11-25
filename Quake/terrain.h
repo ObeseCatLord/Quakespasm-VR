@@ -89,4 +89,20 @@ terrain_chunk_t *Terrain_Chunk (const terrain_t *t, int cx, int cy, int cz);
 void	   Terrain_MeshChunk (const terrain_t *t, int cx, int cy, int cz, terrain_mesh_t *mesh);
 void	   Terrain_MeshFree (terrain_mesh_t *mesh);
 
+typedef struct
+{
+	float fraction;	 // 0..1 along the move; 1 when nothing was hit
+	float normal[3]; // plane the box stopped against, facing the box
+	int	  startsolid; // 1: a zero-length test overlapped the surface; 2: the box centre began inside solid
+} terrain_hit_t;
+
+// Sweeps an axis-aligned box (mins/maxs relative to the moving origin) through the terrain.
+// Returns nonzero when the move is blocked or starts solid.
+int Terrain_TraceBox (const terrain_t *t, const float start[3], const float mins[3], const float maxs[3], const float end[3], terrain_hit_t *hit);
+int Terrain_BoxOverlaps (const terrain_t *t, const float origin[3], const float mins[3], const float maxs[3]);
+int Terrain_PointSolid (const terrain_t *t, const float p[3]);
+
+// The one terrain region the running game collides with, or NULL. Owned by the client module for now.
+extern terrain_t *terrain_active;
+
 #endif
