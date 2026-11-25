@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs a gdb-driven engine script with no visible window, on the machine's real GPU, inside a
-# headless sway (wlroots) session. Used for the scripted terrain checks on sayu.
+# headless sway (wlroots) session. Used for the scripted terrain checks.
 #   tests/run-headless.sh tests/terrain_play.gdb [basedir]     (basedir defaults to ./run)
 # Output: <basedir>/id1/condump.txt, screenshots beside it, engine log in $TMPDIR/drg-headless.log
 set -euo pipefail
