@@ -256,7 +256,7 @@ int PM_PointContents (vec3_t p)
 		}
 	}
 
-	if (terrain_active && Terrain_PointSolid (terrain_active, p))
+	if (terrain_pmove && Terrain_PointSolid (terrain_pmove, p))
 		pc |= CONTENTBIT_SOLID;
 
 	return pc;
@@ -369,7 +369,7 @@ qboolean PM_TestPlayerPosition (vec3_t pos)
 	hull_t		*hull;
 	trace_t		trace;
 
-	if (terrain_active && Terrain_BoxOverlaps (terrain_active, pos, pmove.player_mins, pmove.player_maxs))
+	if (terrain_pmove && Terrain_BoxOverlaps (terrain_pmove, pos, pmove.player_mins, pmove.player_maxs))
 		return false;
 
 	for (i=0 ; i<pmove.numphysent ; i++)
@@ -466,11 +466,11 @@ static trace_t PM_PlayerTraceFiltered (vec3_t start, vec3_t end,
 		}
 	}
 
-	if (terrain_active)
+	if (terrain_pmove)
 	{
 		/* Same terrain sweep as SV_Move, so prediction and the server agree. */
 		terrain_hit_t hit;
-		if (Terrain_TraceBox (terrain_active, start, pmove.player_mins, pmove.player_maxs, end, &hit))
+		if (Terrain_TraceBox (terrain_pmove, start, pmove.player_mins, pmove.player_maxs, end, &hit))
 		{
 			if (hit.startsolid)
 			{
@@ -576,7 +576,7 @@ trace_t PM_TraceLine (vec3_t start, vec3_t end)
 	return PM_PlayerTrace(start, end, MASK_PLAYERSOLID);
 }
 
-#define	MIN_STEP_NORMAL	SV_Terrain_WalkNormal ()	// 0.7, roughly 45 degrees; steeper on cave terrain
+#define MIN_STEP_NORMAL Terrain_PmoveWalkNormal () // 0.7, roughly 45 degrees; steeper on cave terrain
 
 #define	STOP_EPSILON	0.1
 #define BLOCKED_FLOOR	1
@@ -1450,7 +1450,7 @@ void PM_CategorizePosition (void)
 			trace = PM_PlayerTrace (trace.endpos, point, MASK_PLAYERSOLID);
 			/* Terrain crevice: the slide is stopped at once by a second steep face, so the
 			 * player hangs between two walls with nothing to push off. Count that as ground. */
-			if (terrain_active && !trace.startsolid && trace.fraction < 1 && DotProduct (first, trace.plane.normal) < 0.98f)
+			if (terrain_pmove && !trace.startsolid && trace.fraction < 1 && DotProduct (first, trace.plane.normal) < 0.98f)
 				terrain_wedged = true;
 		}
 

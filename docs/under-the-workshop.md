@@ -4,7 +4,8 @@ Branch `drg-terrain`. A Deep Rock Galactic style cave inside the engine: a gener
 diggable ice cave that Quake's weapons, monsters and physics work in. Working title for the
 total conversion: "Under the Workshop" (a tunnel is found under Santa's workshop).
 
-This is a prototype. Nothing here is networked yet, and nothing has been run in a headset.
+This is a prototype. The cave is networked (seed plus op log, see below), but nothing has been
+run in a headset or tested with a remote client yet.
 
 ## Run it
 
@@ -13,7 +14,7 @@ This is a prototype. Nothing here is networked yet, and nothing has been run in 
    25 vanilla monsters.
 2. `vkquake -basedir <basedir> -novr +map drgbox +bind f terrain_flare`
 
-Any map whose name starts with `drg` gets a cave: the server generates it at the map centre
+Any map whose name starts with `drg` gets a cave: the server generates it over the whole map
 before the entities spawn, then moves the player start, items and monsters onto the cave floor.
 
 - Axe: digs.
@@ -60,9 +61,10 @@ Put these arguments before `+map`: the crawlers are made while the map loads.
 
 | File | What |
 | --- | --- |
-| `Quake/terrain.c`, `terrain.h` | Sparse signed-distance field (16-unit cells, 32^3 chunks), cave generator, surface-nets mesher, swept-box collision against triangles made on the fly, and the walking navigation grid (32-unit cells a body can stand in, joined where the climb is at most 45 degrees, plus one-way drops of up to four cells off a ledge). No engine dependencies; `tests/terrain_fixture.c` builds it alone. |
+| `Quake/terrain.c`, `terrain.h` | Sparse signed-distance field (16-unit cells, 32^3 chunks), cave generator, surface-nets mesher, swept-box collision against triangles made on the fly, and the walking navigation grid (32-unit cells a body can stand in, joined where the climb is at most 45 degrees, plus drops of up to four cells off a ledge and, when allowed, jumps of a few cells up onto one; a weighted flood, so routes keep to the floor where they can). No engine dependencies; `tests/terrain_fixture.c` builds it alone. |
 | `Quake/sv_terrain.c` | Server side: owns the region and the op log, entity placement, axe, jetpack, vault, explosion digging, flares, crawlers and their flow field, and walking routes for ordinary monsters (the grid follows the op log and marks cells inside the map's brushes closed; one distance field per chased player and body size). |
-| `Quake/r_terrain.c` | Client side: meshes and draws the region (CPU vertex lighting plus the client's dynamic lights). |
+| `Quake/cl_terrain.c` | Client side: the client's own copy of the cave, generated from the seed the server sends and kept up to date by replaying its op stream. |
+| `Quake/r_terrain.c` | Client side: meshes the client's copy on worker threads and draws it (CPU vertex lighting plus the client's dynamic lights, cached per chunk). |
 | `Quake/r_terrain_tex.c`, `r_terrain_props.c`, `r_terrain_style.h`, `Shaders/terrain.*` | The looks: generated texture atlas, box-projected nearest-sampled shading, props and light strings placed from the seed. |
 | `Quake/world.c`, `pmove.c`, `sv_move.c`, `sv_phys.c`, `pr_cmds.c` | Small hooks: traces, point contents, player movement, monster steps and `movetogoal` routes, explosion sniffing. |
 
@@ -72,8 +74,13 @@ Put these arguments before `+map`: the crawlers are made while the map loads.
   ops (`SV_Terrain_OpLog`). Every change goes through `SV_Terrain_Edit`. The generator and the
   ops are integer and deterministic: the seed-1 hash in the fixture is the same under gcc and
   clang at any optimisation level. A client that has the seed and the op log has the cave.
-- **The client only draws.** Today it reads the server's region through `terrain_active`, which
-  works for a listen server only. Sending seed and ops over the wire is the missing piece.
+- **The client has its own copy.** A spawned client of this engine (the pinned QSVR protocol) is
+  sent `//terrain_init` (seed, origin, size, ice, walk slope) and then every op in order as
+  `//terrain_ops <first index> <bytes per op> <hex>`, hidden stuffed commands on the reliable
+  channel. It generates the same cave and replays the ops (`cl_terrain.c`); drawing, props and
+  the client's player prediction use that copy (`terrain_client`), the server's traces and player
+  move use `terrain_active`. A listen server's own client takes the same path. `terrain_clhash`
+  prints both hashes when one process runs both.
 - **No QuakeC changes.** Everything works with a stock `progs.dat`: abilities read buttons and
   weapon fields, explosion digging watches the `TE_EXPLOSION` broadcasts, crawlers are spawned
   through the progs' own `monster_demon1` function.
@@ -88,6 +95,7 @@ Put these arguments before `+map`: the crawlers are made while the map loads.
 | `terrain_slope` | 0.55 | least walkable floor normal z on terrain |
 | `terrain_monsterstep` | 1 | slope-tolerant monster steps |
 | `terrain_pathfind` | 1 | walking monsters chasing a player follow a route through the cave; 0 is the stock chase |
+| `terrain_monsterclimb` | 3 | 32-unit levels a walking monster may jump up onto a ledge on its route; 0 is none |
 | `terrain_crawlers` | 4 | crawlers added at map load |
 | `terrain_crawler_sense`, `terrain_crawler_speed` | 900, 210 | |
 | `terrain_crawler_types` | `monster_demon1` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
@@ -96,7 +104,7 @@ Put these arguments before `+map`: the crawlers are made while the map loads.
 | `r_terrain_ambient`, `r_terrain_lamp`, `r_terrain_dlights`, `r_terrain_biome` | | look |
 
 Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, `terrain_fill`,
-`terrain_spawn`, `terrain_bench`.
+`terrain_spawn`, `terrain_bench`, `terrain_clhash`.
 
 ## Tests
 
@@ -104,21 +112,25 @@ Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, 
   `TERRAIN_FIXTURE_PASSED`.
 - `tests/run-headless.sh tests/terrain_<name>.gdb [basedir]` drives the engine with gdb inside a
   headless sway session (Linux, real GPU, no window) and leaves `id1/condump.txt`. Each script's
-  header says what to expect. `terrain_pathfind.gdb` compares monsters' route lengths to the player with
-  routes on and off (`terrain_ents` prints `route N`, in 32-unit cells).
+  header says what to expect. `terrain_pathfind.gdb` compares monsters' route costs to the player
+  with routes on and off (`terrain_ents` prints `route N`: about 2 per 32 units walked).
+  `terrain_netsync.gdb` checks that the client's copy matches the server's region after edits.
 
 ## Known gaps
 
-- No netsync, no headset pass, no VR-hand digging.
-- The region edge is a flat wall that cannot be dug.
+- No headset pass, no remote-client pass of the netsync, no VR-hand digging.
+- The region covers the map up to 16 chunks (8192 units) a side; a larger map keeps a flat
+  undiggable wall where the region ends.
 - Walking routes are for ground monsters chasing a player. Flyers, swimmers, monsters fighting each
   other and `path_corner` patrols still use the stock chase. A monster drops off ledges up to 128
-  units high but cannot climb anything steeper than 45 degrees or jump a gap, so a player who
-  jetpacks onto a high ledge is out of reach on foot. Some monsters still stall on steps the slope
-  rules refuse, or wedge into a wall.
+  units high and jumps up to `terrain_monsterclimb` levels, but cannot jump a gap or follow a
+  player jetpacking high up a wall. A monster stuck for three seconds gets a second of the stock
+  chase to shake loose; a wedged one is pushed out of the terrain.
 - Crawlers stop at the surface point nearest the player when the player is not touching a
   surface they can reach (standing mid-floor under a wall they are on, or in the air). The flow
   field is through open cells, not along surfaces, and only the fiend has a leap to close the gap.
-- Crawlers ignore each other's bodies beyond a simple spacing push. Their flow field avoids the map's
-  brushes, but their movement along the surface does not.
-- Meshing is synchronous on the main thread; vertices are re-uploaded every frame.
+- Crawlers keep out of the map's brushes and do not walk into other monsters or players, but
+  they test bodies as spheres, not boxes.
+- Terrain lighting is still computed on the CPU (cached per chunk, redone only when its inputs
+  change); each frame copies the visible chunks' lit vertices into the frame's vertex memory.
+  Moving the lamp and dynamic lights into the shader would remove that copy.

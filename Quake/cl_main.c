@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_main.c  -- client main loop
 
 #include "quakedef.h"
+#include "terrain.h"
 #include "addon_catalog.h"
 #include "snd_spatial_world.h"
 #include "bgmusic.h"
@@ -438,6 +439,7 @@ CL_ClearState
 */
 void CL_ClearState (void)
 {
+	CL_Terrain_Clear ();
 	CL_ResetPendingImpulse ();
 	/* The wheel borrows precached client models; drop those references before
 	 * serverinfo tears down the old client state, including same-map restarts. */
@@ -2665,6 +2667,7 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		}
 		if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
 		{
+			terrain_pmove = terrain_client;
 			if (!PM_PlayerMoveQCReplay (1))
 			{
 				if (shadow)
@@ -2674,7 +2677,10 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			}
 		}
 		else
+		{
+			terrain_pmove = terrain_client;
 			PM_PlayerMove (1);
+		}
 		if (!shadow && prediction_samples_enabled &&
 			result->prediction_sample_count < CL_PREDICTION_SAMPLE_COUNT &&
 			CL_PredictionVectorFinite (pmove.origin))
@@ -2741,6 +2747,7 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 		}
 		if (movevars.flags & MOVEFLAG_QC_JUMP_ORDINARY)
 		{
+			terrain_pmove = terrain_client;
 			if (!PM_PlayerMoveQCReplay (1))
 			{
 				CL_ResetReplayPropagation ();
@@ -2748,7 +2755,10 @@ static qboolean CL_ComputeReplayPlayerMovement (entity_t *ent, cl_replay_result_
 			}
 		}
 		else
+		{
+			terrain_pmove = terrain_client;
 			PM_PlayerMove (1);
+		}
 	}
 
 	VectorCopy (pmove.origin, result->origin);
@@ -2999,6 +3009,7 @@ void CL_MonkeOwnerAuthor (usercmd_t *cmd)
 		cl_monke.valid = false;
 		return;
 	}
+	terrain_pmove = terrain_client;
 	PM_PlayerMove (1);
 	if (!CL_PredictionVectorFinite (pmove.origin) ||
 		!CL_PredictionVectorFinite (pmove.velocity))
@@ -4336,6 +4347,7 @@ CL_Init
 */
 void CL_Init (void)
 {
+	CL_Terrain_Init ();
 	SZ_Alloc (&cls.message, NET_MAXMESSAGE);
 	cls.message.maxsize = 1024;
 

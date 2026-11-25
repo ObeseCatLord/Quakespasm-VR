@@ -5785,6 +5785,7 @@ void SV_SendClientMessages (void)
 		SV_AppendAkimboProtocol (host_client);
 		SV_AppendGorillaProtocol (host_client);
 		SV_AppendInstantStopProtocol (host_client);
+		SV_Terrain_SendToClient (host_client);
 		if (host_client->spawned)
 		{
 			char reason[128] = "metadata envelope cannot be published";

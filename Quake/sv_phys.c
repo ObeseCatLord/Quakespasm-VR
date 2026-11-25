@@ -10087,6 +10087,7 @@ const char *SV_RunStandardPlayerPhysics (edict_t *ent)
 		failure = "standard collision collection failed";
 		goto done;
 	}
+	terrain_pmove = terrain_active;
 	PM_PlayerMove (1);
 	/* Capture and retain contacts before any trigger/impact can mutate scratch
 	 * or remove/reallocate another contact. No callback uses the live PMove list. */
@@ -10990,6 +10991,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	}
 	VectorCopy (ent->v.v_angle, premove_v_angle);
 	VectorCopy (ent->v.angles, premove_angles);
+	terrain_pmove = terrain_active;
 	PM_PlayerMove (1.0f);
 	result_gorilla = pmove.gorilla;
 	VectorCopy (pmove.origin, result_gorilla_origin);

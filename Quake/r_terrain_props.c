@@ -314,7 +314,7 @@ entities and their lights into cl_dlights, so monsters and the player's weapon s
 */
 void R_Terrain_AddEntities (void)
 {
-	if (!terrain_props_for || terrain_props_for != terrain_active || !r_terrain_props.value || R_TerrainStyle_Current () == 0)
+	if (!terrain_props_for || terrain_props_for != terrain_client || !r_terrain_props.value || R_TerrainStyle_Current () == 0)
 		return;
 	for (int i = 0; i < terrain_num_props; ++i)
 	{
@@ -398,7 +398,7 @@ static int PushCord (terrain_gpuvert_t *out, const vec3_t a, const vec3_t b)
 // Strings of lights, drawn with the terrain pipeline already bound.
 void R_TerrainProps_Draw (cb_context_t *cbx)
 {
-	if (!terrain_num_strings || terrain_props_for != terrain_active || !r_terrain_props.value)
+	if (!terrain_num_strings || terrain_props_for != terrain_client || !r_terrain_props.value)
 		return;
 	int total = 0;
 	for (int s = 0; s < terrain_num_strings; ++s)

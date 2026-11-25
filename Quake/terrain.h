@@ -49,6 +49,7 @@ typedef struct
 	int32_t			 origin[3]; // world position of sample (0,0,0), Quake units
 	int32_t			 size[3];	// chunks per axis
 	uint32_t		 seed;
+	float			 walk_normal; // least floor normal z that counts as ground on this terrain (set by the server, sent to clients)
 	terrain_chunk_t *chunks;
 } terrain_t;
 
@@ -109,6 +110,7 @@ int Terrain_PointSolid (const terrain_t *t, const float p[3]);
 #define TERRAIN_NAV_CLASSES	 2 // 0: a body up to a player's size; 1: wide and tall (shambler)
 #define TERRAIN_NAV_FAR		 0xffff
 #define TERRAIN_NAV_MAX_DROP 4 // cells a body may drop off a ledge (one way)
+#define TERRAIN_NAV_MAX_CLIMB 4 // most levels max_climb may allow
 enum
 {
 	TERRAIN_NAV_AIR = 1,	 // centre is open
@@ -120,8 +122,10 @@ typedef struct
 {
 	int32_t	 origin[3];
 	int		 dim[3], count;
-	uint8_t *flags;
-	int		*queue; // flood scratch
+	uint8_t	 *flags;
+	int		  max_climb; // levels a body may jump up onto a ledge; 0 or 1: none (set by the caller)
+	uint64_t *heap;		 // flood scratch
+	int		  heap_len, heap_cap;
 } terrain_nav_t;
 
 void Terrain_NavInit (terrain_nav_t *nav, const terrain_t *t); // allocates; flags start clear
@@ -132,12 +136,27 @@ void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain
 void Terrain_NavSetBlocked (terrain_nav_t *nav, int cell, int blocked);						// takes effect on the next refresh
 void Terrain_NavCellCenter (const terrain_nav_t *nav, int cell, float out[3]);
 int	 Terrain_NavFindStand (const terrain_nav_t *nav, int cls, const float feet[3], int up, int down); // -1 when none near
-void Terrain_NavFlood (const terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist);
+void Terrain_NavFlood (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist);
 int	 Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, int cell); // one step closer, or -1
 int	 Terrain_NavIsDrop (const terrain_nav_t *nav, int from, int to);					  // that step is off a ledge
+int	 Terrain_NavIsClimb (const terrain_nav_t *nav, int from, int to);					  // that step is a jump up onto a ledge
+int	 Terrain_NavStepCost (const terrain_nav_t *nav, int from, int to);
 
-extern terrain_t *terrain_active;
+// Op wire form (netsync): kind, material, radius, centre, little-endian.
+#define TERRAIN_OP_BYTES 16
+void Terrain_OpPack (const terrain_op_t *op, uint8_t out[TERRAIN_OP_BYTES]);
+void Terrain_OpUnpack (const uint8_t in[TERRAIN_OP_BYTES], terrain_op_t *op);
+
+extern terrain_t *terrain_active; // the server's region
 extern unsigned	  terrain_epoch; // changes whenever terrain_active is replaced or freed
+extern terrain_t *terrain_client;		// the client's copy, built from the server's seed and op log (cl_terrain.c); what is drawn
+extern unsigned	  terrain_client_epoch; // changes whenever terrain_client is replaced or freed
+extern terrain_t *terrain_pmove;		// whichever of the two the running player move collides with
+float			  Terrain_PmoveWalkNormal (void);
+void			  CL_Terrain_Init (void);
+void			  CL_Terrain_Clear (void);
+struct client_s;
+void SV_Terrain_SendToClient (struct client_s *client);
 
 /* Server side (sv_terrain.c). Engine code only; the offline fixture does not link these. */
 struct edict_s;
@@ -157,5 +176,6 @@ int	 SV_Terrain_RelaxedSteps (void);
 int		   SV_Terrain_MoveToGoal (struct edict_s *ent, struct edict_s *goal, float dist); // 1 when it stepped the monster along a route
 extern int sv_terrain_step_stats[6]; // monster steps: ok, blocked, edge, bad footing
 void R_Terrain_Update (void);
+void	   R_Terrain_FinishMeshing (void); // waits for chunks meshing on worker threads; call before changing or freeing terrain_client
 
 #endif

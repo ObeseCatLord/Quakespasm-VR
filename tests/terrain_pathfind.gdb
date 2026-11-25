@@ -1,11 +1,12 @@
 # Walking routes for vanilla monsters. Run: tests/run-headless.sh tests/terrain_pathfind.gdb
 # The player stands still in god mode and every monster is told to hunt them, first with
 # terrain_pathfind 1, then on a fresh load with terrain_pathfind 0 (the stock chase). Each
-# terrain_ent line ends with "route N": the monster's walking distance to the player (in 32-unit
-# cells; -1: no route on foot; -2: not standing on any cell the grid knows, usually wedged in a
-# wall). Seen in one run on seed 1 at skill 1: 23 of 25 monsters start with a route; with routes
-# on, 14 of them reach the player (most are then killed in the crossfire), the rest stall partway;
-# with routes off, 2 to 4 do and most end wedged in a wall (overlap 1). Numbers vary between runs.
+# terrain_ent line ends with "route N": the cost of the monster's route to the player (about 2
+# per 32 units walked; -1: no route on foot; -2: not standing on any cell the grid knows, usually
+# wedged in a wall). Seen in one run on seed 1 at skill 1 with jumps (terrain_monsterclimb 3): 23
+# of 25 monsters start with a route; with routes on, all but two of them reach the player by PHASE
+# on1 (most are then killed in the crossfire); with routes off, a few do and most end wedged in a
+# wall (overlap 1). Numbers vary between runs.
 set pagination off
 set confirm off
 set debuginfod enabled off
