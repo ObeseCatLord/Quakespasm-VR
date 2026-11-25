@@ -262,6 +262,121 @@ int main (int argc, char **argv)
 		CHECK (phantom * 100 <= hits, "%d of %d stops had nothing behind them", phantom, hits);
 	}
 
+	// 7. walking navigation on the pristine seed-1 cave
+	{
+		terrain_t *nt = Terrain_Create (origin, size, 1);
+		Terrain_Generate (nt);
+		terrain_nav_t nav;
+		Terrain_NavInit (&nav, nt);
+		double n0 = Now ();
+		Terrain_NavRefreshAll (&nav, nt);
+		const double refresh_ms = Now () - n0;
+		int			 stand[TERRAIN_NAV_CLASSES] = {0};
+		for (int i = 0; i < nav.count; ++i)
+			for (int cls = 0; cls < TERRAIN_NAV_CLASSES; ++cls)
+				stand[cls] += (nav.flags[i] & (TERRAIN_NAV_STAND << cls)) != 0;
+		uint16_t   *dist = malloc ((size_t)nav.count * sizeof (uint16_t));
+		uint16_t   *dist2 = malloc ((size_t)nav.count * sizeof (uint16_t));
+		// the generator always opens a room at the centre; stand on its floor
+		const float centre[3] = {
+			(float)origin[0] + size[0] * TERRAIN_CHUNK_UNITS * 0.5f, (float)origin[1] + size[1] * TERRAIN_CHUNK_UNITS * 0.5f,
+			(float)origin[2] + size[2] * TERRAIN_CHUNK_UNITS * 0.5f - 150.0f};
+		const int seed = Terrain_NavFindStand (&nav, 0, centre, 2, 4);
+		CHECK (seed >= 0, "no stand cell on the floor of the centre room");
+		n0 = Now ();
+		Terrain_NavFlood (&nav, 0, &seed, 1, dist);
+		const double flood_ms = Now () - n0;
+		int			 reached = 0, far_cell = -1;
+		for (int i = 0; i < nav.count; ++i)
+			if (dist[i] != TERRAIN_NAV_FAR)
+			{
+				++reached;
+				if (far_cell < 0 || dist[i] > dist[far_cell])
+					far_cell = i;
+			}
+		printf (
+			"nav: %d x %d x %d cells, stand %d (wide %d), reachable from the centre %d, farthest %d steps\n", nav.dim[0], nav.dim[1], nav.dim[2], stand[0],
+			stand[1], reached, far_cell >= 0 ? dist[far_cell] : -1);
+		printf ("nav cost: full refresh %.2f ms, flood %.2f ms\n", refresh_ms, flood_ms);
+		CHECK (reached > 400, "only %d stand cells reachable on foot from the centre", reached);
+		CHECK (stand[1] > 0 && stand[1] < stand[0], "wide bodies should stand on fewer cells (%d of %d)", stand[1], stand[0]);
+
+		// following the field from the farthest cell arrives in exactly its number of steps, and every
+		// step has room for a player-sized box at body height
+		int path[4096], path_len = 0, blocked_links = 0;
+		for (int cell = far_cell; cell >= 0 && path_len < 4096; cell = Terrain_NavNext (&nav, 0, dist, cell))
+			path[path_len++] = cell;
+		CHECK (
+			path_len == dist[far_cell] + 1 && path[path_len - 1] == seed, "the route from the farthest cell is %d long, not %d, or misses the target",
+			path_len - 1, dist[far_cell]);
+		for (int k = 0; k + 1 < path_len; ++k)
+		{
+			CHECK (dist[path[k + 1]] == dist[path[k]] - 1, "route step %d does not get closer", k);
+			const float	  mins[3] = {-16, -16, -24}, maxs[3] = {16, 16, 32};
+			float		  a[3], b[3];
+			terrain_hit_t hit;
+			Terrain_NavCellCenter (&nav, path[k], a);
+			Terrain_NavCellCenter (&nav, path[k + 1], b);
+			a[2] = b[2] = (a[2] > b[2] ? a[2] : b[2]) + 24.0f; // feet at the higher cell's centre
+			blocked_links += Terrain_TraceBox (nt, a, mins, maxs, b, &hit) && (hit.startsolid || hit.fraction < 0.5f);
+		}
+		int drops = 0;
+		for (int k = 0; k + 1 < path_len; ++k)
+			drops += Terrain_NavIsDrop (&nav, path[k], path[k + 1]);
+		printf ("nav route: %d steps (%d off a ledge), %d with a wall at body height\n", path_len - 1, drops, blocked_links);
+		CHECK (blocked_links * 10 <= path_len, "%d of %d route steps run into a wall", blocked_links, path_len - 1);
+
+		// block the route halfway, then dig it open again: the far cell's distance has to follow
+		const int mid = path[path_len / 2];
+		float	  mid_pos[3];
+		Terrain_NavCellCenter (&nav, mid, mid_pos);
+		terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_FILL, 7 * TERRAIN_SUB, {0, 0, 0}};
+		for (int a = 0; a < 3; ++a)
+			op.center[a] = (int32_t)((mid_pos[a] - (float)origin[a]) * TERRAIN_SUB / TERRAIN_CELL);
+		Terrain_ApplyOp (nt, &op);
+		Terrain_NavRefreshOp (&nav, nt, &op);
+		CHECK (!(nav.flags[mid] & TERRAIN_NAV_STAND), "a filled cell is still somewhere to stand");
+		Terrain_NavFlood (&nav, 0, &seed, 1, dist2);
+		printf (
+			"nav: after a fill on the route the far cell is %d steps away (was %d)\n", dist2[far_cell] == TERRAIN_NAV_FAR ? -1 : dist2[far_cell],
+			dist[far_cell]);
+		CHECK (dist2[far_cell] >= dist[far_cell], "filling the route shortened it");
+		int through_fill = 0;
+		for (int cell = far_cell; cell >= 0; cell = Terrain_NavNext (&nav, 0, dist2, cell))
+		{
+			float p[3], d2 = 0;
+			Terrain_NavCellCenter (&nav, cell, p);
+			for (int a = 0; a < 3; ++a)
+				d2 += (p[a] - mid_pos[a]) * (p[a] - mid_pos[a]);
+			through_fill += d2 < 96.0f * 96.0f;
+		}
+		CHECK (!through_fill, "the new route still goes through %d filled cells", through_fill);
+		op.kind = TERRAIN_OP_DIG;
+		op.radius = 9 * TERRAIN_SUB; // wider than the fill, so it reopens the passage on both sides
+		Terrain_ApplyOp (nt, &op);
+		Terrain_NavRefreshOp (&nav, nt, &op);
+		Terrain_NavFlood (&nav, 0, &seed, 1, dist2);
+		CHECK (
+			dist2[far_cell] != TERRAIN_NAV_FAR && dist2[far_cell] <= dist[far_cell] + 4, "digging the route open again did not restore it (%d steps)",
+			dist2[far_cell]);
+
+		// a refresh around each op gives what a full refresh gives
+		uint8_t *partial = malloc (nav.count);
+		for (int i = 0; i < 40; ++i)
+		{
+			Terrain_ApplyOp (nt, &ops[i]);
+			Terrain_NavRefreshOp (&nav, nt, &ops[i]);
+		}
+		memcpy (partial, nav.flags, nav.count);
+		Terrain_NavRefreshAll (&nav, nt);
+		CHECK (!memcmp (partial, nav.flags, nav.count), "refreshing around ops differs from a full refresh");
+		free (partial);
+		free (dist);
+		free (dist2);
+		Terrain_NavFree (&nav);
+		Terrain_Free (nt);
+	}
+
 	if (argc > 1)
 	{
 		// pristine seed-1 cave as OBJ, for looking at the mesh outside the engine

@@ -22,15 +22,16 @@ before the entities spawn, then moves the player start, items and monsters onto 
 - Hold jump against a ledge: vault onto it.
 - `terrain_flare`: throws a bouncing light.
 - Four fiends crawl on floors, walls and ceilings and hunt by a flow field.
+- Vanilla monsters walk a route through the cave to the player they are chasing.
 
 ## Where things are
 
 | File | What |
 | --- | --- |
-| `Quake/terrain.c`, `terrain.h` | Sparse signed-distance field (16-unit cells, 32^3 chunks), cave generator, surface-nets mesher, swept-box collision against triangles made on the fly. No engine dependencies; `tests/terrain_fixture.c` builds it alone. |
-| `Quake/sv_terrain.c` | Server side: owns the region and the op log, entity placement, axe, jetpack, vault, explosion digging, flares, crawlers and their flow field. |
+| `Quake/terrain.c`, `terrain.h` | Sparse signed-distance field (16-unit cells, 32^3 chunks), cave generator, surface-nets mesher, swept-box collision against triangles made on the fly, and the walking navigation grid (32-unit cells a body can stand in, joined where the climb is at most 45 degrees, plus one-way drops of up to four cells off a ledge). No engine dependencies; `tests/terrain_fixture.c` builds it alone. |
+| `Quake/sv_terrain.c` | Server side: owns the region and the op log, entity placement, axe, jetpack, vault, explosion digging, flares, crawlers and their flow field, and walking routes for ordinary monsters (the grid follows the op log and marks cells inside the map's brushes closed; one distance field per chased player and body size). |
 | `Quake/r_terrain.c` | Client side: meshes and draws the region (untextured, CPU vertex lighting plus the client's dynamic lights). |
-| `Quake/world.c`, `pmove.c`, `sv_move.c`, `sv_phys.c`, `pr_cmds.c` | Small hooks: traces, point contents, player movement, monster steps, explosion sniffing. |
+| `Quake/world.c`, `pmove.c`, `sv_move.c`, `sv_phys.c`, `pr_cmds.c` | Small hooks: traces, point contents, player movement, monster steps and `movetogoal` routes, explosion sniffing. |
 
 ## Design rules so far
 
@@ -53,6 +54,7 @@ before the entities spawn, then moves the player start, items and monsters onto 
 | `terrain_blast` | 64 | radius an explosion digs; 0 is off |
 | `terrain_slope` | 0.55 | least walkable floor normal z on terrain |
 | `terrain_monsterstep` | 1 | slope-tolerant monster steps |
+| `terrain_pathfind` | 1 | walking monsters chasing a player follow a route through the cave; 0 is the stock chase |
 | `terrain_crawlers` | 4 | crawlers added at map load |
 | `terrain_crawler_sense`, `terrain_crawler_speed` | 900, 210 | |
 | `terrain_crawler_types` | `monster_demon1` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
@@ -67,12 +69,18 @@ Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, 
   `TERRAIN_FIXTURE_PASSED`.
 - `tests/run-headless.sh tests/terrain_<name>.gdb [basedir]` drives the engine with gdb inside a
   headless sway session (Linux, real GPU, no window) and leaves `id1/condump.txt`. Each script's
-  header says what to expect.
+  header says what to expect. `terrain_pathfind.gdb` compares monsters' route lengths to the player with
+  routes on and off (`terrain_ents` prints `route N`, in 32-unit cells).
 
 ## Known gaps
 
 - No netsync, no headset pass, no VR-hand digging.
 - The region edge is a flat wall that cannot be dug.
-- Vanilla monsters have no pathfinding and walk into cave walls.
-- Crawlers ignore each other's bodies beyond a simple spacing push, and ignore BSP.
+- Walking routes are for ground monsters chasing a player. Flyers, swimmers, monsters fighting each
+  other and `path_corner` patrols still use the stock chase. A monster drops off ledges up to 128
+  units high but cannot climb anything steeper than 45 degrees or jump a gap, so a player who
+  jetpacks onto a high ledge is out of reach on foot. Some monsters still stall on steps the slope
+  rules refuse, or wedge into a wall.
+- Crawlers ignore each other's bodies beyond a simple spacing push. Their flow field avoids the map's
+  brushes, but their movement along the surface does not.
 - Meshing is synchronous on the main thread; vertices are re-uploaded every frame.
