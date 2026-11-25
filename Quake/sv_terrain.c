@@ -278,7 +278,7 @@ static qboolean WalkNavUpdate (void)
 		{
 			vec3_t p;
 			Terrain_NavCellCenter (&walk_nav, i, p);
-			const int contents = SV_PointContents (p);
+			const int contents = SV_HullPointContents (&qcvm->worldmodel->hulls[0], 0, p); // the map alone: the cave rock is the field's business
 			if (contents == CONTENTS_SOLID || contents == CONTENTS_SKY)
 			{
 				Terrain_NavSetBlocked (&walk_nav, i, 1);
