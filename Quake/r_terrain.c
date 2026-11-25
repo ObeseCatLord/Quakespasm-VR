@@ -37,9 +37,10 @@ static double		   terrain_last_remesh_ms;
 static int			   terrain_last_remesh_chunks;
 
 static cvar_t r_terrain = {"r_terrain", "1", CVAR_NONE};
-static cvar_t r_terrain_lamp = {"r_terrain_lamp", "700", CVAR_ARCHIVE};		// reach of the eye lamp in units; 0 turns it off
-static cvar_t r_terrain_biome = {"r_terrain_biome", "1", CVAR_ARCHIVE};		// 0 rock cave, 1 ice cave
-static cvar_t r_terrain_ambient = {"r_terrain_ambient", "0.3", CVAR_ARCHIVE};
+static cvar_t r_terrain_lamp = {"r_terrain_lamp", "450", CVAR_NONE};		// reach of the eye lamp in units; 0 turns it off
+static cvar_t r_terrain_biome = {"r_terrain_biome", "1", CVAR_NONE};		// 0 rock cave, 1 ice cave
+static cvar_t r_terrain_ambient = {"r_terrain_ambient", "0.16", CVAR_NONE};
+static cvar_t r_terrain_dlights = {"r_terrain_dlights", "1.4", CVAR_NONE}; // strength of rockets, explosions, flares on the terrain; 0 off
 
 static const float terrain_colors[2][TERRAIN_MAT_COUNT][3] = {
 	{
@@ -296,6 +297,7 @@ void R_Terrain_Init (void)
 	Cvar_RegisterVariable (&r_terrain_lamp);
 	Cvar_RegisterVariable (&r_terrain_ambient);
 	Cvar_RegisterVariable (&r_terrain_biome);
+	Cvar_RegisterVariable (&r_terrain_dlights);
 	Cmd_AddCommand ("terrain_spawn", Terrain_Spawn_f);
 	Cmd_AddCommand ("terrain_dig", Terrain_Dig_f);
 	Cmd_AddCommand ("terrain_fill", Terrain_Fill_f);
@@ -316,11 +318,44 @@ void R_DrawTerrain (cb_context_t *cbx)
 	const float lamp_falloff = lamp > 0.0f ? 1.0f / (lamp * lamp * 0.08f) : 0.0f; // half brightness at about 0.28 of the reach
 	const float ambient = r_terrain_ambient.value;
 	const int	ice = r_terrain_biome.value != 0.0f;
+
+	// The engine's dynamic lights (rocket glow, explosions, muzzle flashes, flares). Plain white
+	// ones are warmed so fire reads against the ice.
+	const dlight_t *lights[MAX_DLIGHTS];
+	float			light_rgb[MAX_DLIGHTS][3];
+	int				num_lights = 0;
+	if (r_terrain_dlights.value > 0.0f)
+		for (int i = 0; i < MAX_DLIGHTS; ++i)
+		{
+			const dlight_t *dl = &cl_dlights[i];
+			if (dl->die < cl.time || dl->radius <= 0.0f)
+				continue;
+			const qboolean white = fabsf (dl->color[0] - dl->color[1]) < 0.05f && fabsf (dl->color[1] - dl->color[2]) < 0.05f;
+			const float	   level = white ? (dl->color[0] > 0.0f ? dl->color[0] : 1.0f) : 1.0f;
+			light_rgb[num_lights][0] = (white ? level : dl->color[0]) * r_terrain_dlights.value;
+			light_rgb[num_lights][1] = (white ? level * 0.74f : dl->color[1]) * r_terrain_dlights.value;
+			light_rgb[num_lights][2] = (white ? level * 0.42f : dl->color[2]) * r_terrain_dlights.value;
+			lights[num_lights++] = dl;
+		}
 	for (int i = 0; i < terrain_draw_count; ++i)
 	{
 		const terrain_draw_t *draw = &terrain_draws[i];
 		if (!draw->num_verts || R_CullBox ((float *)draw->mins, (float *)draw->maxs))
 			continue;
+
+		int near_lights[MAX_DLIGHTS], num_near = 0;
+		for (int l = 0; l < num_lights; ++l)
+		{
+			float gap2 = 0.0f;
+			for (int a = 0; a < 3; ++a)
+			{
+				const float o = lights[l]->origin[a];
+				const float d = o < draw->mins[a] ? draw->mins[a] - o : o > draw->maxs[a] ? o - draw->maxs[a] : 0.0f;
+				gap2 += d * d;
+			}
+			if (gap2 < lights[l]->radius * lights[l]->radius)
+				near_lights[num_near++] = l;
+		}
 
 		VkBuffer	   buffer;
 		VkDeviceSize   buffer_offset;
@@ -364,10 +399,30 @@ void R_DrawTerrain (cb_context_t *cbx)
 			}
 			else
 				light = q_min (light * ao, 1.0f);
+			float lit[3] = {light, light, light};
+			for (int n = 0; n < num_near; ++n)
+			{
+				const dlight_t *dl = lights[near_lights[n]];
+				vec3_t			to_light;
+				VectorSubtract (dl->origin, v->pos, to_light);
+				const float dist2 = DotProduct (to_light, to_light);
+				if (dist2 >= dl->radius * dl->radius)
+					continue;
+				const float dist = sqrtf (dist2);
+				float		fall = 1.0f - dist / dl->radius;
+				// ice passes some light through, so it wraps further round than rock does
+				const float wrap = ice ? 0.45f : 0.1f;
+				const float facing = (DotProduct (to_light, v->normal) / (dist + 1.0f) + wrap) / (1.0f + wrap);
+				if (facing <= 0.0f)
+					continue;
+				fall *= fall * facing * (ice ? 1.0f : ao);
+				for (int c = 0; c < 3; ++c)
+					lit[c] += light_rgb[near_lights[n]][c] * fall;
+			}
 			VectorCopy (v->pos, out[k].position);
 			out[k].texcoord[0] = out[k].texcoord[1] = 0.0f;
 			for (int c = 0; c < 3; ++c)
-				out[k].color[c] = (byte)(q_min (rgb[c] * light + shine, 1.0f) * 255.0f);
+				out[k].color[c] = (byte)(q_min (rgb[c] * lit[c] + shine, 1.0f) * 255.0f);
 			out[k].color[3] = 255;
 		}
 		vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);

@@ -20,7 +20,15 @@ static cvar_t terrain_seed = {"terrain_seed", "1", CVAR_NONE};			   // cave seed
 static cvar_t terrain_axedig = {"terrain_axedig", "1", CVAR_NONE};		   // the axe digs
 static cvar_t terrain_jetpack = {"terrain_jetpack", "1", CVAR_NONE};	   // hold jump in the air to climb
 static cvar_t terrain_jetpack_thrust = {"terrain_jetpack_thrust", "1500", CVAR_NONE}; // units/s^2, against sv_gravity
+static cvar_t terrain_blast = {"terrain_blast", "64", CVAR_NONE};				   // radius an explosion digs; 0 turns it off
 static cvar_t terrain_jetpack_speed = {"terrain_jetpack_speed", "260", CVAR_NONE};	  // fastest climb
+
+#define FLARE_MODEL "progs/s_light.spr"
+#define MAX_FLARES	8
+static edict_t *sv_terrain_flares[MAX_FLARES];
+static int		sv_terrain_next_flare;
+static int		sv_terrain_sniff_state, sv_terrain_sniff_count;
+static float	sv_terrain_sniff_pos[3];
 
 #define DRG_SIZE_X 6
 #define DRG_SIZE_Y 6
@@ -48,6 +56,8 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 	terrain_active = t;
 	++terrain_epoch;
 	memset (sv_terrain_next_dig, 0, sizeof (sv_terrain_next_dig));
+	memset (sv_terrain_flares, 0, sizeof (sv_terrain_flares));
+	sv_terrain_sniff_state = 0;
 	Con_Printf (
 		"terrain: seed %u, %dx%dx%d chunks, generate %.1f ms, hash %016llx\n", seed, size[0], size[1], size[2], (Sys_DoubleTime () - start) * 1000.0,
 		(unsigned long long)Terrain_Hash (t));
@@ -150,6 +160,7 @@ void SV_Terrain_PlaceEntities (void)
 	if (!terrain_active || strncmp (sv.name, "drg", 3))
 		return;
 	const terrain_t *t = terrain_active;
+	SV_Precache_Model (FLARE_MODEL); // while the map loads, so every client has it
 	uint32_t		 rng = t->seed * 747796405u + 2891336453u;
 	if (!rng)
 		rng = 1;
@@ -250,6 +261,73 @@ void SV_Terrain_PlayerFrame (edict_t *ent, int num)
 }
 
 /*
+Explosions dig. QuakeC announces one by broadcasting svc_temp_entity, an explosion type and three
+coordinates, whoever caused it; the Write builtins pass each broadcast value through here.
+kind: 0 byte, 1 coord, anything else resets.
+*/
+void SV_Terrain_SniffWrite (int dest, int kind, float value)
+{
+	if (!terrain_active || dest != MSG_BROADCAST)
+		return;
+	if (kind == 0 && sv_terrain_sniff_state == 0 && (int)value == svc_temp_entity)
+		sv_terrain_sniff_state = 1;
+	else if (kind == 0 && sv_terrain_sniff_state == 1 && ((int)value == TE_EXPLOSION || (int)value == TE_TAREXPLOSION || (int)value == TE_EXPLOSION2))
+	{
+		sv_terrain_sniff_state = 2;
+		sv_terrain_sniff_count = 0;
+	}
+	else if (kind == 1 && sv_terrain_sniff_state == 2)
+	{
+		sv_terrain_sniff_pos[sv_terrain_sniff_count++] = value;
+		if (sv_terrain_sniff_count == 3)
+		{
+			sv_terrain_sniff_state = 0;
+			if (terrain_blast.value > 0.0f)
+				SV_Terrain_Edit (TERRAIN_OP_DIG, sv_terrain_sniff_pos, terrain_blast.value);
+		}
+	}
+	else
+		sv_terrain_sniff_state = 0;
+}
+
+/*
+terrain_flare
+The local player throws a light that bounces and stays where it lands. The oldest goes out when
+there are more than MAX_FLARES.
+*/
+static void SV_Terrain_Flare_f (void)
+{
+	if (!terrain_active || !sv.active || !sv_player)
+	{
+		Con_Printf ("terrain_flare: needs a terrain and a local server\n");
+		return;
+	}
+	PR_SwitchQCVM (&sv.qcvm);
+	edict_t **slot = &sv_terrain_flares[sv_terrain_next_flare];
+	sv_terrain_next_flare = (sv_terrain_next_flare + 1) % MAX_FLARES;
+	if (*slot && !(*slot)->free && !strcmp (PR_GetString ((*slot)->v.classname), "terrain_flare"))
+		ED_Free (*slot);
+	edict_t *player = sv_player;
+	edict_t *flare = *slot = ED_Alloc ();
+	vec3_t	 forward, right, up;
+	AngleVectors (player->v.v_angle, forward, right, up);
+	flare->v.classname = PR_SetEngineString ("terrain_flare");
+	flare->v.movetype = MOVETYPE_BOUNCE;
+	flare->v.solid = SOLID_NOT;
+	flare->v.model = PR_SetEngineString (FLARE_MODEL);
+	flare->v.modelindex = SV_ModelIndex (FLARE_MODEL);
+	flare->v.effects = EF_BRIGHTLIGHT;
+	flare->v.owner = EDICT_TO_PROG (player);
+	for (int i = 0; i < 3; ++i)
+	{
+		flare->v.origin[i] = player->v.origin[i] + player->v.view_ofs[i] + forward[i] * 12.0f;
+		flare->v.velocity[i] = forward[i] * 650.0f + up[i] * 120.0f + player->v.velocity[i] * 0.5f;
+	}
+	SV_LinkEdict (flare, false);
+	PR_SwitchQCVM (NULL);
+}
+
+/*
 terrain_ents
 Lists the monsters with where they stand relative to the terrain; the scripted check reads it.
 */
@@ -265,7 +343,7 @@ static void SV_Terrain_Ents_f (void)
 	for (int i = 1; i < qcvm->num_edicts; ++i)
 	{
 		edict_t *ed = EDICT_NUM (i);
-		if (ed->free || strncmp (PR_GetString (ed->v.classname), "monster_", 8))
+		if (ed->free || (strncmp (PR_GetString (ed->v.classname), "monster_", 8) && strcmp (PR_GetString (ed->v.classname), "terrain_flare")))
 			continue;
 		const float *o = ed->v.origin;
 		const float	 d[3] = {o[0] - player[0], o[1] - player[1], o[2] - player[2]};
@@ -284,5 +362,7 @@ void SV_Terrain_Init (void)
 	Cvar_RegisterVariable (&terrain_jetpack);
 	Cvar_RegisterVariable (&terrain_jetpack_thrust);
 	Cvar_RegisterVariable (&terrain_jetpack_speed);
+	Cvar_RegisterVariable (&terrain_blast);
 	Cmd_AddCommand ("terrain_ents", SV_Terrain_Ents_f);
+	Cmd_AddCommand ("terrain_flare", SV_Terrain_Flare_f);
 }

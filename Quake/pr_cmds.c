@@ -21,6 +21,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "terrain.h"
 
 /* Kept local to the trace builtin so server.h does not need the trace_t
  * definition before client translation units include it. */
@@ -1965,26 +1966,31 @@ sizebuf_t *WriteDest (void)
 
 static void PF_sv_WriteByte (void)
 {
+	SV_Terrain_SniffWrite ((int)G_FLOAT (OFS_PARM0), 0, G_FLOAT (OFS_PARM1));
 	MSG_WriteByte (WriteDest (), G_FLOAT (OFS_PARM1));
 }
 
 static void PF_sv_WriteChar (void)
 {
+	SV_Terrain_SniffWrite ((int)G_FLOAT (OFS_PARM0), 2, 0.0f);
 	MSG_WriteChar (WriteDest (), G_FLOAT (OFS_PARM1));
 }
 
 static void PF_sv_WriteShort (void)
 {
+	SV_Terrain_SniffWrite ((int)G_FLOAT (OFS_PARM0), 2, 0.0f);
 	MSG_WriteShort (WriteDest (), G_FLOAT (OFS_PARM1));
 }
 
 static void PF_sv_WriteLong (void)
 {
+	SV_Terrain_SniffWrite ((int)G_FLOAT (OFS_PARM0), 2, 0.0f);
 	MSG_WriteLong (WriteDest (), G_FLOAT (OFS_PARM1));
 }
 
 static void PF_sv_WriteAngle (void)
 {
+	SV_Terrain_SniffWrite ((int)G_FLOAT (OFS_PARM0), 2, 0.0f);
 	MSG_WriteAngle (WriteDest (), G_FLOAT (OFS_PARM1), sv.protocolflags);
 }
 
@@ -1993,16 +1999,19 @@ static void PF_sv_WriteCoord (void)
 	float coord = G_FLOAT (OFS_PARM1);
 	if (qcvm == &sv.qcvm)
 		SV_VRStockLightningBeamCoord (coord, &coord);
+	SV_Terrain_SniffWrite ((int)G_FLOAT (OFS_PARM0), 1, coord);
 	MSG_WriteCoord (WriteDest (), coord, sv.protocolflags);
 }
 
 static void PF_sv_WriteString (void)
 {
+	SV_Terrain_SniffWrite ((int)G_FLOAT (OFS_PARM0), 2, 0.0f);
 	MSG_WriteString (WriteDest (), LOC_GetString (G_STRING (OFS_PARM1)));
 }
 
 static void PF_sv_WriteEntity (void)
 {
+	SV_Terrain_SniffWrite ((int)G_FLOAT (OFS_PARM0), 2, 0.0f);
 	extern unsigned int sv_protocol_pext2; // spike -- this ought to be client-specific, but we can't cope with that, so just live with the problems when
 										   // ents>32768 (which QS doesn't support anyway)
 	MSG_WriteEntity (WriteDest (), G_EDICTNUM (OFS_PARM1), sv_protocol_pext2);

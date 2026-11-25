@@ -116,6 +116,7 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 int	 SV_Terrain_Edit (int kind, const float pos[3], float radius);
 int	 SV_Terrain_OpLog (const terrain_op_t **ops);
 void SV_Terrain_PlayerFrame (struct edict_s *ent, int num);
+void SV_Terrain_SniffWrite (int dest, int kind, float value);
 void R_Terrain_Update (void);
 
 #endif
