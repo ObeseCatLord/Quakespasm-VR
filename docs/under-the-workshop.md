@@ -21,7 +21,7 @@ before the entities spawn, then moves the player start, items and monsters onto 
 - Hold jump in the air: jetpack (a stopgap for traversal).
 - Hold jump against a ledge: vault onto it.
 - `terrain_flare`: throws a bouncing light.
-- Four fiends crawl on floors, walls and ceilings and hunt by a flow field.
+- Four fiends crawl on floors, walls and ceilings, hunt by a flow field along the surfaces, and jump the last gap.
 
 `tests/drg-desktop.sh` does step 2 from a `nix develop` build in `build-drg` with `run/` as the
 basedir, and binds the keys below.
@@ -88,6 +88,8 @@ Put these arguments before `+map`: the crawlers are made while the map loads.
 | `terrain_monsterstep` | 1 | slope-tolerant monster steps |
 | `terrain_crawlers` | 4 | crawlers added at map load |
 | `terrain_crawler_sense`, `terrain_crawler_speed` | 900, 210 | |
+| `terrain_crawler_nav` | 2 | 0 straight at the enemy, 1 flow field through open air, 2 along surfaces |
+| `terrain_crawler_pounce` | 360 | a stalled crawler jumps at a visible enemy within this range; 0 is off |
 | `terrain_crawler_types` | `monster_demon1` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
 | `terrain_ice` | 1 | ice pillars, icicles and floor stubs in new caves |
 | `r_terrain_style`, `r_terrain_props` | 1, 1 | look 0-3 and its props |
@@ -109,8 +111,8 @@ Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, 
 - No netsync, no headset pass, no VR-hand digging.
 - The region edge is a flat wall that cannot be dug.
 - Vanilla monsters have no pathfinding and walk into cave walls.
-- Crawlers stop at the surface point nearest the player when the player is not touching a
-  surface they can reach (standing mid-floor under a wall they are on, or in the air). The flow
-  field is through open cells, not along surfaces, and only the fiend has a leap to close the gap.
+- Crawler surface pathing is new: the field (about 39k surface cells at 32 units) is rebuilt whole
+  four times a second, about 3 ms each time on one core; it should be time-sliced. In seed 1 one
+  spawn spot still traps a crawler that hops in place.
 - Crawlers ignore each other's bodies beyond a simple spacing push, and ignore BSP.
 - Meshing is synchronous on the main thread; vertices are re-uploaded every frame.

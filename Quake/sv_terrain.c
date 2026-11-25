@@ -29,6 +29,10 @@ static cvar_t terrain_crawlers = {"terrain_crawlers", "4", CVAR_NONE};				   // 
 // turn. The classname must be a spawn function of the running progs.dat.
 static cvar_t terrain_crawler_types = {"terrain_crawler_types", "monster_demon1", CVAR_NONE};
 static cvar_t terrain_crawler_speed = {"terrain_crawler_speed", "210", CVAR_NONE};
+static cvar_t terrain_crawler_nav = {"terrain_crawler_nav", "2", CVAR_NONE};	   // 0 straight at the enemy, 1 flow field through open air, 2 along surfaces
+static cvar_t terrain_crawler_pounce = {"terrain_crawler_pounce", "360", CVAR_NONE}; // a stalled crawler jumps at an enemy this close and in sight; 0 is off
+static int	  nav_stats[4];															   // shell cells, seeds, reached cells, pounces
+static float  nav_ms;
 static cvar_t terrain_crawler_sense = {"terrain_crawler_sense", "900", CVAR_NONE}; // crawlers wake for a player this close, seen or not
 static cvar_t terrain_monsterstep = {"terrain_monsterstep", "1", CVAR_NONE};		   // slope-tolerant monster steps on terrain
 static cvar_t terrain_jetpack_speed = {"terrain_jetpack_speed", "260", CVAR_NONE};	  // fastest climb
@@ -54,6 +58,13 @@ typedef struct
 	float	 scale, speed, want_health;
 	float	 feet, half_width, height; // from the monster's own box, times scale, once QuakeC has set it
 	int		 sized;
+	float	 best_dist;				 // closest it has been to its enemy since it last made headway
+	double	 stall_since, pounce_at; // when headway stopped; when it last jumped
+	float	 nav_goal[3];			 // the point on the way it has committed to
+	double	 nav_until;
+	int		 dbg;
+	int		 nav_best;	 // fewest cells from the goal it has been
+	double	 nav_gain_at; // when it last got a cell nearer
 } terrain_crawler_t;
 static terrain_crawler_t sv_terrain_crawlers[MAX_CRAWLERS];
 static int				 sv_terrain_num_crawlers;
@@ -271,8 +282,12 @@ static void NavUpdate (const terrain_t *t)
 					const float p[3] = {
 						(float)t->origin[0] + ((float)x + 0.5f) * NAV_CELL, (float)t->origin[1] + ((float)y + 0.5f) * NAV_CELL,
 						(float)t->origin[2] + ((float)z + 0.5f) * NAV_CELL};
-					nav_air[i] = Terrain_SampleWorld (t, p) > 6.0f;
+					const float d = Terrain_SampleWorld (t, p);
+					nav_air[i] = d <= 6.0f ? 0 : d < 50.0f ? 2 : 1; // 2: air a crawler's body can be in while its feet are on the surface
 				}
+		nav_stats[0] = 0;
+		for (int c = 0; c < count; ++c)
+			nav_stats[0] += nav_air[c] == 2;
 		nav_ops_seen = sv_terrain_num_ops;
 		nav_air_time = qcvm->time;
 		nav_dist_time = -1.0;
@@ -281,63 +296,136 @@ static void NavUpdate (const terrain_t *t)
 		return;
 	nav_dist_time = qcvm->time;
 	memset (nav_dist, 0xff, count * sizeof (uint16_t));
-	int head = 0, tail = 0;
+	const double began = Sys_DoubleTime ();
+	const int	 surface = terrain_crawler_nav.value >= 2;
+	int			 head = 0, tail = 0;
+	nav_stats[1] = 0;
 	for (int i = 1; i <= svs.maxclients; ++i)
 	{
 		edict_t *pl = EDICT_NUM (i);
 		if (!svs.clients[i - 1].active || pl->v.health <= 0)
 			continue;
 		const int cell = NavIndex (t, pl->v.origin);
-		if (cell >= 0 && nav_dist[cell] == NAV_FAR)
+		if (cell < 0)
+			continue;
+		if (!surface)
 		{
-			nav_dist[cell] = 0; // seeded even when the cell reads solid: the player is in it
-			nav_queue[tail++] = cell;
+			if (nav_dist[cell] == NAV_FAR)
+			{
+				nav_dist[cell] = 0; // seeded even when the cell reads solid: the player is in it
+				nav_queue[tail++] = cell;
+			}
+			continue;
+		}
+		// Surface field: the goal is every surface cell near the player, nearest first, so a
+		// player in mid air or mid floor still pulls crawlers to the closest footing around them.
+		const int px = cell % dim[0], py = (cell / dim[0]) % dim[1], pz = cell / (dim[0] * dim[1]);
+		int		  found = 0;
+		for (int r = 0; r <= 24 && found < 2; ++r) // two rings past the first hit, then stop
+		{
+			for (int z = pz - r; z <= pz + r; ++z)
+				for (int y = py - r; y <= py + r; ++y)
+					for (int x = px - r; x <= px + r; ++x)
+					{
+						if (x < 0 || y < 0 || z < 0 || x >= dim[0] || y >= dim[1] || z >= dim[2])
+							continue;
+						if (abs (x - px) != r && abs (y - py) != r && abs (z - pz) != r)
+							continue; // only the shell of the cube at this radius
+						const int c = (z * dim[1] + y) * dim[0] + x;
+						if (nav_air[c] != 2 || nav_dist[c] <= r)
+							continue;
+						if (nav_dist[c] == NAV_FAR)
+							++nav_stats[1];
+						nav_dist[c] = (uint16_t)r;
+						nav_queue[tail++] = c;
+						found = q_max (found, 1);
+					}
+			if (found)
+				++found;
 		}
 	}
-	const int step[6] = {1, -1, dim[0], -dim[0], dim[0] * dim[1], -dim[0] * dim[1]};
-	while (head < tail)
+	const int plane = dim[0] * dim[1];
+	const int step[18] = {1,		  -1,		  dim[0],		  -dim[0],		  plane,		  -plane,		  1 + dim[0],	  1 - dim[0],	  -1 + dim[0],
+						  -1 - dim[0], 1 + plane, 1 - plane,	  -1 + plane,	  -1 - plane,	  dim[0] + plane, dim[0] - plane, -dim[0] + plane, -dim[0] - plane};
+	const int off[18][3] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0},  {0, -1, 0}, {0, 0, 1},	{0, 0, -1}, {1, 1, 0}, {1, -1, 0}, {-1, 1, 0},
+							{-1, -1, 0}, {1, 0, 1}, {1, 0, -1}, {-1, 0, 1}, {-1, 0, -1}, {0, 1, 1},	 {0, 1, -1}, {0, -1, 1}, {0, -1, -1}};
+	const int nbrs = surface ? 18 : 6;
+	const int cap = count * 4; // the queue is a ring: a cell can be queued again when a shorter way is found
+	int		  reached = 0, pushes = tail;
+	while (head != tail && pushes < cap)
 	{
-		const int cell = nav_queue[head++];
-		const int x = cell % dim[0], y = (cell / dim[0]) % dim[1], z = cell / (dim[0] * dim[1]);
-		const int ok[6] = {x + 1 < dim[0], x > 0, y + 1 < dim[1], y > 0, z + 1 < dim[2], z > 0};
-		for (int n = 0; n < 6; ++n)
+		const int cell = nav_queue[head];
+		head = (head + 1) % count;
+		const int x = cell % dim[0], y = (cell / dim[0]) % dim[1], z = cell / plane;
+		const int d = nav_dist[cell] + 1;
+		if (d >= NAV_FAR)
+			continue;
+		++reached;
+		for (int n = 0; n < nbrs; ++n)
 		{
-			const int next = cell + step[n];
-			if (!ok[n] || !nav_air[next] || nav_dist[next] != NAV_FAR || nav_dist[cell] >= NAV_FAR - 1)
+			const int nx = x + off[n][0], ny = y + off[n][1], nz = z + off[n][2];
+			if (nx < 0 || ny < 0 || nz < 0 || nx >= dim[0] || ny >= dim[1] || nz >= dim[2])
 				continue;
-			nav_dist[next] = nav_dist[cell] + 1;
-			nav_queue[tail++] = next;
+			const int next = cell + step[n];
+			if ((surface ? nav_air[next] != 2 : !nav_air[next]) || nav_dist[next] <= d)
+				continue;
+			if ((tail + 1) % count == head)
+				break;
+			nav_dist[next] = (uint16_t)d;
+			nav_queue[tail] = next;
+			tail = (tail + 1) % count;
+			++pushes;
 		}
 	}
+	nav_stats[2] = reached;
+	nav_ms = (float)((Sys_DoubleTime () - began) * 1000.0);
 }
 
-// Direction from p toward the neighbouring cell nearest a player; false when p is cut off.
-static qboolean NavDirection (const terrain_t *t, const float p[3], float dir[3], int *cells_away)
+// Downhill direction of the field at p, along the surface whose normal is given: every reached
+// neighbour cell pulls or pushes by how much nearer or farther it is, counting only the part of
+// its offset that lies in the surface. False when p is cut off or the field is flat here.
+static qboolean NavDirection (const terrain_t *t, const float p[3], const float normal[3], float dir[3], int *cells_away)
 {
-	int base[3], best = NAV_FAR, best_off[3] = {0, 0, 0};
+	int	  base[3], best = NAV_FAR, ds[27], n = 0, sum = 0, got = 0;
+	float offs[27][3];
 	for (int a = 0; a < 3; ++a)
 		base[a] = (int)floorf ((p[a] - (float)t->origin[a]) / NAV_CELL);
 	for (int dz = -1; dz <= 1; ++dz)
 		for (int dy = -1; dy <= 1; ++dy)
-			for (int dx = -1; dx <= 1; ++dx)
+			for (int dx = -1; dx <= 1; ++dx, ++n)
 			{
 				const int x = base[0] + dx, y = base[1] + dy, z = base[2] + dz;
+				ds[n] = NAV_FAR;
 				if (x < 0 || y < 0 || z < 0 || x >= nav_dim[0] || y >= nav_dim[1] || z >= nav_dim[2])
 					continue;
-				const int d = nav_dist[(z * nav_dim[1] + y) * nav_dim[0] + x];
-				if (d < best)
-				{
-					best = d;
-					best_off[0] = dx;
-					best_off[1] = dy;
-					best_off[2] = dz;
-				}
+				ds[n] = nav_dist[(z * nav_dim[1] + y) * nav_dim[0] + x];
+				if (ds[n] == NAV_FAR)
+					continue;
+				offs[n][0] = (float)t->origin[0] + ((float)x + 0.5f) * NAV_CELL - p[0];
+				offs[n][1] = (float)t->origin[1] + ((float)y + 0.5f) * NAV_CELL - p[1];
+				offs[n][2] = (float)t->origin[2] + ((float)z + 0.5f) * NAV_CELL - p[2];
+				best = q_min (best, ds[n]);
+				sum += ds[n];
+				++got;
 			}
-	if (best == NAV_FAR)
+	if (!got)
 		return false;
+	const float here = ds[13] != NAV_FAR ? (float)ds[13] : (float)sum / (float)got;
+	dir[0] = dir[1] = dir[2] = 0;
+	for (n = 0; n < 27; ++n)
+	{
+		if (ds[n] == NAV_FAR || n == 13)
+			continue;
+		float tan[3];
+		VectorMA (offs[n], -DotProduct (offs[n], normal), normal, tan);
+		const float len = sqrtf (DotProduct (offs[n], offs[n])) + 0.01f;
+		VectorMA (dir, (here - (float)ds[n]) / len, tan, dir);
+	}
 	*cells_away = best;
-	for (int a = 0; a < 3; ++a)
-		dir[a] = (float)t->origin[a] + ((float)(base[a] + best_off[a]) + 0.5f) * NAV_CELL - p[a];
+	const float len = sqrtf (DotProduct (dir, dir));
+	if (len < 0.05f)
+		return false;
+	VectorScale (dir, 48.0f / len, dir);
 	return true;
 }
 
@@ -517,15 +605,115 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 		// Far off, follow the flow field through the cave; close by, go straight at them.
 		int	  cells = 0;
 		float flow[3];
-		NavUpdate (t);
-		if (dist > 160.0f && NavDirection (t, body, flow, &cells) && cells > 3)
+		const int nav = (int)terrain_crawler_nav.value;
+		float	  low[3]; // a point just off the surface, inside the band the surface field covers
+		VectorMA (feet, 24.0f, c->normal, low);
+		if (nav)
+			NavUpdate (t);
+		c->dbg = 0;
+		if (nav >= 2 && dist > reach)
+		{
+			// Commit to a point a cell or so ahead for a moment: re-picking every frame makes it
+			// dither between two equally good cells at a ridge or a corner.
+			float gap[3];
+			VectorSubtract (c->nav_goal, low, gap);
+			if (qcvm->time >= c->nav_until || qcvm->time < c->nav_until - 1.0 || DotProduct (gap, gap) < 20.0f * 20.0f)
+			{
+				if (NavDirection (t, low, c->normal, flow, &cells) && cells > 0)
+				{
+					if (cells < c->nav_best || cells > c->nav_best + 6 || qcvm->time < c->nav_gain_at)
+					{
+						c->nav_best = cells;
+						c->nav_gain_at = qcvm->time;
+					}
+					else if (cells > 3 && qcvm->time > c->nav_gain_at + 2.0)
+					{
+						// Walking is getting it nowhere (a spike, a lip, a seam in the surface):
+						// hop off the surface the way it wants to go and take hold where it lands.
+						float v[3];
+						VectorCopy (flow, v);
+						VectorNormalize (v);
+						VectorScale (v, 260.0f, v);
+						VectorMA (v, 220.0f, c->normal, ent->v.velocity);
+						c->nav_gain_at = qcvm->time;
+						c->nav_until = 0;
+						c->attached = 0;
+						c->air_since = qcvm->time;
+						++nav_stats[3];
+						ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+						ent->v.angles[0] = ent->v.angles[2] = 0;
+						VectorMA (body, 12.0f, c->normal, ent->v.origin);
+						ent->v.mins[0] = ent->v.mins[1] = -c->half_width;
+						ent->v.mins[2] = -c->feet;
+						ent->v.maxs[0] = ent->v.maxs[1] = c->half_width;
+						ent->v.maxs[2] = c->height - c->feet;
+						VectorSubtract (ent->v.maxs, ent->v.mins, ent->v.size);
+						SV_LinkEdict (ent, false);
+						return 0;
+					}
+					VectorAdd (low, flow, c->nav_goal);
+					c->nav_until = qcvm->time + 0.5;
+				}
+				else
+					c->nav_until = 0;
+			}
+			if (c->nav_until > 0)
+			{
+				VectorSubtract (c->nav_goal, low, to);
+				c->dbg = 1;
+			}
+		}
+		else if (nav == 1 && dist > 160.0f && NavDirection (t, body, c->normal, flow, &cells) && cells > 3)
 			VectorCopy (flow, to);
+		// Headway: when it has stopped getting closer for a while and the enemy is near and in
+		// sight, the surface does not lead there (they are in the air, or across a gap): jump.
+		if (dist < c->best_dist - 12.0f || dist > c->best_dist + 96.0f)
+		{
+			c->best_dist = dist;
+			c->stall_since = qcvm->time;
+		}
+		if (terrain_crawler_pounce.value > 0 && dist > reach + 16.0f && dist < terrain_crawler_pounce.value && qcvm->time > c->stall_since + 0.6 &&
+			qcvm->time > c->pounce_at + 2.5 && qcvm->time >= c->pounce_at)
+		{
+			terrain_hit_t hit;
+			const float	  small_mins[3] = {-6, -6, -6}, small_maxs[3] = {6, 6, 6};
+			float		  from[3], aim[3];
+			VectorMA (body, 12.0f, c->normal, from);
+			VectorCopy (enemy->v.origin, aim);
+			c->pounce_at = qcvm->time;
+			if (!Terrain_TraceBox (t, from, small_mins, small_maxs, aim, &hit) || hit.fraction > 0.9f)
+			{
+				float v[3];
+				VectorSubtract (aim, from, v);
+				const float len = VectorNormalize (v);
+				const float speed = q_max (380.0f, len * 1.6f);
+				VectorScale (v, speed, ent->v.velocity);
+				ent->v.velocity[2] += 0.5f * 800.0f * len / speed; // cancel the drop over the flight
+				c->attached = 0;
+				c->air_since = qcvm->time;
+				c->best_dist = 1e9f;
+				++nav_stats[3];
+				ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+				ent->v.angles[0] = ent->v.angles[2] = 0;
+				VectorCopy (from, ent->v.origin);
+				ent->v.mins[0] = ent->v.mins[1] = -c->half_width;
+				ent->v.mins[2] = -c->feet;
+				ent->v.maxs[0] = ent->v.maxs[1] = c->half_width;
+				ent->v.maxs[2] = c->height - c->feet;
+				VectorSubtract (ent->v.maxs, ent->v.mins, ent->v.size);
+				SV_LinkEdict (ent, false);
+				return 0;
+			}
+		}
 		const float want = sqrtf (DotProduct (to, to));
 		VectorMA (to, -DotProduct (to, c->normal), c->normal, to);
 		// Straight above or below the enemy the surface offers no direction; keep going the
 		// way it was heading, which carries it round the curve of a passage.
 		if (sqrtf (DotProduct (to, to)) < want * 0.25f)
+		{
 			VectorCopy (c->forward, to);
+			c->dbg |= 2;
+		}
 		const qboolean chase = dist > reach && VectorNormalize (to) > 0.01f;
 		if (!chase)
 		{
@@ -563,7 +751,9 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 		{
 			float next[3], n[3];
 			VectorMA (feet, terrain_crawler_speed.value * c->speed * q_min (rate, 1.0f) / rate * (float)host_frametime, to, next);
-			if (CrawlerProject (t, next, n))
+			if (!CrawlerProject (t, next, n))
+				c->dbg |= 4;
+			else
 			{
 				VectorCopy (next, feet);
 				for (int a = 0; a < 3; ++a)
@@ -930,11 +1120,22 @@ static void SV_Terrain_Ents_f (void)
 			continue;
 		const float *o = ed->v.origin;
 		const float	 d[3] = {o[0] - player[0], o[1] - player[1], o[2] - player[2]};
+		terrain_crawler_t *cr = CrawlerFind (ed);
+		if (cr)
+		{
+			float low[3];
+			VectorMA (o, 24.0f - cr->feet, cr->normal, low);
+			const int cell = nav_dist ? NavIndex (terrain_active, low) : -1;
+			Con_Printf (
+				"terrain_crawler: %d attached %d cell %d mask %d normal %.1f %.1f %.1f stall %.1f dbg %d\n", i, cr->attached, cell < 0 ? -1 : nav_dist[cell],
+				cell < 0 ? -1 : nav_air[cell], cr->normal[0], cr->normal[1], cr->normal[2], qcvm->time - cr->stall_since, cr->dbg);
+		}
 		Con_Printf (
 			"terrain_ent: %d %s origin %.0f %.0f %.0f health %.0f onground %d overlap %d dist %.0f\n", i, PR_GetString (ed->v.classname), o[0], o[1], o[2],
 			ed->v.health, ((int)ed->v.flags & FL_ONGROUND) != 0, Terrain_BoxOverlaps (terrain_active, o, ed->v.mins, ed->v.maxs),
 			sqrtf (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
 	}
+	Con_Printf ("terrain_nav: mode %d shell %d seeds %d reached %d field %.2f ms pounces %d\n", (int)terrain_crawler_nav.value, nav_stats[0], nav_stats[1], nav_stats[2], nav_ms, nav_stats[3]);
 	Con_Printf (
 		"terrain_steps: ok %d blocked %d edge %d footing %d (mid %d corners %d) crawlers %d\n", sv_terrain_step_stats[0], sv_terrain_step_stats[1],
 		sv_terrain_step_stats[2], sv_terrain_step_stats[3], sv_terrain_step_stats[4], sv_terrain_step_stats[5], sv_terrain_num_crawlers);
@@ -957,6 +1158,8 @@ void SV_Terrain_Init (void)
 	Cvar_RegisterVariable (&terrain_crawler_speed);
 	Cvar_RegisterVariable (&terrain_crawler_types);
 	Cvar_RegisterVariable (&terrain_crawler_sense);
+	Cvar_RegisterVariable (&terrain_crawler_nav);
+	Cvar_RegisterVariable (&terrain_crawler_pounce);
 	Cvar_RegisterVariable (&terrain_monsterstep);
 	Cmd_AddCommand ("terrain_ents", SV_Terrain_Ents_f);
 	Cmd_AddCommand ("terrain_wake", SV_Terrain_Wake_f);
