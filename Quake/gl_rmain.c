@@ -2958,6 +2958,7 @@ static void R_DrawViewModelTask (void *unused)
 	R_ShowSkeletons (cbx);
 	R_ShowBoundingBoxes (cbx); // johnfitz
 	R_ShowPointFile (cbx);
+	R_DrawTerrain (cbx);
 	R_DrawFBTCalibrationVisuals (cbx);
 
 	if (vulkan_globals.stereo_active)

@@ -4105,6 +4105,15 @@ static void R_CreateShowTrisPipelines ()
 		R_CreateGraphicsPipeline (
 			&vulkan_globals.debug_lines_pipeline[variant], &infos, vulkan_globals.basic_pipeline_layout, va ("debug_lines%s", pass_suffix));
 
+		// editable terrain: opaque vertex-coloured triangles (r_terrain.c)
+		R_CopyPipelineCreateInfos (&infos, &base);
+		R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
+		infos.input_assembly_state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		infos.rasterization_state.cullMode = VK_CULL_MODE_NONE;
+		infos.depth_stencil_state.depthTestEnable = VK_TRUE;
+		infos.depth_stencil_state.depthWriteEnable = VK_TRUE;
+		R_CreateGraphicsPipeline (&vulkan_globals.terrain_pipeline[variant], &infos, vulkan_globals.basic_pipeline_layout, va ("terrain%s", pass_suffix));
+
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
 		infos.vertex_input_state.vertexAttributeDescriptionCount = 0;
@@ -5404,6 +5413,8 @@ void R_DestroyPipelines (void)
 	{
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.debug_lines_pipeline[variant].handle, NULL);
 		vulkan_globals.debug_lines_pipeline[variant].handle = VK_NULL_HANDLE;
+		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.terrain_pipeline[variant].handle, NULL);
+		vulkan_globals.terrain_pipeline[variant].handle = VK_NULL_HANDLE;
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.md5_debug_pipeline[variant].handle, NULL);
 		vulkan_globals.md5_debug_pipeline[variant].handle = VK_NULL_HANDLE;
 	}
@@ -5481,6 +5492,7 @@ void R_Init (void)
 {
 	cmd_function_t *cmd;
 
+	R_Terrain_Init ();
 	Cmd_AddCommand ("timerefresh", R_TimeRefresh_f);
 	Cmd_AddCommand ("pointfile", R_ReadPointFile_f);
 
@@ -5794,6 +5806,8 @@ R_NewMap
 void R_NewMap (void)
 {
 	int i;
+
+	R_Terrain_NewMap ();
 
 	for (i = 0; i < MAX_LIGHTSTYLES; i++)
 		d_lightstylevalue[i] = 264; // normal light value
