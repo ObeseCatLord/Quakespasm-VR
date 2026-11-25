@@ -130,7 +130,6 @@ void Terrain_NavRefresh (terrain_nav_t *nav, const terrain_t *t, const int lo[3]
 void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t);
 void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op); // after Terrain_ApplyOp
 void Terrain_NavSetBlocked (terrain_nav_t *nav, int cell, int blocked);						// takes effect on the next refresh
-int	 Terrain_NavCell (const terrain_nav_t *nav, const float p[3]);							// -1 outside
 void Terrain_NavCellCenter (const terrain_nav_t *nav, int cell, float out[3]);
 int	 Terrain_NavFindStand (const terrain_nav_t *nav, int cls, const float feet[3], int up, int down); // -1 when none near
 void Terrain_NavFlood (const terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist);

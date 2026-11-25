@@ -1098,12 +1098,14 @@ void Terrain_NavCellCenter (const terrain_nav_t *nav, int cell, float out[3])
 		out[a] = (float)nav->origin[a] + ((float)c[a] + 0.5f) * (float)TERRAIN_NAV_CELL;
 }
 
-int Terrain_NavCell (const terrain_nav_t *nav, const float p[3])
+// Whether a column is open from just under level top down to level bottom: nothing solid between
+// a body and a floor it is looking for below.
+static int NavOpenDown (const terrain_nav_t *nav, int x, int y, int top, int bottom)
 {
-	int c[3];
-	for (int a = 0; a < 3; ++a)
-		c[a] = (int)floorf ((p[a] - (float)nav->origin[a]) / (float)TERRAIN_NAV_CELL);
-	return NavIndex3 (nav, c[0], c[1], c[2]);
+	for (int z = top; z > bottom; --z)
+		if (!NavOpen (nav, x, y, z))
+			return 0;
+	return 1;
 }
 
 int Terrain_NavFindStand (const terrain_nav_t *nav, int cls, const float feet[3], int up, int down)
@@ -1112,24 +1114,28 @@ int Terrain_NavFindStand (const terrain_nav_t *nav, int cls, const float feet[3]
 	int			  c[3];
 	for (int a = 0; a < 3; ++a)
 		c[a] = (int)floorf ((feet[a] - (float)nav->origin[a]) / (float)TERRAIN_NAV_CELL);
-	// nearest level first, the column itself before its neighbours
-	for (int ring = 0; ring <= 1; ++ring)
-		for (int dz = 0; dz <= NavMax (up, down); ++dz)
-			for (int sign = 0; sign <= 1; ++sign)
-			{
-				const int z = c[2] + (sign ? -dz : dz);
-				if ((sign && dz > down) || (!sign && dz > up) || (sign && !dz))
-					continue;
+	// nearest level first; on each level the column itself, then its neighbours. Below the feet only
+	// through open cells, so a floor on the far side of rock never counts.
+	for (int dz = 0; dz <= NavMax (up, down); ++dz)
+		for (int sign = 0; sign <= 1; ++sign)
+		{
+			if ((sign && (dz > down || !dz)) || (!sign && dz > up))
+				continue;
+			const int z = c[2] + (sign ? -dz : dz);
+			for (int ring = 0; ring <= 1; ++ring)
 				for (int dy = -ring; dy <= ring; ++dy)
 					for (int dx = -ring; dx <= ring; ++dx)
 					{
 						if (ring && !dx && !dy)
 							continue;
 						const int i = NavIndex3 (nav, c[0] + dx, c[1] + dy, z);
-						if (i >= 0 && (nav->flags[i] & bit))
-							return i;
+						if (i < 0 || !(nav->flags[i] & bit))
+							continue;
+						if (sign && !NavOpenDown (nav, c[0] + dx, c[1] + dy, c[2], z))
+							continue;
+						return i;
 					}
-			}
+		}
 	return -1;
 }
 
@@ -1217,8 +1223,8 @@ int Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, in
 	const uint8_t bit = (uint8_t)(TERRAIN_NAV_STAND << cls);
 	const int	  c[3] = {cell % nav->dim[0], (cell / nav->dim[0]) % nav->dim[1], cell / (nav->dim[0] * nav->dim[1])};
 	int			  best = -1, best_dist = dist[cell];
-	// straight neighbours are tried first, so a tie keeps to the grid's axes; on a tie a walk wins
-	// over a drop, and a short drop over a long one
+	// first found wins a tie: straight directions before diagonals, and within a direction a walk
+	// before a drop and a short drop before a long one
 	for (int d = 0; d < 8; ++d)
 		for (int k = 0; k < 2 + TERRAIN_NAV_MAX_DROP; ++k)
 		{

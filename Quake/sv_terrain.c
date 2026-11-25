@@ -246,11 +246,8 @@ static void WalkReset (void)
 	Terrain_NavFree (&walk_nav);
 	walk_nav_ops = -1;
 	for (int i = 0; i < WALK_SLOTS; ++i)
-	{
 		free (walk_fields[i].dist);
-		walk_fields[i].dist = NULL;
-		walk_fields[i].goal = NULL;
-	}
+	memset (walk_fields, 0, sizeof (walk_fields)); // qcvm->time restarts with the map, so the stamps go too
 }
 
 // Brings the walking grid up to date with the terrain and its op log.
@@ -316,10 +313,14 @@ static const uint16_t *WalkField (edict_t *goal, int cls)
 	{
 		if (seed < 0)
 			return NULL;
+		// an empty slot, else the one unused longest; a field still in use is not given up, or two
+		// targets would take turns flooding the grid on every think
 		slot = 0;
 		for (int i = 1; i < WALK_SLOTS; ++i)
-			if (walk_fields[i].used < walk_fields[slot].used)
+			if (!walk_fields[i].dist ? walk_fields[slot].dist != NULL : (walk_fields[slot].dist && walk_fields[i].used < walk_fields[slot].used))
 				slot = i;
+		if (walk_fields[slot].dist && qcvm->time >= walk_fields[slot].used && qcvm->time < walk_fields[slot].used + 1.0)
+			return NULL;
 		if (!walk_fields[slot].dist)
 			walk_fields[slot].dist = (uint16_t *)malloc ((size_t)walk_nav.count * sizeof (uint16_t));
 		walk_fields[slot].goal = goal;
@@ -353,15 +354,34 @@ static int WalkSteps (edict_t *ent, edict_t *goal)
 	return dist && dist[cell] != TERRAIN_NAV_FAR ? dist[cell] : -1;
 }
 
-// Turns toward yaw and steps, but only when a step that way is possible: turning toward one heading
-// and then another in the same think would leave the monster facing neither.
+// Turns toward yaw and steps, but keeps the turn only when a step that way is possible: turning
+// toward one heading and then another in the same think would leave the monster facing neither.
 static qboolean WalkTry (edict_t *ent, float yaw, float dist)
 {
-	vec3_t oldorigin, move = {cosf (yaw * M_PI / 180.0f) * dist, sinf (yaw * M_PI / 180.0f) * dist, 0};
-	VectorCopy (ent->v.origin, oldorigin);
-	const qboolean ok = SV_movestep (ent, move, false);
-	VectorCopy (oldorigin, ent->v.origin);
-	return ok && SV_StepDirection (ent, anglemod (yaw), dist);
+	const float angle = ent->v.angles[YAW], ideal = ent->v.ideal_yaw;
+	if (SV_StepDirection (ent, anglemod (yaw), dist))
+		return true;
+	ent->v.angles[YAW] = angle; // a refused heading leaves the monster facing as it was
+	ent->v.ideal_yaw = ideal;
+	return false;
+}
+
+// True when the way ahead is clear and there is no floor within a step of the feet: the monster is
+// at a ledge, not held back by something in its way.
+static qboolean WalkAtLip (edict_t *ent, float yaw)
+{
+	vec3_t		ahead, below;
+	const float reach = (ent->v.maxs[0] - ent->v.mins[0]) * 0.5f + 16.0f;
+	ahead[0] = ent->v.origin[0] + cosf (yaw * M_PI / 180.0f) * reach;
+	ahead[1] = ent->v.origin[1] + sinf (yaw * M_PI / 180.0f) * reach;
+	ahead[2] = ent->v.origin[2];
+	trace_t way = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, ahead, MOVE_NORMAL, ent);
+	if (way.startsolid || way.allsolid || way.fraction < 1.0f)
+		return false;
+	VectorCopy (ahead, below);
+	below[2] -= 42.0f; // the deepest step SV_movestep takes on terrain
+	trace_t floor = SV_Move (ahead, ent->v.mins, ent->v.maxs, below, MOVE_NOMONSTERS, ent);
+	return !floor.startsolid && floor.fraction == 1.0f;
 }
 
 /*
@@ -370,6 +390,7 @@ and returns true; returns false when the stock chase should decide (no terrain, 
 a target that is not a player, no route, or the target close by).
 */
 void PF_changeyaw (void);
+extern cvar_t sv_gravity;
 
 int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 {
@@ -404,19 +425,25 @@ int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 	}
 	if (WalkTry (ent, yaws[0], dist) || (n > 1 && WalkTry (ent, yaws[1], dist)))
 		return true;
-	if (Terrain_NavIsDrop (&walk_nav, cell, route[0]))
+	if (Terrain_NavIsDrop (&walk_nav, cell, route[0]) && WalkAtLip (ent, yaws[1]))
 	{
 		// At the lip, where a step is refused for walking off an edge: once it faces the drop, it
-		// steps off and falls as ordinary step physics.
+		// steps off and falls as ordinary step physics, just fast enough to clear the lip and land
+		// in the next cell.
 		ent->v.ideal_yaw = anglemod (yaws[1]);
 		PF_changeyaw ();
 		const float delta = fabsf (anglemod (ent->v.angles[YAW] - ent->v.ideal_yaw + 180.0f) - 180.0f);
 		if (delta < 30.0f)
 		{
+			vec3_t		landing;
 			const float yaw = yaws[1] * M_PI / 180.0f;
-			ent->v.velocity[0] = cosf (yaw) * 160.0f;
-			ent->v.velocity[1] = sinf (yaw) * 160.0f;
-			ent->v.velocity[2] = 60.0f;
+			Terrain_NavCellCenter (&walk_nav, route[0], landing);
+			const float fall = q_max (ent->v.origin[2] + ent->v.mins[2] - (landing[2] - TERRAIN_NAV_CELL * 0.5f), 16.0f);
+			const float airtime = sqrtf (2.0f * fall / q_max (sv_gravity.value, 100.0f));
+			const float speed = CLAMP (60.0f, 48.0f / airtime, 160.0f);
+			ent->v.velocity[0] = cosf (yaw) * speed;
+			ent->v.velocity[1] = sinf (yaw) * speed;
+			ent->v.velocity[2] = 0;
 			ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
 			ent->v.groundentity = 0;
 		}
