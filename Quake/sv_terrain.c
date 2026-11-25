@@ -36,6 +36,7 @@ static float  nav_ms;
 static cvar_t terrain_crawler_sense = {"terrain_crawler_sense", "900", CVAR_NONE}; // crawlers wake for a player this close, seen or not
 static cvar_t terrain_monsterstep = {"terrain_monsterstep", "1", CVAR_NONE};		   // slope-tolerant monster steps on terrain
 static cvar_t terrain_jetpack_speed = {"terrain_jetpack_speed", "260", CVAR_NONE};	  // fastest climb
+static cvar_t terrain_pathfind = {"terrain_pathfind", "1", CVAR_NONE};				  // walking monsters follow a route through the cave
 static cvar_t terrain_ice = {"terrain_ice", "1", CVAR_NONE}; // grow ice pillars and icicles in new caves; 0 is the plain worm cave
 
 #define FLARE_MODEL "progs/s_light.spr"
@@ -77,6 +78,8 @@ static float	sv_terrain_sniff_pos[3];
 #define DRG_SIZE_Y 6
 #define DRG_SIZE_Z 3
 
+static void WalkReset (void);
+
 void SV_Terrain_Clear (void)
 {
 	if (!terrain_active)
@@ -85,6 +88,7 @@ void SV_Terrain_Clear (void)
 	terrain_active = NULL;
 	sv_terrain_num_ops = 0;
 	++terrain_epoch;
+	WalkReset ();
 }
 
 void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t size[3])
@@ -211,8 +215,8 @@ float SV_Terrain_WalkNormal (void)
 /*
 Surface crawler prototype. The edict is an ordinary QuakeC fiend (its think, pain, death and melee
 all still run), but its position is owned here: it is glued to the zero surface of the terrain
-field, on floors, walls and ceilings alike, and walks straight at its enemy along that surface.
-There is no pathfinding. A leap (QuakeC clears FL_ONGROUND and sets a velocity) lets go of the
+field, on floors, walls and ceilings alike, and walks at its enemy along that surface, through the
+cave by the flow field below. A leap (QuakeC clears FL_ONGROUND and sets a velocity) lets go of the
 surface until it lands or a second passes.
 */
 static terrain_crawler_t *CrawlerFind (edict_t *ent)
@@ -227,6 +231,240 @@ int SV_Terrain_IsCrawler (edict_t *ent)
 {
 	terrain_crawler_t *c = sv_terrain_num_crawlers ? CrawlerFind (ent) : NULL;
 	return c && c->attached;
+}
+
+/*
+Walking routes for ordinary monsters. terrain.c keeps a grid of cells a body can stand in and how
+they join up (no climbs steeper than the monsters' terrain step); here it learns which cells the
+map's own brushes fill, follows edits as they are made, and floods a distance field from whatever a
+monster is chasing. SV_MoveToGoal asks for a heading from it before trying its stock chase, so the
+QuakeC (ai_run and movetogoal) is unchanged. Fields are kept per player and body size, a few at once.
+*/
+#define WALK_SLOTS 8
+static terrain_nav_t walk_nav;
+static unsigned		 walk_nav_epoch;
+static int			 walk_nav_ops = -1, walk_nav_version;
+static struct
+{
+	edict_t	 *goal;
+	int		  cls, seed, version;
+	double	  built, used;
+	uint16_t *dist;
+} walk_fields[WALK_SLOTS];
+
+static void WalkReset (void)
+{
+	Terrain_NavFree (&walk_nav);
+	walk_nav_ops = -1;
+	for (int i = 0; i < WALK_SLOTS; ++i)
+		free (walk_fields[i].dist);
+	memset (walk_fields, 0, sizeof (walk_fields)); // qcvm->time restarts with the map, so the stamps go too
+}
+
+// Brings the walking grid up to date with the terrain and its op log.
+static qboolean WalkNavUpdate (void)
+{
+	const terrain_t *t = terrain_active;
+	if (!t)
+		return false;
+	if (!walk_nav.flags || walk_nav_epoch != terrain_epoch)
+	{
+		WalkReset ();
+		Terrain_NavInit (&walk_nav, t);
+		walk_nav_epoch = terrain_epoch;
+		// cells inside the map's brushes are closed whatever the field says
+		int blocked = 0;
+		for (int i = 0; i < walk_nav.count; ++i)
+		{
+			vec3_t p;
+			Terrain_NavCellCenter (&walk_nav, i, p);
+			const int contents = SV_PointContents (p);
+			if (contents == CONTENTS_SOLID || contents == CONTENTS_SKY)
+			{
+				Terrain_NavSetBlocked (&walk_nav, i, 1);
+				++blocked;
+			}
+		}
+		Terrain_NavRefreshAll (&walk_nav, t);
+		walk_nav_ops = sv_terrain_num_ops;
+		++walk_nav_version;
+		Con_DPrintf ("terrain: walking grid %dx%dx%d, %d cells inside brushes\n", walk_nav.dim[0], walk_nav.dim[1], walk_nav.dim[2], blocked);
+	}
+	if (walk_nav_ops != sv_terrain_num_ops)
+	{
+		for (int i = walk_nav_ops; i < sv_terrain_num_ops; ++i)
+			Terrain_NavRefreshOp (&walk_nav, t, &sv_terrain_ops[i]);
+		walk_nav_ops = sv_terrain_num_ops;
+		++walk_nav_version;
+	}
+	return true;
+}
+
+static int WalkClass (const edict_t *ent)
+{
+	return ent->v.maxs[0] - ent->v.mins[0] > 40.0f || ent->v.maxs[2] - ent->v.mins[2] > 72.0f;
+}
+
+static int WalkStandCell (const edict_t *ent, int cls, int down)
+{
+	const float feet[3] = {ent->v.origin[0], ent->v.origin[1], ent->v.origin[2] + ent->v.mins[2] + 8.0f};
+	return Terrain_NavFindStand (&walk_nav, cls, feet, 1, down);
+}
+
+// The distance field toward goal for bodies of this class, or NULL when the goal has no floor.
+static const uint16_t *WalkField (edict_t *goal, int cls)
+{
+	// a target in the air (jetpack, a jump) is chased to the floor under it
+	const int seed = WalkStandCell (goal, cls, 8);
+	int		  slot = -1;
+	for (int i = 0; i < WALK_SLOTS && slot < 0; ++i)
+		if (walk_fields[i].goal == goal && walk_fields[i].cls == cls && walk_fields[i].dist)
+			slot = i;
+	if (slot < 0)
+	{
+		if (seed < 0)
+			return NULL;
+		// an empty slot, else the one unused longest; a field still in use is not given up, or two
+		// targets would take turns flooding the grid on every think
+		slot = 0;
+		for (int i = 1; i < WALK_SLOTS; ++i)
+			if (!walk_fields[i].dist ? walk_fields[slot].dist != NULL : (walk_fields[slot].dist && walk_fields[i].used < walk_fields[slot].used))
+				slot = i;
+		if (walk_fields[slot].dist && qcvm->time >= walk_fields[slot].used && qcvm->time < walk_fields[slot].used + 1.0)
+			return NULL;
+		if (!walk_fields[slot].dist)
+			walk_fields[slot].dist = (uint16_t *)malloc ((size_t)walk_nav.count * sizeof (uint16_t));
+		walk_fields[slot].goal = goal;
+		walk_fields[slot].cls = cls;
+		walk_fields[slot].seed = -1;
+		walk_fields[slot].built = -1.0;
+	}
+	__typeof__ (walk_fields[0]) *f = &walk_fields[slot];
+	f->used = qcvm->time;
+	// rebuilt when the target reaches another cell or the cave changes, at most a few times a second
+	const qboolean stale = f->seed < 0 || (seed >= 0 && seed != f->seed) || f->version != walk_nav_version;
+	if (stale && seed >= 0 && (f->built < 0.0 || qcvm->time < f->built || qcvm->time >= f->built + 0.2))
+	{
+		Terrain_NavFlood (&walk_nav, cls, &seed, 1, f->dist);
+		f->seed = seed;
+		f->version = walk_nav_version;
+		f->built = qcvm->time;
+	}
+	return f->seed >= 0 ? f->dist : NULL;
+}
+
+static int WalkSteps (edict_t *ent, edict_t *goal)
+{
+	if (!WalkNavUpdate () || goal == qcvm->edicts || goal->free)
+		return -1;
+	const int		cls = WalkClass (ent);
+	const uint16_t *dist = WalkField (goal, cls);
+	const int		cell = WalkStandCell (ent, cls, 2);
+	if (cell < 0)
+		return -2; // not standing anywhere the grid knows
+	return dist && dist[cell] != TERRAIN_NAV_FAR ? dist[cell] : -1;
+}
+
+// Turns toward yaw and steps, but keeps the turn only when a step that way is possible: turning
+// toward one heading and then another in the same think would leave the monster facing neither.
+static qboolean WalkTry (edict_t *ent, float yaw, float dist)
+{
+	const float angle = ent->v.angles[YAW], ideal = ent->v.ideal_yaw;
+	if (SV_StepDirection (ent, anglemod (yaw), dist))
+		return true;
+	ent->v.angles[YAW] = angle; // a refused heading leaves the monster facing as it was
+	ent->v.ideal_yaw = ideal;
+	return false;
+}
+
+// True when the way ahead is clear and there is no floor within a step of the feet: the monster is
+// at a ledge, not held back by something in its way.
+static qboolean WalkAtLip (edict_t *ent, float yaw)
+{
+	vec3_t		ahead, below;
+	const float reach = (ent->v.maxs[0] - ent->v.mins[0]) * 0.5f + 16.0f;
+	ahead[0] = ent->v.origin[0] + cosf (yaw * M_PI / 180.0f) * reach;
+	ahead[1] = ent->v.origin[1] + sinf (yaw * M_PI / 180.0f) * reach;
+	ahead[2] = ent->v.origin[2];
+	trace_t way = SV_Move (ent->v.origin, ent->v.mins, ent->v.maxs, ahead, MOVE_NORMAL, ent);
+	if (way.startsolid || way.allsolid || way.fraction < 1.0f)
+		return false;
+	VectorCopy (ahead, below);
+	below[2] -= 42.0f; // the deepest step SV_movestep takes on terrain
+	trace_t floor = SV_Move (ahead, ent->v.mins, ent->v.maxs, below, MOVE_NOMONSTERS, ent);
+	return !floor.startsolid && floor.fraction == 1.0f;
+}
+
+/*
+Called by SV_MoveToGoal for a monster on the ground. Steps the monster along its route toward goal
+and returns true; returns false when the stock chase should decide (no terrain, a flyer or crawler,
+a target that is not a player, no route, or the target close by).
+*/
+void PF_changeyaw (void);
+extern cvar_t sv_gravity;
+
+int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
+{
+	if (!terrain_active || !terrain_pathfind.value || ((int)ent->v.flags & (FL_FLY | FL_SWIM)) || SV_Terrain_IsCrawler (ent))
+		return false;
+	// players only: monsters fighting each other are usually close, and a field per monster would
+	// churn the few kept
+	if (goal == qcvm->edicts || goal->free || !((int)goal->v.flags & FL_CLIENT) || !WalkNavUpdate ())
+		return false;
+	const int		cls = WalkClass (ent);
+	const uint16_t *field = WalkField (goal, cls);
+	const int		cell = field ? WalkStandCell (ent, cls, 2) : -1;
+	if (cell < 0 || field[cell] == TERRAIN_NAV_FAR || field[cell] <= 1)
+		return false;
+	// look a few cells down the route; aiming past the next cell cuts the grid's corners. Not past a
+	// ledge: the drop is taken square on.
+	int route[4], n = 0;
+	for (int c = cell, next; n < 4 && (next = Terrain_NavNext (&walk_nav, cls, field, c)) >= 0; c = next)
+	{
+		route[n++] = next;
+		if (Terrain_NavIsDrop (&walk_nav, c, next))
+			break;
+	}
+	if (!n)
+		return false;
+	float yaws[2];
+	for (int k = 0; k < 2; ++k)
+	{
+		vec3_t p;
+		Terrain_NavCellCenter (&walk_nav, route[k ? 0 : n - 1], p);
+		yaws[k] = atan2f (p[1] - ent->v.origin[1], p[0] - ent->v.origin[0]) * 180.0f / M_PI;
+	}
+	if (WalkTry (ent, yaws[0], dist) || (n > 1 && WalkTry (ent, yaws[1], dist)))
+		return true;
+	if (Terrain_NavIsDrop (&walk_nav, cell, route[0]) && WalkAtLip (ent, yaws[1]))
+	{
+		// At the lip, where a step is refused for walking off an edge: once it faces the drop, it
+		// steps off and falls as ordinary step physics, just fast enough to clear the lip and land
+		// in the next cell.
+		ent->v.ideal_yaw = anglemod (yaws[1]);
+		PF_changeyaw ();
+		const float delta = fabsf (anglemod (ent->v.angles[YAW] - ent->v.ideal_yaw + 180.0f) - 180.0f);
+		if (delta < 30.0f)
+		{
+			vec3_t		landing;
+			const float yaw = yaws[1] * M_PI / 180.0f;
+			Terrain_NavCellCenter (&walk_nav, route[0], landing);
+			const float fall = q_max (ent->v.origin[2] + ent->v.mins[2] - (landing[2] - TERRAIN_NAV_CELL * 0.5f), 16.0f);
+			const float airtime = sqrtf (2.0f * fall / q_max (sv_gravity.value, 100.0f));
+			const float speed = CLAMP (60.0f, 48.0f / airtime, 160.0f);
+			ent->v.velocity[0] = cosf (yaw) * speed;
+			ent->v.velocity[1] = sinf (yaw) * speed;
+			ent->v.velocity[2] = 0;
+			ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+			ent->v.groundentity = 0;
+		}
+		return true;
+	}
+	static const float around[4] = {45, -45, 90, -90};
+	for (int k = 0; k < 4; ++k)
+		if (WalkTry (ent, yaws[1] + around[k], dist))
+			return true;
+	return false; // boxed in: the stock chase shuffles it loose
 }
 
 /*
@@ -274,6 +512,7 @@ static void NavUpdate (const terrain_t *t)
 	}
 	if (nav_ops_seen < 0 || (nav_ops_seen != sv_terrain_num_ops && qcvm->time > nav_air_time + 1.0))
 	{
+		WalkNavUpdate (); // for the map's own solid cells
 		int i = 0;
 		for (int z = 0; z < dim[2]; ++z)
 			for (int y = 0; y < dim[1]; ++y)
@@ -283,7 +522,8 @@ static void NavUpdate (const terrain_t *t)
 						(float)t->origin[0] + ((float)x + 0.5f) * NAV_CELL, (float)t->origin[1] + ((float)y + 0.5f) * NAV_CELL,
 						(float)t->origin[2] + ((float)z + 0.5f) * NAV_CELL};
 					const float d = Terrain_SampleWorld (t, p);
-					nav_air[i] = d <= 6.0f ? 0 : d < 50.0f ? 2 : 1; // 2: air a crawler's body can be in while its feet are on the surface
+					const int	blocked = walk_nav.flags && (walk_nav.flags[i] & TERRAIN_NAV_BLOCKED);
+					nav_air[i] = d <= 6.0f || blocked ? 0 : d < 50.0f ? 2 : 1; // 2: air a crawler's body can be in while its feet are on the surface
 				}
 		nav_stats[0] = 0;
 		for (int c = 0; c < count; ++c)
@@ -907,6 +1147,7 @@ void SV_Terrain_PlaceEntities (void)
 		SV_LinkEdict (ed, false);
 	}
 	Con_Printf ("terrain: placed %d monsters and %d items on the cave floor (%d found no spot)\n", monsters, items, failed);
+	WalkNavUpdate (); // while the map loads rather than at the first chase
 	CrawlerSpawnAll (&rng, start);
 }
 
@@ -1131,9 +1372,9 @@ static void SV_Terrain_Ents_f (void)
 				cell < 0 ? -1 : nav_air[cell], cr->normal[0], cr->normal[1], cr->normal[2], qcvm->time - cr->stall_since, cr->dbg);
 		}
 		Con_Printf (
-			"terrain_ent: %d %s origin %.0f %.0f %.0f health %.0f onground %d overlap %d dist %.0f\n", i, PR_GetString (ed->v.classname), o[0], o[1], o[2],
-			ed->v.health, ((int)ed->v.flags & FL_ONGROUND) != 0, Terrain_BoxOverlaps (terrain_active, o, ed->v.mins, ed->v.maxs),
-			sqrtf (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+			"terrain_ent: %d %s origin %.0f %.0f %.0f health %.0f onground %d overlap %d dist %.0f route %d\n", i, PR_GetString (ed->v.classname), o[0], o[1],
+			o[2], ed->v.health, ((int)ed->v.flags & FL_ONGROUND) != 0, Terrain_BoxOverlaps (terrain_active, o, ed->v.mins, ed->v.maxs),
+			sqrtf (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]), ed->v.health > 0 && ((int)ed->v.flags & FL_MONSTER) ? WalkSteps (ed, EDICT_NUM (1)) : -1);
 	}
 	Con_Printf ("terrain_nav: mode %d shell %d seeds %d reached %d field %.2f ms pounces %d\n", (int)terrain_crawler_nav.value, nav_stats[0], nav_stats[1], nav_stats[2], nav_ms, nav_stats[3]);
 	Con_Printf (
@@ -1161,6 +1402,7 @@ void SV_Terrain_Init (void)
 	Cvar_RegisterVariable (&terrain_crawler_nav);
 	Cvar_RegisterVariable (&terrain_crawler_pounce);
 	Cvar_RegisterVariable (&terrain_monsterstep);
+	Cvar_RegisterVariable (&terrain_pathfind);
 	Cmd_AddCommand ("terrain_ents", SV_Terrain_Ents_f);
 	Cmd_AddCommand ("terrain_wake", SV_Terrain_Wake_f);
 	Cmd_AddCommand ("terrain_flare", SV_Terrain_Flare_f);

@@ -104,6 +104,38 @@ int Terrain_BoxOverlaps (const terrain_t *t, const float origin[3], const float 
 int Terrain_PointSolid (const terrain_t *t, const float p[3]);
 
 // The one terrain region the running game collides with, or NULL. Owned by the client module for now.
+// Walking navigation grid over a region (see terrain.c). Cells are TERRAIN_NAV_CELL units.
+#define TERRAIN_NAV_CELL	 32
+#define TERRAIN_NAV_CLASSES	 2 // 0: a body up to a player's size; 1: wide and tall (shambler)
+#define TERRAIN_NAV_FAR		 0xffff
+#define TERRAIN_NAV_MAX_DROP 4 // cells a body may drop off a ledge (one way)
+enum
+{
+	TERRAIN_NAV_AIR = 1,	 // centre is open
+	TERRAIN_NAV_BLOCKED = 2, // closed by something other than the field (set by the caller)
+	TERRAIN_NAV_STAND = 4,	 // shifted left by the class: a body of that class can stand here
+};
+
+typedef struct
+{
+	int32_t	 origin[3];
+	int		 dim[3], count;
+	uint8_t *flags;
+	int		*queue; // flood scratch
+} terrain_nav_t;
+
+void Terrain_NavInit (terrain_nav_t *nav, const terrain_t *t); // allocates; flags start clear
+void Terrain_NavFree (terrain_nav_t *nav);
+void Terrain_NavRefresh (terrain_nav_t *nav, const terrain_t *t, const int lo[3], const int hi[3]); // inclusive cell box
+void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t);
+void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op); // after Terrain_ApplyOp
+void Terrain_NavSetBlocked (terrain_nav_t *nav, int cell, int blocked);						// takes effect on the next refresh
+void Terrain_NavCellCenter (const terrain_nav_t *nav, int cell, float out[3]);
+int	 Terrain_NavFindStand (const terrain_nav_t *nav, int cls, const float feet[3], int up, int down); // -1 when none near
+void Terrain_NavFlood (const terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist);
+int	 Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, int cell); // one step closer, or -1
+int	 Terrain_NavIsDrop (const terrain_nav_t *nav, int from, int to);					  // that step is off a ledge
+
 extern terrain_t *terrain_active;
 extern unsigned	  terrain_epoch; // changes whenever terrain_active is replaced or freed
 
@@ -122,6 +154,7 @@ float SV_Terrain_WalkNormal (void); // least floor normal z that counts as groun
 int	 SV_Terrain_CrawlerFrame (struct edict_s *ent); // 1 when the edict is a surface crawler and was moved here
 int	 SV_Terrain_IsCrawler (struct edict_s *ent);
 int	 SV_Terrain_RelaxedSteps (void);
+int		   SV_Terrain_MoveToGoal (struct edict_s *ent, struct edict_s *goal, float dist); // 1 when it stepped the monster along a route
 extern int sv_terrain_step_stats[6]; // monster steps: ok, blocked, edge, bad footing
 void R_Terrain_Update (void);
 

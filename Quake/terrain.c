@@ -938,3 +938,308 @@ int Terrain_TraceBox (const terrain_t *t, const float start[3], const float mins
 	}
 	return 0;
 }
+
+/*
+==============================================================================
+
+WALKING NAVIGATION
+
+A coarse grid over the region for monsters that walk. A cell is open when the field at its centre
+is clear by a few units; a cell is somewhere to stand when it is open, the one under it is not, and
+there is headroom above. Two neighbouring stand cells are joined when the climb or drop between them
+is at most one cell (45 degrees at this cell size, inside the step monsters take on terrain) and the
+body has room to make it; a ledge also leads, one way, to a floor up to TERRAIN_NAV_MAX_DROP cells
+below it. A flood from the target gives every connected stand cell its number of
+steps to go; walking to a neighbour with a smaller number is the way there.
+
+==============================================================================
+*/
+
+static int NavMax (int a, int b)
+{
+	return a > b ? a : b;
+}
+
+static int NavMin (int a, int b)
+{
+	return a < b ? a : b;
+}
+
+#ifndef NAV_OPEN_UNITS
+#define NAV_OPEN_UNITS 14 // a player-wide box fits through a run of cells this open
+#endif
+#define NAV_OPEN_SUB (NAV_OPEN_UNITS * TERRAIN_SUB / TERRAIN_CELL) // clearance at a cell centre that counts as open
+
+static int NavHeadroom (int cls)
+{
+	return cls ? 3 : 2; // cells of open space a standing body needs, its own included
+}
+
+static int NavIndex3 (const terrain_nav_t *nav, int x, int y, int z)
+{
+	if (x < 0 || y < 0 || z < 0 || x >= nav->dim[0] || y >= nav->dim[1] || z >= nav->dim[2])
+		return -1;
+	return (z * nav->dim[1] + y) * nav->dim[0] + x;
+}
+
+static int NavOpen (const terrain_nav_t *nav, int x, int y, int z)
+{
+	const int i = NavIndex3 (nav, x, y, z);
+	return i >= 0 && (nav->flags[i] & TERRAIN_NAV_AIR);
+}
+
+static int NavCanStand (const terrain_nav_t *nav, int cls, int x, int y, int z)
+{
+	if (!NavOpen (nav, x, y, z) || NavOpen (nav, x, y, z - 1))
+		return 0;
+	for (int h = 1; h < NavHeadroom (cls); ++h)
+		if (!NavOpen (nav, x, y, z + h))
+			return 0;
+	if (cls)
+	{
+		// a wide body also needs its shoulders clear on every side
+		static const int side[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+		for (int s = 0; s < 4; ++s)
+			if (!NavOpen (nav, x + side[s][0], y + side[s][1], z + 1))
+				return 0;
+	}
+	return 1;
+}
+
+void Terrain_NavInit (terrain_nav_t *nav, const terrain_t *t)
+{
+	memset (nav, 0, sizeof (*nav));
+	int count = 1;
+	for (int a = 0; a < 3; ++a)
+	{
+		nav->origin[a] = t->origin[a];
+		nav->dim[a] = t->size[a] * TERRAIN_CHUNK_UNITS / TERRAIN_NAV_CELL;
+		count *= nav->dim[a];
+	}
+	nav->count = count;
+	nav->flags = (uint8_t *)calloc (count, 1);
+	nav->queue = (int *)malloc (count * sizeof (int));
+}
+
+void Terrain_NavFree (terrain_nav_t *nav)
+{
+	free (nav->flags);
+	free (nav->queue);
+	memset (nav, 0, sizeof (*nav));
+}
+
+void Terrain_NavRefresh (terrain_nav_t *nav, const terrain_t *t, const int lo_in[3], const int hi_in[3])
+{
+	const int ratio = TERRAIN_NAV_CELL / TERRAIN_CELL;
+	int		  lo[3], hi[3];
+	for (int a = 0; a < 3; ++a)
+	{
+		lo[a] = Clamp (lo_in[a], 0, nav->dim[a] - 1);
+		hi[a] = Clamp (hi_in[a], 0, nav->dim[a] - 1);
+		if (lo[a] > hi[a])
+			return;
+	}
+	for (int z = lo[2]; z <= hi[2]; ++z)
+		for (int y = lo[1]; y <= hi[1]; ++y)
+			for (int x = lo[0]; x <= hi[0]; ++x)
+			{
+				// a cell centre lands exactly on a lattice sample
+				uint8_t	 *f = &nav->flags[NavIndex3 (nav, x, y, z)];
+				const int open =
+					!(*f & TERRAIN_NAV_BLOCKED) && Terrain_Sample (t, x * ratio + ratio / 2, y * ratio + ratio / 2, z * ratio + ratio / 2, NULL) > NAV_OPEN_SUB;
+				*f = (uint8_t)((*f & ~TERRAIN_NAV_AIR) | (open ? TERRAIN_NAV_AIR : 0));
+			}
+	// standing depends on the cell below, headroom above and, for wide bodies, the sides
+	const int reach_down = TERRAIN_NAV_CLASSES > 1 ? NavHeadroom (1) - 1 : 1;
+	for (int z = NavMax (lo[2] - reach_down, 0); z <= NavMin (hi[2] + 1, nav->dim[2] - 1); ++z)
+		for (int y = NavMax (lo[1] - 1, 0); y <= NavMin (hi[1] + 1, nav->dim[1] - 1); ++y)
+			for (int x = NavMax (lo[0] - 1, 0); x <= NavMin (hi[0] + 1, nav->dim[0] - 1); ++x)
+			{
+				uint8_t *f = &nav->flags[NavIndex3 (nav, x, y, z)];
+				for (int cls = 0; cls < TERRAIN_NAV_CLASSES; ++cls)
+				{
+					const uint8_t bit = (uint8_t)(TERRAIN_NAV_STAND << cls);
+					*f = (uint8_t)((*f & ~bit) | (NavCanStand (nav, cls, x, y, z) ? bit : 0));
+				}
+			}
+}
+
+void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t)
+{
+	const int lo[3] = {0, 0, 0}, hi[3] = {nav->dim[0] - 1, nav->dim[1] - 1, nav->dim[2] - 1};
+	Terrain_NavRefresh (nav, t, lo, hi);
+}
+
+void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op)
+{
+	// an op changes samples up to radius + TERRAIN_SDF_MAX (fixed point) from its centre
+	const int reach = (int)op->radius + TERRAIN_SDF_MAX + TERRAIN_SUB;
+	int		  lo[3], hi[3];
+	for (int a = 0; a < 3; ++a)
+	{
+		const int sub_per_nav = TERRAIN_SUB * TERRAIN_NAV_CELL / TERRAIN_CELL;
+		lo[a] = (int)floorf ((float)(op->center[a] - reach) / (float)sub_per_nav);
+		hi[a] = (int)floorf ((float)(op->center[a] + reach) / (float)sub_per_nav);
+	}
+	Terrain_NavRefresh (nav, t, lo, hi);
+}
+
+void Terrain_NavSetBlocked (terrain_nav_t *nav, int cell, int blocked)
+{
+	if (cell < 0 || cell >= nav->count)
+		return;
+	nav->flags[cell] = (uint8_t)((nav->flags[cell] & ~TERRAIN_NAV_BLOCKED) | (blocked ? TERRAIN_NAV_BLOCKED : 0));
+}
+
+void Terrain_NavCellCenter (const terrain_nav_t *nav, int cell, float out[3])
+{
+	const int c[3] = {cell % nav->dim[0], (cell / nav->dim[0]) % nav->dim[1], cell / (nav->dim[0] * nav->dim[1])};
+	for (int a = 0; a < 3; ++a)
+		out[a] = (float)nav->origin[a] + ((float)c[a] + 0.5f) * (float)TERRAIN_NAV_CELL;
+}
+
+// Whether a column is open from just under level top down to level bottom: nothing solid between
+// a body and a floor it is looking for below.
+static int NavOpenDown (const terrain_nav_t *nav, int x, int y, int top, int bottom)
+{
+	for (int z = top; z > bottom; --z)
+		if (!NavOpen (nav, x, y, z))
+			return 0;
+	return 1;
+}
+
+int Terrain_NavFindStand (const terrain_nav_t *nav, int cls, const float feet[3], int up, int down)
+{
+	const uint8_t bit = (uint8_t)(TERRAIN_NAV_STAND << cls);
+	int			  c[3];
+	for (int a = 0; a < 3; ++a)
+		c[a] = (int)floorf ((feet[a] - (float)nav->origin[a]) / (float)TERRAIN_NAV_CELL);
+	// nearest level first; on each level the column itself, then its neighbours. Below the feet only
+	// through open cells, so a floor on the far side of rock never counts.
+	for (int dz = 0; dz <= NavMax (up, down); ++dz)
+		for (int sign = 0; sign <= 1; ++sign)
+		{
+			if ((sign && (dz > down || !dz)) || (!sign && dz > up))
+				continue;
+			const int z = c[2] + (sign ? -dz : dz);
+			for (int ring = 0; ring <= 1; ++ring)
+				for (int dy = -ring; dy <= ring; ++dy)
+					for (int dx = -ring; dx <= ring; ++dx)
+					{
+						if (ring && !dx && !dy)
+							continue;
+						const int i = NavIndex3 (nav, c[0] + dx, c[1] + dy, z);
+						if (i < 0 || !(nav->flags[i] & bit))
+							continue;
+						if (sign && !NavOpenDown (nav, c[0] + dx, c[1] + dy, c[2], z))
+							continue;
+						return i;
+					}
+		}
+	return -1;
+}
+
+// Whether a body of this class can walk directly between two stand cells in neighbouring columns.
+static int NavLink (const terrain_nav_t *nav, int cls, const int a[3], const int b[3])
+{
+	const int dz = b[2] - a[2];
+	if (dz < -1 || dz > 1)
+		return 0;
+	const int top = NavMax (a[2], b[2]);
+	// climbing or dropping a level: the lower end needs room for the body at the upper level
+	if (dz)
+	{
+		const int *low = dz > 0 ? a : b;
+		if (!NavOpen (nav, low[0], low[1], top + NavHeadroom (cls) - 1))
+			return 0;
+	}
+	// diagonal: no cutting through a corner at body height
+	if (a[0] != b[0] && a[1] != b[1])
+		if (!NavOpen (nav, b[0], a[1], top + 1) || !NavOpen (nav, a[0], b[1], top + 1))
+			return 0;
+	return 1;
+}
+
+// Whether a body can walk off the edge of stand cell a and land on b, two to four levels down in a
+// neighbouring column. One way only: nothing climbs back.
+static int NavDrop (const terrain_nav_t *nav, int cls, const int a[3], const int b[3])
+{
+	const int fall = a[2] - b[2];
+	if (fall < 2 || fall > TERRAIN_NAV_MAX_DROP)
+		return 0;
+	// open from the landing up to body height above the edge, so the body clears the lip as it falls
+	for (int z = b[2] + 1; z <= a[2] + NavHeadroom (cls) - 1; ++z)
+		if (!NavOpen (nav, b[0], b[1], z))
+			return 0;
+	if (a[0] != b[0] && a[1] != b[1])
+		if (!NavOpen (nav, b[0], a[1], a[2] + 1) || !NavOpen (nav, a[0], b[1], a[2] + 1))
+			return 0;
+	return 1;
+}
+
+// One step from a to b on foot: a walk or climb either way, or a drop off a ledge.
+static int NavStep (const terrain_nav_t *nav, int cls, const int a[3], const int b[3])
+{
+	return b[2] - a[2] >= -1 ? NavLink (nav, cls, a, b) : NavDrop (nav, cls, a, b);
+}
+
+static const int nav_dirs[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+
+void Terrain_NavFlood (const terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist)
+{
+	const uint8_t bit = (uint8_t)(TERRAIN_NAV_STAND << cls);
+	memset (dist, 0xff, (size_t)nav->count * sizeof (uint16_t));
+	int head = 0, tail = 0;
+	for (int s = 0; s < num_seeds; ++s)
+		if (seeds[s] >= 0 && seeds[s] < nav->count && dist[seeds[s]] == TERRAIN_NAV_FAR && (nav->flags[seeds[s]] & bit))
+		{
+			dist[seeds[s]] = 0;
+			nav->queue[tail++] = seeds[s];
+		}
+	while (head < tail)
+	{
+		const int cell = nav->queue[head++];
+		const int c[3] = {cell % nav->dim[0], (cell / nav->dim[0]) % nav->dim[1], cell / (nav->dim[0] * nav->dim[1])};
+		if (dist[cell] >= TERRAIN_NAV_FAR - 1)
+			continue;
+		// the flood runs backwards: next is a cell from which one step reaches this one
+		for (int d = 0; d < 8; ++d)
+			for (int dz = -1; dz <= TERRAIN_NAV_MAX_DROP; ++dz)
+			{
+				const int n[3] = {c[0] + nav_dirs[d][0], c[1] + nav_dirs[d][1], c[2] + dz};
+				const int next = NavIndex3 (nav, n[0], n[1], n[2]);
+				if (next < 0 || dist[next] != TERRAIN_NAV_FAR || !(nav->flags[next] & bit) || !NavStep (nav, cls, n, c))
+					continue;
+				dist[next] = (uint16_t)(dist[cell] + 1);
+				nav->queue[tail++] = next;
+			}
+	}
+}
+
+int Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, int cell)
+{
+	if (cell < 0 || cell >= nav->count || dist[cell] == TERRAIN_NAV_FAR || !dist[cell])
+		return -1;
+	const uint8_t bit = (uint8_t)(TERRAIN_NAV_STAND << cls);
+	const int	  c[3] = {cell % nav->dim[0], (cell / nav->dim[0]) % nav->dim[1], cell / (nav->dim[0] * nav->dim[1])};
+	int			  best = -1, best_dist = dist[cell];
+	// first found wins a tie: straight directions before diagonals, and within a direction a walk
+	// before a drop and a short drop before a long one
+	for (int d = 0; d < 8; ++d)
+		for (int k = 0; k < 2 + TERRAIN_NAV_MAX_DROP; ++k)
+		{
+			const int dz = k < 3 ? k - 1 : 1 - k;
+			const int n[3] = {c[0] + nav_dirs[d][0], c[1] + nav_dirs[d][1], c[2] + dz};
+			const int next = NavIndex3 (nav, n[0], n[1], n[2]);
+			if (next < 0 || dist[next] >= best_dist || !(nav->flags[next] & bit) || !NavStep (nav, cls, c, n))
+				continue;
+			best = next;
+			best_dist = dist[next];
+		}
+	return best;
+}
+
+int Terrain_NavIsDrop (const terrain_nav_t *nav, int from, int to)
+{
+	return (to / (nav->dim[0] * nav->dim[1])) < (from / (nav->dim[0] * nav->dim[1])) - 1;
+}
