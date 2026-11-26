@@ -29,7 +29,7 @@ static cvar_t terrain_vault_height = {"terrain_vault_height", "76", CVAR_NONE};	
 static cvar_t terrain_crawlers = {"terrain_crawlers", "4", CVAR_NONE};				   // surface-crawling fiends added to a drg* map
 // Which monsters crawl: a comma list of classname[:scale[:health[:speed[:spawnflags]]]], used in
 // turn. The classname must be a spawn function of the running progs.dat.
-static cvar_t terrain_crawler_types = {"terrain_crawler_types", "monster_demon1", CVAR_NONE};
+static cvar_t terrain_crawler_types = {"terrain_crawler_types", "monster_demon1:1:60:0.5", CVAR_NONE};
 static cvar_t terrain_crawler_speed = {"terrain_crawler_speed", "210", CVAR_NONE};
 static cvar_t terrain_crawler_nav = {"terrain_crawler_nav", "2", CVAR_NONE};	   // 0 straight at the enemy, 1 flow field through open air, 2 along surfaces
 static cvar_t terrain_crawler_pounce = {"terrain_crawler_pounce", "360", CVAR_NONE}; // a stalled crawler jumps at an enemy this close and in sight; 0 is off

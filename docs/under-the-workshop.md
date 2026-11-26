@@ -235,7 +235,7 @@ own pak). Without them the tools fall back to stock models.
 | `terrain_crawler_sense`, `terrain_crawler_speed` | 900, 210 | |
 | `terrain_crawler_nav` | 2 | 0 straight at the enemy, 1 flow field through open air, 2 along surfaces |
 | `terrain_crawler_pounce` | 360 | a stalled crawler jumps at a visible enemy within this range; 0 is off |
-| `terrain_crawler_types` | `monster_demon1` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
+| `terrain_crawler_types` | `monster_demon1:1:60:0.5` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
 | `terrain_ice` | 1 | ice pillars, icicles and floor stubs in new caves |
 | `r_terrain_style`, `r_terrain_props` | 1, 1 | look 0-3 and its props |
 | `workshop_tools` | 1 | the platform gun, grapple and lava sprayer on drg* maps |
