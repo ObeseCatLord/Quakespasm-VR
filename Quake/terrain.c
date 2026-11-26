@@ -27,6 +27,9 @@ void Terrain_OpPack (const terrain_op_t *op, uint8_t out[TERRAIN_OP_BYTES])
 	for (int a = 0; a < 3; ++a)
 		for (int b = 0; b < 4; ++b)
 			out[4 + a * 4 + b] = (uint8_t)((uint32_t)op->center[a] >> (8 * b));
+	for (int a = 0; a < 3; ++a)
+		out[16 + a] = (uint8_t)op->normal[a];
+	out[19] = op->thickness;
 }
 
 void Terrain_OpUnpack (const uint8_t in[TERRAIN_OP_BYTES], terrain_op_t *op)
@@ -42,6 +45,9 @@ void Terrain_OpUnpack (const uint8_t in[TERRAIN_OP_BYTES], terrain_op_t *op)
 			v |= (uint32_t)in[4 + a * 4 + b] << (8 * b);
 		op->center[a] = (int32_t)v;
 	}
+	for (int a = 0; a < 3; ++a)
+		op->normal[a] = (int8_t)in[16 + a];
+	op->thickness = in[19];
 }
 
 #define PAD	  (TERRAIN_CHUNK + 2) // samples -1 .. CHUNK
@@ -198,7 +204,12 @@ float Terrain_SampleWorld (const terrain_t *t, const float p[3])
 
 int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 {
-	const int reach = (int)op->radius + TERRAIN_SDF_MAX;
+	const int	  reach = (int)op->radius + (op->kind == TERRAIN_OP_DISK ? (int)op->thickness : 0) + TERRAIN_SDF_MAX;
+	// a disk's axis, as given (integer, any length up to 127)
+	const int64_t nx = op->normal[0], ny = op->normal[1], nz = op->normal[2];
+	const int64_t nlen = op->kind == TERRAIN_OP_DISK ? (int64_t)ISqrt64 ((uint64_t)(nx * nx + ny * ny + nz * nz)) : 0;
+	if (op->kind == TERRAIN_OP_DISK && !nlen)
+		return 0;
 	int		  lo[3], hi[3];
 	for (int a = 0; a < 3; ++a)
 	{
@@ -217,7 +228,8 @@ int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 			for (int x = lo[0]; x <= hi[0]; ++x)
 			{
 				const int64_t	 dx = (int64_t)x * TERRAIN_SUB - op->center[0];
-				const int		 dist = (int)ISqrt64 ((uint64_t)(dx * dx + dy * dy + dz * dz));
+				const int64_t	 d2 = dx * dx + dy * dy + dz * dz;
+				const int		 dist = (int)ISqrt64 ((uint64_t)d2);
 				const int		 cx = x >> TERRAIN_CHUNK_SHIFT;
 				terrain_chunk_t *c = Terrain_Chunk (t, cx, cy, cz);
 				const int		 i = (((z & 31) << TERRAIN_CHUNK_SHIFT | (y & 31)) << TERRAIN_CHUNK_SHIFT) | (x & 31);
@@ -229,6 +241,20 @@ int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 					if (v <= old)
 						continue;
 				}
+				else if (op->kind == TERRAIN_OP_DISK)
+				{
+					// distance to a flat cylinder: across the axis against the radius, along it against the
+					// half thickness
+					const int64_t axial = (dx * nx + dy * ny + dz * nz) / nlen;
+					const int64_t r2 = d2 - axial * axial;
+					const int64_t qx = (int64_t)ISqrt64 ((uint64_t)(r2 > 0 ? r2 : 0)) - (int64_t)op->radius;
+					const int64_t qy = (axial < 0 ? -axial : axial) - (int64_t)op->thickness;
+					const int64_t ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0, in = qx > qy ? qx : qy;
+					const int64_t sdf = (int64_t)ISqrt64 ((uint64_t)(ox * ox + oy * oy)) + (in < 0 ? in : 0);
+					v = (int)(sdf < -TERRAIN_SDF_MAX ? -TERRAIN_SDF_MAX : sdf > TERRAIN_SDF_MAX ? TERRAIN_SDF_MAX : sdf);
+					if (v >= old)
+						continue;
+				}
 				else
 				{
 					v = Clamp (dist - (int)op->radius, -TERRAIN_SDF_MAX, TERRAIN_SDF_MAX);
@@ -238,7 +264,7 @@ int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 				if (!c->sdf)
 					Materialize (t, c, cx, cy, cz);
 				c->sdf[i] = (int8_t)v;
-				if (op->kind == TERRAIN_OP_FILL && old >= 0)
+				if (op->kind != TERRAIN_OP_DIG && old >= 0)
 					c->mat[i] = op->material;
 				++changed;
 				const int p[3] = {x, y, z};
@@ -290,7 +316,7 @@ void Terrain_Generate (terrain_t *t)
 		extent[a] = t->size[a] * TERRAIN_CHUNK * TERRAIN_SUB;
 		pos[a] = extent[a] / 2;
 	}
-	terrain_op_t op = {TERRAIN_OP_DIG, 0, 11 * TERRAIN_SUB, {pos[0], pos[1], pos[2]}};
+	terrain_op_t op = {TERRAIN_OP_DIG, 0, 11 * TERRAIN_SUB, {pos[0], pos[1], pos[2]}, {0, 0, 0}, 0};
 	Terrain_ApplyOp (t, &op); // start room at the region centre
 	// Sized for Quake: passages 130-260 units across (a player is 32 by 56), chambers about 450.
 	// The margin keeps every dig inside the region, so the cave never opens onto the map shell.
@@ -339,7 +365,7 @@ static void FillColumn (terrain_t *t, int x, int y, int z0, int z1, int r0, int 
 {
 	// a stack of fill spheres from z0 to z1 (lattice), radius r0 at z0 to r1 at z1 (TERRAIN_SUB units),
 	// plus `bulge` extra at both ends so columns flare into floor and ceiling
-	terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_GOLD, 0, {x * TERRAIN_SUB + TERRAIN_SUB / 2, y * TERRAIN_SUB + TERRAIN_SUB / 2, 0}};
+	terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_GOLD, 0, {x * TERRAIN_SUB + TERRAIN_SUB / 2, y * TERRAIN_SUB + TERRAIN_SUB / 2, 0}, {0, 0, 0}, 0};
 	const int	 len = (z1 - z0) * TERRAIN_SUB;
 	const int	 dir = len < 0 ? -1 : 1;
 	for (int d = 0; d * dir <= len * dir;)
@@ -1109,7 +1135,7 @@ void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t)
 void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op)
 {
 	// an op changes samples up to radius + TERRAIN_SDF_MAX (fixed point) from its centre
-	const int reach = (int)op->radius + TERRAIN_SDF_MAX + TERRAIN_SUB;
+	const int reach = (int)op->radius + (op->kind == TERRAIN_OP_DISK ? (int)op->thickness : 0) + TERRAIN_SDF_MAX + TERRAIN_SUB;
 	int		  lo[3], hi[3];
 	for (int a = 0; a < 3; ++a)
 	{

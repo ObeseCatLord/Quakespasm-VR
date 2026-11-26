@@ -292,6 +292,8 @@ srcs = [
     'Quake/gl_rmisc.c',
     'Quake/r_passes.c',
     'Quake/cl_terrain.c',
+    'Quake/cl_workshop.c',
+    'Quake/sv_workshop.c',
     'Quake/r_terrain.c',
     'Quake/r_terrain_props.c',
     'Quake/r_terrain_tex.c',

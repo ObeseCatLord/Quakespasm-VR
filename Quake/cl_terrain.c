@@ -12,6 +12,7 @@ static int cl_terrain_ops_applied;
 
 void CL_Terrain_Clear (void)
 {
+	CL_Workshop_Clear ();
 	R_Terrain_FinishMeshing ();
 	if (terrain_client)
 	{
@@ -122,4 +123,5 @@ void CL_Terrain_Init (void)
 	Cmd_AddCommand_ServerCommand ("terrain_init", CL_Terrain_Init_f);
 	Cmd_AddCommand_ServerCommand ("terrain_ops", CL_Terrain_Ops_f);
 	Cmd_AddCommand ("terrain_clhash", CL_Terrain_Hash_f);
+	CL_Workshop_Init ();
 }

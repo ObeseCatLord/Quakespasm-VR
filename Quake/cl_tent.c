@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 // cl_tent.c -- client side temporary entities
 
 #include "quakedef.h"
+#include "terrain.h"
 
 int		 num_temp_entities;
 entity_t cl_temp_entities[MAX_TEMP_ENTITIES];
@@ -354,6 +355,7 @@ void CL_UpdateTEnts (void)
 
 	num_temp_entities = 0;
 	R_Terrain_AddEntities (); // the terrain styles' props and their lights (r_terrain_props.c)
+	CL_Workshop_AddEntities ();
 
 	if (cl.paused)
 		COM_SeedRand ((uint64_t)(cl.time * 1000)); // johnfitz -- freeze beams when paused

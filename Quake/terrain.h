@@ -25,13 +25,15 @@ enum
 	TERRAIN_MAT_DIRT,
 	TERRAIN_MAT_GOLD,
 	TERRAIN_MAT_FILL,
+	TERRAIN_MAT_GINGER, // platform gun disks
 	TERRAIN_MAT_COUNT
 };
 
 enum
 {
 	TERRAIN_OP_DIG,
-	TERRAIN_OP_FILL
+	TERRAIN_OP_FILL,
+	TERRAIN_OP_DISK // fills a flat disk: radius across, thickness through, facing normal
 };
 
 // Field values are signed distance in TERRAIN_SUB units, negative inside solid.
@@ -61,6 +63,8 @@ typedef struct
 	uint8_t	 material;
 	uint16_t radius;
 	int32_t	 center[3];
+	int8_t	 normal[3]; // TERRAIN_OP_DISK: the disk's axis, any length up to 127
+	uint8_t	 thickness; // TERRAIN_OP_DISK: half the disk's thickness, TERRAIN_SUB units
 } terrain_op_t;
 
 typedef struct
@@ -142,8 +146,8 @@ int	 Terrain_NavIsDrop (const terrain_nav_t *nav, int from, int to);					  // th
 int	 Terrain_NavIsClimb (const terrain_nav_t *nav, int from, int to);					  // that step is a jump up onto a ledge
 int	 Terrain_NavStepCost (const terrain_nav_t *nav, int from, int to);
 
-// Op wire form (netsync): kind, material, radius, centre, little-endian.
-#define TERRAIN_OP_BYTES 16
+// Op wire form (netsync): kind, material, radius, centre, normal, thickness, little-endian.
+#define TERRAIN_OP_BYTES 20
 void Terrain_OpPack (const terrain_op_t *op, uint8_t out[TERRAIN_OP_BYTES]);
 void Terrain_OpUnpack (const uint8_t in[TERRAIN_OP_BYTES], terrain_op_t *op);
 
@@ -155,6 +159,9 @@ extern terrain_t *terrain_pmove;		// whichever of the two the running player mov
 float			  Terrain_PmoveWalkNormal (void);
 void			  CL_Terrain_Init (void);
 void			  CL_Terrain_Clear (void);
+void			  CL_Workshop_Init (void);
+void			  CL_Workshop_Clear (void);
+void			  CL_Workshop_AddEntities (void); // cl_workshop.c: light strings, VR wrist flares and holster
 struct client_s;
 void SV_Terrain_SendToClient (struct client_s *client);
 
@@ -166,8 +173,19 @@ void SV_Terrain_PlaceEntities (void);
 void SV_Terrain_Clear (void);
 void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t size[3]);
 int	 SV_Terrain_Edit (int kind, const float pos[3], float radius);
+int	 SV_Terrain_Disk (const float pos[3], const float normal[3], float radius, float half_thickness); // gingerbread
 int	 SV_Terrain_OpLog (const terrain_op_t **ops);
 void SV_Terrain_PlayerFrame (struct edict_s *ent, int num);
+void SV_Terrain_ThrowFlare (struct edict_s *player, const float origin[3], const float velocity[3]);
+
+/* The workshop's tools (sv_workshop.c): platform gun, festive grapple, thrown flares. */
+void	   SV_Workshop_Init (void);
+void	   SV_Workshop_Precache (void); // while a drg* map loads
+void	   SV_Workshop_Clear (void);
+void	   SV_Workshop_PlayerFrame (struct edict_s *ent, int num);										// once a frame, before the player's commands
+void	   SV_Workshop_PreThink (struct edict_s *ent);													// per command, right before PlayerPreThink
+void	   SV_Workshop_Frame (void);																	// once a server frame, after physics
+int		   SV_Workshop_ViewModel (struct client_s *client, int *modelindex, float *frame, float *ammo); // 1 when a tool replaces the weapon on screen
 void SV_Terrain_SniffWrite (int dest, int kind, float value);
 float SV_Terrain_WalkNormal (void); // least floor normal z that counts as ground; steeper on terrain than BSP's 0.7
 int	 SV_Terrain_CrawlerFrame (struct edict_s *ent); // 1 when the edict is a surface crawler and was moved here

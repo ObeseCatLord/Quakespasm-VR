@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <!-- Concept sheet: stick flare and the wristband that carries three of them. -->
+  <rect width="1600" height="1000" fill="#6b6b68"/>
+  <rect width="1600" height="70" fill="#4a4a47"/>
+  <text x="40" y="47" font-family="monospace" font-size="30" fill="#e8dcc0">FLARE + WRISTBAND  /  pull from the wrist, throw by letting go</text>
+
+  <!-- flare, side view, hexagonal tube ~24 tris -->
+  <g transform="translate(160,260)">
+    <text x="0" y="-80" font-family="monospace" font-size="22" fill="#efe6cf">stick flare (hand-sized: ~10 units long)</text>
+    <polygon points="0,0 360,0 360,70 0,70" fill="#b3261e"/>
+    <polygon points="0,0 360,0 360,20 0,20" fill="#d8443a"/>
+    <polygon points="0,52 360,52 360,70 0,70" fill="#7c1813"/>
+    <!-- paper wrap band -->
+    <polygon points="120,0 200,0 200,70 120,70" fill="#e9dfc4"/>
+    <polygon points="120,0 200,0 200,20 120,20" fill="#fbf4e0"/>
+    <!-- striker cap, glowing end -->
+    <polygon points="360,-8 430,4 430,66 360,78" fill="#f7d34a"/>
+    <polygon points="430,4 470,20 470,50 430,66" fill="#fff7c2"/>
+    <!-- base cap -->
+    <polygon points="-30,6 0,0 0,70 -30,64" fill="#3a2f27"/>
+    <text x="360" y="130" font-family="monospace" font-size="18" fill="#efe6cf">fullbright tip</text>
+  </g>
+
+  <!-- wristband with three flares, seen on a forearm from the side -->
+  <g transform="translate(160,560)">
+    <text x="0" y="-70" font-family="monospace" font-size="22" fill="#efe6cf">leather wristband, three flares in loops (sits 21 cm back from the hand)</text>
+    <!-- band (octagonal ring seen side-on) -->
+    <polygon points="0,0 520,0 540,30 540,170 520,200 0,200 -20,170 -20,30" fill="#6e4423"/>
+    <polygon points="0,0 520,0 540,30 -20,30" fill="#8d5a2f"/>
+    <polygon points="-20,170 540,170 520,200 0,200" fill="#4b2d16"/>
+    <!-- stitching -->
+    <g fill="#d9c08a"><rect x="20" y="40" width="20" height="6"/><rect x="80" y="40" width="20" height="6"/><rect x="420" y="40" width="20" height="6"/><rect x="480" y="40" width="20" height="6"/>
+      <rect x="20" y="154" width="20" height="6"/><rect x="80" y="154" width="20" height="6"/><rect x="420" y="154" width="20" height="6"/><rect x="480" y="154" width="20" height="6"/></g>
+    <!-- brass buckle -->
+    <polygon points="230,-10 290,-10 290,210 230,210" fill="#a87d2e"/>
+    <polygon points="245,20 275,20 275,180 245,180" fill="#6e4423"/>
+    <!-- three flares lying across the band -->
+    <g>
+      <polygon points="110,-40 150,-40 150,240 110,240" fill="#b3261e"/><polygon points="110,-60 150,-60 150,-40 110,-40" fill="#f7d34a"/>
+      <polygon points="330,-40 370,-40 370,240 330,240" fill="#b3261e"/><polygon points="330,-60 370,-60 370,-40 330,-40" fill="#f7d34a"/>
+      <polygon points="400,-40 440,-40 440,240 400,240" fill="#b3261e"/><polygon points="400,-60 440,-60 440,-40 400,-40" fill="#f7d34a"/>
+      <polygon points="110,90 150,90 150,120 110,120" fill="#e9dfc4"/><polygon points="330,90 370,90 370,120 330,120" fill="#e9dfc4"/><polygon points="400,90 440,90 440,120 400,120" fill="#e9dfc4"/>
+    </g>
+    <!-- loops over the flares -->
+    <g fill="#5a371b"><polygon points="100,20 160,20 160,44 100,44"/><polygon points="320,20 450,20 450,44 320,44"/><polygon points="100,156 160,156 160,180 100,180"/><polygon points="320,156 450,156 450,180 320,180"/></g>
+  </g>
+
+  <g transform="translate(1180,620)" font-family="monospace" font-size="18" fill="#efe6cf">
+    <text x="0" y="-14">palette</text>
+    <rect x="0" y="0" width="40" height="40" fill="#b3261e"/><text x="50" y="27">flare tube red</text>
+    <rect x="0" y="50" width="40" height="40" fill="#f7d34a"/><text x="50" y="77">striker (fullbright)</text>
+    <rect x="0" y="100" width="40" height="40" fill="#e9dfc4"/><text x="50" y="127">paper wrap</text>
+    <rect x="0" y="150" width="40" height="40" fill="#6e4423"/><text x="50" y="177">leather</text>
+    <rect x="0" y="200" width="40" height="40" fill="#a87d2e"/><text x="50" y="227">brass buckle</text>
+  </g>
+</svg>

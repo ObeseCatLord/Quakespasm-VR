@@ -57,6 +57,32 @@ as a mod directory (`<basedir>/tcj`):
 Each entry is `classname:scale:health:speed multiplier`; the list is cycled over the crawlers.
 Put these arguments before `+map`: the crawlers are made while the map loads.
 
+## The workshop tools
+
+Engine-side, so they work with a stock `progs.dat`: a tool takes the weapon's place on screen
+while it is out and holds the progs' own weapon back; ordinary weapon impulses put it away.
+
+- **Platform gun** (`impulse 70`), after the Engineer's in Deep Rock Galactic. Its numbers come
+  from the game's own weapon and projectile assets (`WPN_PlatformGun`, `PRJ_PlatformMaker`),
+  scaled to Quake: 4 a magazine, 16 carried, one shot a second, 2 second automatic reload, the
+  shot flying at 4000 cm/s (1250 units/s) under half gravity, the platform forming a quarter
+  second after it lands. Here the shot is a blob of gingerbread dough: on the cave or the map it
+  spreads into a flat gingerbread disk (`TERRAIN_OP_DISK`, a networked terrain op, so it is
+  ground like any other and the monsters' routes use it); on a monster or player it shatters
+  and hurts them. Anyone a growing platform would bury is lifted onto it. Reserve comes back
+  slowly (`workshop_platgun_regen`).
+- **Festive grapple** (`impulse 71`): hold fire to throw a gold star hook on a string of
+  Christmas lights; once it bites, it pulls you in, letting go reels it back. Its behaviour
+  follows the grapple in Dissolution of Eternity; the models are new.
+- **VR**: flares ride on the weapon hand's wrist and are taken with the other hand's grip and
+  thrown by letting go, at the hand's own speed (as the VRG mod for Deep Rock does); the grapple
+  sits in a holster on the right hip, drawn by gripping there with the weapon hand and put back
+  by letting go. Desktop players throw flares with `terrain_flare`.
+
+Assets: `Misc/workshop_assets/` holds the concept sheets, the Blender sources and
+`mdltool.py`, which builds the Quake models into `Misc/vq_pak/progs/workshop/` (the engine's
+own pak). Without them the tools fall back to stock models.
+
 ## Where things are
 
 | File | What |
@@ -101,6 +127,12 @@ Put these arguments before `+map`: the crawlers are made while the map loads.
 | `terrain_crawler_types` | `monster_demon1` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
 | `terrain_ice` | 1 | ice pillars, icicles and floor stubs in new caves |
 | `r_terrain_style`, `r_terrain_props` | 1, 1 | look 0-3 and its props |
+| `workshop_tools` | 1 | the platform gun and grapple on drg* maps |
+| `workshop_platform_radius`, `workshop_platform_thickness` | 60, 20 | platform size |
+| `workshop_platgun_speed`, `workshop_platgun_damage`, `workshop_platgun_regen` | 1250, 40, 10 | |
+| `workshop_grapple_speed`, `workshop_grapple_pull`, `workshop_grapple_range` | 1100, 620, 1600 | |
+| `workshop_flares`, `workshop_flare_regen` | 4, 15 | flares a VR wrist carries, seconds per flare back |
+| `vr_workshop_holsters`, `vr_workshop_throw_scale`, `cl_workshop_lights` | 1, 2.5, 1 | client side |
 | `r_terrain_ambient`, `r_terrain_lamp`, `r_terrain_dlights`, `r_terrain_biome` | | look |
 
 Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, `terrain_fill`,
@@ -115,10 +147,12 @@ Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, 
   header says what to expect. `terrain_pathfind.gdb` compares monsters' route costs to the player
   with routes on and off (`terrain_ents` prints `route N`: about 2 per 32 units walked).
   `terrain_netsync.gdb` checks that the client's copy matches the server's region after edits.
+  `workshop_tools.gdb` fires the platform gun and the grapple.
 
 ## Known gaps
 
-- No headset pass, no remote-client pass of the netsync, no VR-hand digging.
+- No headset pass (the wrist flares and hip holster are untested in VR), no remote-client pass
+  of the netsync, no VR-hand digging.
 - The region covers the map up to 16 chunks (8192 units) a side; a larger map keeps a flat
   undiggable wall where the region ends.
 - Walking routes are for ground monsters chasing a player. Flyers, swimmers, monsters fighting each

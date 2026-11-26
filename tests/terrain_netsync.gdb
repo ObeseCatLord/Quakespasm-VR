@@ -12,9 +12,12 @@ run
 ignore 1 300
 continue
 call (void)Cbuf_AddText("terrain_crawlers 0; map drgbox\n")
-ignore 1 400
+ignore 1 40
 continue
-call (void)Cbuf_AddText("god; notarget; echo PHASE start; terrain_clhash; terrain_probe\n")
+call (void)Cbuf_AddText("god; notarget\n")
+ignore 1 360
+continue
+call (void)Cbuf_AddText("echo PHASE start; terrain_clhash; terrain_probe\n")
 ignore 1 20
 continue
 call (void)Cbuf_AddText("terrain_dig; wait; terrain_dig; wait; terrain_fill; wait; terrain_dig\n")

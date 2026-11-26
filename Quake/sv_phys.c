@@ -10588,6 +10588,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		}
 		SV_CoopRespawnFilterBorrowedInput (ent, NUM_FOR_EDICT (ent),
 			respawn_policy, &respawn_input_scope, &respawn_input_saved);
+		SV_Workshop_PreThink (ent); // tools read this command's impulse and buttons
+
 		PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 		if (!SV_CoopRespawnPolicyOwnerLive (respawn_policy, client, ent))
 		{
@@ -10788,6 +10790,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	if (run_prethink)
 	{
 		host_frametime = shared_qc ? think_window->world_frametime : seconds;
+		SV_Workshop_PreThink (ent); // tools read this command's impulse and buttons
+
 		PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 		host_frametime = seconds;
 		pr_global_struct->frametime = seconds;
@@ -11967,6 +11971,8 @@ static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
 		SV_CoopRespawnFilterBorrowedInput (ent, num, respawn_policy,
 			&respawn_input_scope, &respawn_input_saved);
 	VectorCopy (ent->v.origin, callback_origin);
+	SV_Workshop_PreThink (ent); // tools read this command's impulse and buttons
+
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 
 after_prethink:
@@ -12921,6 +12927,9 @@ void SV_Physics (void)
 
 	if (pr_global_struct->force_retouch)
 		pr_global_struct->force_retouch--;
+
+	if (qcvm == &sv.qcvm)
+		SV_Workshop_Frame (); // the workshop tools' shots and growing platforms
 
 	if (!(sv_freezenonclients.value && qcvm == &sv.qcvm))
 		qcvm->time += host_frametime;

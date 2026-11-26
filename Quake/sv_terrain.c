@@ -38,6 +38,7 @@ static cvar_t terrain_pathfind = {"terrain_pathfind", "1", CVAR_NONE};				  // w
 static cvar_t terrain_ice = {"terrain_ice", "1", CVAR_NONE}; // grow ice pillars and icicles in new caves; 0 is the plain worm cave
 
 #define FLARE_MODEL "progs/s_light.spr"
+#define WORKSHOP_FLARE_MODEL "progs/workshop/flare.mdl" // the hand flare, when the engine pak has it
 #define MAX_FLARES	8
 static edict_t *sv_terrain_flares[MAX_FLARES];
 
@@ -114,6 +115,7 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 void SV_Terrain_NewMap (void)
 {
 	SV_Terrain_Clear ();
+	SV_Workshop_Clear ();
 	if (strncmp (sv.name, "drg", 3))
 		return;
 	// The region covers the whole map, so its outer layer (which always stays solid to keep the
@@ -135,18 +137,10 @@ void SV_Terrain_NewMap (void)
 The one way the terrain changes after generation. The op is quantized here and logged; the
 quantized op is what every peer would replay. Radius and position are in Quake units.
 */
-int SV_Terrain_Edit (int kind, const float pos[3], float radius)
+// Applies an op to the region and logs it; every peer replays the log in this order.
+static int SV_Terrain_Log (terrain_op_t *op)
 {
-	terrain_t *t = terrain_active;
-	if (!t)
-		return 0;
-	terrain_op_t op;
-	op.kind = (uint8_t)kind;
-	op.material = TERRAIN_MAT_FILL;
-	op.radius = (uint16_t)(CLAMP (8.0f, radius, 512.0f) * TERRAIN_SUB / TERRAIN_CELL);
-	for (int i = 0; i < 3; ++i)
-		op.center[i] = (int32_t)floorf ((pos[i] - (float)t->origin[i]) * TERRAIN_SUB / TERRAIN_CELL + 0.5f);
-	const int changed = Terrain_ApplyOp (t, &op);
+	const int changed = Terrain_ApplyOp (terrain_active, op);
 	if (!changed)
 		return 0;
 	if (sv_terrain_num_ops == sv_terrain_cap_ops)
@@ -154,8 +148,47 @@ int SV_Terrain_Edit (int kind, const float pos[3], float radius)
 		sv_terrain_cap_ops = sv_terrain_cap_ops ? sv_terrain_cap_ops * 2 : 256;
 		sv_terrain_ops = (terrain_op_t *)realloc (sv_terrain_ops, sv_terrain_cap_ops * sizeof (*sv_terrain_ops));
 	}
-	sv_terrain_ops[sv_terrain_num_ops++] = op;
+	sv_terrain_ops[sv_terrain_num_ops++] = *op;
 	return changed;
+}
+
+int SV_Terrain_Edit (int kind, const float pos[3], float radius)
+{
+	terrain_t *t = terrain_active;
+	if (!t)
+		return 0;
+	terrain_op_t op;
+	memset (&op, 0, sizeof (op));
+	op.kind = (uint8_t)kind;
+	op.material = TERRAIN_MAT_FILL;
+	op.radius = (uint16_t)(CLAMP (8.0f, radius, 512.0f) * TERRAIN_SUB / TERRAIN_CELL);
+	for (int i = 0; i < 3; ++i)
+		op.center[i] = (int32_t)floorf ((pos[i] - (float)t->origin[i]) * TERRAIN_SUB / TERRAIN_CELL + 0.5f);
+	return SV_Terrain_Log (&op);
+}
+
+/*
+Fills a gingerbread disk: radius across its axis, half_thickness along it (Quake units), the axis
+given by normal (any length). The platform gun's way of adding to the cave.
+*/
+int SV_Terrain_Disk (const float pos[3], const float normal[3], float radius, float half_thickness)
+{
+	terrain_t  *t = terrain_active;
+	const float len = t ? sqrtf (DotProduct (normal, normal)) : 0.0f;
+	if (!t || len < 1e-3f)
+		return 0;
+	terrain_op_t op;
+	memset (&op, 0, sizeof (op));
+	op.kind = TERRAIN_OP_DISK;
+	op.material = TERRAIN_MAT_GINGER;
+	op.radius = (uint16_t)(CLAMP (8.0f, radius, 512.0f) * TERRAIN_SUB / TERRAIN_CELL);
+	op.thickness = (uint8_t)(CLAMP (2.0f, half_thickness, 120.0f) * TERRAIN_SUB / TERRAIN_CELL);
+	for (int i = 0; i < 3; ++i)
+	{
+		op.center[i] = (int32_t)floorf ((pos[i] - (float)t->origin[i]) * TERRAIN_SUB / TERRAIN_CELL + 0.5f);
+		op.normal[i] = (int8_t)floorf (normal[i] / len * 127.0f + 0.5f);
+	}
+	return SV_Terrain_Log (&op);
 }
 
 int SV_Terrain_OpLog (const terrain_op_t **ops)
@@ -1041,6 +1074,9 @@ void SV_Terrain_PlaceEntities (void)
 		return;
 	const terrain_t *t = terrain_active;
 	SV_Precache_Model (FLARE_MODEL); // while the map loads, so every client has it
+	if (COM_FileExists (WORKSHOP_FLARE_MODEL, NULL))
+		SV_Precache_Model (WORKSHOP_FLARE_MODEL);
+	SV_Workshop_Precache ();
 	uint32_t		 rng = t->seed * 747796405u + 2891336453u;
 	if (!rng)
 		rng = 1;
@@ -1105,6 +1141,7 @@ Both work from fields every progs.dat has, so they need no QuakeC support.
 */
 void SV_Terrain_PlayerFrame (edict_t *ent, int num)
 {
+	SV_Workshop_PlayerFrame (ent, num);
 	const terrain_t *t = terrain_active;
 	if (!t || ent->free || ent->v.health <= 0 || num < 1 || num > MAX_SCOREBOARD)
 		return;
@@ -1234,6 +1271,32 @@ terrain_flare
 The local player throws a light that bounces and stays where it lands. The oldest goes out when
 there are more than MAX_FLARES.
 */
+/*
+Throws a flare from origin at velocity for player. The oldest goes out when there are more than
+MAX_FLARES. Used by the terrain_flare command and by a VR hand throwing one off the wrist.
+*/
+void SV_Terrain_ThrowFlare (edict_t *player, const float origin[3], const float velocity[3])
+{
+	edict_t **slot = &sv_terrain_flares[sv_terrain_next_flare];
+	sv_terrain_next_flare = (sv_terrain_next_flare + 1) % MAX_FLARES;
+	if (*slot && !(*slot)->free && !strcmp (PR_GetString ((*slot)->v.classname), "terrain_flare"))
+		ED_Free (*slot);
+	edict_t	   *flare = *slot = ED_Alloc ();
+	const char *model = COM_FileExists (WORKSHOP_FLARE_MODEL, NULL) ? WORKSHOP_FLARE_MODEL : FLARE_MODEL;
+	flare->v.classname = PR_SetEngineString ("terrain_flare");
+	flare->v.movetype = MOVETYPE_BOUNCE;
+	flare->v.solid = SOLID_NOT;
+	flare->v.model = PR_SetEngineString (model);
+	flare->v.modelindex = SV_ModelIndex (model);
+	flare->v.effects = EF_BRIGHTLIGHT;
+	flare->v.owner = EDICT_TO_PROG (player);
+	VectorCopy (origin, flare->v.origin);
+	VectorCopy (velocity, flare->v.velocity);
+	flare->v.avelocity[0] = 300.0f; // tumbles end over end
+	flare->v.avelocity[1] = 120.0f;
+	SV_LinkEdict (flare, false);
+}
+
 static void SV_Terrain_Flare_f (void)
 {
 	if (!terrain_active || !sv.active || !sv_player)
@@ -1242,27 +1305,15 @@ static void SV_Terrain_Flare_f (void)
 		return;
 	}
 	PR_SwitchQCVM (&sv.qcvm);
-	edict_t **slot = &sv_terrain_flares[sv_terrain_next_flare];
-	sv_terrain_next_flare = (sv_terrain_next_flare + 1) % MAX_FLARES;
-	if (*slot && !(*slot)->free && !strcmp (PR_GetString ((*slot)->v.classname), "terrain_flare"))
-		ED_Free (*slot);
 	edict_t *player = sv_player;
-	edict_t *flare = *slot = ED_Alloc ();
-	vec3_t	 forward, right, up;
+	vec3_t	 forward, right, up, origin, velocity;
 	AngleVectors (player->v.v_angle, forward, right, up);
-	flare->v.classname = PR_SetEngineString ("terrain_flare");
-	flare->v.movetype = MOVETYPE_BOUNCE;
-	flare->v.solid = SOLID_NOT;
-	flare->v.model = PR_SetEngineString (FLARE_MODEL);
-	flare->v.modelindex = SV_ModelIndex (FLARE_MODEL);
-	flare->v.effects = EF_BRIGHTLIGHT;
-	flare->v.owner = EDICT_TO_PROG (player);
 	for (int i = 0; i < 3; ++i)
 	{
-		flare->v.origin[i] = player->v.origin[i] + player->v.view_ofs[i] + forward[i] * 12.0f;
-		flare->v.velocity[i] = forward[i] * 650.0f + up[i] * 120.0f + player->v.velocity[i] * 0.5f;
+		origin[i] = player->v.origin[i] + player->v.view_ofs[i] + forward[i] * 12.0f;
+		velocity[i] = forward[i] * 650.0f + up[i] * 120.0f + player->v.velocity[i] * 0.5f;
 	}
-	SV_LinkEdict (flare, false);
+	SV_Terrain_ThrowFlare (player, origin, velocity);
 	PR_SwitchQCVM (NULL);
 }
 
@@ -1424,4 +1475,5 @@ void SV_Terrain_Init (void)
 	Cmd_AddCommand ("terrain_ents", SV_Terrain_Ents_f);
 	Cmd_AddCommand ("terrain_wake", SV_Terrain_Wake_f);
 	Cmd_AddCommand ("terrain_flare", SV_Terrain_Flare_f);
+	SV_Workshop_Init ();
 }

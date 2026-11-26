@@ -75,12 +75,14 @@ static const float terrain_colors[2][TERRAIN_MAT_COUNT][3] = {
 		{0.46f, 0.31f, 0.19f}, // dirt
 		{0.95f, 0.72f, 0.18f}, // gold
 		{0.62f, 0.64f, 0.60f}, // player fill
+		{0.58f, 0.31f, 0.12f}, // gingerbread
 	},
 	{
 		{0.50f, 0.74f, 0.93f}, // glacier ice
 		{0.90f, 0.94f, 1.00f}, // packed snow
 		{0.16f, 0.34f, 0.66f}, // old blue ice
 		{0.80f, 0.90f, 0.98f}, // cut ice
+		{0.58f, 0.31f, 0.12f}, // gingerbread
 	},
 };
 static const float terrain_snow[3] = {0.94f, 0.97f, 1.0f};
@@ -564,7 +566,7 @@ void R_DrawTerrain (cb_context_t *cbx)
 			}
 			float rgb[3];
 			VectorCopy (terrain_colors[ice][v->material], rgb);
-			if (ice)
+			if (ice && v->material != TERRAIN_MAT_GINGER)
 			{
 				// snow settles on what faces up; shadowed ice goes deep blue instead of black
 				const float snow = CLAMP (0.0f, ((float)v->up / 255.0f - 0.55f) * 3.0f, 1.0f);
@@ -715,6 +717,8 @@ static void R_DrawTerrainTextured (cb_context_t *cbx)
 				snow = q_min (snow + st->strata_snow, 1.0f); // packed-snow strata show on the walls too
 			else if (v->material == TERRAIN_MAT_FILL)
 				snow = 1.0f;
+			else if (v->material == TERRAIN_MAT_GINGER)
+				snow = 0.0f; // fresh from the gun
 			VectorCopy (v->pos, out[k].pos);
 			for (int c = 0; c < 3; ++c)
 				out[k].light[c] = (byte)(CLAMP (0.0f, (lit[c] + shine) * 0.5f, 1.0f) * 255.0f);

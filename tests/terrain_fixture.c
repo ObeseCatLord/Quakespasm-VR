@@ -362,7 +362,7 @@ int main (int argc, char **argv)
 		const int mid = path[path_len / 2];
 		float	  mid_pos[3];
 		Terrain_NavCellCenter (&nav, mid, mid_pos);
-		terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_FILL, 7 * TERRAIN_SUB, {0, 0, 0}};
+		terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_FILL, 7 * TERRAIN_SUB, {0, 0, 0}, {0, 0, 0}, 0};
 		for (int a = 0; a < 3; ++a)
 			op.center[a] = (int32_t)((mid_pos[a] - (float)origin[a]) * TERRAIN_SUB / TERRAIN_CELL);
 		Terrain_ApplyOp (nt, &op);
@@ -405,6 +405,51 @@ int main (int argc, char **argv)
 		free (dist2);
 		Terrain_NavFree (&nav);
 		Terrain_Free (nt);
+	}
+
+	// 8. platform disks: shape, wire round trip, and somewhere to stand on the far side of a pit
+	{
+		terrain_t *dt = Terrain_Create (origin, size, 1);
+		Terrain_Generate (dt);
+		// a flat disk, 60 units across the axis and 10 either side of it, tilted off the vertical
+		const float c[3] = {
+			(float)origin[0] + size[0] * TERRAIN_CHUNK_UNITS * 0.5f, (float)origin[1] + size[1] * TERRAIN_CHUNK_UNITS * 0.5f,
+			(float)origin[2] + size[2] * TERRAIN_CHUNK_UNITS * 0.5f};
+		terrain_op_t disk = {TERRAIN_OP_DISK, TERRAIN_MAT_GINGER, 60 * TERRAIN_SUB / TERRAIN_CELL, {0, 0, 0}, {0, 30, 120}, 10 * TERRAIN_SUB / TERRAIN_CELL};
+		for (int a = 0; a < 3; ++a)
+			disk.center[a] = (int32_t)((c[a] - (float)origin[a]) * TERRAIN_SUB / TERRAIN_CELL);
+		const uint64_t before = Terrain_Hash (dt);
+		CHECK (Terrain_ApplyOp (dt, &disk) > 0, "a disk in the start room changed nothing");
+		const float n[3] = {0.0f, 30.0f / sqrtf (30.0f * 30.0f + 120.0f * 120.0f), 120.0f / sqrtf (30.0f * 30.0f + 120.0f * 120.0f)};
+		// a direction in the disk's plane
+		const float u[3] = {1.0f, 0.0f, 0.0f};
+		int			wrong = 0;
+		for (int k = -5; k <= 5; ++k)
+		{
+			float in_plane[3], off_axis[3];
+			for (int a = 0; a < 3; ++a)
+			{
+				in_plane[a] = c[a] + u[a] * 10.0f * (float)k;				 // within the radius: solid
+				off_axis[a] = c[a] + n[a] * 26.0f + u[a] * 10.0f * (float)k; // past the thickness: open
+			}
+			wrong += Terrain_SampleWorld (dt, in_plane) > -2.0f;
+			wrong += Terrain_SampleWorld (dt, off_axis) < 2.0f;
+		}
+		CHECK (!wrong, "%d samples on the wrong side of a disk", wrong);
+		uint8_t		 packed[TERRAIN_OP_BYTES];
+		terrain_op_t back;
+		Terrain_OpPack (&disk, packed);
+		Terrain_OpUnpack (packed, &back);
+		terrain_t *peer = Terrain_Create (origin, size, 1);
+		Terrain_Generate (peer);
+		Terrain_ApplyOp (peer, &back);
+		CHECK (Terrain_Hash (peer) == Terrain_Hash (dt) && Terrain_Hash (dt) != before, "a disk sent over the wire did not replay to the same field");
+		uint8_t mat = 0;
+		Terrain_Sample (dt, (int)(disk.center[0] / TERRAIN_SUB), (int)(disk.center[1] / TERRAIN_SUB), (int)(disk.center[2] / TERRAIN_SUB), &mat);
+		CHECK (mat == TERRAIN_MAT_GINGER, "a disk's inside is material %d, not gingerbread", mat);
+		printf ("disk: radius 60, half thickness 10, shape and replay checked\n");
+		Terrain_Free (peer);
+		Terrain_Free (dt);
 	}
 
 	if (argc > 1)
