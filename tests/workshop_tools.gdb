@@ -9,7 +9,8 @@
 # server (terrain_clhash). Screenshots show the light string and the platforms.
 # Then the mouse wheel (impulses 10 and 12): with every weapon given (impulse 9 leaves the rocket
 # launcher out), the WHEEL lines must read, in order: tool none weapon 64 (lightning), grapple,
-# platgun, lavagun, none weapon 4096 (axe), then going down: lavagun, platgun, grapple, none weapon 64.
+# platgun, lavagun, none weapon 4096 (axe) (up1..up5; the game starts on weapon 32), then going down
+# (down1..down4): lavagun, platgun, grapple, none weapon 64.
 # (tests/workshop_lava_tool.gdb covers the lava sprayer itself: impulse 72 and the tank.)
 set pagination off
 set confirm off
@@ -89,6 +90,12 @@ call (void)Cbuf_AddText("impulse 10\n")
 ignore 1 20
 continue
 call (void)Cbuf_AddText("echo WHEEL up4; workshop_info\n")
+ignore 1 5
+continue
+call (void)Cbuf_AddText("impulse 10\n")
+ignore 1 20
+continue
+call (void)Cbuf_AddText("echo WHEEL up5; workshop_info\n")
 ignore 1 5
 continue
 call (void)Cbuf_AddText("impulse 12\n")

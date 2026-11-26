@@ -8,7 +8,8 @@
 #               stays held, then refills past workshop_lava_restart and sprays again
 #   LT_WHEEL    impulse 10 from the platform gun goes to the lava sprayer, once more to Quake's first weapon
 #   LT_END      terrain_clhash: client hash equals server hash, same ops count
-# Screenshots: 1 the sprayer idle in hand, 2 spraying, 3 later (steam where the lava melts the wall).
+# Screenshots: 1 the sprayer idle in hand, 2 the platform gun and 3 the grapple for comparison, 4 spraying,
+# 5 later (steam where the lava melts the wall).
 set pagination off
 set confirm off
 set debuginfod enabled off
@@ -46,6 +47,14 @@ cmd "workshop_info; impulse 72\n"
 frames 10
 cmd "workshop_info; terrain_lava_info; terrain_clhash; screenshot\n"
 frames 10
+cmd "echo LT_COMPARE; impulse 70\n"
+frames 12
+cmd "screenshot\n"
+cmd "impulse 71\n"
+frames 12
+cmd "screenshot\n"
+cmd "impulse 72\n"
+frames 12
 cmd "echo LT_SPRAY; +attack\n"
 set $t0 = sv.qcvm.time
 waitsim 1.2

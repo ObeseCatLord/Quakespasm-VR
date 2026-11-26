@@ -144,7 +144,10 @@ def lavagun():
     R_bar = (0, 60, 88, 44); R_in = (88, 60, 20, 44); R_plug = (224, 14, 14, 14)
     rb = lambda x, r: ngon(x, 0, Z0, r, r, 8); nz8 = side_nz(yz(rb(0, 1)))
     def stripes(a, f, j, ix, iy):
-        if a > 0.9: return m.pick(BRASS, 0.5 + 0.3 * (j == 2), 0.2)
+        # candy stripes, then a glass conduit full of lava between brass rings, then a white-hot nozzle
+        if a > 0.73: return (m.pick(LAVA, 0.55 + 0.4 * (nz8[j] * 0.5 + 0.5) + 0.1 * ((ix + iy) % 3 == 0), 0.2), True)
+        if abs(a - 0.73) < 0.02 or abs(a - 0.43) < 0.02 or abs(a - 0.67) < 0.02: return m.pick(BRASS, 0.6 + 0.3 * (j == 2), 0.2)
+        if 0.45 <= a < 0.67: return (m.pick(LAVA, 0.15 + 0.6 * (nz8[j] * 0.5 + 0.5) + 0.15 * ((ix * 3 + iy) % 4 == 0), 0.3), True)
         return m.pick(WHITE, 0.8, 0.3) if ((ix + iy) // 5) % 2 else m.pick(BERRY, 0.7, 0.3)
     m.paint_loft(R_bar, nz8, BERRY, extra=stripes, noise=0.2)
     m.paint_loft(R_in, nz8, LAVA, cols=[(0.0, 1.0, LAVA[2:], True)], noise=0.3, fb=True)
