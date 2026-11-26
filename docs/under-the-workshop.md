@@ -6,6 +6,19 @@ total conversion: "Under the Workshop" (a tunnel is found under Santa's workshop
 
 This is a prototype. Nothing here is networked yet, and nothing has been run in a headset.
 
+## New to try (all merged here, each first pass and untuned)
+
+From a `nix develop` build in `build-drg` with `run/` as the basedir:
+
+- `tests/drg-worm.sh`: one ice worm and no other monsters. G forces a hunt, X toggles an x-ray of
+  the worm inside the rock. Fight it and follow its tunnels.
+- `tests/drg-ice.sh`: falling ice. P builds an icicle on the ceiling where you aim, C cuts its root
+  (rockets on the root work too); the piece falls as a rigid body, crushes monsters and freezes
+  back into the cave. Any dig that cuts a piece of ice loose does the same.
+- `tests/drg-lava.sh`: hold L to spray particle lava that runs downhill, pools and melts the ice.
+
+Sections below: "Ice worm", "Falling ice", "Particle lava".
+
 ## Run it
 
 1. Compile `tests/maps/drgbox.map` with `qbsp` from ericw-tools and put `drgbox.bsp` in
