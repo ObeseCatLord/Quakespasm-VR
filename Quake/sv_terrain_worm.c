@@ -671,8 +671,17 @@ static void UpdateWarning (void)
 		worm.hunt.warn_off = now + 0.4; // let the marker linger a moment
 }
 
+static qboolean worm_pending; // terrain_worm 1: spawn on the first server frame after the map load
+static qboolean WormSpawn (const float near[3], float min_dist, float max_dist);
+
 void SV_Terrain_WormFrame (void)
 {
+	if (worm_pending && terrain_active && sv.active)
+	{
+		// the map-load hook runs before the server is active, so the spawn waits for the first frame
+		worm_pending = false;
+		WormSpawn (EDICT_NUM (1)->v.origin, 600.0f, 1600.0f);
+	}
 	if (!worm.active)
 		return;
 	if (!terrain_active || !sv.active)
@@ -772,8 +781,8 @@ void SV_Terrain_WormMapLoad (const float start[3])
 	SV_Precache_Sound (SND_BURST);
 	SV_Precache_Sound (SND_SEGDIE);
 	SV_Precache_Sound (SND_WORMDIE);
-	if (terrain_worm.value)
-		WormSpawn (start, 600.0f, 1600.0f);
+	(void)start;
+	worm_pending = terrain_worm.value != 0;
 }
 
 /* ---- commands ---- */
