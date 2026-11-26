@@ -36,10 +36,11 @@ jobs:
   build:
     name: Build and smoke-test linux-x64 runtime
     runs-on: ubuntu-22.04
-    env:
-      NATIVE_CACHE_KEY: qsvr-native-${{ hashFiles('Packaging/Linux/sources.json', 'Packaging/Linux/build-native.sh', 'Packaging/Linux/Dockerfile') }}
     steps:
     - uses: actions/checkout@v6
+    - name: Dependency cache key
+      id: keys
+      run: echo "native=qsvr-native-${{ hashFiles('Packaging/Linux/sources.json', 'Packaging/Linux/build-native.sh', 'Packaging/Linux/Dockerfile') }}" >> "$GITHUB_OUTPUT"
     # Dependencies are built from pinned sources by build-native.sh and reused
     # through its verified cache while the recipe is unchanged. The cache is
     # saved right after the build so a later test failure never forces a cold
@@ -49,7 +50,7 @@ jobs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.cache/qsvr-native-build
-        key: ${{ env.NATIVE_CACHE_KEY }}
+        key: ${{ steps.keys.outputs.native }}
     - name: Build builder image
       run: docker build --platform linux/amd64 -t qsvr-builder Packaging/Linux
     - name: Build runtime
@@ -71,7 +72,7 @@ jobs:
       uses: actions/cache/save@v4
       with:
         path: ~/.cache/qsvr-native-build
-        key: ${{ env.NATIVE_CACHE_KEY }}
+        key: ${{ steps.keys.outputs.native }}
     - name: Upload runtime
       uses: actions/upload-artifact@v7
       with:
