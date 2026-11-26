@@ -434,6 +434,13 @@ MESON_OPTIONS=(--prefix=/ --libdir=lib --buildtype=release --auto-features=enabl
     -Dsteam_audio_library_dir="$DEPS/lib" -Duse_codec_wave=enabled \
     -Duse_codec_mp3=enabled -Dmp3_lib=mpg123 -Duse_codec_flac=enabled \
     -Duse_codec_vorbis=enabled -Dvorbis_lib=vorbis -Duse_codec_opus=enabled)
+# CI-only sanitizer builds (for example QSVR_SANITIZE=address,undefined). Release
+# packages never set this; package.py would reject the sanitizer runtime.
+if [[ -n "${QSVR_SANITIZE:-}" ]]; then
+    [[ "$QSVR_SANITIZE" =~ ^[a-z,]+$ ]] || fail 'QSVR_SANITIZE must be a meson b_sanitize list'
+    # Sanitizer instrumentation produces false-positive warnings under -Werror.
+    MESON_OPTIONS+=("-Db_sanitize=$QSVR_SANITIZE" -Db_lundef=false -Dwerror=false)
+fi
 {
     printf '[Meson]\n'
     for option in "${MESON_OPTIONS[@]}"; do

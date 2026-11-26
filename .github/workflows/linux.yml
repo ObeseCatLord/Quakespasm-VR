@@ -2,8 +2,16 @@ name: Linux
 
 on:
   push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
   pull_request:
+    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
+
+# A newer push to the same branch supersedes a run still in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -26,17 +34,22 @@ jobs:
         VULKAN_INCLUDE: ${{ github.workspace }}/vulkan-headers/include
 
   build:
-    name: Build linux-x64 runtime
+    name: Build and smoke-test linux-x64 runtime
     runs-on: ubuntu-22.04
+    env:
+      NATIVE_CACHE_KEY: qsvr-native-${{ hashFiles('Packaging/Linux/sources.json', 'Packaging/Linux/build-native.sh', 'Packaging/Linux/Dockerfile') }}
     steps:
     - uses: actions/checkout@v6
     # Dependencies are built from pinned sources by build-native.sh and reused
-    # through its verified cache while the recipe is unchanged.
+    # through its verified cache while the recipe is unchanged. The cache is
+    # saved right after the build so a later test failure never forces a cold
+    # dependency build on the next run.
     - name: Restore dependency cache
-      uses: actions/cache@v4
+      id: native-cache
+      uses: actions/cache/restore@v4
       with:
         path: ~/.cache/qsvr-native-build
-        key: qsvr-native-${{ hashFiles('Packaging/Linux/sources.json', 'Packaging/Linux/build-native.sh', 'Packaging/Linux/Dockerfile') }}
+        key: ${{ env.NATIVE_CACHE_KEY }}
     - name: Build builder image
       run: docker build --platform linux/amd64 -t qsvr-builder Packaging/Linux
     - name: Build runtime
@@ -53,9 +66,63 @@ jobs:
         docker run --rm --platform linux/amd64 --entrypoint python3 --network none -v "$PWD/package:/package" \
           qsvr-builder /usr/local/bin/package.py verify /package
         sudo chown -R "$(id -u):$(id -g)" ~/.cache/qsvr-native-build package
+    - name: Save dependency cache
+      if: steps.native-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.cache/qsvr-native-build
+        key: ${{ env.NATIVE_CACHE_KEY }}
     - name: Upload runtime
       uses: actions/upload-artifact@v7
       with:
         name: qsvr-linux-x64-${{ github.sha }}
         path: package
         retention-days: 30
+    # Same sources and dependencies, engine rebuilt with AddressSanitizer and
+    # UBSan (not packaged; only the smoke tests below use it).
+    - name: Build sanitizer engine
+      run: |
+        set -euo pipefail
+        mkdir -p native-asan
+        docker run --rm --platform linux/amd64 -e QSVR_SANITIZE=address,undefined -v "$PWD/input:/input:ro" \
+          -v "$HOME/.cache/qsvr-native-build:/cache" -e QSVR_BUILD_CACHE=/cache \
+          -v "$PWD/native-asan:/output" qsvr-builder /input/product.tar "$GITHUB_SHA" /output
+        sudo chown -R "$(id -u):$(id -g)" native-asan
+    - name: Install smoke-test packages
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends xvfb x11-utils mesa-vulkan-drivers libvulkan1 \
+          libasan6 libubsan1 libarchive-tools ninja-build libeigen3-dev libvulkan-dev glslang-tools \
+          libx11-xcb-dev libxrandr-dev libxcb-randr0-dev libbsd-dev libudev-dev libusb-1.0-0-dev libcjson-dev
+    - name: Restore Monado
+      id: monado-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/monado
+        key: monado-${{ hashFiles('tests/smoke/build_monado.sh') }}
+    - name: Build Monado
+      if: steps.monado-cache.outputs.cache-hit != 'true'
+      run: tests/smoke/build_monado.sh ~/monado
+    - name: Restore shareware pak
+      uses: actions/cache@v4
+      with:
+        path: ~/quake-shareware
+        key: quake-shareware-${{ hashFiles('tests/smoke/fetch_shareware.sh') }}
+    - name: Fetch shareware pak
+      run: tests/smoke/fetch_shareware.sh ~/quake-shareware/pak0.pak
+    - name: Smoke tests (release package)
+      run: SMOKE_LOGS=smoke-logs/release tests/smoke/run_smoke.sh package ~/quake-shareware/pak0.pak ~/monado
+    - name: Smoke tests (AddressSanitizer + UBSan)
+      if: success() || failure()
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/native-asan/deps/lib:${{ github.workspace }}/package/lib
+        ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+        UBSAN_OPTIONS: print_stacktrace=1:suppressions=${{ github.workspace }}/tests/smoke/ubsan.supp
+      run: SMOKE_LOGS=smoke-logs/sanitizer tests/smoke/run_smoke.sh native-asan/install ~/quake-shareware/pak0.pak ~/monado
+    - name: Upload smoke logs
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: smoke-logs-${{ github.sha }}
+        path: smoke-logs
+        retention-days: 14

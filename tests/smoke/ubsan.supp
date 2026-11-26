@@ -1,0 +1,9 @@
+# UndefinedBehaviorSanitizer reports that predate the sanitizer smoke test and
+# are harmless on the shipped platforms. Anything not listed here fails CI.
+# miniz deliberately uses unaligned 32-bit loads on x86.
+alignment:miniz.c
+# Dotted-quad parsing shifts a mask of -1.
+shift-base:net_udp.c
+# Zero-length copies/clears that may pass a null pointer.
+nonnull-attribute:pr_edict.c
+nonnull-attribute:r_part_fte.c
