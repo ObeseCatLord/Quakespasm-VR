@@ -190,12 +190,13 @@ int	 SV_Terrain_Edit (int kind, const float pos[3], float radius);
 int	 SV_Terrain_Disk (const float pos[3], const float normal[3], float radius, float half_thickness); // gingerbread
 int	 SV_Terrain_OpLog (const terrain_op_t **ops);
 void SV_Terrain_PlayerFrame (struct edict_s *ent, int num);
-void SV_Terrain_ThrowFlare (struct edict_s *player, const float origin[3], const float velocity[3]);
+int	 SV_Terrain_ThrowFlare (struct edict_s *player, const float origin[3], const float velocity[3]); // 0: no flare model on this map
 
 /* The workshop's tools (sv_workshop.c): platform gun, festive grapple, thrown flares. */
 void	   SV_Workshop_Init (void);
 void	   SV_Workshop_Precache (void); // while a drg* map loads
 void	   SV_Workshop_Clear (void);
+void SV_Workshop_LoadingSave (void); // a saved game is being loaded over this map
 void	   SV_Workshop_PlayerFrame (struct edict_s *ent, int num);										// once a frame, before the player's commands
 void	   SV_Workshop_PreThink (struct edict_s *ent);													// per command, right before PlayerPreThink
 void	   SV_Workshop_Frame (void);																	// once a server frame, after physics

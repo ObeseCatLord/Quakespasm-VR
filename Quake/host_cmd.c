@@ -22,6 +22,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 #include "quakedef.h"
+#include "terrain.h"
 extern cvar_t sv_autosave, sv_autosave_interval;
 #include "q_ctype.h"
 #include "json.h"
@@ -3643,6 +3644,7 @@ static void Host_Loadgame_f (void)
 
 	if (!fastload)
 		SV_SpawnServer (mapname);
+	SV_Workshop_LoadingSave (); // the saved edicts replace whatever the workshop tools were tracking
 
 	if (!sv.active)
 	{

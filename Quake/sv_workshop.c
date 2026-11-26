@@ -134,6 +134,17 @@ static qboolean WS_Active (void)
 	return terrain_active && workshop_tools.value && ws_precached;
 }
 
+void SV_Workshop_LoadingSave (void)
+{
+	// the edicts about to be read replace everything held here (a fast load keeps the map, so the
+	// pointers would otherwise go on pointing at whatever the save puts in those slots); hooks and
+	// blobs the save brings back are swept once the game runs again
+	for (int i = 1; i <= MAX_SCOREBOARD; ++i)
+		WS_ResetSlot (&ws_players[i], false);
+	ws_num_blobs = ws_num_grows = 0;
+	ws_sweep = true;
+}
+
 void SV_Workshop_Precache (void)
 {
 	SV_Workshop_Clear ();
@@ -444,6 +455,9 @@ static void Grapple_Throw (edict_t *player, int num, ws_player_t *p)
 static void Grapple_HookFrame (int num, ws_player_t *p)
 {
 	edict_t *player = EDICT_NUM (num), *hook = p->hook;
+	if (hook && !hook->free && (player->free || player->v.health <= 0))
+		Grapple_Release (p); // its thrower died: the hook goes with them
+	hook = p->hook;
 	if (!hook || hook->free)
 	{
 		p->hook = NULL;
@@ -735,8 +749,8 @@ static void SV_Workshop_ThrowFlare_f (void)
 	const float speed = sqrtf (DotProduct (velocity, velocity));
 	if (speed > 1200.0f)
 		VectorScale (velocity, 1200.0f / speed, velocity);
-	--ws_players[num].flares;
-	SV_Terrain_ThrowFlare (player, origin, velocity);
+	if (SV_Terrain_ThrowFlare (player, origin, velocity))
+		--ws_players[num].flares;
 }
 
 void SV_Workshop_Init (void)

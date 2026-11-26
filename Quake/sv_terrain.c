@@ -1427,18 +1427,18 @@ static qboolean SV_Terrain_Precached (const char *model)
 	return false;
 }
 
-void SV_Terrain_ThrowFlare (edict_t *player, const float origin[3], const float velocity[3])
+int SV_Terrain_ThrowFlare (edict_t *player, const float origin[3], const float velocity[3])
 {
-	edict_t **slot = &sv_terrain_flares[sv_terrain_next_flare];
-	sv_terrain_next_flare = (sv_terrain_next_flare + 1) % MAX_FLARES;
-	if (*slot && !(*slot)->free && !strcmp (PR_GetString ((*slot)->v.classname), "terrain_flare"))
-		ED_Free (*slot);
 	const char *model = COM_FileExists (WORKSHOP_FLARE_MODEL, NULL) && SV_Terrain_Precached (WORKSHOP_FLARE_MODEL) ? WORKSHOP_FLARE_MODEL : FLARE_MODEL;
 	if (!SV_Terrain_Precached (model))
 	{
 		Con_Printf ("terrain_flare: the flare model is not precached on this map\n");
-		return;
+		return 0;
 	}
+	edict_t **slot = &sv_terrain_flares[sv_terrain_next_flare];
+	sv_terrain_next_flare = (sv_terrain_next_flare + 1) % MAX_FLARES;
+	if (*slot && !(*slot)->free && !strcmp (PR_GetString ((*slot)->v.classname), "terrain_flare"))
+		ED_Free (*slot);
 	edict_t *flare = *slot = ED_Alloc ();
 	flare->v.classname = PR_SetEngineString ("terrain_flare");
 	flare->v.movetype = MOVETYPE_BOUNCE;
@@ -1452,6 +1452,7 @@ void SV_Terrain_ThrowFlare (edict_t *player, const float origin[3], const float 
 	flare->v.avelocity[0] = 300.0f; // tumbles end over end
 	flare->v.avelocity[1] = 120.0f;
 	SV_LinkEdict (flare, false);
+	return 1;
 }
 
 static void SV_Terrain_Flare_f (void)
