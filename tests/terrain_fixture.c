@@ -358,6 +358,32 @@ int main (int argc, char **argv)
 			free (walk_only);
 			nav.max_climb = 0;
 		}
+		// a near field matches the full one within its bound, and stays right when flooded again from
+		// another seed (it clears only what it reached before)
+		{
+			terrain_navfield_t near;
+			Terrain_NavFieldInit (&nav, &near);
+			int		  wrong = 0, inside = 0;
+			const int seeds2[2] = {seed, path[path_len / 3]};
+			for (int round = 0; round < 2; ++round)
+			{
+				Terrain_NavFlood (&nav, 0, &seeds2[round], 1, dist2);
+				double t0 = Now ();
+				Terrain_NavFloodNear (&nav, 0, &seeds2[round], 1, &near, 60);
+				const double near_ms = Now () - t0;
+				for (int i = 0; i < nav.count; ++i)
+				{
+					const int expect = dist2[i] <= 60 ? dist2[i] : TERRAIN_NAV_FAR;
+					wrong += near.dist[i] != expect;
+					inside += round == 0 && expect != TERRAIN_NAV_FAR;
+				}
+				if (!round)
+					printf ("nav near field (cost 60): %d cells in %.3f ms\n", inside, near_ms);
+			}
+			CHECK (!wrong, "%d cells of a near field differ from the full flood", wrong);
+			CHECK (inside > 20, "the near field reached only %d cells", inside);
+			Terrain_NavFieldFree (&near);
+		}
 		// block the route halfway, then dig it open again: the far cell's distance has to follow
 		const int mid = path[path_len / 2];
 		float	  mid_pos[3];

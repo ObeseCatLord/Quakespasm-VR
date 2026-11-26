@@ -280,13 +280,47 @@ static terrain_nav_t walk_nav;
 static uint8_t		*walk_bsp_tested; // per walking cell: the map's brushes were asked about it
 static unsigned		 walk_nav_epoch;
 static int			 walk_nav_ops = -1, walk_nav_version;
+// Each chased player has two fields per body size. The near one covers about WALK_NEAR_COST of
+// walking around them and is flooded again whenever they reach another cell or the cave changes,
+// in the same frame, so the monsters close by react to a new tunnel or platform at once; it costs
+// only the cells it covers. The far one covers the whole cave for the monsters beyond that and is
+// brought up to date every couple of seconds.
+#define WALK_NEAR_COST	   120 // about 1900 units of walking
+#define WALK_NEAR_COST_TOP 180 // for the most chased player
+#define WALK_FAR_EVERY	   2.0
+#define WALK_FAR_EVERY_TOP 1.0
 static struct
 {
-	edict_t	 *goal;
-	int		  cls, seed, version;
-	double	  built, used;
-	uint16_t *dist;
+	edict_t			  *goal;
+	int				   cls, used_once;
+	double			   used;
+	int				   asks, demand; // monsters' requests this second, and over the last full second
+	double			   demand_since;
+	terrain_navfield_t near;
+	int				   near_seed, near_version;
+	double			   near_built;
+	uint16_t		  *far;
+	int				   far_seed, far_version;
+	double			   far_built;
 } walk_fields[WALK_SLOTS];
+
+static double walk_far_frame = -1.0; // server time of the last whole-cave flood: one a frame at most
+
+/*
+Priority: a field's demand is how many monster thinks asked for it over the last second, i.e. how
+hard that player is being chased. The most wanted field gets the larger near area and the faster
+whole-cave refresh, takes the frame's one whole-cave flood first, and fields in demand are never
+given up for another target. A player who outruns the pack keeps a fresh field behind them, so the
+monsters follow their trail instead of losing them.
+*/
+static int WalkTopDemand (void)
+{
+	int top = 0;
+	for (int i = 0; i < WALK_SLOTS; ++i)
+		if (walk_fields[i].used_once && walk_fields[i].demand > top)
+			top = walk_fields[i].demand;
+	return top;
+}
 
 // Per monster: the best route cost it has reached and when, to notice one that has stopped getting
 // anywhere.
@@ -302,13 +336,17 @@ static void WalkReset (void)
 {
 	free (walk_progress);
 	walk_progress = NULL;
+	walk_far_frame = -1.0;
 	free (walk_bsp_tested);
 	walk_bsp_tested = NULL;
 	walk_progress_cap = 0;
 	Terrain_NavFree (&walk_nav);
 	walk_nav_ops = -1;
 	for (int i = 0; i < WALK_SLOTS; ++i)
-		free (walk_fields[i].dist);
+	{
+		Terrain_NavFieldFree (&walk_fields[i].near);
+		free (walk_fields[i].far);
+	}
 	memset (walk_fields, 0, sizeof (walk_fields)); // qcvm->time restarts with the map, so the stamps go too
 }
 
@@ -388,45 +426,87 @@ static int WalkStandCell (const edict_t *ent, int cls, int down)
 }
 
 // The distance field toward goal for bodies of this class, or NULL when the goal has no floor.
-static const uint16_t *WalkField (edict_t *goal, int cls)
+/*
+The field toward goal for bodies of this class that covers cell (the monster's): the near one when
+the monster is inside it, else the far one. NULL when there is none yet or the goal has no floor.
+*/
+static const uint16_t *WalkField (edict_t *goal, int cls, int cell)
 {
 	// a target in the air (jetpack, a jump) is chased to the floor under it
 	const int seed = WalkStandCell (goal, cls, 8);
 	int		  slot = -1;
 	for (int i = 0; i < WALK_SLOTS && slot < 0; ++i)
-		if (walk_fields[i].goal == goal && walk_fields[i].cls == cls && walk_fields[i].dist)
+		if (walk_fields[i].goal == goal && walk_fields[i].cls == cls && walk_fields[i].used_once)
 			slot = i;
 	if (slot < 0)
 	{
 		if (seed < 0)
 			return NULL;
-		// an empty slot, else the one unused longest; a field still in use is not given up, or two
-		// targets would take turns flooding the grid on every think
+		// an empty slot, else the least wanted (then the one unused longest); a field still in use is
+		// not given up
 		slot = 0;
 		for (int i = 1; i < WALK_SLOTS; ++i)
-			if (!walk_fields[i].dist ? walk_fields[slot].dist != NULL : (walk_fields[slot].dist && walk_fields[i].used < walk_fields[slot].used))
+		{
+			const qboolean empty = !walk_fields[i].used_once, slot_empty = !walk_fields[slot].used_once;
+			if (slot_empty)
+				break;
+			if (empty || walk_fields[i].demand < walk_fields[slot].demand ||
+				(walk_fields[i].demand == walk_fields[slot].demand && walk_fields[i].used < walk_fields[slot].used))
 				slot = i;
-		if (walk_fields[slot].dist && qcvm->time >= walk_fields[slot].used && qcvm->time < walk_fields[slot].used + 1.0)
+		}
+		if (walk_fields[slot].used_once && qcvm->time >= walk_fields[slot].used && qcvm->time < walk_fields[slot].used + 1.0)
 			return NULL;
-		if (!walk_fields[slot].dist)
-			walk_fields[slot].dist = (uint16_t *)malloc ((size_t)walk_nav.count * sizeof (uint16_t));
-		walk_fields[slot].goal = goal;
-		walk_fields[slot].cls = cls;
-		walk_fields[slot].seed = -1;
-		walk_fields[slot].built = -1.0;
+		__typeof__ (walk_fields[0]) *f = &walk_fields[slot];
+		if (!f->near.dist)
+			Terrain_NavFieldInit (&walk_nav, &f->near);
+		if (!f->far)
+			f->far = (uint16_t *)malloc ((size_t)walk_nav.count * sizeof (uint16_t));
+		f->goal = goal;
+		f->cls = cls;
+		f->used_once = 1;
+		f->near_seed = f->far_seed = -1;
+		f->near_built = f->far_built = -1.0;
+		f->asks = f->demand = 0;
+		f->demand_since = qcvm->time;
 	}
 	__typeof__ (walk_fields[0]) *f = &walk_fields[slot];
 	f->used = qcvm->time;
-	// rebuilt when the target reaches another cell or the cave changes, at most a few times a second
-	const qboolean stale = f->seed < 0 || (seed >= 0 && seed != f->seed) || f->version != walk_nav_version;
-	if (stale && seed >= 0 && (f->built < 0.0 || qcvm->time < f->built || qcvm->time >= f->built + 0.2))
+	++f->asks;
+	if (qcvm->time < f->demand_since || qcvm->time >= f->demand_since + 1.0)
 	{
-		Terrain_NavFlood (&walk_nav, cls, &seed, 1, f->dist);
-		f->seed = seed;
-		f->version = walk_nav_version;
-		f->built = qcvm->time;
+		f->demand = f->asks;
+		f->asks = 0;
+		f->demand_since = qcvm->time;
 	}
-	return f->seed >= 0 ? f->dist : NULL;
+	const qboolean top = f->demand > 0 && f->demand >= WalkTopDemand ();
+	if (seed >= 0)
+	{
+		// near: redone the frame anything it depends on changes
+		if ((seed != f->near_seed || f->near_version != walk_nav_version) && f->near_built != qcvm->time)
+		{
+			Terrain_NavFloodNear (&walk_nav, cls, &seed, 1, &f->near, top ? WALK_NEAR_COST_TOP : WALK_NEAR_COST);
+			f->near_seed = seed;
+			f->near_version = walk_nav_version;
+			f->near_built = qcvm->time;
+		}
+		// far: the whole cave, every couple of seconds at most
+		// far: the whole cave, every second or two, one such flood a frame, the most chased first
+		// (a field never built yet goes first of all: until then its monsters have nothing)
+		const qboolean far_stale = f->far_seed < 0 || seed != f->far_seed || f->far_version != walk_nav_version;
+		const double   every = top ? WALK_FAR_EVERY_TOP : WALK_FAR_EVERY;
+		const qboolean frame_free = walk_far_frame != qcvm->time || f->far_built < 0.0;
+		if (far_stale && frame_free && (f->far_built < 0.0 || qcvm->time < f->far_built || qcvm->time >= f->far_built + every))
+		{
+			walk_far_frame = qcvm->time;
+			Terrain_NavFlood (&walk_nav, cls, &seed, 1, f->far);
+			f->far_seed = seed;
+			f->far_version = walk_nav_version;
+			f->far_built = qcvm->time;
+		}
+	}
+	if (cell >= 0 && f->near_seed >= 0 && f->near.dist[cell] != TERRAIN_NAV_FAR)
+		return f->near.dist;
+	return f->far_seed >= 0 ? f->far : NULL;
 }
 
 static int WalkSteps (edict_t *ent, edict_t *goal)
@@ -434,8 +514,8 @@ static int WalkSteps (edict_t *ent, edict_t *goal)
 	if (!WalkNavUpdate () || goal == qcvm->edicts || goal->free)
 		return -1;
 	const int		cls = WalkClass (ent);
-	const uint16_t *dist = WalkField (goal, cls);
 	const int		cell = WalkStandCell (ent, cls, 2);
+	const uint16_t *dist = WalkField (goal, cls, cell);
 	if (cell < 0)
 		return -2; // not standing anywhere the grid knows
 	return dist && dist[cell] != TERRAIN_NAV_FAR ? dist[cell] : -1;
@@ -548,9 +628,9 @@ int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 		return false;
 	WalkUnstick (ent);
 	const int		cls = WalkClass (ent);
-	const uint16_t *field = WalkField (goal, cls);
-	const int		cell = field ? WalkStandCell (ent, cls, 2) : -1;
-	if (cell < 0 || field[cell] == TERRAIN_NAV_FAR || field[cell] <= 3)
+	const int		cell = WalkStandCell (ent, cls, 2);
+	const uint16_t *field = cell >= 0 ? WalkField (goal, cls, cell) : NULL;
+	if (cell < 0 || !field || field[cell] == TERRAIN_NAV_FAR || field[cell] <= 3)
 		return false;
 
 	// A monster that has not got closer in a few seconds is stuck on something the grid cannot see
