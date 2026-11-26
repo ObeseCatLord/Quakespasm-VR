@@ -2681,6 +2681,7 @@ DECLARE_SHADER_MODULE (basic_notex_frag);
 DECLARE_SHADER_MODULE (terrain_vert);
 DECLARE_SHADER_MODULE (terrain_stereo_vert);
 DECLARE_SHADER_MODULE (terrain_frag);
+DECLARE_SHADER_MODULE (lava_frag);
 DECLARE_SHADER_MODULE (basic_notex_ui_frag);
 DECLARE_SHADER_MODULE (draw_pic_frag);
 DECLARE_SHADER_MODULE (draw_pic_ui_frag);
@@ -4150,6 +4151,20 @@ static void R_CreateShowTrisPipelines ()
 		R_CreateGraphicsPipeline (
 			&vulkan_globals.terrain_tex_pipeline[variant], &infos, vulkan_globals.basic_pipeline_layout, va ("terrain_tex%s", pass_suffix));
 
+		// particle lava (r_terrain_lava.c): the terrain vertex shader with its own fragment shader; solid
+		// writes depth, soft is premultiplied alpha (alpha 0 adds) and leaves depth alone
+		infos.shader_stages[1].module = lava_frag_module;
+		R_CreateGraphicsPipeline (
+			&vulkan_globals.lava_solid_pipeline[variant], &infos, vulkan_globals.basic_pipeline_layout, va ("lava_solid%s", pass_suffix));
+		infos.depth_stencil_state.depthWriteEnable = VK_FALSE;
+		infos.blend_attachment_states[0].blendEnable = VK_TRUE;
+		infos.blend_attachment_states[0].srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+		infos.blend_attachment_states[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		infos.blend_attachment_states[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+		infos.blend_attachment_states[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		R_CreateGraphicsPipeline (
+			&vulkan_globals.lava_soft_pipeline[variant], &infos, vulkan_globals.basic_pipeline_layout, va ("lava_soft%s", pass_suffix));
+
 		R_CopyPipelineCreateInfos (&infos, &base);
 		R_SetPipelineRenderPassVariant (&infos, SUBPASS_MAIN, variant);
 		infos.vertex_input_state.vertexAttributeDescriptionCount = 0;
@@ -4957,6 +4972,7 @@ static void R_CreateShaderModules ()
 	CREATE_SHADER_MODULE (terrain_vert);
 	CREATE_SHADER_MODULE_COND (terrain_stereo_vert, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (terrain_frag);
+	CREATE_SHADER_MODULE (lava_frag);
 	CREATE_SHADER_MODULE_COND (basic_notex_ui_frag, vulkan_globals.stereo_active);
 	CREATE_SHADER_MODULE (draw_pic_frag);
 	CREATE_SHADER_MODULE_COND (draw_pic_ui_frag, vulkan_globals.stereo_active);
@@ -5107,6 +5123,7 @@ static void R_DestroyShaderModules ()
 	DESTROY_SHADER_MODULE (terrain_vert);
 	DESTROY_SHADER_MODULE (terrain_stereo_vert);
 	DESTROY_SHADER_MODULE (terrain_frag);
+	DESTROY_SHADER_MODULE (lava_frag);
 	DESTROY_SHADER_MODULE (basic_notex_ui_frag);
 	DESTROY_SHADER_MODULE (draw_pic_frag);
 	DESTROY_SHADER_MODULE (draw_pic_ui_frag);
@@ -5459,6 +5476,10 @@ void R_DestroyPipelines (void)
 		vulkan_globals.terrain_pipeline[variant].handle = VK_NULL_HANDLE;
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.terrain_tex_pipeline[variant].handle, NULL);
 		vulkan_globals.terrain_tex_pipeline[variant].handle = VK_NULL_HANDLE;
+		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.lava_solid_pipeline[variant].handle, NULL);
+		vulkan_globals.lava_solid_pipeline[variant].handle = VK_NULL_HANDLE;
+		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.lava_soft_pipeline[variant].handle, NULL);
+		vulkan_globals.lava_soft_pipeline[variant].handle = VK_NULL_HANDLE;
 		vkDestroyPipeline (vulkan_globals.device, vulkan_globals.md5_debug_pipeline[variant].handle, NULL);
 		vulkan_globals.md5_debug_pipeline[variant].handle = VK_NULL_HANDLE;
 	}

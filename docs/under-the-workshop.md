@@ -106,6 +106,18 @@ with `terrain_lava_` (`cap`, `density`, `stiffness`, `near_stiffness`, `cohesion
 `Quake/r_terrain_lava.c` (drawing and lights). Offline check:
 `gcc -O2 -std=c11 -IQuake tests/terrain_lava_fixture.c Quake/terrain.c -lm && ./a.out` prints
 `TERRAIN_LAVA_FIXTURE_PASSED`; in the engine, `tests/terrain_lava.gdb` and `tests/terrain_lava_melt.gdb`.
+
+#### Look, lights, steam, sleeping (second pass)
+
+Styles: `r_terrain_lava_style 0..3` or `terrain_lava_style next` (prints the name; `terrain_lava_style info`
+prints quad counts and the frame GPU time): blobs (shaded spheres), goo (big merged bodies, dithered
+edge), chunky (pixel-art discs, six palette steps, world-locked texels), crust (cooling plates with glowing
+cracks). Hot glow sprites are additive, steam is a soft premultiplied puff; both skip depth writes.
+Lights: at most 8, orange-red, scale with heat and particle count, smoothed over time; brightness is
+`r_terrain_lava_light` (0 = off). Steam: `r_terrain_lava_steam` (0 = off, 1 = default) where lava melts or
+digs ice; puffs rise and fade over about 1.5 s, capped. Sleeping: `terrain_lava_sleep 1` lets settled
+particles stop being simulated (they wake when an awake neighbour moves fast or the terrain changes
+nearby); `terrain_lava_crust` sets surface cooling. Look test: `tests/terrain_lava_look.gdb`.
 Not done: collision with map brushes and entities, a fluid surface, netsync (draws from server
 memory, listen server only).
 

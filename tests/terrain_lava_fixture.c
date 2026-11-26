@@ -42,7 +42,7 @@ static void Tune (void)
 	if (getenv ("LAVA_" #name)) \
 		P.name = (float)atof (getenv ("LAVA_" #name));
 	T (rest) T (stiff) T (near_stiff) T (cohesion) T (visc) T (visc_quad) T (cold_visc) T (friction) T (stick_time) T (adhesion) T (cool_air) T (cool_contact) T (freeze) T (melt) T (melt_threshold) T (dig_radius)
-	T (ops_rate) T (gravity) T (spacing) T (vmax)
+	T (ops_rate) T (gravity) T (spacing) T (vmax) T (sleep)
 #undef T
 }
 
@@ -231,6 +231,47 @@ int main (void)
 		printf ("cost: %d live: %.3f ms per step (neighbour %.3f relax %.3f terrain %.3f) pairs %d neigh %.1f maxspeed %.1f\n", s.live, ms, L.t_grid, L.t_relax, L.t_terrain, L.npairs, s.mean_neigh,
 				s.maxspeed);
 	}
+	// (e) sleeping: a settled pool lies down, a terrain edit under it wakes it, a splash wakes the rim
+	{
+		Arena (0);
+		Reset (4096);
+		P.cool_contact = 0.0f;
+		P.cool_air = 0.0f;
+		P.melt = 0.0f;
+		Tune ();
+		Block (1500, floor_pt);
+		Run (6.0);
+		lava_stats_t s;
+		Lava_Stats (&s);
+		const int slept = L.nasleep;
+		printf ("sleep: %d of %d asleep after 6 s, step %.3f ms\n", slept, s.live, L.t_total);
+		CHECK (slept > s.live * 8 / 10, "sleep: only %d of %d asleep", slept, s.live);
+		const float before_z = s.centroid[2];
+		// a splash: 200 particles dropped from 150 units up land on the sleeping pool
+		for (int k = 0; k < 200; ++k)
+		{
+			const float p[3] = {(Rand () - 0.5f) * 60.0f, (Rand () - 0.5f) * 60.0f, -100.0f + 90.0f + (float)k * 0.6f}, v[3] = {0, 0, -300};
+			Spawn (p, v, 1.0f, 15);
+		}
+		Run (1.0);
+		const int awake_after_splash = L.n - L.nasleep;
+		printf ("sleep: after a splash %d awake of %d\n", awake_after_splash, L.n);
+		CHECK (awake_after_splash > 150, "sleep: the splash woke only %d", awake_after_splash);
+		Run (8.0);
+		Lava_Stats (&s);
+		CHECK (s.inside_frac < 0.01f, "sleep: inside rock %.4f after the splash", s.inside_frac);
+		CHECK (L.nasleep > L.n * 8 / 10, "sleep: did not settle again, %d of %d asleep", L.nasleep, L.n);
+		// dig the floor out from under the pool: the engine reports every edit, and the sleepers get up and fall
+		const float z0 = s.centroid[2];
+		Op (TERRAIN_OP_DIG, 0, 0, -100.0f - 60.0f, 200.0f);
+		const float centre[3] = {0, 0, -160.0f};
+		TerrainChangedNear (centre, 400.0f);
+		Run (2.0);
+		Lava_Stats (&s);
+		printf ("sleep: floor dug away: centroid z %.1f -> %.1f (before the splash %.1f), %d awake\n", z0, s.centroid[2], before_z, L.n - L.nasleep);
+		CHECK (s.centroid[2] < z0 - 20.0f, "sleep: pool stayed up after the floor went, z %.1f -> %.1f", z0, s.centroid[2]);
+	}
+
 	printf ("%s\n", failures ? "TERRAIN_LAVA_FIXTURE_FAILED" : "TERRAIN_LAVA_FIXTURE_PASSED");
 	return failures != 0;
 }
