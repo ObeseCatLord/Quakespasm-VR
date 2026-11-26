@@ -37,7 +37,7 @@ static void CL_Terrain_Init_f (void)
 	{
 		origin[a] = atoi (Cmd_Argv (2 + a));
 		size[a] = atoi (Cmd_Argv (5 + a));
-		if (size[a] < 1 || size[a] > 16 || abs (origin[a]) > 65536)
+		if (size[a] < 1 || size[a] > 12 || abs (origin[a]) > 65536)
 		{
 			Con_Warning ("terrain_init: bad region size from server\n");
 			return;

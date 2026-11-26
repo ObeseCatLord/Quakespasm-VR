@@ -313,21 +313,40 @@ whole-cave refresh, takes the frame's one whole-cave flood first, and fields in 
 given up for another target. A player who outruns the pack keeps a fresh field behind them, so the
 monsters follow their trail instead of losing them.
 */
+// A field's demand, gone once nothing has asked for it for a second (its pack died or gave up).
+static int WalkDemand (int i)
+{
+	const double used = walk_fields[i].used;
+	return walk_fields[i].used_once && qcvm->time >= used && qcvm->time < used + 1.0 ? walk_fields[i].demand : 0;
+}
+
 static int WalkTopDemand (void)
 {
 	int top = 0;
 	for (int i = 0; i < WALK_SLOTS; ++i)
-		if (walk_fields[i].used_once && walk_fields[i].demand > top)
-			top = walk_fields[i].demand;
+		top = q_max (top, WalkDemand (i));
 	return top;
 }
 
-// Per monster: the best route cost it has reached and when, to notice one that has stopped getting
-// anywhere.
+// Fields nothing has asked for in a while give their memory back (a large cave's are megabytes each).
+static void WalkFreeIdle (void)
+{
+	for (int i = 0; i < WALK_SLOTS; ++i)
+		if (walk_fields[i].used_once && (qcvm->time < walk_fields[i].used || qcvm->time > walk_fields[i].used + 10.0))
+		{
+			Terrain_NavFieldFree (&walk_fields[i].near);
+			free (walk_fields[i].far);
+			walk_fields[i].far = NULL;
+			walk_fields[i].used_once = 0;
+			walk_fields[i].goal = NULL;
+		}
+}
+
+// Per monster: where it last got to and when, to notice one that has stopped getting anywhere.
 typedef struct
 {
-	int	   best, seed;
-	double since, stock_until;
+	vec3_t anchor; // where it was when it last moved 32 units
+	double since, stock_until, last_chase;
 } walk_progress_t;
 static walk_progress_t *walk_progress;
 static int				walk_progress_cap;
@@ -432,6 +451,7 @@ the monster is inside it, else the far one. NULL when there is none yet or the g
 */
 static const uint16_t *WalkField (edict_t *goal, int cls, int cell)
 {
+	WalkFreeIdle ();
 	// a target in the air (jetpack, a jump) is chased to the floor under it
 	const int seed = WalkStandCell (goal, cls, 8);
 	int		  slot = -1;
@@ -450,8 +470,7 @@ static const uint16_t *WalkField (edict_t *goal, int cls, int cell)
 			const qboolean empty = !walk_fields[i].used_once, slot_empty = !walk_fields[slot].used_once;
 			if (slot_empty)
 				break;
-			if (empty || walk_fields[i].demand < walk_fields[slot].demand ||
-				(walk_fields[i].demand == walk_fields[slot].demand && walk_fields[i].used < walk_fields[slot].used))
+			if (empty || WalkDemand (i) < WalkDemand (slot) || (WalkDemand (i) == WalkDemand (slot) && walk_fields[i].used < walk_fields[slot].used))
 				slot = i;
 		}
 		if (walk_fields[slot].used_once && qcvm->time >= walk_fields[slot].used && qcvm->time < walk_fields[slot].used + 1.0)
@@ -645,11 +664,16 @@ int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 		walk_progress_cap = cap;
 	}
 	walk_progress_t *wp = &walk_progress[num];
-	const int		 target = WalkStandCell (goal, cls, 8);
-	if (qcvm->time < wp->since || !wp->best || field[cell] < wp->best || target != wp->seed)
+	// stuck means not getting anywhere itself: it has stayed within 32 units of one spot for three
+	// seconds (a player outrunning it is not that)
+	vec3_t			 moved;
+	VectorSubtract (ent->v.origin, wp->anchor, moved);
+	// (time spent standing to fire, not chasing, does not count)
+	const qboolean gap = qcvm->time < wp->last_chase || qcvm->time > wp->last_chase + 0.5;
+	wp->last_chase = qcvm->time;
+	if (gap || qcvm->time < wp->since || !wp->since || DotProduct (moved, moved) > 32.0f * 32.0f)
 	{
-		wp->seed = target; // a player on the move resets it: their route changing is not being stuck
-		wp->best = field[cell];
+		VectorCopy (ent->v.origin, wp->anchor);
 		wp->since = qcvm->time;
 	}
 	if (qcvm->time < wp->stock_until)
@@ -657,7 +681,6 @@ int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 	if (qcvm->time > wp->since + 3.0)
 	{
 		wp->stock_until = qcvm->time + 1.0;
-		wp->best = field[cell];
 		wp->since = qcvm->time + 1.0;
 		return false;
 	}
