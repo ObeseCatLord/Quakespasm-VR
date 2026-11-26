@@ -13,6 +13,10 @@ RUN set -eu; \
     test "$(grep -c '^deb ' /etc/apt/sources.list)" -gt 0; \
     test "$(grep -c '^deb ' /etc/apt/sources.list)" = "$(grep -c '^deb-src ' /etc/apt/sources.list)"; \
     apt-get update; \
+    # Bring base-image packages up to the current index: package.py re-downloads
+    # the exact .deb of every shipped package, and superseded versions that are
+    # only in the base image are no longer listed.
+    apt-get -y upgrade; \
     apt-get install -y --no-install-recommends python3 ca-certificates
 
 RUN set -eu; \
