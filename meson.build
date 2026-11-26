@@ -295,6 +295,7 @@ srcs = [
     'Quake/r_terrain_props.c',
     'Quake/r_terrain_tex.c',
     'Quake/sv_terrain.c',
+    'Quake/sv_terrain_worm.c',
     'Quake/terrain.c',
     'Quake/r_ssao.c',
     'Quake/gl_screen.c',

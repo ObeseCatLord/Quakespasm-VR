@@ -82,6 +82,7 @@ static void WalkReset (void);
 
 void SV_Terrain_Clear (void)
 {
+	SV_Terrain_WormReset ();
 	if (!terrain_active)
 		return;
 	Terrain_Free (terrain_active);
@@ -1149,6 +1150,7 @@ void SV_Terrain_PlaceEntities (void)
 	Con_Printf ("terrain: placed %d monsters and %d items on the cave floor (%d found no spot)\n", monsters, items, failed);
 	WalkNavUpdate (); // while the map loads rather than at the first chase
 	CrawlerSpawnAll (&rng, start);
+	SV_Terrain_WormMapLoad (start);
 }
 
 /*
@@ -1406,4 +1408,5 @@ void SV_Terrain_Init (void)
 	Cmd_AddCommand ("terrain_ents", SV_Terrain_Ents_f);
 	Cmd_AddCommand ("terrain_wake", SV_Terrain_Wake_f);
 	Cmd_AddCommand ("terrain_flare", SV_Terrain_Flare_f);
+	SV_Terrain_WormInit ();
 }
