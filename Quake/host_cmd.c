@@ -3645,6 +3645,7 @@ static void Host_Loadgame_f (void)
 	if (!fastload)
 		SV_SpawnServer (mapname);
 	SV_Workshop_LoadingSave (); // the saved edicts replace whatever the workshop tools were tracking
+	SV_Enemies_LoadingSave ();	// and whatever the cave's enemies were
 
 	if (!sv.active)
 	{

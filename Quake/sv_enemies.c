@@ -25,7 +25,7 @@
 #define SAUCER_MODEL   "progs/workshop/saucer.mdl"
 #define SAUCER_GIB	   "progs/workshop/saucergib.mdl"
 #define SNOWBALL_MODEL "progs/workshop/snowball.mdl"
-#define LASER_MODEL	   "progs/laser.mdl" // the enforcer's bolt, as AD's sentinel uses
+#define LASER_MODEL	   "progs/laser.mdl" // the enforcer's bolt, as AD's sentinel uses (registered data only)
 #define YETI_MODEL	   "progs/workshop/yeti.mdl"
 
 #define CHAN_AUTO	0
@@ -42,6 +42,7 @@ static cvar_t terrain_saucer_hunt = {"terrain_saucer_hunt", "2.6", CVAR_NONE};	 
 static cvar_t terrain_saucer_laser = {"terrain_saucer_laser", "15", CVAR_NONE};	 // damage a bolt does
 static cvar_t terrain_yeti_health = {"terrain_yeti_health", "2000", CVAR_NONE};
 static cvar_t terrain_yeti_snow = {"terrain_yeti_snow", "10", CVAR_NONE}; // radius of the snow a landed snowball leaves; 0 none
+static cvar_t terrain_yeti_snow_max = {"terrain_yeti_snow_max", "400", CVAR_NONE}; // snow drifts a map may log (every one is replayed to joining clients)
 
 enum
 {
@@ -55,7 +56,7 @@ typedef struct
 {
 	edict_t *ent;
 	int		 kind, last_frame, dead;
-	double	 fire_until;
+	double	 fire_until, dead_at;
 } enemy_t;
 
 typedef struct
@@ -70,7 +71,23 @@ static enemy_t	enemies[MAX_ENEMIES];
 static shot_t	shots[MAX_SHOTS];
 static int		num_enemies, num_shots;
 static int		fired_bolts, fired_snowballs, hits_bolts, hits_snowballs, snow_ops; // for terrain_ents
-static qboolean have_saucer, have_snowball, have_gib, have_sentinel;
+static qboolean have_saucer, have_snowball, have_gib, have_sentinel, enemies_sweep;
+static const char *laser_model;
+
+// AD's sentinel sounds, each used only when its file is there
+static const char *const sentinel_sounds[] = {"sentinel/laser.wav", "sentinel/widle1.wav", "sentinel/widle2.wav", "sentinel/wsight.wav", "sentinel/wpain.wav"};
+#define NUM_SENTINEL ((int)(sizeof (sentinel_sounds) / sizeof (sentinel_sounds[0])))
+static qboolean have_sentinel_sound[NUM_SENTINEL];
+
+// recent snow drifts, so one volley landing in a heap logs one drift, not eleven
+#define RECENT_SNOW 16
+static struct
+{
+	vec3_t at;
+	float  radius;
+	double time;
+} recent_snow[RECENT_SNOW];
+static int recent_snow_next;
 
 static enemy_t *EnemyFind (const edict_t *ent)
 {
@@ -83,6 +100,8 @@ static enemy_t *EnemyFind (const edict_t *ent)
 void SV_Enemies_Clear (void)
 {
 	num_enemies = num_shots = 0;
+	enemies_sweep = false;
+	memset (recent_snow, 0, sizeof (recent_snow));
 	fired_bolts = fired_snowballs = hits_bolts = hits_snowballs = snow_ops = 0;
 }
 
@@ -100,7 +119,10 @@ void SV_Enemies_Precache (void)
 	have_saucer = COM_FileExists (SAUCER_MODEL, NULL);
 	have_snowball = COM_FileExists (SNOWBALL_MODEL, NULL);
 	have_gib = COM_FileExists (SAUCER_GIB, NULL);
-	have_sentinel = COM_FileExists ("sound/sentinel/laser.wav", NULL); // Arcane Dimensions' data
+	have_sentinel = false;
+	for (int i = 0; i < NUM_SENTINEL; ++i) // Arcane Dimensions' data
+		have_sentinel |= have_sentinel_sound[i] = COM_FileExists (va ("sound/%s", sentinel_sounds[i]), NULL);
+	laser_model = COM_FileExists (LASER_MODEL, NULL) ? LASER_MODEL : "progs/spike.mdl"; // shareware data has no enforcer
 	if (have_saucer)
 		SV_Precache_Model (SAUCER_MODEL);
 	if (have_snowball)
@@ -109,25 +131,29 @@ void SV_Enemies_Precache (void)
 		SV_Precache_Model (SAUCER_GIB);
 	if (COM_FileExists ("progs/shambler.mdl", NULL))
 		SV_Precache_Model (YETI_MODEL);
-	SV_Precache_Model (LASER_MODEL);
+	SV_Precache_Model (laser_model);
 	SV_Precache_Sound ("enforcer/enfire.wav");
 	SV_Precache_Sound ("enforcer/enfstop.wav");
 	SV_Precache_Sound ("weapons/r_exp3.wav");
 	SV_Precache_Sound ("zombie/z_shot1.wav");
 	SV_Precache_Sound ("zombie/z_miss.wav");
-	if (have_sentinel)
-	{
-		static const char *const sentinel[] = {"sentinel/laser.wav", "sentinel/widle1.wav", "sentinel/widle2.wav", "sentinel/wsight.wav", "sentinel/wpain.wav"};
-		for (size_t i = 0; i < sizeof (sentinel) / sizeof (sentinel[0]); ++i)
-			if (COM_FileExists (va ("sound/%s", sentinel[i]), NULL))
-				SV_Precache_Sound (sentinel[i]);
-	}
+	for (int i = 0; i < NUM_SENTINEL; ++i)
+		if (have_sentinel_sound[i])
+			SV_Precache_Sound (sentinel_sounds[i]); // (the precache keeps the pointer: these are literals)
 }
 
-static void SetModel (edict_t *ent, const char *model)
+/*
+Precaching here too (it is sent to clients mid-game), so an enemy spawned by hand on a map that
+did not precache its look gets it instead of stopping the server. False when the list is full.
+*/
+static qboolean SetModel (edict_t *ent, const char *model)
 {
+	const int index = SV_Precache_Model (model);
+	if (!index)
+		return false;
 	ent->v.model = PR_SetEngineString (model);
-	ent->v.modelindex = SV_ModelIndex (model);
+	ent->v.modelindex = index;
+	return true;
 }
 
 static void SetScale (edict_t *ent, float scale)
@@ -143,13 +169,16 @@ the monster is not of that kind or its look is missing (it then stays what it wa
 */
 int SV_Enemies_Adopt (edict_t *ent, int yeti)
 {
+	if (EnemyFind (ent))
+		return 1;
 	if (num_enemies == MAX_ENEMIES || ent->free)
 		return 0;
+	if (!laser_model)
+		laser_model = COM_FileExists (LASER_MODEL, NULL) ? LASER_MODEL : "progs/spike.mdl";
 	if (yeti)
 	{
-		if (!COM_FileExists ("progs/shambler.mdl", NULL))
+		if (!COM_FileExists ("progs/shambler.mdl", NULL) || !SetModel (ent, YETI_MODEL)) // the shambler's frames, so its own animations play on it
 			return 0;
-		SetModel (ent, YETI_MODEL); // the shambler's frames, so its own animations play on it
 		ent->v.health = ent->v.max_health = terrain_yeti_health.value;
 		// no lightning: its ranged attack is the smash, which hurls a big snowball from afar
 		const int	 missile = ED_FindFieldOffset ("th_missile");
@@ -160,9 +189,8 @@ int SV_Enemies_Adopt (edict_t *ent, int yeti)
 	}
 	else
 	{
-		if (!have_saucer)
+		if (!COM_FileExists (SAUCER_MODEL, NULL) || !SetModel (ent, SAUCER_MODEL))
 			return 0;
-		SetModel (ent, SAUCER_MODEL);
 		const vec3_t mins = {-30, -30, -12}, maxs = {30, 30, 14};
 		VectorCopy (mins, ent->v.mins);
 		VectorCopy (maxs, ent->v.maxs);
@@ -190,20 +218,22 @@ Called by SV_StartSound with the sample it is about to play.
 */
 const char *SV_Enemies_Sound (const edict_t *ent, const char *sample)
 {
-	const enemy_t *e = num_enemies && ent ? EnemyFind (ent) : NULL;
-	if (!e || e->kind != KIND_SAUCER || strncmp (sample, "wizard/", 7))
+	if (!num_enemies || !ent || strncmp (sample, "wizard/", 7))
+		return sample;
+	// (the progs play the scrag's attack sound on a helper entity the scrag owns)
+	const enemy_t *e = EnemyFind (ent);
+	if (!e && ent->v.owner)
+		e = EnemyFind (PROG_TO_EDICT (ent->v.owner));
+	if (!e || e->kind != KIND_SAUCER)
 		return sample;
 	const char *name = sample + 7;
 	if (!strcmp (name, "wattack.wav"))
-		return have_sentinel && (COM_Rand () % 5) == 0 ? "sentinel/laser.wav" : "enforcer/enfire.wav";
+		return have_sentinel_sound[0] && (COM_Rand () % 5) == 0 ? "sentinel/laser.wav" : "enforcer/enfire.wav";
 	if (!strcmp (name, "wdeath.wav"))
 		return "weapons/r_exp3.wav";
-	if (have_sentinel && (!strcmp (name, "widle1.wav") || !strcmp (name, "widle2.wav") || !strcmp (name, "wsight.wav") || !strcmp (name, "wpain.wav")))
-	{
-		static char mapped[64];
-		q_snprintf (mapped, sizeof (mapped), "sentinel/%s", name);
-		return mapped;
-	}
+	for (int i = 1; i < NUM_SENTINEL; ++i)
+		if (have_sentinel_sound[i] && !strcmp (name, sentinel_sounds[i] + 9))
+			return sentinel_sounds[i];
 	return sample;
 }
 
@@ -283,34 +313,35 @@ static shot_t *NewShot (edict_t *owner, int kind)
 // A scrag's spit, fired by a saucer: becomes a laser bolt at the sentinel's speed (it is removed here).
 static void Saucer_Bolt (edict_t *spit, edict_t *saucer)
 {
-	shot_t *s = NewShot (saucer, KIND_SAUCER);
-	if (!s)
-		return;
-	edict_t *bolt = s->ent;
-	vec3_t	 dir, aim;
-	bolt->v.classname = PR_SetEngineString ("saucer_laser");
-	++fired_bolts;
-	SetModel (bolt, LASER_MODEL);
-	bolt->v.effects = EF_DIMLIGHT;
+	vec3_t dir, aim, org;
 	// out of the turret under its belly, aimed at the target's body (leading it a little), not
 	// along the scrag's spit, which leaves from beside the scrag with a spread of its own
-	VectorCopy (saucer->v.origin, bolt->v.origin);
-	bolt->v.origin[2] -= 8.0f;
+	VectorCopy (saucer->v.origin, org);
+	org[2] -= 8.0f;
 	const float	   speed = (575.0f + 75.0f * CLAMP (0.0f, skill.value, 3.0f)) * 1.25f;
 	const edict_t *enemy = PROG_TO_EDICT (saucer->v.enemy);
 	if (enemy != qcvm->edicts && !enemy->free)
 	{
 		VectorCopy (enemy->v.origin, aim);
 		aim[2] += (enemy->v.mins[2] + enemy->v.maxs[2]) * 0.5f;
-		VectorSubtract (aim, bolt->v.origin, dir);
+		VectorSubtract (aim, org, dir);
 		const float flight = VectorLength (dir) / speed;
 		VectorMA (aim, flight * 0.5f, enemy->v.velocity, aim);
-		VectorSubtract (aim, bolt->v.origin, dir);
+		VectorSubtract (aim, org, dir);
 	}
 	else
 		VectorCopy (spit->v.velocity, dir);
 	if (VectorNormalize (dir) < 0.001f)
 		return;
+	shot_t *s = NewShot (saucer, KIND_SAUCER);
+	if (!s)
+		return;
+	edict_t *bolt = s->ent;
+	bolt->v.classname = PR_SetEngineString ("saucer_laser");
+	++fired_bolts;
+	SetModel (bolt, laser_model);
+	bolt->v.effects = EF_DIMLIGHT;
+	VectorCopy (org, bolt->v.origin);
 	VectorScale (dir, speed, bolt->v.velocity);
 	VectorAngles (dir, NULL, bolt->v.angles);
 	SV_LinkEdict (bolt, false);
@@ -391,10 +422,13 @@ static void Yeti_Throw (edict_t *yeti, qboolean fan)
 // A saucer brought down: a blast and its hull in pieces; the scrag's body goes on unseen.
 static void Saucer_Wreck (edict_t *saucer)
 {
-	MSG_WriteByte (&sv.datagram, svc_temp_entity);
-	MSG_WriteByte (&sv.datagram, TE_EXPLOSION);
-	for (int a = 0; a < 3; ++a)
-		MSG_WriteCoord (&sv.datagram, saucer->v.origin[a], sv.protocolflags);
+	if (sv.datagram.maxsize - sv.datagram.cursize >= 16) // (the blast is only for show)
+	{
+		MSG_WriteByte (&sv.datagram, svc_temp_entity);
+		MSG_WriteByte (&sv.datagram, TE_EXPLOSION);
+		for (int a = 0; a < 3; ++a)
+			MSG_WriteCoord (&sv.datagram, saucer->v.origin[a], sv.protocolflags);
+	}
 	dfunction_t *remove = ED_FindFunction ("SUB_Remove");
 	for (int i = 0; have_gib && i < 5; ++i)
 	{
@@ -419,6 +453,46 @@ static void Saucer_Wreck (edict_t *saucer)
 	saucer->v.model = 0;
 	saucer->v.modelindex = 0;
 	SV_LinkEdict (saucer, false);
+}
+
+/*
+Snow left where a snowball landed: a small fill op, logged and networked like any edit, so drifts
+build up where a yeti throws. A drift that would heap onto one just made is left out (one volley
+makes one drift), as is one that would bury a player or monster, and a map takes only so many.
+*/
+static void Snow (const vec3_t endpos, const vec3_t normal, float radius)
+{
+	if (snow_ops >= terrain_yeti_snow_max.value)
+		return;
+	vec3_t at;
+	VectorMA (endpos, -radius * 0.35f, normal, at);
+	for (int i = 0; i < RECENT_SNOW; ++i)
+	{
+		vec3_t d;
+		VectorSubtract (at, recent_snow[i].at, d);
+		if (qcvm->time - recent_snow[i].time < 0.5 && VectorLength (d) < recent_snow[i].radius)
+			return;
+	}
+	const float reach = radius * 0.65f + 4.0f; // how far above the ground the drift rises, and some
+	for (int e = 1; e < qcvm->num_edicts; ++e)
+	{
+		const edict_t *ed = EDICT_NUM (e);
+		if (ed->free || ed->v.solid == SOLID_NOT || ed->v.solid == SOLID_TRIGGER || !((int)ed->v.flags & (FL_CLIENT | FL_MONSTER)) || ed->v.health <= 0)
+			continue;
+		int a = 0;
+		while (a < 3 && at[a] + reach > ed->v.absmin[a] && at[a] - reach < ed->v.absmax[a])
+			++a;
+		if (a == 3)
+			return;
+	}
+	if (SV_Terrain_Edit (TERRAIN_OP_FILL, at, radius) > 0)
+	{
+		++snow_ops;
+		VectorCopy (at, recent_snow[recent_snow_next].at);
+		recent_snow[recent_snow_next].radius = radius;
+		recent_snow[recent_snow_next].time = qcvm->time;
+		recent_snow_next = (recent_snow_next + 1) % RECENT_SNOW;
+	}
 }
 
 static void Shots_Frame (void)
@@ -451,11 +525,7 @@ static void Shots_Frame (void)
 					// a snowball that lands on the cave or the map leaves its snow there: a small
 					// fill op (logged and networked like any edit), so drifts build up where it throws
 					if (!body && !tr.startsolid && s->snow > 0)
-					{
-						vec3_t at;
-						VectorMA (tr.endpos, -s->snow * 0.35f, tr.plane.normal, at);
-						snow_ops += SV_Terrain_Edit (TERRAIN_OP_FILL, at, s->snow) > 0;
-					}
+						Snow (tr.endpos, tr.plane.normal, s->snow);
 					SV_StartParticle (tr.endpos, dir, 12, 24); // a puff of snow (the palette's light greys)
 					SV_StartSound (ent, NULL, CHAN_AUTO, "zombie/z_miss.wav", 200, ATTN_NORM);
 				}
@@ -485,9 +555,46 @@ static void Shots_Frame (void)
 	}
 }
 
+/*
+A saved game was loaded over the map: the edicts read from it replace everything held here (a fast
+load keeps the map, so the pointers would point at whatever the save put in those slots).
+*/
+void SV_Enemies_LoadingSave (void)
+{
+	num_enemies = num_shots = 0;
+	memset (recent_snow, 0, sizeof (recent_snow));
+	enemies_sweep = true;
+}
+
+// The first frame after a load: the saved saucers and yetis are taken over again by their look,
+// and their shots (which the save cannot move) removed.
+static void Sweep (void)
+{
+	enemies_sweep = false;
+	for (int e = svs.maxclients + 1; e < qcvm->num_edicts; ++e)
+	{
+		edict_t	   *ed = EDICT_NUM (e);
+		const char *model = PR_GetString (ed->v.model), *classname = PR_GetString (ed->v.classname);
+		if (ed->free)
+			continue;
+		if (!strcmp (classname, "saucer_laser") || !strcmp (classname, "yeti_snowball"))
+			ED_Free (ed);
+		else if (num_enemies < MAX_ENEMIES && ed->v.health > 0 && (!strcmp (model, SAUCER_MODEL) || !strcmp (model, YETI_MODEL)))
+		{
+			enemy_t *en = &enemies[num_enemies++];
+			memset (en, 0, sizeof (*en));
+			en->ent = ed;
+			en->kind = strcmp (model, SAUCER_MODEL) ? KIND_YETI : KIND_SAUCER;
+			en->last_frame = -1;
+		}
+	}
+}
+
 // Once a server frame, after the monsters have thought.
 void SV_Enemies_Frame (void)
 {
+	if (enemies_sweep)
+		Sweep ();
 	if (!num_enemies && !num_shots)
 		return;
 	// a saucer's spit becomes a bolt the frame it is fired
@@ -518,7 +625,15 @@ void SV_Enemies_Frame (void)
 			if (ent->v.health <= 0 && !e->dead)
 			{
 				e->dead = 1;
+				e->dead_at = qcvm->time;
 				Saucer_Wreck (ent);
+			}
+			else if (e->dead && qcvm->time > e->dead_at + 3.0)
+			{
+				// long done falling (the scrag's corpse is not solid, so it gibs only as it dies):
+				// let the slot go
+				*e = enemies[--num_enemies];
+				continue;
 			}
 			else if (e->dead && ent->v.modelindex)
 			{
@@ -529,9 +644,8 @@ void SV_Enemies_Frame (void)
 			else if (!e->dead)
 			{
 				// the scrag's animations are not the saucer's: it shows its idle or its firing tilt
-				if (frame != e->last_frame && frame >= 28 && frame <= 33) // the scrag's attack frames
+				if (frame != e->last_frame && frame >= 29 && frame <= 34) // the scrag's attack (magatt1-6)
 					e->fire_until = qcvm->time + 0.3;
-				e->last_frame = frame;
 				ent->v.frame = qcvm->time < e->fire_until ? 1 : 0;
 				e->last_frame = frame;
 				ent->v.angles[ROLL] = 0;
@@ -563,6 +677,7 @@ void SV_Enemies_Init (void)
 	Cvar_RegisterVariable (&terrain_saucer_laser);
 	Cvar_RegisterVariable (&terrain_yeti_health);
 	Cvar_RegisterVariable (&terrain_yeti_snow);
+	Cvar_RegisterVariable (&terrain_yeti_snow_max);
 }
 
 int SV_Enemies_WantSaucers (void)

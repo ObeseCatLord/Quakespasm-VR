@@ -214,7 +214,9 @@ Made in the engine from the running progs' own monsters (no QuakeC); `terrain_sa
   attack is the smash, which from afar hurls one big snowball (30 damage). Snowballs that land on
   the cave or the map leave snow there as terrain fill ops (`terrain_yeti_snow`, radius 10, more for
   a big one), so drifts build up where a yeti fights; they are networked and walkable like any
-  other ground.
+  other ground. A volley landing in a heap makes one drift, snow never lands on a player or
+  monster, and a map takes at most `terrain_yeti_snow_max` (400) drifts, since every one is
+  replayed to joining clients.
 
 Debug: `terrain_spawnenemy <saucer|yeti> [distance]` or `<saucer|yeti> x y z [yaw]`,
 `terrain_clearmonsters [all]`; `terrain_ents` ends with what the enemies have fired.
@@ -275,7 +277,7 @@ random, so tests do not depend on the cave's layout.
 | `r_terrain_style`, `r_terrain_props` | 1, 1 | look 0-3 and its props |
 | `terrain_saucers`, `terrain_yetis` | 2, 1 | the cave's own enemies added to a drg* map |
 | `terrain_saucer_health`, `terrain_saucer_speed`, `terrain_saucer_hunt`, `terrain_saucer_laser` | 150, 1.7, 2.6, 15 | |
-| `terrain_yeti_health`, `terrain_yeti_snow` | 2000, 10 | |
+| `terrain_yeti_health`, `terrain_yeti_snow`, `terrain_yeti_snow_max` | 2000, 10, 400 | |
 | `workshop_tools` | 1 | the platform gun, grapple and lava sprayer on drg* maps |
 | `workshop_platform_radius`, `workshop_platform_thickness` | 60, 20 | platform size |
 | `workshop_platgun_speed`, `workshop_platgun_damage`, `workshop_platgun_regen` | 1250, 40, 10 | |

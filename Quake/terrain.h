@@ -252,6 +252,7 @@ void	   SV_Workshop_Init (void);
 void	   SV_Workshop_Precache (void); // while a drg* map loads
 void	   SV_Workshop_Clear (void);
 void SV_Workshop_LoadingSave (void); // a saved game is being loaded over this map
+void SV_Enemies_LoadingSave (void);  // likewise for the cave's enemies
 void	   SV_Workshop_PlayerFrame (struct edict_s *ent, int num);										// once a frame, before the player's commands
 void	   SV_Workshop_PreThink (struct edict_s *ent);													// per command, right before PlayerPreThink
 void	   SV_Workshop_Frame (void);																	// once a server frame, after physics

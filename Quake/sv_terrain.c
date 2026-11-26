@@ -161,6 +161,9 @@ void SV_Terrain_NewMap (void)
 	{
 		int32_t origin_z = (int)floorf (center[2] / TERRAIN_CELL + 0.5f) * TERRAIN_CELL - size[2] * TERRAIN_CHUNK_UNITS / 2;
 		sv_terrain_arena_floor = -origin_z / TERRAIN_CELL;
+		// clients build the arena only for a floor inside the region (as here); otherwise a cave
+		if (sv_terrain_arena_floor < 0 || sv_terrain_arena_floor > size[2] * TERRAIN_CHUNK)
+			sv_terrain_arena_floor = INT_MIN;
 	}
 	SV_Terrain_SpawnAt (center, (uint32_t)terrain_seed.value, size);
 }
@@ -1901,9 +1904,15 @@ void SV_Terrain_SendToClient (client_t *client)
 	{
 		const terrain_t *t = terrain_active;
 		if (t)
+		{
 			q_snprintf (
-				command, sizeof (command), "//terrain_init %u %d %d %d %d %d %d %d %.4f %d\n", t->seed, t->origin[0], t->origin[1], t->origin[2], t->size[0],
-				t->size[1], t->size[2], sv_terrain_ice_used ? 1 : 0, t->walk_normal, sv_terrain_arena_floor == INT_MIN ? -1 : sv_terrain_arena_floor);
+				command, sizeof (command), "//terrain_init %u %d %d %d %d %d %d %d %.4f", t->seed, t->origin[0], t->origin[1], t->origin[2], t->size[0],
+				t->size[1], t->size[2], sv_terrain_ice_used ? 1 : 0, t->walk_normal);
+			// the arena's floor only for an arena, so clients from before it still get every cave
+			if (sv_terrain_arena_floor != INT_MIN)
+				q_strlcat (command, va (" %d", sv_terrain_arena_floor), sizeof (command));
+			q_strlcat (command, "\n", sizeof (command));
+		}
 		else
 			q_strlcpy (command, "//terrain_init none\n", sizeof (command));
 		if (!SV_Terrain_Stuff (client, command))
