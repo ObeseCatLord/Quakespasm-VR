@@ -1,0 +1,60 @@
+name: Windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  STEAM_AUDIO_VERSION: 4.8.1
+  STEAM_AUDIO_SHA256: 4a0aa5ec1176f38f0b0993a37c2259d9e86f27e22d5e24f83ec4c3cb9a1d5449
+
+jobs:
+  build:
+    name: Build win-x64 runtime (MSVC)
+    # MSVC v143, the same toolset the release packages use. MinGW builds are not
+    # used for releases.
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install Vulkan SDK
+      uses: jakoch/install-vulkan-sdk-action@v1.6.0
+      with:
+        vulkan_version: 1.4.341.1
+        install_runtime: false
+        cache: true
+        stripdown: true
+    - name: Restore Steam Audio SDK
+      id: steamaudio
+      uses: actions/cache@v4
+      with:
+        path: steamaudio
+        key: steamaudio-${{ env.STEAM_AUDIO_VERSION }}-${{ env.STEAM_AUDIO_SHA256 }}
+    - name: Download Steam Audio SDK
+      if: steps.steamaudio.outputs.cache-hit != 'true'
+      run: |
+        $zip = "$env:RUNNER_TEMP\steamaudio.zip"
+        Invoke-WebRequest -Uri "https://github.com/ValveSoftware/steam-audio/releases/download/v$env:STEAM_AUDIO_VERSION/steamaudio_$env:STEAM_AUDIO_VERSION.zip" -OutFile $zip
+        $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+        if ($hash -ne $env:STEAM_AUDIO_SHA256) { throw "Steam Audio SDK hash mismatch: $hash" }
+        Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\sa"
+        Move-Item "$env:RUNNER_TEMP\sa\steamaudio" steamaudio
+    - name: Build
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $msbuild = & "$vswhere" -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe | Select-Object -First 1
+        & $msbuild Windows\VisualStudio\vkquake.sln /p:Configuration=Release /p:Platform=x64 `
+          /p:PlatformToolset=v143 /p:PreferredToolArchitecture=x64 "/p:SteamAudioSdkDir=$PWD\steamaudio" `
+          /m /v:minimal /nologo
+        if ($LASTEXITCODE -ne 0) { throw "MSBuild failed" }
+    - name: Package
+      run: Packaging\Windows\ci-package.ps1 -Source Windows\VisualStudio\Build-vkQuake\x64\Release -Destination dist -Revision $env:GITHUB_SHA
+    - name: Upload runtime
+      uses: actions/upload-artifact@v7
+      with:
+        name: qsvr-win-x64-${{ github.sha }}
+        path: dist
+        retention-days: 30

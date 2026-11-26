@@ -1,0 +1,53 @@
+name: Linux
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Fixture tests
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v6
+    - name: Run fixtures
+      run: tests/run_ci_fixtures.sh
+
+  build:
+    name: Build linux-x64 runtime
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v6
+    # Dependencies are built from pinned sources by build-native.sh and reused
+    # through its verified cache while the recipe is unchanged.
+    - name: Restore dependency cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/qsvr-native-build
+        key: qsvr-native-${{ hashFiles('Packaging/Linux/sources.json', 'Packaging/Linux/build-native.sh', 'Packaging/Linux/Dockerfile') }}
+    - name: Build builder image
+      run: docker build --platform linux/amd64 -t qsvr-builder Packaging/Linux
+    - name: Build runtime
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.cache/qsvr-native-build input native package
+        git archive --format=tar HEAD > input/product.tar
+        docker run --rm --platform linux/amd64 -v "$PWD/input:/input:ro" \
+          -v "$HOME/.cache/qsvr-native-build:/cache" -e QSVR_BUILD_CACHE=/cache \
+          -v "$PWD/native:/output" qsvr-builder /input/product.tar "$GITHUB_SHA" /output
+        docker run --rm --platform linux/amd64 --entrypoint python3 -v "$PWD/package:/package" \
+          -v "$PWD/native:/output:ro" -v "$HOME/.cache/qsvr-native-build:/cache" -e QSVR_BUILD_CACHE=/cache \
+          qsvr-builder /usr/local/bin/package.py stage /output /package
+        docker run --rm --platform linux/amd64 --entrypoint python3 --network none -v "$PWD/package:/package" \
+          qsvr-builder /usr/local/bin/package.py verify /package
+        sudo chown -R "$(id -u):$(id -g)" ~/.cache/qsvr-native-build package
+    - name: Upload runtime
+      uses: actions/upload-artifact@v7
+      with:
+        name: qsvr-linux-x64-${{ github.sha }}
+        path: package
+        retention-days: 30
