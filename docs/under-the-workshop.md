@@ -59,7 +59,8 @@ the styles use where the engine finds them. Without them the looks still work, w
 
 ### Ice worm (first pass)
 
-`tests/drg-worm.sh`, or `+terrain_worm 1` before `+map`. A segmented worm (shambler head, greybox
+On by default in every cave (`terrain_worm 0` turns it off); `tests/drg-worm.sh` runs it alone with
+the x-ray on. `terrain_worm_scale` (2) sets its thickness. A segmented worm (shambler head, greybox
 body) burrows through the rock, digging a tunnel, and every few seconds hunts: it bursts out near a
 player, arcs through the cave and dives back in. `terrain_worm_hunt` forces a hunt,
 `r_terrain_worm_xray 1` draws its chain as lines through the rock (X in the runner, which also

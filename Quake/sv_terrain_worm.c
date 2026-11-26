@@ -24,25 +24,26 @@
 #define SND_SEGDIE	 "zombie/z_gib.wav"
 #define SND_WORMDIE	 "boss1/death.wav"
 
-static cvar_t terrain_worm = {"terrain_worm", "0", CVAR_NONE};					  // 1: one worm at map load
+static cvar_t terrain_worm = {"terrain_worm", "1", CVAR_NONE};					  // 1: one worm at map load
 static cvar_t terrain_worm_auto = {"terrain_worm_auto", "1", CVAR_NONE};			  // 0: hunts only on terrain_worm_hunt
-static cvar_t terrain_worm_speed = {"terrain_worm_speed", "220", CVAR_NONE};		  // cruising speed through rock
-static cvar_t terrain_worm_hunt_speed = {"terrain_worm_hunt_speed", "320", CVAR_NONE};
-static cvar_t terrain_worm_turn = {"terrain_worm_turn", "60", CVAR_NONE};			  // deg/s cruising
-static cvar_t terrain_worm_hunt_turn = {"terrain_worm_hunt_turn", "90", CVAR_NONE};
-static cvar_t terrain_worm_dig_radius = {"terrain_worm_dig_radius", "44", CVAR_NONE};
-static cvar_t terrain_worm_dig_step = {"terrain_worm_dig_step", "40", CVAR_NONE};
+static cvar_t terrain_worm_speed = {"terrain_worm_speed", "110", CVAR_NONE};		  // cruising speed through rock
+static cvar_t terrain_worm_hunt_speed = {"terrain_worm_hunt_speed", "160", CVAR_NONE};
+static cvar_t terrain_worm_turn = {"terrain_worm_turn", "30", CVAR_NONE};			  // deg/s cruising
+static cvar_t terrain_worm_hunt_turn = {"terrain_worm_hunt_turn", "45", CVAR_NONE};
+static cvar_t terrain_worm_dig_radius = {"terrain_worm_dig_radius", "76", CVAR_NONE};
+static cvar_t terrain_worm_dig_step = {"terrain_worm_dig_step", "64", CVAR_NONE};
 static cvar_t terrain_worm_max_ops = {"terrain_worm_max_ops", "400", CVAR_NONE};
-static cvar_t terrain_worm_launch = {"terrain_worm_launch", "520", CVAR_NONE};		  // least speed leaving the rock on a hunt
-static cvar_t terrain_worm_gravity = {"terrain_worm_gravity", "800", CVAR_NONE};
-static cvar_t terrain_worm_telegraph = {"terrain_worm_telegraph", "1.5", CVAR_NONE};  // seconds of warning before the burst
-static cvar_t terrain_worm_hunt_min = {"terrain_worm_hunt_min", "6", CVAR_NONE};
-static cvar_t terrain_worm_hunt_max = {"terrain_worm_hunt_max", "10", CVAR_NONE};
+static cvar_t terrain_worm_launch = {"terrain_worm_launch", "260", CVAR_NONE};		  // least speed leaving the rock on a hunt
+static cvar_t terrain_worm_gravity = {"terrain_worm_gravity", "200", CVAR_NONE};
+static cvar_t terrain_worm_telegraph = {"terrain_worm_telegraph", "2.5", CVAR_NONE};  // seconds of warning before the burst
+static cvar_t terrain_worm_hunt_min = {"terrain_worm_hunt_min", "10", CVAR_NONE};
+static cvar_t terrain_worm_hunt_max = {"terrain_worm_hunt_max", "16", CVAR_NONE};
 static cvar_t terrain_worm_damage = {"terrain_worm_damage", "25", CVAR_NONE};
 static cvar_t terrain_worm_aim_height = {"terrain_worm_aim_height", "96", CVAR_NONE}; // apex above the player's head
 static cvar_t terrain_worm_segments = {"terrain_worm_segments", "14", CVAR_NONE};
 static cvar_t terrain_worm_freeze = {"terrain_worm_freeze", "0", CVAR_NONE};		  // debug: hang in the air so a weapon test has a still target
-static cvar_t terrain_worm_spacing = {"terrain_worm_spacing", "28", CVAR_NONE};
+static cvar_t terrain_worm_scale = {"terrain_worm_scale", "2", CVAR_NONE};			  // body thickness; 1 is a 44-unit head
+static cvar_t terrain_worm_spacing = {"terrain_worm_spacing", "56", CVAR_NONE};
 
 enum { WS_BURROW, WS_AIR };
 enum { SEG_HEAD, SEG_BODY, SEG_TAIL };
@@ -756,7 +757,7 @@ static qboolean WormSpawn (const float near[3], float min_dist, float max_dist)
 	{
 		wseg_t *s = &worm.seg[worm.nseg++];
 		s->kind = i == 0 ? SEG_HEAD : i == n - 1 ? SEG_TAIL : SEG_BODY;
-		s->radius = s->kind == SEG_HEAD ? 22.0f : s->kind == SEG_TAIL ? 10.0f : 16.0f;
+		s->radius = (s->kind == SEG_HEAD ? 22.0f : s->kind == SEG_TAIL ? 10.0f : 16.0f) * CLAMP (0.5f, terrain_worm_scale.value, 4.0f);
 		const float hp = s->kind == SEG_HEAD ? 400.0f : s->kind == SEG_TAIL ? 200.0f : 120.0f;
 		if (s->kind == SEG_HEAD)
 			s->ent = SpawnEdict ("terrain_worm_head", HEAD_MODEL, s->radius, s->radius / 27.0f);
@@ -914,7 +915,7 @@ void SV_Terrain_WormInit (void)
 {
 	cvar_t *all[] = {&terrain_worm, &terrain_worm_auto, &terrain_worm_speed, &terrain_worm_hunt_speed, &terrain_worm_turn, &terrain_worm_hunt_turn, &terrain_worm_dig_radius,
 					 &terrain_worm_dig_step, &terrain_worm_max_ops, &terrain_worm_launch, &terrain_worm_gravity, &terrain_worm_telegraph, &terrain_worm_hunt_min,
-					 &terrain_worm_hunt_max, &terrain_worm_damage, &terrain_worm_aim_height, &terrain_worm_segments, &terrain_worm_freeze, &terrain_worm_spacing};
+					 &terrain_worm_hunt_max, &terrain_worm_damage, &terrain_worm_aim_height, &terrain_worm_segments, &terrain_worm_freeze, &terrain_worm_spacing, &terrain_worm_scale};
 	for (size_t i = 0; i < sizeof (all) / sizeof (all[0]); ++i)
 		Cvar_RegisterVariable (all[i]);
 	Cmd_AddCommand ("terrain_worm_spawn", Spawn_f);
