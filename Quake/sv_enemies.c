@@ -520,6 +520,12 @@ void SV_Enemies_Frame (void)
 				e->dead = 1;
 				Saucer_Wreck (ent);
 			}
+			else if (e->dead && ent->v.modelindex)
+			{
+				// a scrag gibbed hard turns into its head gib (ThrowHead): a wrecked saucer has none
+				ent->v.model = 0;
+				ent->v.modelindex = 0;
+			}
 			else if (!e->dead)
 			{
 				// the scrag's animations are not the saucer's: it shows its idle or its firing tilt
