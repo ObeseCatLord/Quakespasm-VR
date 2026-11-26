@@ -1106,17 +1106,23 @@ void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t)
 	Terrain_NavRefresh (nav, t, lo, hi);
 }
 
-void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op)
+void Terrain_NavOpBox (const terrain_nav_t *nav, const terrain_op_t *op, int lo[3], int hi[3])
 {
 	// an op changes samples up to radius + TERRAIN_SDF_MAX (fixed point) from its centre
 	const int reach = (int)op->radius + TERRAIN_SDF_MAX + TERRAIN_SUB;
-	int		  lo[3], hi[3];
+	(void)nav;
 	for (int a = 0; a < 3; ++a)
 	{
 		const int sub_per_nav = TERRAIN_SUB * TERRAIN_NAV_CELL / TERRAIN_CELL;
 		lo[a] = (int)floorf ((float)(op->center[a] - reach) / (float)sub_per_nav);
 		hi[a] = (int)floorf ((float)(op->center[a] + reach) / (float)sub_per_nav);
 	}
+}
+
+void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op)
+{
+	int lo[3], hi[3];
+	Terrain_NavOpBox (nav, op, lo, hi);
 	Terrain_NavRefresh (nav, t, lo, hi);
 }
 

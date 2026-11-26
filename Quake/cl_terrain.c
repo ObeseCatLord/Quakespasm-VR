@@ -36,14 +36,13 @@ static void CL_Terrain_Init_f (void)
 	{
 		origin[a] = atoi (Cmd_Argv (2 + a));
 		size[a] = atoi (Cmd_Argv (5 + a));
-		if (size[a] < 1 || size[a] > 32)
+		if (size[a] < 1 || size[a] > 16 || abs (origin[a]) > 65536)
 		{
 			Con_Warning ("terrain_init: bad region size from server\n");
 			return;
 		}
 	}
 	const uint32_t seed = (uint32_t)strtoul (Cmd_Argv (1), NULL, 10);
-	const double   start = Sys_DoubleTime ();
 	terrain_t	  *t = Terrain_Create (origin, size, seed);
 	Terrain_Generate (t);
 	if (atoi (Cmd_Argv (8)))
@@ -51,9 +50,6 @@ static void CL_Terrain_Init_f (void)
 	t->walk_normal = CLAMP (0.0f, (float)atof (Cmd_Argv (9)), 1.0f);
 	terrain_client = t;
 	++terrain_client_epoch;
-	Con_DPrintf (
-		"terrain: client copy of seed %u generated in %.1f ms, hash %016llx\n", seed, (Sys_DoubleTime () - start) * 1000.0,
-		(unsigned long long)Terrain_Hash (t));
 }
 
 static int HexNibble (char c)
@@ -65,6 +61,21 @@ static int HexNibble (char c)
 	if (c >= 'A' && c <= 'F')
 		return c - 'A' + 10;
 	return -1;
+}
+
+// What the server itself can produce: a known kind, a known material, the server's largest radius,
+// a centre inside the region (with room for that radius).
+static qboolean CL_Terrain_OpSane (const terrain_op_t *op)
+{
+	if (op->kind > TERRAIN_OP_FILL || op->material >= TERRAIN_MAT_COUNT || op->radius > 512 * TERRAIN_SUB / TERRAIN_CELL)
+		return false;
+	for (int a = 0; a < 3; ++a)
+	{
+		const int32_t extent = terrain_client->size[a] * TERRAIN_CHUNK * TERRAIN_SUB;
+		if (op->center[a] < -(int32_t)op->radius || op->center[a] > extent + (int32_t)op->radius)
+			return false;
+	}
+	return true;
 }
 
 /*
@@ -101,6 +112,11 @@ static void CL_Terrain_Ops_f (void)
 		}
 		terrain_op_t op;
 		Terrain_OpUnpack (packed, &op);
+		if (!CL_Terrain_OpSane (&op))
+		{
+			Con_Warning ("terrain_ops: op %d from the server is out of range\n", first + at / (bytes * 2));
+			continue;
+		}
 		Terrain_ApplyOp (terrain_client, &op);
 	}
 	cl_terrain_ops_applied = first + len / (bytes * 2);
