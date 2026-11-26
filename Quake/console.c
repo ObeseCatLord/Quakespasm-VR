@@ -173,10 +173,12 @@ Converts screen (display pixel) coordinates to CANVAS_CONSOLE coordinates
 static void Con_ScreenToCanvas (int x, int y, int *outx, int *outy)
 {
 	// mirrors the CANVAS_CONSOLE ortho matrix setup in GL_SetCanvas
-	int lines = vid.conheight - ((int)scr_con_current * (int)vid.conheight / glheight);
+	// a mouse event can arrive before the first frame has set the render size
+	const int w = q_max (1, glwidth), h = q_max (1, glheight);
+	int		  lines = vid.conheight - ((int)scr_con_current * (int)vid.conheight / h);
 
-	*outx = x * (int)vid.conwidth / glwidth;
-	*outy = lines + y * (int)vid.conheight / glheight;
+	*outx = x * (int)vid.conwidth / w;
+	*outy = lines + y * (int)vid.conheight / h;
 }
 
 /*
