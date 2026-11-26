@@ -213,6 +213,7 @@ void			  CL_Terrain_Init (void);
 void			  CL_Terrain_Clear (void);
 void			  CL_Workshop_Init (void);
 void			  CL_Workshop_Clear (void);
+int				  CL_Workshop_Active (void); // the server runs the workshop tools here (vr_weapon_menu.c lists them)
 void			  CL_Workshop_AddEntities (void); // cl_workshop.c: light strings, VR wrist flares and holster
 struct client_s;
 void SV_Terrain_SendToClient (struct client_s *client);

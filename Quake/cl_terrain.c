@@ -10,9 +10,8 @@
 
 static int cl_terrain_ops_applied;
 
-void CL_Terrain_Clear (void)
+static void CL_Terrain_Free (void)
 {
-	CL_Workshop_Clear ();
 	R_Terrain_FinishMeshing ();
 	if (terrain_client)
 	{
@@ -23,15 +22,26 @@ void CL_Terrain_Clear (void)
 	cl_terrain_ops_applied = 0;
 }
 
+void CL_Terrain_Clear (void)
+{
+	CL_Workshop_Clear ();
+	CL_Terrain_Free ();
+}
+
 /*
 //terrain_init <seed> <origin x y z> <size x y z> <ice> <walk_normal>
 //terrain_init none
 */
 static void CL_Terrain_Init_f (void)
 {
-	CL_Terrain_Clear ();
+	// the workshop state was cleared with the server info; the server's workshop_flarecount can
+	// come ahead of this line, so clearing it again here would lose it
+	CL_Terrain_Free ();
 	if (Cmd_Argc () != 10)
-		return; // "none": this map has no cave
+	{
+		CL_Workshop_Clear (); // "none": this map has no cave, or terrain_clear removed it
+		return;
+	}
 	int32_t origin[3], size[3];
 	for (int a = 0; a < 3; ++a)
 	{

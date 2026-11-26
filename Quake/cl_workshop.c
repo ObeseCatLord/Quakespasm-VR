@@ -87,6 +87,11 @@ static void CL_Workshop_Flares_f (void)
 		CL_Workshop_DefaultBinds ();
 }
 
+int CL_Workshop_Active (void)
+{
+	return cl_workshop_flares >= 0;
+}
+
 void CL_Workshop_Clear (void)
 {
 	cl_workshop_flares = -1;

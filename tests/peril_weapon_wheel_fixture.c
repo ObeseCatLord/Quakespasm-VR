@@ -14,6 +14,7 @@ unsigned int d_8to24table[256];
 keydest_t key_dest;
 qboolean con_forcedup;
 int glwidth, glheight;
+int CL_Workshop_Active (void) { return 0; }
 static qmodel_t fixture_world, fixture_held;
 static qpic_t fixture_icon;
 static int fixture_icon_selector;

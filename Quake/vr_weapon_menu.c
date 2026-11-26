@@ -8,6 +8,7 @@
 #include "vr_weapon_menu.h"
 #include "vr_weapon_schema.h"
 #include "vr_weapon_calibration.h"
+#include "terrain.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -78,6 +79,25 @@ static const vr_weapon_menu_catalog_t vr_weapon_menu_stock_catalog = {
 	vr_weapon_menu_stock_entries,
 	sizeof (vr_weapon_menu_stock_entries) / sizeof (vr_weapon_menu_stock_entries[0]),
 	0
+};
+
+/* Workshop tools (sv_workshop.c) are engine-side, not progs weapons: each
+ * impulse toggles its tool, any other weapon impulse puts it away, and while
+ * one is out the server replaces only STAT_WEAPON/STAT_AMMO. Rows are appended
+ * once a workshop map is seen, are owned only while it is, and are recognized
+ * by their viewmodel pointer into this table (nothing repoints a tool row's
+ * viewmodel_path). A server without these models sends progs fallbacks; those
+ * are not recognized as tools. Order follows ws_tools. */
+static const struct {
+	const char *label;
+	const char *viewmodel;
+	int impulse;
+	int ammo_stat;
+	int ammo_max;
+} vr_weapon_menu_workshop_tools[] = {
+	{"GRAPPLE", "progs/workshop/v_grapple.mdl", 71, -1, 0},
+	{"PLATFORM GUN", "progs/workshop/v_platgun.mdl", 70, STAT_AMMO, 16},
+	{"LAVA SPRAYER", "progs/workshop/v_lavagun.mdl", 72, STAT_AMMO, 100}
 };
 
 typedef struct {
@@ -1472,6 +1492,25 @@ static const char *VR_WeaponMenu_CurrentModelPath (
 	return model->name;
 }
 
+static int VR_WeaponMenu_WorkshopTool (const vr_weapon_menu_entry_t *entry)
+{
+	for (int i = 0; i < (int)countof (vr_weapon_menu_workshop_tools); ++i)
+		if (entry->viewmodel_path == vr_weapon_menu_workshop_tools[i].viewmodel)
+			return i;
+	return -1;
+}
+
+/* The tool held in this viewmodel, or -1. Only while the workshop runs. */
+static int VR_WeaponMenu_HeldWorkshopTool (const char *path)
+{
+	if (!path || !CL_Workshop_Active ())
+		return -1;
+	for (int i = 0; i < (int)countof (vr_weapon_menu_workshop_tools); ++i)
+		if (!q_strcasecmp (path, vr_weapon_menu_workshop_tools[i].viewmodel))
+			return i;
+	return -1;
+}
+
 static qboolean VR_WeaponMenu_EntryMatchesSelector (
 	const vr_weapon_menu_entry_t *entry, int selector)
 {
@@ -1790,6 +1829,16 @@ static qboolean VR_WeaponMenu_EntryStatActive (const vr_weapon_menu_entry_t *ent
 static qboolean VR_WeaponMenu_EntryActive (const vr_weapon_menu_entry_t *entry,
 	const int *stats, size_t num_stats)
 {
+	const int tool = VR_WeaponMenu_WorkshopTool (entry);
+	const char *current = stats == cl.stats ?
+		VR_WeaponMenu_CurrentModelPath (stats, num_stats) : NULL;
+	/* A held tool leaves .weapon on the progs weapon; only the tool is held. */
+	const int held_tool = VR_WeaponMenu_HeldWorkshopTool (current);
+	if (held_tool >= 0)
+		return tool == held_tool;
+	if (tool >= 0)
+		return false;
+
 	const qboolean active = VR_WeaponMenu_EntryStatActive (entry, stats, num_stats);
 
 	if (active && stats == cl.stats && entry->model_path &&
@@ -1825,6 +1874,8 @@ static qboolean VR_WeaponMenu_EntryOwned (const vr_weapon_menu_entry_t *entry,
 	qboolean owned = false;
 	if (entry->source == VR_WEAPON_CATALOG_SOURCE_DISCOVERED)
 		return active;
+	if (VR_WeaponMenu_WorkshopTool (entry) >= 0)
+		return CL_Workshop_Active () != 0;
 	if (entry->owned_stat >= 0)
 	{
 		stat = entry->owned_stat == STAT_ITEMS ?
@@ -2300,6 +2351,61 @@ static int VR_WeaponMenu_AddDiscoveredEntry (int selector,
 	return (int)index;
 }
 
+/* Idempotent: rows survive leaving the workshop (unowned, so hidden) and are
+ * appended again after a game reload rebuilds the catalog. */
+static void VR_WeaponMenu_AddWorkshopTools (void)
+{
+	const vr_weapon_menu_catalog_t *catalog = VR_WeaponMenu_CurrentCatalog ();
+	qboolean present[countof (vr_weapon_menu_workshop_tools)] = {false};
+
+	if (!CL_Workshop_Active ())
+		return;
+	for (size_t i = 0; i < catalog->count; ++i)
+	{
+		const int tool = VR_WeaponMenu_WorkshopTool (&catalog->entries[i]);
+		if (tool >= 0)
+			present[tool] = true;
+	}
+	for (size_t tool = 0; tool < countof (vr_weapon_menu_workshop_tools); ++tool)
+	{
+		vr_weapon_menu_entry_t *entry;
+		size_t index;
+		int id;
+		if (present[tool])
+			continue;
+		if (!VR_WeaponMenu_EnsureMutableCatalogForDiscovery () ||
+			vr_weapon_menu_wwheel_catalog.count >= VR_WEAPON_MENU_MAX_ENTRIES)
+			return;
+		id = VR_WeaponMenu_AllocateStableID (&vr_weapon_menu_wwheel_catalog,
+			0x7fff0000 + vr_weapon_menu_workshop_tools[tool].impulse);
+		if (id < 0)
+			return;
+		index = vr_weapon_menu_wwheel_catalog.count;
+		entry = &vr_weapon_menu_wwheel_entries[index];
+		memset (entry, 0, sizeof (*entry));
+		vr_weapon_menu_held_models[index][0] = '\0';
+		vr_weapon_menu_schema_bitmasks[index] = 0;
+		entry->id = id;
+		entry->kind = VR_WEAPON_MENU_WEAPON;
+		/* Not STOCK: an authoritative schema hides stock guesses. */
+		entry->source = VR_WEAPON_CATALOG_SOURCE_PROFILE;
+		entry->label = vr_weapon_menu_workshop_tools[tool].label;
+		entry->model_path = vr_weapon_menu_workshop_tools[tool].viewmodel;
+		entry->viewmodel_path = vr_weapon_menu_workshop_tools[tool].viewmodel;
+		entry->model_scale = 1.0f;
+		entry->impulse = vr_weapon_menu_workshop_tools[tool].impulse;
+		/* No selector or stats: no identity peers among progs rows. */
+		entry->owned_stat = -1;
+		entry->active_stat = -1;
+		entry->ammo_stat = vr_weapon_menu_workshop_tools[tool].ammo_stat;
+		entry->ammo_max = vr_weapon_menu_workshop_tools[tool].ammo_max;
+		entry->ammo_max_stat = -1;
+		vr_weapon_menu_wwheel_catalog.count++;
+		VR_WeaponMenu_InvalidateModelSlot (&vr_weapon_menu_wwheel_catalog, index);
+		++vr_weapon_menu_catalog_serial;
+	}
+}
+
 void VR_WeaponMenu_ObserveActive (void)
 {
 	const int selector = cl.stats[STAT_ACTIVEWEAPON];
@@ -2307,10 +2413,15 @@ void VR_WeaponMenu_ObserveActive (void)
 	const vr_weapon_menu_catalog_t *catalog;
 	size_t index = 0;
 
-	if (cls.state != ca_connected || cls.signon != SIGNONS || selector == 0)
+	if (cls.state != ca_connected || cls.signon != SIGNONS)
+		return;
+	VR_WeaponMenu_AddWorkshopTools ();
+	if (selector == 0)
 		return;
 	model_path = VR_WeaponMenu_CurrentModelPath (cl.stats, MAX_CL_STATS);
-	if (!VR_WeaponMenu_ModelPathLooksWeapon (model_path))
+	/* A held tool is not a progs weapon to learn under the current selector. */
+	if (VR_WeaponMenu_HeldWorkshopTool (model_path) >= 0 ||
+		!VR_WeaponMenu_ModelPathLooksWeapon (model_path))
 		return;
 	catalog = VR_WeaponMenu_CurrentCatalog ();
 	vr_wheel_match_t match = VR_WeaponMenu_FindDiscoveredModel (catalog, selector, model_path, &index);
@@ -2360,7 +2471,8 @@ void VR_WeaponMenu_PreloadModels (void)
 		const vr_weapon_menu_entry_t *entry = &catalog->entries[i];
 		size_t alias_count;
 		const vr_weapon_menu_alias_t *aliases;
-		if (entry->kind != VR_WEAPON_MENU_WEAPON)
+		if (entry->kind != VR_WEAPON_MENU_WEAPON ||
+			(VR_WeaponMenu_WorkshopTool (entry) >= 0 && !CL_Workshop_Active ()))
 			continue;
 		VR_WeaponMenu_WarmModel (VR_WeaponMenu_EntryPreviewPath (entry, cl.stats, MAX_CL_STATS));
 		VR_WeaponMenu_WarmModel (VR_WeaponMenu_EntryViewmodel (entry, cl.stats, MAX_CL_STATS));
