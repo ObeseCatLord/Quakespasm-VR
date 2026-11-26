@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build and run the self-contained C fixtures that need no GPU, display, VR
 # runtime or game data. CI runs this on every push; it also works locally.
+# VULKAN_INCLUDE optionally names a Vulkan-Headers include directory.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,7 +34,7 @@ unset DISPLAY WAYLAND_DISPLAY XR_RUNTIME_JSON
 failed=()
 for name in "${fixtures[@]}"; do
 	if ! gcc -std=gnu11 -DUSE_SDL3 -D_GNU_SOURCE -ffunction-sections -fdata-sections -Wl,--gc-sections \
-		-IQuake -IWindows/SDL3/include -O1 -w -o "$out/$name" "tests/$name.c" -lm >"$out/$name.log" 2>&1; then
+		-IQuake -IWindows/SDL3/include ${VULKAN_INCLUDE:+-I"$VULKAN_INCLUDE"} -O1 -w -o "$out/$name" "tests/$name.c" -lm >"$out/$name.log" 2>&1; then
 		echo "FAIL (compile) $name"; cat "$out/$name.log"; failed+=("$name"); continue
 	fi
 	if (cd "$out" && timeout 60 "./$name") >"$out/$name.log" 2>&1; then

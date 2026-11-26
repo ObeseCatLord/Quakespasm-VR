@@ -14,8 +14,16 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
     - uses: actions/checkout@v6
+    - name: Fetch Vulkan headers
+      uses: actions/checkout@v6
+      with:
+        repository: KhronosGroup/Vulkan-Headers
+        ref: v1.4.341
+        path: vulkan-headers
     - name: Run fixtures
       run: tests/run_ci_fixtures.sh
+      env:
+        VULKAN_INCLUDE: ${{ github.workspace }}/vulkan-headers/include
 
   build:
     name: Build linux-x64 runtime

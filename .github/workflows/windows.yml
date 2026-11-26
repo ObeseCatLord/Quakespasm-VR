@@ -19,6 +19,9 @@ jobs:
     # used for releases.
     runs-on: windows-2022
     steps:
+    # Keep LF line endings, as in the git archive the release packages build from.
+    - name: Disable line-ending conversion
+      run: git config --global core.autocrlf false
     - uses: actions/checkout@v6
     - name: Install Vulkan SDK
       uses: jakoch/install-vulkan-sdk-action@v1.6.0
