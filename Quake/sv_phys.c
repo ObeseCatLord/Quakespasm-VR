@@ -12803,6 +12803,7 @@ void SV_Physics (void)
 	{
 		SV_Terrain_WormFrame ();
 		SV_Terrain_IceFrame ();
+		SV_Terrain_LavaFrame ();
 	}
 
 	// SV_CheckAllEnts ();

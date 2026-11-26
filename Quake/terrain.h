@@ -203,6 +203,18 @@ void SV_Terrain_IceEdited (const terrain_op_t *op);			   // after a logged edit:
 int	 SV_Terrain_PushOp (const terrain_op_t *op);			   // applies and logs any op kind (SV_Terrain_Edit builds sphere ops on it)
 int	 SV_Terrain_IceDrawCount (void);
 int	 SV_Terrain_IceDraw (int i, const terrain_mesh_t **mesh, float pos[3], float rot[9], float com[3]); // interpolated pose of a live body
+void SV_Terrain_LavaInit (void);
+void SV_Terrain_LavaReset (void);
+void SV_Terrain_LavaFrame (void); // once per server frame, after the worm
+typedef struct // read-only view of the lava particles for drawing (listen server only)
+{
+	int			 count;
+	const float *pos[3], *heat;
+	float		 radius;
+	int			 num_lights;
+	const float (*lights)[4]; // x y z radius
+} terrain_lava_view_t;
+const terrain_lava_view_t *SV_Terrain_LavaView (void); // NULL when nothing to draw
 void R_Terrain_Update (void);
 
 #endif

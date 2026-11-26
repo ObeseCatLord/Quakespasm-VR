@@ -613,5 +613,6 @@ static void R_DrawTerrainTextured (cb_context_t *cbx)
 		vulkan_globals.vk_cmd_draw (cbx->cb, draw->num_verts, 1, 0, 0);
 	}
 	R_TerrainProps_Draw (cbx);
+	R_TerrainLava_Draw (cbx);
 	R_EndDebugUtilsLabel (cbx);
 }

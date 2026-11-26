@@ -70,6 +70,31 @@ aim), `terrain_ice_cut`, `terrain_ice_dummy`, `terrain_ice_ramp`, `terrain_ice_t
 `terrain_ice_*` (`bodies`, `restitution`, `friction`, `damage`, `max`, `shell`, `sleep`).
 Test: `tests/terrain_ice.gdb`. Code: `Quake/sv_terrain_ice.c`, `Quake/terrain_ice.c`.
 
+### Particle lava (first pass)
+
+`tests/drg-lava.sh`: hold G to spray. A pool of up to 4096 particles (`terrain_lava_cap`) simulated
+on the server, one fixed 1/72 s step per frame at most: pairwise viscosity, double-density
+relaxation (Clavet et al. 2005) on a hash grid, collision with the terrain field, friction and a
+short cling so lava hangs on walls and then drips. Each particle has heat: it cools (faster on
+terrain), thickens as it cools and freezes when cold. Heat spent on contact fills a counter per
+terrain cell; a full counter digs ONE sphere through `SV_Terrain_Edit`, at most
+`terrain_lava_ops_rate` (4) per second per emitter stream. Frozen particles piling up in a cell
+leave a fill (dark rock). Hot particles are drawn as fullbright blobs coloured by heat, and up to 8
+dynamic lights follow the hottest clusters.
+
+Commands: `+terrain_lava` / `-terrain_lava`, `terrain_lava_emit x y z vx vy vz rate seconds [spread]`,
+`terrain_lava_clear`, `terrain_lava_stop`, `terrain_lava_info` (counts, max speed, mean neighbours,
+step cost split into neighbour search, relaxation and terrain), and test helpers
+`terrain_lava_block n x y z` and `terrain_lava_trench x y z dirx diry length radius`. Cvars start
+with `terrain_lava_` (`cap`, `density`, `stiffness`, `near_stiffness`, `cohesion`, `viscosity`,
+`friction`, `stick`, `cooling`, `contact_cooling`, `melt`, `ops_rate`, `damage`). Code:
+`Quake/sv_terrain_lava.c` (simulation, compiles alone with `-DLAVA_STANDALONE`),
+`Quake/r_terrain_lava.c` (drawing and lights). Offline check:
+`gcc -O2 -std=c11 -IQuake tests/terrain_lava_fixture.c Quake/terrain.c -lm && ./a.out` prints
+`TERRAIN_LAVA_FIXTURE_PASSED`; in the engine, `tests/terrain_lava.gdb` and `tests/terrain_lava_melt.gdb`.
+Not done: collision with map brushes and entities, a fluid surface, netsync (draws from server
+memory, listen server only).
+
 ### Spider crawlers
 
 The crawler code drives any walking monster the loaded `progs.dat` has. With the same jam pack

@@ -882,6 +882,8 @@ void R_InitParticles (void);
 
 void R_Terrain_Init (void);
 void R_Terrain_AddEntities (void);
+void R_TerrainLava_Lights (void);
+void R_TerrainLava_Draw (cb_context_t *cbx);
 void R_Terrain_NewMap (void);
 void R_DrawTerrain (cb_context_t *cbx);
 void R_DrawParticles (cb_context_t *cbx);
