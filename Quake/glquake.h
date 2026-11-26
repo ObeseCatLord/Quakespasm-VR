@@ -569,6 +569,8 @@ typedef struct
 	vulkan_pipeline_t		 debug_lines_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 terrain_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 terrain_tex_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
+	vulkan_pipeline_t		 lava_solid_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT]; // r_terrain_lava.c
+	vulkan_pipeline_t		 lava_soft_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 md5_debug_pipeline[MAIN_RENDER_PASS_VARIANT_COUNT];
 	vulkan_pipeline_t		 update_lightmap_pipeline;
 	vulkan_pipeline_t		 update_lightmap_rt_pipeline;

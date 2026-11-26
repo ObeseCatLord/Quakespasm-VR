@@ -40,6 +40,7 @@ shaders = [
     'Shaders/basic_notex.frag',
     'Shaders/terrain.vert',
     'Shaders/terrain.frag',
+    'Shaders/lava.frag',
     'Shaders/draw_pic.frag',
     'Shaders/draw_pic_alphatest.frag',
     'Shaders/draw_pic_xbr.frag',

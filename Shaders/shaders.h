@@ -41,6 +41,7 @@ DECLARE_SHADER_SPV (basic_notex_frag);
 DECLARE_SHADER_SPV (terrain_vert);
 DECLARE_SHADER_SPV (terrain_stereo_vert);
 DECLARE_SHADER_SPV (terrain_frag);
+DECLARE_SHADER_SPV (lava_frag);
 DECLARE_SHADER_SPV (basic_notex_ui_frag);
 DECLARE_SHADER_SPV (draw_pic_frag);
 DECLARE_SHADER_SPV (draw_pic_ui_frag);

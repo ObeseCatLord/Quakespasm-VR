@@ -22,6 +22,7 @@
 #include <string.h>
 #include <time.h>
 #include "terrain.h"
+#include "terrain_lava.h"
 #define Con_Printf printf
 static double LavaNow (void)
 {
@@ -32,6 +33,7 @@ static double LavaNow (void)
 #else
 #include "quakedef.h"
 #include "terrain.h"
+#include "terrain_lava.h"
 static double LavaNow (void)
 {
 	return Sys_DoubleTime () * 1e3;
@@ -49,6 +51,13 @@ static double LavaNow (void)
 #define LAVA_EMITTERS	16
 #define LAVA_CELLS		2048
 #define LAVA_MAX_LIGHTS 8
+#define LAVA_SLEEP_STEPS 30	  // steps within LAVA_SLEEP_DIST of one spot before a particle sleeps
+#define LAVA_SLEEP_DIST	 2.0f
+#define LAVA_SLEEP_SPEED 25.0f
+#define LAVA_WAKE_SPEED	 30.0f // an awake neighbour this fast wakes a sleeper
+#define LAVA_STEAM_RING	 256
+#define LAVA_REGION_BITS 18
+#define LAVA_REGION_WORDS (1 << (LAVA_REGION_BITS - 5))
 #define LAVA_PAIRS_PER	40 // pair capacity per particle; denser clumps drop the extra pairs
 
 typedef struct
@@ -62,9 +71,12 @@ typedef struct
 	float melt, melt_threshold, dig_radius, ops_rate;
 	float fill_count, fill_radius;
 	float vmax;
+	int	  sleep; // 0 disables sleeping
+	float crust; // extra heat per second a settled particle loses at the surface of a pool
 } lava_params_t;
 
 static lava_params_t P;
+
 
 typedef struct
 {
@@ -98,12 +110,18 @@ static struct
 	float  *heat, *rho, *rhon, *wet;
 	float  *sp[3], *sd, *gp[3], *gn[3]; // gp/gn: where the surface normal was last computed, and it // where the terrain was last sampled and the distance found there
 	uint8_t *stream, *lost;
+	uint8_t *asleep, *wake, *touch, *calm; // sleeping particles are fixed boundary: no relaxation, no terrain sampling
+	float  *anc[3];			// where the calm count started
 	uint64_t *ckey, *skey; // cell key per particle, and in grid order
 	float  *sx[3];			// positions in grid order, for a sequential inner loop
 	uint32_t *bucket;
 	int	   *sorted, *cstart;
 	pair_t *pairs;
-	int		npairs, cap_pairs, pairs_dropped;
+	int		npairs, npairs_all, cap_pairs, pairs_dropped, nasleep;
+	uint8_t *sasleep;		// asleep flag in grid order
+	int	   *act, nact;		// particles the grid is built from: the awake and the sleepers beside them
+	uint32_t *reg_own, *reg_near; // bitsets over hashed cells: with an awake particle, and next to one
+	int		ops_seen;
 	cell_t	cells[LAVA_CELLS];
 	float	tokens[LAVA_STREAMS];
 	emitter_t em[LAVA_EMITTERS];
@@ -119,11 +137,16 @@ static struct
 	float	first_dig[3], first_before, first_after;
 	int		have_first;
 	// lights
-	float	lights[LAVA_MAX_LIGHTS][4];
+	float	lights[LAVA_MAX_LIGHTS][4], light_w[LAVA_MAX_LIGHTS];
 	int		num_lights;
 	int		next_light_step;
 	float	rho0;
 	float	rho0_for_spacing, rho0_for_h;
+	// steam events for the client (ring), and the accumulated heat that turns into puffs
+	terrain_lava_steam_event_t steam[LAVA_STEAM_RING];
+	unsigned steam_seq;
+	float	steam_acc;
+	int		steam_this_step;
 } L;
 
 static float Rand (void)
@@ -162,6 +185,8 @@ static void Lava_Defaults (void)
 	P.fill_count = 10.0f;
 	P.fill_radius = 11.0f;
 	P.vmax = 1100.0f;
+	P.sleep = 1;
+	P.crust = 0.03f;
 }
 
 static void Lava_Free (void)
@@ -176,6 +201,8 @@ static void Lava_Free (void)
 		free (L.gp[a]);
 		free (L.gn[a]);
 		free (L.sx[a]);
+		free (L.anc[a]);
+		L.anc[a] = NULL;
 		L.sx[a] = NULL;
 		L.x[a] = L.q[a] = L.v[a] = L.dq[a] = L.sp[a] = L.gp[a] = L.gn[a] = NULL;
 	}
@@ -186,6 +213,17 @@ static void Lava_Free (void)
 	free (L.sd);
 	free (L.stream);
 	free (L.lost);
+	free (L.asleep);
+	free (L.wake);
+	free (L.touch);
+	free (L.calm);
+	free (L.sasleep);
+	free (L.act);
+	free (L.reg_own);
+	free (L.reg_near);
+	L.act = NULL;
+	L.reg_own = L.reg_near = NULL;
+	L.asleep = L.wake = L.touch = L.calm = L.sasleep = NULL;
 	free (L.ckey);
 	free (L.skey);
 	L.skey = NULL;
@@ -217,6 +255,7 @@ static void Lava_Alloc (int cap)
 		L.gp[a] = (float *)calloc (cap, sizeof (float));
 		L.gn[a] = (float *)calloc (cap, sizeof (float));
 		L.sx[a] = (float *)calloc (cap, sizeof (float));
+		L.anc[a] = (float *)calloc (cap, sizeof (float));
 	}
 	L.heat = (float *)calloc (cap, sizeof (float));
 	L.rho = (float *)calloc (cap, sizeof (float));
@@ -225,6 +264,14 @@ static void Lava_Alloc (int cap)
 	L.sd = (float *)calloc (cap, sizeof (float));
 	L.stream = (uint8_t *)calloc (cap, 1);
 	L.lost = (uint8_t *)calloc (cap, 1);
+	L.asleep = (uint8_t *)calloc (cap, 1);
+	L.wake = (uint8_t *)calloc (cap, 1);
+	L.touch = (uint8_t *)calloc (cap, 1);
+	L.calm = (uint8_t *)calloc (cap, 1);
+	L.sasleep = (uint8_t *)calloc (cap, 1);
+	L.act = (int *)calloc (cap, sizeof (int));
+	L.reg_own = (uint32_t *)calloc (LAVA_REGION_WORDS, sizeof (uint32_t));
+	L.reg_near = (uint32_t *)calloc (LAVA_REGION_WORDS, sizeof (uint32_t));
 	L.ckey = (uint64_t *)calloc (cap, sizeof (uint64_t));
 	L.skey = (uint64_t *)calloc (cap, sizeof (uint64_t));
 	L.bucket = (uint32_t *)calloc (cap, sizeof (uint32_t));
@@ -269,6 +316,9 @@ static void Lava_ClearAll (void)
 	L.acc_time = 0;
 	L.sim_time = 0;
 	L.pairs_dropped = 0;
+	L.nasleep = 0;
+	L.ops_seen = 0;
+	L.steam_acc = 0.0f;
 }
 
 /* ---- terrain helpers ---- */
@@ -323,6 +373,9 @@ static int Spawn (const float pos[3], const float vel[3], float heat, int stream
 	L.gp[0][i] = pos[0] + 100000.0f;
 	L.stream[i] = (uint8_t)stream;
 	L.lost[i] = 0;
+	L.asleep[i] = L.wake[i] = L.touch[i] = L.calm[i] = 0;
+	for (int a = 0; a < 3; ++a)
+		L.anc[a][i] = pos[a];
 	++L.emitted;
 	return 1;
 }
@@ -412,6 +465,33 @@ static int LavaFillBlocked (const float c[3], float r)
 static int LavaFillBlocked (const float c[3], float r);
 #endif
 
+// The terrain changed near c: cached clearances are stale there, and sleepers on it must get up.
+// radius < 0 means everywhere.
+static void TerrainChangedNear (const float c[3], float radius)
+{
+	const float r2 = radius * radius;
+	for (int i = 0; i < L.n; ++i)
+	{
+		if (radius >= 0.0f)
+		{
+			const float dx = L.x[0][i] - c[0], dy = L.x[1][i] - c[1], dz = L.x[2][i] - c[2];
+			if (dx * dx + dy * dy + dz * dz > r2)
+				continue;
+		}
+		L.sp[0][i] += 100000.0f;
+		L.wake[i] = 1;
+	}
+}
+
+static void SteamEvent (const float pos[3], const float nrm[3], float strength)
+{
+	terrain_lava_steam_event_t *e = &L.steam[L.steam_seq % LAVA_STEAM_RING];
+	memcpy (e->pos, pos, sizeof (e->pos));
+	memcpy (e->nrm, nrm, sizeof (e->nrm));
+	e->strength = strength;
+	++L.steam_seq;
+}
+
 static void MeltDeposit (const float contact[3], const float n[3], float energy, int stream)
 {
 	cell_t *c = Cell (contact, 1);
@@ -438,6 +518,7 @@ static void MeltDeposit (const float contact[3], const float n[3], float energy,
 	float center[3];
 	for (int a = 0; a < 3; ++a)
 		center[a] = c->pos[a] * inv - c->nrm[a] * nl * (P.dig_radius * 0.35f); // into the surface
+	const float nrm[3] = {c->nrm[0] * nl, c->nrm[1] * nl, c->nrm[2] * nl};
 	const float before = Sample (center);
 	const int	changed = SV_Terrain_Edit (TERRAIN_OP_DIG, center, P.dig_radius);
 	if (changed > 0)
@@ -454,9 +535,15 @@ static void MeltDeposit (const float contact[3], const float n[3], float energy,
 	c->e = 0.0f;
 	memset (c->pos, 0, sizeof (c->pos));
 	memset (c->nrm, 0, sizeof (c->nrm));
-	// the terrain moved: every particle's cached clearance is stale
-	for (int i = 0; i < L.n; ++i)
-		L.sp[0][i] += 100000.0f;
+	// the terrain moved: cached clearances near the hole are stale and sleepers there wake
+	if (changed > 0)
+	{
+		TerrainChangedNear (center, P.dig_radius + 2.0f * P.radius + P.h);
+		float at[3]; // the surface the hole opened on, not its centre
+		for (int a = 0; a < 3; ++a)
+			at[a] = center[a] + nrm[a] * P.dig_radius * 0.6f;
+		SteamEvent (at, nrm, 3.0f);
+	}
 }
 
 static void FreezeDeposit (const float p[3], const float n[3])
@@ -489,8 +576,7 @@ static void FreezeDeposit (const float p[3], const float n[3])
 	c->fz = 0.0f;
 	memset (c->fpos, 0, sizeof (c->fpos));
 	memset (c->fnrm, 0, sizeof (c->fnrm));
-	for (int i = 0; i < L.n; ++i)
-		L.sp[0][i] += 100000.0f;
+	TerrainChangedNear (center, P.fill_radius + 2.0f * P.radius + P.h);
 }
 
 /* ---- neighbour search ---- */
@@ -505,16 +591,60 @@ static inline uint64_t CellKey (int cx, int cy, int cz)
 	return ((uint64_t)(cx & 0xfffff) << 40) | ((uint64_t)(cy & 0xfffff) << 20) | (uint64_t)(cz & 0xfffff);
 }
 
+static inline uint32_t RegionBit (uint64_t key)
+{
+	return (uint32_t)((key * 0xD6E8FEB86659FD93ull) >> (64 - LAVA_REGION_BITS));
+}
+
+static int build_all; // statistics only: put every sleeper in the grid and wake nothing
+
 static void BuildPairs (void)
 {
 	const int	n = L.n;
 	const float inv_h = 1.0f / P.h, h2 = P.h * P.h;
-	memset (L.cstart, 0, (LAVA_GRID_SIZE + 1) * sizeof (int));
-	for (int i = 0; i < n; ++i)
+	// Who goes in the grid: every awake particle, and the sleepers within a cell of one. A sleeper
+	// with nothing awake near it has no pair to find, so it costs nothing here.
+	int na = 0;
 	{
-		const int cx = (int)floorf (L.q[0][i] * inv_h), cy = (int)floorf (L.q[1][i] * inv_h), cz = (int)floorf (L.q[2][i] * inv_h);
-		const uint64_t k = CellKey (cx, cy, cz);
-		L.ckey[i] = k;
+		memset (L.reg_own, 0, LAVA_REGION_WORDS * sizeof (uint32_t));
+		memset (L.reg_near, 0, LAVA_REGION_WORDS * sizeof (uint32_t));
+		int nawake = 0;
+		for (int i = 0; i < n; ++i)
+		{
+			if (L.asleep[i])
+				continue;
+			++nawake;
+			const int cx = (int)floorf (L.q[0][i] * inv_h), cy = (int)floorf (L.q[1][i] * inv_h), cz = (int)floorf (L.q[2][i] * inv_h);
+			const uint64_t k = CellKey (cx, cy, cz);
+			L.ckey[i] = k;
+			L.act[na++] = i;
+			const uint32_t b = RegionBit (k);
+			if (L.reg_own[b >> 5] & (1u << (b & 31)))
+				continue;
+			L.reg_own[b >> 5] |= 1u << (b & 31);
+			for (int dz = -1; dz <= 1; ++dz)
+				for (int dy = -1; dy <= 1; ++dy)
+					for (int dx = -1; dx <= 1; ++dx)
+					{
+						const uint32_t nb = RegionBit (CellKey (cx + dx, cy + dy, cz + dz));
+						L.reg_near[nb >> 5] |= 1u << (nb & 31);
+					}
+		}
+		if (nawake < n)
+			for (int i = 0; i < n; ++i)
+				if (L.asleep[i])
+				{
+					const uint32_t b = RegionBit (L.ckey[i]);
+					if (build_all || (L.reg_near[b >> 5] & (1u << (b & 31))))
+						L.act[na++] = i;
+				}
+	}
+	L.nact = na;
+	memset (L.cstart, 0, (LAVA_GRID_SIZE + 1) * sizeof (int));
+	for (int a = 0; a < na; ++a)
+	{
+		const int	  i = L.act[a];
+		const uint64_t k = L.ckey[i];
 		const uint32_t b = BucketOf (k);
 		L.bucket[i] = b;
 		++L.cstart[b + 1];
@@ -522,11 +652,13 @@ static void BuildPairs (void)
 	for (int b = 0; b < LAVA_GRID_SIZE; ++b)
 		L.cstart[b + 1] += L.cstart[b];
 	// scatter into grid order using the start offsets as running cursors, then restore them
-	for (int i = 0; i < n; ++i)
+	for (int a = 0; a < na; ++a)
 	{
+		const int i = L.act[a];
 		const int s = L.cstart[L.bucket[i]]++;
 		L.sorted[s] = i;
 		L.skey[s] = L.ckey[i];
+		L.sasleep[s] = L.asleep[i];
 		L.sx[0][s] = L.q[0][i];
 		L.sx[1][s] = L.q[1][i];
 		L.sx[2][s] = L.q[2][i];
@@ -537,16 +669,18 @@ static void BuildPairs (void)
 
 	static const int stencil[13][3] = {{1, 0, 0},  {-1, 1, 0}, {0, 1, 0},	{1, 1, 0}, {-1, -1, 1}, {0, -1, 1}, {1, -1, 1},
 									   {-1, 0, 1}, {0, 0, 1},  {1, 0, 1}, {-1, 1, 1}, {0, 1, 1},	{1, 1, 1}};
-	int				  np = 0;
+	int				  np = 0, nall = 0;
 	const int		  cap = L.cap_pairs;
+	const float		  wake2 = LAVA_WAKE_SPEED * LAVA_WAKE_SPEED;
 	uint64_t		  last_key = ~0ull;
 	uint64_t		  skey[14];
 	int				  slo[14], shi[14];
-	for (int s = 0; s < n; ++s)
+	for (int s = 0; s < na; ++s)
 	{
 		const int	i = L.sorted[s];
 		const float xi = L.sx[0][s], yi = L.sx[1][s], zi = L.sx[2][s];
 		const uint64_t ki = L.skey[s];
+		const int	   si = L.sasleep[s];
 		if (ki != last_key)
 		{
 			// the cell's own bucket and its 13 forward neighbours: one lookup per cell run, not per particle
@@ -577,6 +711,17 @@ static void BuildPairs (void)
 				const float r2 = dx * dx + dy * dy + dz * dz;
 				if (r2 >= h2)
 					continue;
+				++nall;
+				const int sj = L.sasleep[m];
+				if (si | sj)
+				{
+					if (si & sj)
+						continue; // two sleepers: nothing to compute
+					const int a = si ? L.sorted[m] : i, b = si ? i : L.sorted[m]; // a is awake, b sleeps
+					const float sp2 = L.v[0][a] * L.v[0][a] + L.v[1][a] * L.v[1][a] + L.v[2][a] * L.v[2][a];
+					if (sp2 > wake2 && !build_all)
+						L.wake[b] = 1;
+				}
 				if (np >= cap)
 				{
 					++L.pairs_dropped;
@@ -608,6 +753,7 @@ static void BuildPairs (void)
 		}
 	}
 	L.npairs = np;
+	L.npairs_all = nall;
 }
 
 /* ---- relaxation ---- */
@@ -637,15 +783,28 @@ static void Relax (float dt)
 			iy -= imp * u[1];
 			iz -= imp * u[2];
 		}
-		L.v[0][i] += ix;
-		L.v[1][i] += iy;
-		L.v[2][i] += iz;
-		L.v[0][j] -= ix;
-		L.v[1][j] -= iy;
-		L.v[2][j] -= iz;
+		if (!L.asleep[i])
+		{
+			L.v[0][i] += ix;
+			L.v[1][i] += iy;
+			L.v[2][i] += iz;
+		}
+		if (!L.asleep[j])
+		{
+			L.v[0][j] -= ix;
+			L.v[1][j] -= iy;
+			L.v[2][j] -= iz;
+		}
 	}
 	for (int i = 0; i < n; ++i)
 	{
+		if (L.asleep[i])
+		{
+			L.q[0][i] = L.x[0][i]; // a sleeper keeps its density from when it lay down
+			L.q[1][i] = L.x[1][i];
+			L.q[2][i] = L.x[2][i];
+			continue;
+		}
 		L.q[0][i] = L.x[0][i] + dt * L.v[0][i];
 		L.q[1][i] = L.x[1][i] + dt * L.v[1][i];
 		L.q[2][i] = L.x[2][i] + dt * L.v[2][i];
@@ -655,10 +814,16 @@ static void Relax (float dt)
 	for (int k = 0; k < np; ++k)
 	{
 		const float w = 1.0f - pr[k].q, w2 = w * w, w3 = w2 * w;
-		L.rho[pr[k].i] += w2;
-		L.rho[pr[k].j] += w2;
-		L.rhon[pr[k].i] += w3;
-		L.rhon[pr[k].j] += w3;
+		if (!L.asleep[pr[k].i])
+		{
+			L.rho[pr[k].i] += w2;
+			L.rhon[pr[k].i] += w3;
+		}
+		if (!L.asleep[pr[k].j])
+		{
+			L.rho[pr[k].j] += w2;
+			L.rhon[pr[k].j] += w3;
+		}
 	}
 	const float rho0 = L.rho0 * P.rest, dt2 = dt * dt, h = P.h;
 	for (int k = 0; k < np; ++k)
@@ -670,21 +835,40 @@ static void Relax (float dt)
 			pi *= P.cohesion;
 		if (pj < 0.0f)
 			pj *= P.cohesion;
-		const float pni = P.near_stiff * L.rhon[i], pnj = P.near_stiff * L.rhon[j];
+		float		pni = P.near_stiff * L.rhon[i], pnj = P.near_stiff * L.rhon[j];
+		const int	si = L.asleep[i], sj = L.asleep[j];
+		if (sj) // a sleeper pushes back as hard as it is pushed
+		{
+			pj = pi;
+			pnj = pni;
+		}
+		else if (si)
+		{
+			pi = pj;
+			pni = pnj;
+		}
 		float		m = 0.5f * dt2 * ((pi + pj) * w + (pni + pnj) * w * w);
 		const float r = pr[k].q * h;
 		m = LCLAMP (-0.25f * r, m, 0.2f * h);
 		const float *u = pr[k].u;
-		L.dq[0][i] -= m * u[0];
-		L.dq[1][i] -= m * u[1];
-		L.dq[2][i] -= m * u[2];
-		L.dq[0][j] += m * u[0];
-		L.dq[1][j] += m * u[1];
-		L.dq[2][j] += m * u[2];
+		if (!si)
+		{
+			L.dq[0][i] -= m * u[0];
+			L.dq[1][i] -= m * u[1];
+			L.dq[2][i] -= m * u[2];
+		}
+		if (!sj)
+		{
+			L.dq[0][j] += m * u[0];
+			L.dq[1][j] += m * u[1];
+			L.dq[2][j] += m * u[2];
+		}
 	}
 	const float maxd = 0.45f * P.h;
 	for (int i = 0; i < n; ++i)
 	{
+		if (L.asleep[i])
+			continue;
 		float dx = L.dq[0][i], dy = L.dq[1][i], dz = L.dq[2][i];
 		const float l2 = dx * dx + dy * dy + dz * dz;
 		if (l2 > maxd * maxd)
@@ -702,12 +886,62 @@ static void Relax (float dt)
 
 /* ---- terrain collision, heat, contact response ---- */
 
+#define STEAM_PER_ENERGY 0.004f // steam puffs per unit of melt energy spent on contact
+
+static void SteamFromContact (const float pt[3], const float n[3], float energy)
+{
+	L.steam_acc = LMIN (L.steam_acc + energy * STEAM_PER_ENERGY, 3.0f);
+	if (L.steam_acc >= 1.0f && L.steam_this_step < 3)
+	{
+		L.steam_acc -= 1.0f;
+		++L.steam_this_step;
+		SteamEvent (pt, n, 1.0f);
+	}
+}
+
+// A sleeper does no relaxation and no terrain sampling, but it still cools, melts what it lies on
+// and freezes. Done every fourth step with four steps' worth of time.
+static void SleeperHeat (int i, float dt)
+{
+	if (((i + L.steps) & 3) != 0)
+		return;
+	const float dt4 = 4.0f * dt, r = P.radius;
+	const float cold = 1.0f - L.heat[i];
+	float		n[3] = {0.0f, 0.0f, 1.0f};
+	L.heat[i] -= P.cool_air * dt4;
+	// the skin of a settled pool (few neighbours, so a low density) crusts over first
+	const float exposure = LCLAMP (0.0f, 1.25f - L.rho[i] / LMAX (1e-3f, L.rho0 * P.rest), 1.0f);
+	L.heat[i] -= P.crust * exposure * dt4;
+	if (L.touch[i])
+	{
+		for (int a = 0; a < 3; ++a)
+			n[a] = L.gn[a][i];
+		L.heat[i] -= P.cool_contact * (0.4f + cold) * dt4;
+		const float contact_pt[3] = {L.x[0][i] - n[0] * r, L.x[1][i] - n[1] * r, L.x[2][i] - n[2] * r};
+		const float e = LMAX (0.0f, L.heat[i]) * P.melt * 10.0f * dt4;
+		MeltDeposit (contact_pt, n, e, L.stream[i]);
+		SteamFromContact (contact_pt, n, e);
+	}
+	if (L.heat[i] < P.freeze && L.heat[i] >= 0.0f)
+	{
+		const float p[3] = {L.x[0][i], L.x[1][i], L.x[2][i]};
+		FreezeDeposit (p, n);
+		L.heat[i] = -1.0f;
+		++L.frozen;
+	}
+}
+
 static void Collide (float dt)
 {
 	const float r = P.radius, touch = r + 1.5f;
 	int			touching = 0;
 	for (int i = 0; i < L.n; ++i)
 	{
+		if (L.asleep[i])
+		{
+			SleeperHeat (i, dt);
+			continue;
+		}
 		float p[3] = {L.q[0][i], L.q[1][i], L.q[2][i]};
 		const float mx = p[0] - L.sp[0][i], my = p[1] - L.sp[1][i], mz = p[2] - L.sp[2][i];
 		const float moved = sqrtf (mx * mx + my * my + mz * mz);
@@ -783,6 +1017,7 @@ static void Collide (float dt)
 		float v[3] = {(p[0] - L.x[0][i]) / dt, (p[1] - L.x[1][i]) / dt, (p[2] - L.x[2][i]) / dt};
 		const float cold = 1.0f - L.heat[i];
 		L.heat[i] -= P.cool_air * dt;
+		L.touch[i] = (uint8_t)contact;
 		if (contact)
 		{
 			++touching;
@@ -805,6 +1040,7 @@ static void Collide (float dt)
 			const float contact_pt[3] = {p[0] - n[0] * dd, p[1] - n[1] * dd, p[2] - n[2] * dd};
 			const float e = L.heat[i] * P.melt * 10.0f * dt; // hot lava melts at a rate set by its heat
 			MeltDeposit (contact_pt, n, e, L.stream[i]);
+			SteamFromContact (contact_pt, n, e);
 		}
 		else
 			L.wet[i] = LMAX (0.0f, L.wet[i] - 2.0f * dt);
@@ -825,12 +1061,35 @@ static void Collide (float dt)
 			v[1] *= s;
 			v[2] *= s;
 		}
+		// calm for long enough: lie down (fixed in place, out of the relaxation) till something wakes it
+		if (P.sleep && L.heat[i] >= 0.0f)
+		{
+			const float ax = p[0] - L.anc[0][i], ay = p[1] - L.anc[1][i], az = p[2] - L.anc[2][i];
+			if (ax * ax + ay * ay + az * az > LAVA_SLEEP_DIST * LAVA_SLEEP_DIST)
+			{
+				L.anc[0][i] = p[0];
+				L.anc[1][i] = p[1];
+				L.anc[2][i] = p[2];
+				L.calm[i] = 0;
+			}
+			else if (L.calm[i] < 255)
+				++L.calm[i];
+			if (L.calm[i] >= LAVA_SLEEP_STEPS && sp2 < LAVA_SLEEP_SPEED * LAVA_SLEEP_SPEED && (contact || L.sd[i] < 40.0f))
+			{
+				L.asleep[i] = 1;
+				v[0] = v[1] = v[2] = 0.0f;
+				L.ckey[i] = CellKey ((int)floorf (p[0] * (1.0f / P.h)), (int)floorf (p[1] * (1.0f / P.h)), (int)floorf (p[2] * (1.0f / P.h)));
+			}
+		}
 		L.v[0][i] = v[0];
 		L.v[1][i] = v[1];
 		L.v[2][i] = v[2];
 		L.x[0][i] = p[0];
 		L.x[1][i] = p[1];
 		L.x[2][i] = p[2];
+		L.q[0][i] = p[0];
+		L.q[1][i] = p[1];
+		L.q[2][i] = p[2];
 	}
 	L.last_touch = touching;
 }
@@ -860,6 +1119,15 @@ static void Compact (void)
 			L.sd[i] = L.sd[last];
 			L.stream[i] = L.stream[last];
 			L.lost[i] = L.lost[last];
+			L.asleep[i] = L.asleep[last];
+			L.wake[i] = L.wake[last];
+			L.touch[i] = L.touch[last];
+			L.calm[i] = L.calm[last];
+			L.rho[i] = L.rho[last];
+			L.ckey[i] = L.ckey[last];
+			L.rhon[i] = L.rhon[last];
+			for (int a = 0; a < 3; ++a)
+				L.anc[a][i] = L.anc[a][last];
 		}
 	}
 }
@@ -911,21 +1179,70 @@ static void UpdateLights (void)
 				best = b;
 		if (best < 0)
 			break;
+		L.light_w[L.num_lights] = bins[best].w; // heat summed over the particles in the bin
 		float *o = L.lights[L.num_lights++];
 		for (int a = 0; a < 3; ++a)
 			o[a] = bins[best].p[a] / bins[best].w;
-		o[3] = LMIN (320.0f, 110.0f + 16.0f * sqrtf (bins[best].w));
+		o[3] = LMIN (200.0f, 60.0f + 11.0f * sqrtf (bins[best].w));
 		bins[best].w = 0.0f;
 	}
 }
 
 /* ---- the step ---- */
 
+#ifdef LAVA_STANDALONE
+static void Lava_ExternalEdits (void)
+{
+}
+#else
+// Edits made by anything else (the axe, explosions): sleepers near them get up. Ops are read back
+// from the server's op log, which also holds this file's own digs and fills (a harmless repeat).
+static void Lava_ExternalEdits (void)
+{
+	const terrain_op_t *ops;
+	const int			num = SV_Terrain_OpLog (&ops);
+	if (num < L.ops_seen)
+		L.ops_seen = 0; // log restarted: a new terrain
+	if (num - L.ops_seen > 64 || !terrain_active)
+	{
+		const float none[3] = {0, 0, 0};
+		TerrainChangedNear (none, -1.0f);
+		L.ops_seen = num;
+		return;
+	}
+	for (; L.ops_seen < num; ++L.ops_seen)
+	{
+		const terrain_op_t *op = &ops[L.ops_seen];
+		float				c[3];
+		if (op->kind != TERRAIN_OP_DIG && op->kind != TERRAIN_OP_FILL)
+		{
+			TerrainChangedNear (c, -1.0f); // detach and stamp ops move whole bricks
+			continue;
+		}
+		for (int a = 0; a < 3; ++a)
+			c[a] = (float)terrain_active->origin[a] + (float)op->center[a] * TERRAIN_CELL / TERRAIN_SUB;
+		TerrainChangedNear (c, (float)op->radius * TERRAIN_CELL / TERRAIN_SUB + 2.0f * P.radius + P.h);
+	}
+}
+#endif
+
 static void Lava_Step (void)
 {
 	const float dt = P.dt;
 	const double t0 = LavaNow ();
 	L.sim_time += dt;
+	L.steam_this_step = 0;
+	for (int i = 0; i < L.n; ++i) // things that woke a sleeper last step take effect now
+		if (L.wake[i])
+		{
+			L.wake[i] = 0;
+			L.asleep[i] = 0;
+			L.calm[i] = 0;
+			L.anc[0][i] = L.x[0][i];
+			L.anc[1][i] = L.x[1][i];
+			L.anc[2][i] = L.x[2][i];
+		}
+	Lava_ExternalEdits ();
 	for (int s = 0; s < LAVA_STREAMS; ++s)
 		L.tokens[s] = LMIN (2.0f, L.tokens[s] + P.ops_rate * dt);
 	Lava_Emitters (dt);
@@ -938,6 +1255,8 @@ static void Lava_Step (void)
 	float maxv2 = 0.0f;
 	for (int i = 0; i < L.n; ++i)
 	{
+		if (L.asleep[i])
+			continue;
 		L.v[2][i] -= P.gravity * dt;
 		L.q[0][i] = L.x[0][i] + dt * L.v[0][i];
 		L.q[1][i] = L.x[1][i] + dt * L.v[1][i];
@@ -951,11 +1270,14 @@ static void Lava_Step (void)
 	Collide (dt);
 	Compact ();
 	const double t4 = LavaNow ();
+	int asleep = 0;
 	for (int i = 0; i < L.n; ++i)
 	{
 		const float s2 = L.v[0][i] * L.v[0][i] + L.v[1][i] * L.v[1][i] + L.v[2][i] * L.v[2][i];
 		maxv2 = LMAX (maxv2, s2);
+		asleep += L.asleep[i];
 	}
+	L.nasleep = asleep;
 	L.max_speed = sqrtf (maxv2);
 	if (L.steps >= L.next_light_step)
 	{
@@ -1014,6 +1336,14 @@ static void Lava_Stats (lava_stats_t *s)
 	s->live = L.n;
 	if (!L.n)
 		return;
+	if (L.nasleep) // the real grid leaves out sleepers nothing awake is near; count with everyone in it
+	{
+		const int np = L.npairs;
+		build_all = 1;
+		BuildPairs ();
+		build_all = 0;
+		L.npairs = np;
+	}
 	int inside = 0;
 	for (int i = 0; i < L.n; ++i)
 	{
@@ -1029,7 +1359,7 @@ static void Lava_Stats (lava_stats_t *s)
 	s->mean_heat /= (float)L.n;
 	s->meanspeed /= (float)L.n;
 	s->maxspeed = L.max_speed;
-	s->mean_neigh = 2.0f * (float)L.npairs / (float)L.n;
+	s->mean_neigh = 2.0f * (float)L.npairs_all / (float)L.n;
 	s->inside_frac = (float)inside / (float)L.n;
 }
 
@@ -1081,6 +1411,8 @@ static cvar_t terrain_lava_damage = {"terrain_lava_damage", "4", CVAR_NONE};			/
 static cvar_t terrain_lava_gravity = {"terrain_lava_gravity", "800", CVAR_NONE};
 static cvar_t terrain_lava_draw = {"terrain_lava_draw", "1", CVAR_NONE};
 static cvar_t terrain_lava_lights = {"terrain_lava_lights", "1", CVAR_NONE};
+static cvar_t terrain_lava_crust = {"terrain_lava_crust", "0.03", CVAR_NONE};			// extra cooling per second at the skin of a settled pool; 0 is off
+static cvar_t terrain_lava_sleep = {"terrain_lava_sleep", "1", CVAR_NONE};				// 0: no sleeping, every particle is relaxed every step
 
 static int	 lava_held;
 static double lava_next_damage;
@@ -1106,6 +1438,8 @@ static void Lava_ReadCvars (void)
 	P.ops_rate = terrain_lava_ops_rate.value;
 	P.fill_count = terrain_lava_fill.value;
 	P.gravity = terrain_lava_gravity.value;
+	P.sleep = terrain_lava_sleep.value != 0.0f;
+	P.crust = terrain_lava_crust.value;
 }
 
 void SV_Terrain_LavaReset (void)
@@ -1271,6 +1605,30 @@ const terrain_lava_view_t *SV_Terrain_LavaView (void)
 	return &lava_view;
 }
 
+static terrain_lava_view2_t lava_view2;
+
+const terrain_lava_view2_t *SV_Terrain_LavaView2 (void)
+{
+	if (!sv.active || !terrain_active)
+		return NULL;
+	lava_view2.count = terrain_lava_draw.value ? L.n : 0;
+	for (int a = 0; a < 3; ++a)
+	{
+		lava_view2.pos[a] = L.x[a];
+		lava_view2.vel[a] = L.v[a];
+	}
+	lava_view2.heat = L.heat;
+	lava_view2.asleep = L.asleep;
+	lava_view2.radius = P.spacing * 0.9f;
+	lava_view2.num_lights = terrain_lava_lights.value ? L.num_lights : 0;
+	lava_view2.lights = L.lights;
+	lava_view2.light_weight = L.light_w;
+	lava_view2.steam_seq = L.steam_seq;
+	lava_view2.steam = L.steam;
+	lava_view2.sim_time = L.sim_time;
+	return &lava_view2;
+}
+
 /* ---- commands ---- */
 
 static int Ready (void)
@@ -1344,7 +1702,7 @@ static void Info_f (void)
 	Con_Printf ("terrain_lava_info: speed max %.1f mean %.1f meanneigh %.1f inside %.4f\n", s.maxspeed, s.meanspeed, s.mean_neigh, s.inside_frac);
 	Con_Printf ("terrain_lava_info: centroid %.1f %.1f %.1f meanheat %.2f lights %d\n", s.centroid[0], s.centroid[1], s.centroid[2], s.mean_heat, L.num_lights);
 	Con_Printf ("terrain_lava_info: cost_ms %.3f neighbour %.3f relax %.3f terrain %.3f\n", L.t_total, L.t_grid, L.t_relax, L.t_terrain);
-	Con_Printf ("terrain_lava_info: steps %d cap %d pairs %d dropped %d touching %d\n", L.steps, L.cap, L.npairs, L.pairs_dropped, L.last_touch);
+	Con_Printf ("terrain_lava_info: steps %d cap %d pairs %d dropped %d touching %d asleep %d\n", L.steps, L.cap, L.npairs, L.pairs_dropped, L.last_touch, L.nasleep);
 	if (sv_player && !sv_player->free)
 		Con_Printf ("terrain_lava_info: player health %.0f\n", sv_player->v.health);
 	if (L.have_first)
@@ -1409,7 +1767,7 @@ void SV_Terrain_LavaInit (void)
 	cvar_t *all[] = {&terrain_lava_cap, &terrain_lava_density, &terrain_lava_stiffness, &terrain_lava_near_stiffness, &terrain_lava_cohesion, &terrain_lava_viscosity,
 					 &terrain_lava_cold_viscosity, &terrain_lava_friction, &terrain_lava_stick, &terrain_lava_cooling, &terrain_lava_contact_cooling, &terrain_lava_freeze,
 					 &terrain_lava_melt, &terrain_lava_melt_threshold, &terrain_lava_dig_radius, &terrain_lava_ops_rate, &terrain_lava_fill, &terrain_lava_heat, &terrain_lava_rate,
-					 &terrain_lava_speed, &terrain_lava_spread, &terrain_lava_damage, &terrain_lava_gravity, &terrain_lava_draw, &terrain_lava_lights};
+					 &terrain_lava_speed, &terrain_lava_spread, &terrain_lava_damage, &terrain_lava_gravity, &terrain_lava_draw, &terrain_lava_lights, &terrain_lava_sleep, &terrain_lava_crust};
 	for (size_t i = 0; i < sizeof (all) / sizeof (all[0]); ++i)
 		Cvar_RegisterVariable (all[i]);
 	Cmd_AddCommand ("+terrain_lava", LavaOn_f);
@@ -1421,5 +1779,6 @@ void SV_Terrain_LavaInit (void)
 	Cmd_AddCommand ("terrain_lava_block", Block_f);
 	Cmd_AddCommand ("terrain_lava_trench", Trench_f);
 	Lava_Defaults ();
+	R_TerrainLava_Init (); // client cvars and the style command
 }
 #endif
