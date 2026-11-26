@@ -1,4 +1,7 @@
 # The workshop tools. Run: tests/run-headless.sh tests/workshop_tools.gdb
+# Desktop keys: on the first workshop map the client binds 9 (grapple), 0 (platform gun) and F
+# (flare) where nothing is bound; the bind lines show them. The flare button throws the wrist's
+# four flares, then prints "No flares left" (terrain_ents lists the terrain_flare entities).
 # Grapple first, from the start room (impulse 71): aimed up and held, the player is pulled toward
 # the ceiling, so the origin z in the PHASE grapple terrain_probe line is well above PHASE start.
 # Then the platform gun (impulse 70): aimed down, its shots land as gingerbread disks (three
@@ -17,6 +20,12 @@ ignore 1 40
 continue
 call (void)Cbuf_AddText("god; notarget\n")
 ignore 1 360
+continue
+call (void)Cbuf_AddText("echo PHASE keys; bind 9; bind 0; bind f; workshop_flare; workshop_flare; workshop_flare; workshop_flare; workshop_flare\n")
+ignore 1 30
+continue
+call (void)Cbuf_AddText("echo PHASE flares; terrain_ents\n")
+ignore 1 10
 continue
 call (void)Cbuf_AddText("echo PHASE start; terrain_probe; impulse 71; +lookup\n")
 ignore 1 80

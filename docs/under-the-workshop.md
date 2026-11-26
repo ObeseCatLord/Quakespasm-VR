@@ -62,7 +62,7 @@ Put these arguments before `+map`: the crawlers are made while the map loads.
 Engine-side, so they work with a stock `progs.dat`: a tool takes the weapon's place on screen
 while it is out and holds the progs' own weapon back; ordinary weapon impulses put it away.
 
-- **Platform gun** (`impulse 70`), after the Engineer's in Deep Rock Galactic. Its numbers come
+- **Platform gun** (`impulse 70`, key `0`), after the Engineer's in Deep Rock Galactic. Its numbers come
   from the game's own weapon and projectile assets (`WPN_PlatformGun`, `PRJ_PlatformMaker`),
   scaled to Quake: 4 a magazine, 16 carried, one shot a second, 2 second automatic reload, the
   shot flying at 4000 cm/s (1250 units/s) under half gravity, the platform forming a quarter
@@ -71,13 +71,19 @@ while it is out and holds the progs' own weapon back; ordinary weapon impulses p
   ground like any other and the monsters' routes use it); on a monster or player it shatters
   and hurts them. Anyone a growing platform would bury is lifted onto it. Reserve comes back
   slowly (`workshop_platgun_regen`).
-- **Festive grapple** (`impulse 71`): hold fire to throw a gold star hook on a string of
+- **Festive grapple** (`impulse 71`, key `9`): hold fire to throw a gold star hook on a string of
   Christmas lights; once it bites, it pulls you in, letting go reels it back. Its behaviour
   follows the grapple in Dissolution of Eternity; the models are new.
+- **Desktop keys**: `9` the grapple and `0` the platform gun (weapon slots after Quake's 1-8; press
+  again or pick any weapon to put the tool away), `F` throws a flare (`workshop_flare`, from the
+  same flares a VR wrist carries, four that come back over time). New configs get these from the
+  engine's `default.cfg`; on the first workshop map the client also binds whichever of the three
+  keys are free (or hold Quake's no-op `impulse 0`) and says so in the console;
+  `cl_workshop_binds 0` leaves keys alone.
 - **VR**: flares ride on the weapon hand's wrist and are taken with the other hand's grip and
   thrown by letting go, at the hand's own speed (as the VRG mod for Deep Rock does); the grapple
   sits in a holster on the right hip, drawn by gripping there with the weapon hand and put back
-  by letting go. Desktop players throw flares with `terrain_flare`.
+  by letting go. 
 
 Assets: `Misc/workshop_assets/` holds the concept sheets, the Blender sources and
 `mdltool.py`, which builds the Quake models into `Misc/vq_pak/progs/workshop/` (the engine's
@@ -132,7 +138,7 @@ own pak). Without them the tools fall back to stock models.
 | `workshop_platgun_speed`, `workshop_platgun_damage`, `workshop_platgun_regen` | 1250, 40, 10 | |
 | `workshop_grapple_speed`, `workshop_grapple_pull`, `workshop_grapple_range` | 1100, 620, 1600 | |
 | `workshop_flares`, `workshop_flare_regen` | 4, 15 | flares a VR wrist carries, seconds per flare back |
-| `vr_workshop_holsters`, `vr_workshop_throw_scale`, `cl_workshop_lights` | 1, 2.5, 1 | client side |
+| `vr_workshop_holsters`, `vr_workshop_throw_scale`, `cl_workshop_lights`, `cl_workshop_binds` | 1, 2.5, 1, 1 | client side |
 | `r_terrain_ambient`, `r_terrain_lamp`, `r_terrain_dlights`, `r_terrain_biome` | | look |
 
 Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, `terrain_fill`,

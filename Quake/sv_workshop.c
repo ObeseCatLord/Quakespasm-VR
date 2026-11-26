@@ -555,7 +555,7 @@ void SV_Workshop_PlayerFrame (edict_t *ent, int num)
 		client->message.cursize + 64 < client->message.maxsize)
 	{
 		MSG_WriteByte (&client->message, svc_stufftext);
-		MSG_WriteString (&client->message, va ("//workshop_flares %d\n", p->flares));
+		MSG_WriteString (&client->message, va ("//workshop_flarecount %d\n", p->flares));
 		p->flares_sent = p->flares;
 	}
 
@@ -717,6 +717,40 @@ static void SV_Workshop_Tool_f (void)
 }
 
 /*
+workshop_flare
+The flare button: throws one from the view, the way terrain_flare does, from the same flares a VR
+wrist carries (they come back over time).
+*/
+static void SV_Workshop_Flare_f (void)
+{
+	if (cmd_source == src_command)
+	{
+		Cmd_ForwardToServer ();
+		return;
+	}
+	if (!WS_Active () || !host_client || !host_client->edict)
+		return;
+	edict_t	 *player = host_client->edict;
+	const int num = NUM_FOR_EDICT (player);
+	if (num < 1 || num > MAX_SCOREBOARD || player->v.health <= 0)
+		return;
+	if (ws_players[num].flares <= 0)
+	{
+		SV_ClientPrintf ("No flares left\n");
+		return;
+	}
+	vec3_t forward, right, up, origin, velocity;
+	AngleVectors (player->v.v_angle, forward, right, up);
+	for (int a = 0; a < 3; ++a)
+	{
+		origin[a] = player->v.origin[a] + player->v.view_ofs[a] + forward[a] * 12.0f;
+		velocity[a] = forward[a] * 650.0f + up[a] * 120.0f + player->v.velocity[a] * 0.5f;
+	}
+	if (SV_Terrain_ThrowFlare (player, origin, velocity))
+		--ws_players[num].flares;
+}
+
+/*
 workshop_throwflare <origin x y z> <velocity x y z>
 A VR hand let go of a flare it took off the wrist. The server checks the throw is near the player
 and not absurdly fast, and that a flare is left.
@@ -768,4 +802,5 @@ void SV_Workshop_Init (void)
 	Cvar_RegisterVariable (&workshop_flare_regen);
 	Cmd_AddCommand_ClientCommand ("workshop_tool", SV_Workshop_Tool_f);
 	Cmd_AddCommand_ClientCommand ("workshop_throwflare", SV_Workshop_ThrowFlare_f);
+	Cmd_AddCommand_ClientCommand ("workshop_flare", SV_Workshop_Flare_f);
 }

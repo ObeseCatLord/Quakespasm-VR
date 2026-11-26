@@ -14,7 +14,8 @@
 #include "vr_input.h"
 #include "vr_openxr.h"
 
-entity_t *CL_NewTempEntity (void); // cl_tent.c
+entity_t *CL_NewTempEntity (void);				// cl_tent.c
+int		  Key_StringToKeynum (const char *str); // keys.c
 
 #define BULB_MODEL		   "progs/workshop/bulb.mdl"
 #define FLARE_MODEL		   "progs/workshop/flare.mdl"
@@ -46,11 +47,42 @@ static qmodel_t *WS_ClientModel (const char *name)
 }
 
 /*
-//workshop_flares <count>
+//workshop_flarecount <count>
 */
+static cvar_t cl_workshop_binds = {"cl_workshop_binds", "1", CVAR_ARCHIVE}; // bind the workshop keys left free
+
+/*
+The desktop keys, on the first workshop map: 9 the grapple and 0 the platform gun (weapon slots
+after Quake's 1-8), F the flare. Only keys with nothing on them (or Quake's no-op "impulse 0") are
+taken, so a player's own binds stay; the saved config keeps them after that.
+*/
+static void CL_Workshop_DefaultBinds (void)
+{
+	static const char *const binds[][2] = {{"9", "impulse 71"}, {"0", "impulse 70"}, {"f", "workshop_flare"}};
+	static qboolean			 done;
+	char					 taken[128] = "";
+	if (done || !cl_workshop_binds.value)
+		return;
+	done = true;
+	for (size_t i = 0; i < sizeof (binds) / sizeof (binds[0]); ++i)
+	{
+		const int	key = Key_StringToKeynum (binds[i][0]);
+		const char *now = key >= 0 ? keybindings[key] : NULL;
+		if (key < 0 || (now && *now && strcmp (now, "impulse 0")))
+			continue;
+		Key_SetBinding (key, binds[i][1]);
+		q_strlcat (taken, taken[0] ? ", " : "", sizeof (taken));
+		q_strlcat (taken, va ("%s %s", binds[i][0], i == 0 ? "grapple" : i == 1 ? "platform gun" : "flare"), sizeof (taken));
+	}
+	if (taken[0])
+		Con_Printf ("Workshop keys bound: %s (cl_workshop_binds 0 leaves keys alone)\n", taken);
+}
+
 static void CL_Workshop_Flares_f (void)
 {
 	cl_workshop_flares = Cmd_Argc () > 1 ? CLAMP (0, atoi (Cmd_Argv (1)), 16) : -1;
+	if (cl_workshop_flares >= 0)
+		CL_Workshop_DefaultBinds ();
 }
 
 void CL_Workshop_Clear (void)
@@ -318,5 +350,6 @@ void CL_Workshop_Init (void)
 	Cvar_RegisterVariable (&vr_workshop_holsters);
 	Cvar_RegisterVariable (&vr_workshop_throw_scale);
 	Cvar_RegisterVariable (&cl_workshop_lights);
-	Cmd_AddCommand_ServerCommand ("workshop_flares", CL_Workshop_Flares_f);
+	Cvar_RegisterVariable (&cl_workshop_binds);
+	Cmd_AddCommand_ServerCommand ("workshop_flarecount", CL_Workshop_Flares_f);
 }
