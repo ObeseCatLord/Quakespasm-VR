@@ -19,3 +19,11 @@ maps/e2m7@10a8.ent
 maps/r2m3@63f4.ent
 maps/r2m3@76ec.ent
 default.cfg
+progs/workshop/v_platgun.mdl
+progs/workshop/gingerblob.mdl
+progs/workshop/gingershard.mdl
+progs/workshop/v_grapple.mdl
+progs/workshop/starhook.mdl
+progs/workshop/bulb.mdl
+progs/workshop/flare.mdl
+progs/workshop/wristband.mdl

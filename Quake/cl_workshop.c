@@ -114,6 +114,10 @@ static void AddLightString (const entity_t *hook, int owner, int which)
 		VectorMA (start, t, span, ent->origin);
 		ent->origin[2] -= sinf (t * (float)M_PI) * sag;
 		ent->skinnum = i % 4; // red, green, blue, gold
+		// bulbs are a few units tall: farther down the string they are drawn bigger so it still reads
+		vec3_t to_eye;
+		VectorSubtract (ent->origin, r_refdef.vieworg, to_eye);
+		ent->netstate.scale = ENTSCALE_ENCODE (CLAMP (1.0f, VectorLength (to_eye) / 160.0f, 3.0f));
 		ent->angles[1] = (float)(i * 47 % 360);
 		ent->angles[0] = 180.0f; // hanging down from the wire
 	}

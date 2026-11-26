@@ -22,7 +22,10 @@ call (void)Cbuf_AddText("impulse 70; echo PHASE start; terrain_probe; +lookdown\
 ignore 1 40
 continue
 call (void)Cbuf_AddText("-lookdown; +attack\n")
-ignore 1 600
+ignore 1 12
+continue
+call (void)Cbuf_AddText("screenshot\n")
+ignore 1 588
 continue
 call (void)Cbuf_AddText("-attack\n")
 ignore 1 60
