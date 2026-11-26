@@ -16,9 +16,12 @@ run
 ignore 1 300
 continue
 call (void)Cbuf_AddText("terrain_crawlers 0; terrain_pathfind 1; map drgbox\n")
-ignore 1 500
+ignore 1 40
 continue
-call (void)Cbuf_AddText("god; terrain_wake; echo PHASE on0; terrain_ents\n")
+call (void)Cbuf_AddText("god\n")
+ignore 1 460
+continue
+call (void)Cbuf_AddText("terrain_wake; echo PHASE on0; terrain_ents\n")
 ignore 1 1500
 continue
 call (void)Cbuf_AddText("echo PHASE on1; terrain_ents\n")
@@ -28,9 +31,12 @@ call (void)Cbuf_AddText("echo PHASE on2; terrain_ents; screenshot\n")
 ignore 1 10
 continue
 call (void)Cbuf_AddText("terrain_pathfind 0; map drgbox\n")
-ignore 1 500
+ignore 1 40
 continue
-call (void)Cbuf_AddText("god; terrain_wake; echo PHASE off0; terrain_ents\n")
+call (void)Cbuf_AddText("god\n")
+ignore 1 460
+continue
+call (void)Cbuf_AddText("terrain_wake; echo PHASE off0; terrain_ents\n")
 ignore 1 1500
 continue
 call (void)Cbuf_AddText("echo PHASE off1; terrain_ents\n")

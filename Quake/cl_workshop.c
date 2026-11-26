@@ -102,7 +102,7 @@ static void AddLightString (const entity_t *hook, int owner, int which)
 	if (length < 8.0f)
 		return;
 	qmodel_t   *bulb = WS_ClientModel (BULB_MODEL);
-	const int	count = q_min ((int)(length / 14.0f), 160);
+	const int	count = q_min ((int)(length / 14.0f), 96); // temporary entities are shared with props and beams
 	const float sag = q_min (length * 0.04f, 20.0f); // a little slack between the hands and the hook
 	for (int i = 1; i <= count && bulb; ++i)
 	{
@@ -243,7 +243,7 @@ static void VRHolsters (void)
 	if (!vr_workshop_holsters.value || cl_workshop_flares < 0 || !frame || V_TrackedAimMode () != VR_AIMMODE_CONTROLLER || cls.signon != SIGNONS ||
 		cl.intermission || cls.demoplayback || cl.stats[STAT_HEALTH] <= 0)
 	{
-		holding_flare = false;
+		holding_flare = holding_grapple = false; // dead or out of VR: the server puts tools away itself
 		return;
 	}
 	const int	main = VR_InputDominantPhysicalHand (), off = !main;

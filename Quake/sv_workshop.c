@@ -101,8 +101,10 @@ static ws_player_t ws_players[MAX_SCOREBOARD + 1];
 static ws_blob_t   ws_blobs[MAX_BLOBS];
 static ws_grow_t   ws_grows[MAX_GROWS];
 static int		   ws_num_blobs, ws_num_grows;
-static qboolean	   ws_precached;
+static qboolean	   ws_precached, ws_sweep;
 static int		   ws_attack_finished = -1; // its offset in the running progs, looked up as a map loads
+
+static void WS_ResetSlot (ws_player_t *p, qboolean release_hook);
 
 static const char *WS_Model (const char *own, const char *fallback)
 {
@@ -155,13 +157,9 @@ void SV_Workshop_Precache (void)
 	SV_Precache_Sound ("weapons/lock4.wav");
 	SV_Precache_Sound ("weapons/pkup.wav");
 	ws_precached = true;
+	ws_sweep = true;
 	for (int i = 1; i <= MAX_SCOREBOARD; ++i)
-	{
-		ws_players[i].clip = PLATGUN_CLIP;
-		ws_players[i].reserve = PLATGUN_MAX - PLATGUN_CLIP;
-		ws_players[i].flares = (int)workshop_flares.value;
-		ws_players[i].flares_sent = -1;
-	}
+		WS_ResetSlot (&ws_players[i], false);
 }
 
 // T_Damage (targ, inflictor, attacker, damage) from the running progs.
@@ -240,7 +238,8 @@ static void Platgun_Fire (edict_t *player, int num, ws_player_t *p)
 {
 	if (ws_num_blobs == MAX_BLOBS)
 	{
-		ED_Free (ws_blobs[0].ent);
+		if (!ws_blobs[0].ent->free)
+			ED_Free (ws_blobs[0].ent);
 		memmove (ws_blobs, ws_blobs + 1, (MAX_BLOBS - 1) * sizeof (ws_blobs[0]));
 		--ws_num_blobs;
 	}
@@ -317,7 +316,10 @@ static void Platform_Lift (const float center[3], float radius, float half)
 		const float dz = ent->v.origin[2] + ent->v.mins[2] - center[2];
 		if (dx * dx + dy * dy > (radius + 24.0f) * (radius + 24.0f) || dz < -half - 64.0f || dz > half + 8.0f)
 			continue;
-		ent->v.origin[2] = center[2] + half - ent->v.mins[2] + 1.0f;
+		vec3_t top = {ent->v.origin[0], ent->v.origin[1], center[2] + half - ent->v.mins[2] + 1.0f};
+		if (SV_Terrain_BoxInBrushes (top, ent->v.mins, ent->v.maxs))
+			continue; // no room on top: leave them where they are
+		VectorCopy (top, ent->v.origin);
 		SV_LinkEdict (ent, false);
 	}
 }
@@ -511,13 +513,8 @@ static void WS_SetTool (edict_t *player, ws_player_t *p, int tool)
 	if (p->tool == TOOL_GRAPPLE)
 		Grapple_Release (p);
 	p->tool = tool;
-	if (tool == TOOL_NONE)
-	{
-		eval_t *finished = WS_AttackFinished (player);
-		if (finished)
-			finished->_float = qcvm->time; // QuakeC's weapon may act again at once
-	}
-	else
+	// putting a tool away only stops holding the progs' weapon back (never shortens its own cooldown)
+	if (tool != TOOL_NONE)
 		SV_StartSound (player, NULL, CHAN_ITEM, "weapons/lock4.wav", 160, ATTN_NORM);
 }
 
@@ -595,8 +592,8 @@ void SV_Workshop_PreThink (edict_t *ent)
 		WS_SetTool (ent, p, p->tool == want ? TOOL_NONE : want);
 		ent->v.impulse = 0;
 	}
-	else if (impulse >= 1 && impulse <= 8 && p->tool)
-		WS_SetTool (ent, p, TOOL_NONE);
+	else if (impulse && p->tool)
+		WS_SetTool (ent, p, TOOL_NONE); // any of the progs' own impulses: they act on it themselves
 	if (p->tool == TOOL_NONE)
 		return;
 
@@ -620,10 +617,41 @@ void SV_Workshop_PreThink (edict_t *ent)
 	}
 }
 
+// release_hook: the slot's hook is still this map's edict (not on a map change, where it may be reused)
+static void WS_ResetSlot (ws_player_t *p, qboolean release_hook)
+{
+	if (release_hook)
+		Grapple_Release (p);
+	memset (p, 0, sizeof (*p));
+	p->clip = PLATGUN_CLIP;
+	p->reserve = PLATGUN_MAX - PLATGUN_CLIP;
+	p->flares = (int)workshop_flares.value;
+	p->flares_sent = -1;
+}
+
 void SV_Workshop_Frame (void)
 {
 	if (!WS_Active ())
 		return;
+	if (ws_sweep)
+	{
+		// a saved game brings back hooks and blobs nothing here holds any more
+		ws_sweep = false;
+		for (int e = svs.maxclients + 1; e < qcvm->num_edicts; ++e)
+		{
+			edict_t *ent = EDICT_NUM (e);
+			if (!ent->free && (!strcmp (PR_GetString (ent->v.classname), "workshop_hook") || !strcmp (PR_GetString (ent->v.classname), "workshop_blob")))
+				ED_Free (ent);
+		}
+	}
+	// a slot whose player left starts fresh for the next one (and its hook goes)
+	for (int num = 1; num <= svs.maxclients && num <= MAX_SCOREBOARD; ++num)
+	{
+		const client_t *client = &svs.clients[num - 1];
+		ws_player_t	   *p = &ws_players[num];
+		if ((!client->active || !client->spawned) && (p->tool || p->hook || p->flares_sent != -1))
+			WS_ResetSlot (p, true);
+	}
 	Blob_Frame ();
 	Platform_GrowFrame ();
 	for (int num = 1; num <= svs.maxclients && num <= MAX_SCOREBOARD; ++num)

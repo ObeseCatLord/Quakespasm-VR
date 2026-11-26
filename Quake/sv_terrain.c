@@ -69,7 +69,7 @@ static float	sv_terrain_sniff_pos[3];
 #define DRG_SIZE_X 6
 #define DRG_SIZE_Y 6
 #define DRG_SIZE_Z 3
-#define DRG_SIZE_MAX 16 // chunks per axis at most (8192 units)
+#define DRG_SIZE_MAX 12 // chunks per axis at most (6144 units): keeps the walking grid and its fields a few MB
 
 static void WalkReset (void);
 
@@ -94,7 +94,7 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 	const double start = Sys_DoubleTime ();
 	Terrain_Generate (t);
 	const int ice = terrain_ice.value ? Terrain_GenerateIce (t) : 0;
-	t->walk_normal = terrain_slope.value;
+	t->walk_normal = CLAMP (0.0f, terrain_slope.value, 1.0f);
 	sv_terrain_ice_used = terrain_ice.value != 0;
 	terrain_active = t;
 	++terrain_epoch;
@@ -277,6 +277,7 @@ QuakeC (ai_run and movetogoal) is unchanged. Fields are kept per player and body
 */
 #define WALK_SLOTS 8
 static terrain_nav_t walk_nav;
+static uint8_t		*walk_bsp_tested; // per walking cell: the map's brushes were asked about it
 static unsigned		 walk_nav_epoch;
 static int			 walk_nav_ops = -1, walk_nav_version;
 static struct
@@ -291,7 +292,7 @@ static struct
 // anywhere.
 typedef struct
 {
-	int	   best;
+	int	   best, seed;
 	double since, stock_until;
 } walk_progress_t;
 static walk_progress_t *walk_progress;
@@ -301,12 +302,29 @@ static void WalkReset (void)
 {
 	free (walk_progress);
 	walk_progress = NULL;
+	free (walk_bsp_tested);
+	walk_bsp_tested = NULL;
 	walk_progress_cap = 0;
 	Terrain_NavFree (&walk_nav);
 	walk_nav_ops = -1;
 	for (int i = 0; i < WALK_SLOTS; ++i)
 		free (walk_fields[i].dist);
 	memset (walk_fields, 0, sizeof (walk_fields)); // qcvm->time restarts with the map, so the stamps go too
+}
+
+// Asks the map whether a cell's centre is inside a brush, once per cell; 1 when it is.
+static int WalkNavTestCell (int cell)
+{
+	if (walk_bsp_tested[cell])
+		return 0;
+	walk_bsp_tested[cell] = 1;
+	vec3_t p;
+	Terrain_NavCellCenter (&walk_nav, cell, p);
+	const int contents = SV_HullPointContents (&qcvm->worldmodel->hulls[0], 0, p);
+	if (contents != CONTENTS_SOLID && contents != CONTENTS_SKY)
+		return 0;
+	Terrain_NavSetBlocked (&walk_nav, cell, 1);
+	return 1;
 }
 
 // Brings the walking grid up to date with the terrain and its op log.
@@ -320,19 +338,15 @@ static qboolean WalkNavUpdate (void)
 		WalkReset ();
 		Terrain_NavInit (&walk_nav, t);
 		walk_nav_epoch = terrain_epoch;
-		// cells inside the map's brushes are closed whatever the field says
+		// cells inside the map's brushes are closed whatever the field says; only open cells need
+		// asking, and a dig that opens more asks about those as it comes (WalkNavTestCell)
+		Terrain_NavRefreshAll (&walk_nav, t);
+		free (walk_bsp_tested);
+		walk_bsp_tested = (uint8_t *)calloc (walk_nav.count, 1);
 		int blocked = 0;
 		for (int i = 0; i < walk_nav.count; ++i)
-		{
-			vec3_t p;
-			Terrain_NavCellCenter (&walk_nav, i, p);
-			const int contents = SV_PointContents (p);
-			if (contents == CONTENTS_SOLID || contents == CONTENTS_SKY)
-			{
-				Terrain_NavSetBlocked (&walk_nav, i, 1);
-				++blocked;
-			}
-		}
+			if (walk_nav.flags[i] & TERRAIN_NAV_AIR)
+				blocked += WalkNavTestCell (i);
 		Terrain_NavRefreshAll (&walk_nav, t);
 		walk_nav_ops = sv_terrain_num_ops;
 		++walk_nav_version;
@@ -347,7 +361,15 @@ static qboolean WalkNavUpdate (void)
 	if (walk_nav_ops != sv_terrain_num_ops)
 	{
 		for (int i = walk_nav_ops; i < sv_terrain_num_ops; ++i)
+		{
+			int lo[3], hi[3];
+			Terrain_NavOpBox (&walk_nav, &sv_terrain_ops[i], lo, hi);
+			for (int z = q_max (lo[2], 0); z <= q_min (hi[2], walk_nav.dim[2] - 1); ++z)
+				for (int y = q_max (lo[1], 0); y <= q_min (hi[1], walk_nav.dim[1] - 1); ++y)
+					for (int x = q_max (lo[0], 0); x <= q_min (hi[0], walk_nav.dim[0] - 1); ++x)
+						WalkNavTestCell ((z * walk_nav.dim[1] + y) * walk_nav.dim[0] + x);
 			Terrain_NavRefreshOp (&walk_nav, t, &sv_terrain_ops[i]);
+		}
 		walk_nav_ops = sv_terrain_num_ops;
 		++walk_nav_version;
 	}
@@ -461,6 +483,19 @@ extern cvar_t sv_gravity;
 // landing) can take no step at all. Push it out along the field's gradient, a little at a time.
 static float CrawlerGradient (const terrain_t *t, const float p[3], float g[3]);
 
+int SV_Terrain_BoxInBrushes (const float origin[3], const float mins[3], const float maxs[3])
+{
+	for (int k = 0; k < 9; ++k)
+	{
+		vec3_t p;
+		for (int a = 0; a < 3; ++a)
+			p[a] = origin[a] + (k == 8 ? (mins[a] + maxs[a]) * 0.5f : ((k >> a) & 1) ? maxs[a] - 1.0f : mins[a] + 1.0f);
+		if (SV_HullPointContents (&qcvm->worldmodel->hulls[0], 0, p) == CONTENTS_SOLID)
+			return 1;
+	}
+	return 0;
+}
+
 static void WalkUnstick (edict_t *ent)
 {
 	const terrain_t *t = terrain_active;
@@ -471,7 +506,11 @@ static void WalkUnstick (edict_t *ent)
 			centre[a] = ent->v.origin[a] + (ent->v.mins[a] + ent->v.maxs[a]) * 0.5f;
 		if (CrawlerGradient (t, centre, g) < 0.05f)
 			break;
-		VectorMA (ent->v.origin, 4.0f, g, ent->v.origin);
+		vec3_t to;
+		VectorMA (ent->v.origin, 4.0f, g, to);
+		if (SV_Terrain_BoxInBrushes (to, ent->v.mins, ent->v.maxs))
+			break; // out of the cave but into the map: stay put
+		VectorCopy (to, ent->v.origin);
 	}
 	SV_LinkEdict (ent, false);
 }
@@ -526,8 +565,10 @@ int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 		walk_progress_cap = cap;
 	}
 	walk_progress_t *wp = &walk_progress[num];
-	if (qcvm->time < wp->since || !wp->best || field[cell] < wp->best)
+	const int		 target = WalkStandCell (goal, cls, 8);
+	if (qcvm->time < wp->since || !wp->best || field[cell] < wp->best || target != wp->seed)
 	{
+		wp->seed = target; // a player on the move resets it: their route changing is not being stuck
 		wp->best = field[cell];
 		wp->since = qcvm->time;
 	}
@@ -1275,14 +1316,27 @@ there are more than MAX_FLARES.
 Throws a flare from origin at velocity for player. The oldest goes out when there are more than
 MAX_FLARES. Used by the terrain_flare command and by a VR hand throwing one off the wrist.
 */
+static qboolean SV_Terrain_Precached (const char *model)
+{
+	for (int i = 1; i < MAX_MODELS && sv.model_precache[i]; ++i)
+		if (!strcmp (sv.model_precache[i], model))
+			return true;
+	return false;
+}
+
 void SV_Terrain_ThrowFlare (edict_t *player, const float origin[3], const float velocity[3])
 {
 	edict_t **slot = &sv_terrain_flares[sv_terrain_next_flare];
 	sv_terrain_next_flare = (sv_terrain_next_flare + 1) % MAX_FLARES;
 	if (*slot && !(*slot)->free && !strcmp (PR_GetString ((*slot)->v.classname), "terrain_flare"))
 		ED_Free (*slot);
-	edict_t	   *flare = *slot = ED_Alloc ();
-	const char *model = COM_FileExists (WORKSHOP_FLARE_MODEL, NULL) ? WORKSHOP_FLARE_MODEL : FLARE_MODEL;
+	const char *model = COM_FileExists (WORKSHOP_FLARE_MODEL, NULL) && SV_Terrain_Precached (WORKSHOP_FLARE_MODEL) ? WORKSHOP_FLARE_MODEL : FLARE_MODEL;
+	if (!SV_Terrain_Precached (model))
+	{
+		Con_Printf ("terrain_flare: the flare model is not precached on this map\n");
+		return;
+	}
+	edict_t *flare = *slot = ED_Alloc ();
 	flare->v.classname = PR_SetEngineString ("terrain_flare");
 	flare->v.movetype = MOVETYPE_BOUNCE;
 	flare->v.solid = SOLID_NOT;
@@ -1384,7 +1438,8 @@ so a client can tell when it has missed or repeated one.
 
 ==============================================================================
 */
-#define TERRAIN_OPS_PER_COMMAND 60
+// as many ops as fit a stuffed command (the client takes up to 2047 characters) with room for the header
+#define TERRAIN_OPS_PER_COMMAND ((2047 - 64) / (2 * TERRAIN_OP_BYTES))
 static struct
 {
 	qboolean live, need_init;
@@ -1396,7 +1451,7 @@ static qboolean SV_Terrain_Stuff (client_t *client, const char *command)
 {
 	sizebuf_t *msg = &client->message;
 	const int  need = (int)strlen (command) + 2;					  // svc_stufftext and the terminator
-	if (msg->overflowed || msg->cursize + need > msg->maxsize - 1024) // leave room for everything else
+	if (msg->overflowed || msg->cursize + need > msg->maxsize / 2)	  // leave half for everything else
 		return false;
 	MSG_WriteByte (msg, svc_stufftext);
 	MSG_WriteString (msg, command);
@@ -1443,7 +1498,7 @@ void SV_Terrain_SendToClient (client_t *client)
 		{
 			uint8_t packed[TERRAIN_OP_BYTES];
 			Terrain_OpPack (&sv_terrain_ops[sent->ops + i], packed);
-			for (int b = 0; b < TERRAIN_OP_BYTES; ++b)
+			for (int b = 0; b < TERRAIN_OP_BYTES && len + 3 < (int)sizeof (command); ++b)
 				len += q_snprintf (command + len, sizeof (command) - len, "%02x", packed[b]);
 		}
 		q_strlcpy (command + len, "\n", sizeof (command) - len);

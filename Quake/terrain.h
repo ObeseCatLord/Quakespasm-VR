@@ -136,6 +136,7 @@ void Terrain_NavInit (terrain_nav_t *nav, const terrain_t *t); // allocates; fla
 void Terrain_NavFree (terrain_nav_t *nav);
 void Terrain_NavRefresh (terrain_nav_t *nav, const terrain_t *t, const int lo[3], const int hi[3]); // inclusive cell box
 void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t);
+void Terrain_NavOpBox (const terrain_nav_t *nav, const terrain_op_t *op, int lo[3], int hi[3]); // the cells an op can change (unclamped)
 void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op); // after Terrain_ApplyOp
 void Terrain_NavSetBlocked (terrain_nav_t *nav, int cell, int blocked);						// takes effect on the next refresh
 void Terrain_NavCellCenter (const terrain_nav_t *nav, int cell, float out[3]);
@@ -187,6 +188,7 @@ void	   SV_Workshop_PreThink (struct edict_s *ent);													// per command, 
 void	   SV_Workshop_Frame (void);																	// once a server frame, after physics
 int		   SV_Workshop_ViewModel (struct client_s *client, int *modelindex, float *frame, float *ammo); // 1 when a tool replaces the weapon on screen
 void SV_Terrain_SniffWrite (int dest, int kind, float value);
+int		   SV_Terrain_BoxInBrushes (const float origin[3], const float mins[3], const float maxs[3]); // corners or centre inside the map's solid
 float SV_Terrain_WalkNormal (void); // least floor normal z that counts as ground; steeper on terrain than BSP's 0.7
 int	 SV_Terrain_CrawlerFrame (struct edict_s *ent); // 1 when the edict is a surface crawler and was moved here
 int	 SV_Terrain_IsCrawler (struct edict_s *ent);
