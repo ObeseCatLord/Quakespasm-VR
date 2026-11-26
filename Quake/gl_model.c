@@ -1188,6 +1188,126 @@ qboolean Mod_AkimboPairUsesGeneratedHalves (const char *source)
 	return true;
 }
 
+/*
+The yeti (sv_enemies.c): the player's own progs/shambler.mdl in a white and ice-blue coat. The coat
+is a skin painted for the shambler's UV layout (progs/workshop/yeti_skin.lmp, Misc/workshop_assets/
+yeti); if that is missing or does not fit (a mod's own shambler), it is made from the model's own
+skin instead: each pixel keeps how light it was, and a fur pattern (progs/workshop/yeti_fur.lmp, 64 x
+64 levels, from a generated fur swatch) breaks it into tufts, taken back to the nearest palette colour. The shambler's frames are untouched, so its own
+animations play on the yeti. Nothing of id's is shipped: without the shambler there is no yeti.
+*/
+#define YETI_MODEL_NAME "progs/workshop/yeti.mdl"
+
+// Generated model buffers are the C heap's (Mod_LoadModel frees them with free); a loaded file is not.
+static byte *Mod_YetiOwned (byte *loaded, size_t size)
+{
+	byte *out = (byte *)malloc (size);
+	if (out)
+		memcpy (out, loaded, size);
+	Mem_Free (loaded);
+	return out;
+}
+static byte *Mod_GenerateYetiModel (const char *name, unsigned int *path_id, size_t *generated_size)
+{
+	if (strcmp (name, YETI_MODEL_NAME))
+		return NULL;
+	byte *buf = COM_LoadFile ("progs/shambler.mdl", path_id);
+	if (!buf)
+		return NULL;
+	const size_t size = (size_t)com_filesize;
+	*generated_size = size;
+	if (size < sizeof (mdl_t) || LittleLong (((const mdl_t *)buf)->ident) != IDPOLYHEADER)
+		return Mod_YetiOwned (buf, size);
+	const mdl_t *hdr = (const mdl_t *)buf;
+	const int	 numskins = LittleLong (hdr->numskins), w = LittleLong (hdr->skinwidth), h = LittleLong (hdr->skinheight);
+	const byte	*pal = (const byte *)d_8to24table;
+	if (w <= 0 || h <= 0 || (!pal[4 * 15] && !pal[4 * 15 + 1])) // no palette yet (a dedicated server): only the frames matter
+		return Mod_YetiOwned (buf, size);
+	// the painted coat (progs/workshop/yeti_skin.lmp: width, height, then palette indices), when it
+	// fits this shambler's skin; otherwise the coat is made from its own skin below
+	byte *painted = COM_LoadFile ("progs/workshop/yeti_skin.lmp", NULL);
+	if (painted && com_filesize >= 8 && LittleLong (((int *)painted)[0]) == w && LittleLong (((int *)painted)[1]) == h &&
+		(size_t)com_filesize >= 8 + (size_t)(w * h))
+	{
+		size_t at = sizeof (mdl_t);
+		for (int s = 0; s < numskins && at + 4 <= size; ++s)
+		{
+			const int type = LittleLong (*(const int *)(buf + at));
+			at += 4;
+			int count = 1;
+			if (type != ALIAS_SKIN_SINGLE)
+			{
+				if (at + 4 > size)
+					break;
+				count = LittleLong (*(const int *)(buf + at));
+				at += 4 + 4 * (size_t)q_max (count, 0);
+			}
+			for (int k = 0; k < count && at + (size_t)(w * h) <= size; ++k, at += (size_t)(w * h))
+				memcpy (buf + at, painted + 8, (size_t)(w * h));
+		}
+		Mem_Free (painted);
+		return Mod_YetiOwned (buf, size);
+	}
+	if (painted)
+		Mem_Free (painted);
+	byte			  *fur = COM_LoadFile ("progs/workshop/yeti_fur.lmp", NULL);
+	const qboolean	   have_fur = fur && com_filesize >= 64 * 64;
+	// target colours: deep blue-grey, through ice blue, to white
+	static const float stops[3][3] = {{58, 70, 92}, {150, 182, 214}, {236, 241, 248}};
+	byte			   map[32][32]; // (lightness, fur) -> palette index
+	for (int li = 0; li < 32; ++li)
+		for (int fi = 0; fi < 32; ++fi)
+		{
+			const float l = (float)li / 31.0f, f = (float)fi / 31.0f;
+			const float t = CLAMP (0.0f, 0.25f + l * 0.95f * (0.55f + 0.45f * f) + (f - 0.5f) * 0.25f, 1.0f) * 2.0f;
+			const int	k = t >= 1.0f ? 1 : 0;
+			const float u = t - (float)k;
+			float		rgb[3];
+			for (int c = 0; c < 3; ++c)
+				rgb[c] = stops[k][c] + (stops[k + 1][c] - stops[k][c]) * u;
+			int best = 0, best_d = INT_MAX;
+			for (int i = 0; i < 224; ++i) // never a fullbright colour
+			{
+				const int dr = pal[4 * i] - (int)rgb[0], dg = pal[4 * i + 1] - (int)rgb[1], db = pal[4 * i + 2] - (int)rgb[2];
+				const int d = dr * dr * 3 + dg * dg * 4 + db * db * 2;
+				if (d < best_d)
+				{
+					best_d = d;
+					best = i;
+				}
+			}
+			map[li][fi] = (byte)best;
+		}
+	size_t at = sizeof (mdl_t);
+	for (int s = 0; s < numskins && at + 4 <= size; ++s)
+	{
+		const int type = LittleLong (*(const int *)(buf + at));
+		at += 4;
+		int count = 1;
+		if (type != ALIAS_SKIN_SINGLE)
+		{
+			if (at + 4 > size)
+				break;
+			count = LittleLong (*(const int *)(buf + at));
+			at += 4 + 4 * (size_t)q_max (count, 0); // the group's intervals
+		}
+		for (int k = 0; k < count && at + (size_t)(w * h) <= size; ++k, at += (size_t)(w * h))
+			for (int y = 0; y < h; ++y)
+				for (int x = 0; x < w; ++x)
+				{
+					byte	 *px = buf + at + (size_t)(y * w + x);
+					const int r = pal[4 * *px], g = pal[4 * *px + 1], b = pal[4 * *px + 2];
+					const int light = (r * 3 + g * 6 + b) / 10;
+					// the fur tiles three times across the skin
+					const int f = have_fur ? fur[((y * 3 * 64 / h) & 63) * 64 + ((x * 3 * 64 / w) & 63)] : 160;
+					*px = map[CLAMP (0, light * 31 / 200, 31)][f * 31 / 255];
+				}
+	}
+	if (fur)
+		Mem_Free (fur);
+	return Mod_YetiOwned (buf, size);
+}
+
 /* Generate pairs and single held meshes with the same source/provenance rules. */
 static byte *Mod_GenerateVRHeldModel (const char *name,
 	unsigned int *source_path_id, size_t *generated_size,
@@ -1298,6 +1418,12 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	buf_filesize = com_filesize;
 	generated_buf = Mod_GenerateVRHeldModel (mod->name, &generated_path_id,
 		&generated_size, &skin_source);
+	qboolean yeti_model = false;
+	if (!generated_buf)
+	{
+		generated_buf = Mod_GenerateYetiModel (mod->name, &generated_path_id, &generated_size);
+		yeti_model = generated_buf != NULL;
+	}
 	if (generated_buf)
 	{
 		if (buf)
@@ -1407,7 +1533,7 @@ static qmodel_t *Mod_LoadModel (qmodel_t *mod, qboolean crash)
 	{
 	case IDPOLYHEADER:
 		Mod_LoadAliasModel (mod, buf, buf_filesize, skin_source);
-		if (generated_model && mod->type == mod_alias)
+		if (generated_model && !yeti_model && mod->type == mod_alias)
 			/* Single held meshes share this provenance bit; consumers also
 			 * check their exact recipe, topology and cached edge. */
 			mod->is_generated_akimbo_half = true;

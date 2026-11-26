@@ -1,0 +1,14 @@
+{
+ "frames": [
+  "frame_idle.obj",
+  "frame_fire.obj"
+ ],
+ "frame_names": [
+  "idle",
+  "fire"
+ ],
+ "skins": [
+  "skin.png"
+ ],
+ "fullbright": "fullbright.png"
+}

@@ -488,8 +488,8 @@ void SV_MoveToGoal (void)
 	if (PROG_TO_EDICT (ent->v.enemy) != qcvm->edicts && SV_CloseEnough (ent, goal, dist))
 		return;
 
-	// on terrain, walk the route through the cave
-	if (SV_Terrain_MoveToGoal (ent, goal, dist))
+	// on terrain, walk the route through the cave (or a saucer's flight)
+	if (SV_Enemies_MoveToGoal (ent, goal, dist) || SV_Terrain_MoveToGoal (ent, goal, dist))
 		return;
 
 	// bump around...

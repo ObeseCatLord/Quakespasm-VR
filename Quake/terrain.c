@@ -173,6 +173,39 @@ static void Materialize (terrain_t *t, terrain_chunk_t *c, int cx, int cy, int c
 				*m++ = GenMaterial (t->seed, cx * TERRAIN_CHUNK + x, cy * TERRAIN_CHUNK + y, cz * TERRAIN_CHUNK + z);
 }
 
+/*
+A test arena instead of a cave (debug maps): a flat floor at lattice height floor_z, walls 64 cells
+(1024 units) out from the region's middle on each side and a ceiling 48 cells above the floor, all
+terrain, so it looks and digs like the cave. Integer-only like the cave, so a client builds the
+same field.
+*/
+void Terrain_GenerateFlat (terrain_t *t, int floor_z)
+{
+	const int mid[2] = {t->size[0] * TERRAIN_CHUNK / 2, t->size[1] * TERRAIN_CHUNK / 2};
+	const int half = 64, ceiling = floor_z + 48;
+	for (int cz = 0; cz < t->size[2]; ++cz)
+		for (int cy = 0; cy < t->size[1]; ++cy)
+			for (int cx = 0; cx < t->size[0]; ++cx)
+			{
+				terrain_chunk_t *c = Terrain_Chunk (t, cx, cy, cz);
+				c->dirty = 1;
+				Materialize (t, c, cx, cy, cz);
+				int8_t *out = c->sdf;
+				for (int z = cz * TERRAIN_CHUNK; z < (cz + 1) * TERRAIN_CHUNK; ++z)
+					for (int y = cy * TERRAIN_CHUNK; y < (cy + 1) * TERRAIN_CHUNK; ++y)
+						for (int x = cx * TERRAIN_CHUNK; x < (cx + 1) * TERRAIN_CHUNK; ++x)
+						{
+							// cells to the nearest face of the box; negative outside it
+							int d = z - floor_z;
+							d = d < ceiling - z ? d : ceiling - z;
+							const int dx = half - (x > mid[0] ? x - mid[0] : mid[0] - x), dy = half - (y > mid[1] ? y - mid[1] : mid[1] - y);
+							d = d < dx ? d : dx;
+							d = d < dy ? d : dy;
+							*out++ = (int8_t)Clamp (d * TERRAIN_SUB, -TERRAIN_SDF_MAX, TERRAIN_SDF_MAX);
+						}
+			}
+}
+
 int Terrain_Sample (const terrain_t *t, int x, int y, int z, uint8_t *mat)
 {
 	const terrain_chunk_t *c = Terrain_Chunk (t, x >> TERRAIN_CHUNK_SHIFT, y >> TERRAIN_CHUNK_SHIFT, z >> TERRAIN_CHUNK_SHIFT);

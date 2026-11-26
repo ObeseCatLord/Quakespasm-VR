@@ -295,6 +295,7 @@ srcs = [
     'Quake/cl_terrain.c',
     'Quake/cl_workshop.c',
     'Quake/sv_workshop.c',
+    'Quake/sv_enemies.c',
     'Quake/r_terrain.c',
     'Quake/r_terrain_lava.c',
     'Quake/r_terrain_props.c',

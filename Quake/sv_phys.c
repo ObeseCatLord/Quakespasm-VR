@@ -12936,7 +12936,10 @@ void SV_Physics (void)
 		pr_global_struct->force_retouch--;
 
 	if (qcvm == &sv.qcvm)
+	{
 		SV_Workshop_Frame (); // the workshop tools' shots and growing platforms
+		SV_Enemies_Frame ();  // the saucers' bolts and the yetis' snowballs
+	}
 
 	if (!(sv_freezenonclients.value && qcvm == &sv.qcvm))
 		qcvm->time += host_frametime;

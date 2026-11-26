@@ -188,6 +188,41 @@ Assets: `Misc/workshop_assets/` holds the concept sheets, the Blender sources an
 `mdltool.py`, which builds the Quake models into `Misc/vq_pak/progs/workshop/` (the engine's
 own pak). Without them the tools fall back to stock models.
 
+## The cave's own enemies
+
+Made in the engine from the running progs' own monsters (no QuakeC); `terrain_saucers` and
+`terrain_yetis` of them are added to a drg* map, well away from the start.
+
+![The yeti and the saucer in the debug arena](images/enemies/yeti.png)
+
+- **Saucer** (an Agarthan Hyperborean flying saucer; model and skin from a generated concept,
+  `Misc/workshop_assets/saucer`): the progs' scrag in a saucer's body, flying and fighting like
+  Arcane Dimensions' sentinel drone. It fires laser bolts from its belly turret at the sentinel's
+  speeds (575 + 75 a skill level, a quarter faster), aimed at the target's body and leading it;
+  each does `terrain_saucer_laser` damage. It has `terrain_saucer_health` health and chases a
+  scrag's chase `terrain_saucer_speed` times quicker; out of sight it flies the cave's air routes
+  (the crawlers' flow field) `terrain_saucer_hunt` times quicker, so it keeps up with whoever it
+  chases. Shot down, it blows apart into hull plates. Its sounds are AD's sentinel's (shipped
+  unmodified in the engine's pak under `sound/sentinel/`, with AD's readme beside them, as its
+  licence asks; they are Arcane Dimensions' assets, by its authors, free to share at no charge with
+  credit, not for commercial use), and the enforcer's laser.
+- **Yeti**: the progs' shambler in a white and ice-blue fur coat (a skin painted for the
+  shambler's UV layout, `Misc/workshop_assets/yeti`, applied to the player's own shambler model
+  when it loads: no id data is shipped), fighting like Dawn of the Machine's blood shambler:
+  `terrain_yeti_health` (2000) health, half damage from explosions, and each smash throws a fan of
+  11 snowballs, each claw a 3 x 3 block of 9 (9 damage each). It never casts lightning: its ranged
+  attack is the smash, which from afar hurls one big snowball (30 damage). Snowballs that land on
+  the cave or the map leave snow there as terrain fill ops (`terrain_yeti_snow`, radius 10, more for
+  a big one), so drifts build up where a yeti fights; they are networked and walkable like any
+  other ground.
+
+Debug: `terrain_spawnenemy <saucer|yeti> [distance]` or `<saucer|yeti> x y z [yaw]`,
+`terrain_clearmonsters [all]`; `terrain_ents` ends with what the enemies have fired.
+
+The debug arena `tests/maps/drgarena.map`: maps named drgarena* get a flat terrain arena (floor at
+height 0, terrain walls 1024 units out, ceiling at 768) instead of a cave, and nothing is placed at
+random, so tests do not depend on the cave's layout.
+
 ## Where things are
 
 | File | What |
@@ -238,6 +273,9 @@ own pak). Without them the tools fall back to stock models.
 | `terrain_crawler_types` | `monster_demon1:1:60:0.5` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
 | `terrain_ice` | 1 | ice pillars, icicles and floor stubs in new caves |
 | `r_terrain_style`, `r_terrain_props` | 1, 1 | look 0-3 and its props |
+| `terrain_saucers`, `terrain_yetis` | 2, 1 | the cave's own enemies added to a drg* map |
+| `terrain_saucer_health`, `terrain_saucer_speed`, `terrain_saucer_hunt`, `terrain_saucer_laser` | 150, 1.7, 2.6, 15 | |
+| `terrain_yeti_health`, `terrain_yeti_snow` | 2000, 10 | |
 | `workshop_tools` | 1 | the platform gun, grapple and lava sprayer on drg* maps |
 | `workshop_platform_radius`, `workshop_platform_thickness` | 60, 20 | platform size |
 | `workshop_platgun_speed`, `workshop_platgun_damage`, `workshop_platgun_regen` | 1250, 40, 10 | |
@@ -265,6 +303,8 @@ Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, 
   the weapons and tools; `workshop_lava_tool.gdb` runs the lava sprayer (tank drain and refill, running dry, melting
   a wall, the stock weapon held back). `terrain_combined.gdb` runs the worm, crawlers, a falling pillar, lava and
   a platform in one map and compares the client's copy with the server's at the end.
+  `enemies_arena.gdb` runs in the debug arena (`drgarena`): the saucer alone, then the yeti alone,
+  with the lasers, snowballs and snow drifts they produced and the client's copy compared.
 
 ## Known gaps
 

@@ -1,0 +1,72 @@
+// Debug arena for the cave's tests and pictures. Maps named drgarena* get, instead of a generated
+// cave, a terrain arena: a flat floor at height 0, terrain walls 1024 units out from the middle and
+// a terrain ceiling at 768, so it looks and digs like the cave; nothing is moved or added at
+// random (tests place what they need: terrain_spawnenemy <kind> x y z [yaw]). The brushes below
+// only seal the map, outside the terrain arena where they are never seen. The player starts at the
+// west end looking east down the arena.
+// Build: qbsp drgarena.map and light drgarena.bsp (ericw-tools), then put drgarena.bsp in
+// <game>/maps.
+{
+"classname" "worldspawn"
+"message" "Workshop arena"
+"worldtype" "0"
+"_minlight" "160"
+{
+( -1264 0 0 ) ( -1264 1 0 ) ( -1264 0 1 ) CITY4_2 0 0 0 1 1
+( -1200 0 0 ) ( -1200 0 1 ) ( -1200 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1264 0 ) ( 0 -1264 1 ) ( 1 -1264 0 ) CITY4_2 0 0 0 1 1
+( 0 1264 0 ) ( 1 1264 0 ) ( 0 1264 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -364 ) ( 1 0 -364 ) ( 0 1 -364 ) CITY4_2 0 0 0 1 1
+( 0 0 1064 ) ( 0 1 1064 ) ( 1 0 1064 ) CITY4_2 0 0 0 1 1
+}
+{
+( 1200 0 0 ) ( 1200 1 0 ) ( 1200 0 1 ) CITY4_2 0 0 0 1 1
+( 1264 0 0 ) ( 1264 0 1 ) ( 1264 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1264 0 ) ( 0 -1264 1 ) ( 1 -1264 0 ) CITY4_2 0 0 0 1 1
+( 0 1264 0 ) ( 1 1264 0 ) ( 0 1264 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -364 ) ( 1 0 -364 ) ( 0 1 -364 ) CITY4_2 0 0 0 1 1
+( 0 0 1064 ) ( 0 1 1064 ) ( 1 0 1064 ) CITY4_2 0 0 0 1 1
+}
+{
+( -1200 0 0 ) ( -1200 1 0 ) ( -1200 0 1 ) CITY4_2 0 0 0 1 1
+( 1200 0 0 ) ( 1200 0 1 ) ( 1200 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1264 0 ) ( 0 -1264 1 ) ( 1 -1264 0 ) CITY4_2 0 0 0 1 1
+( 0 -1200 0 ) ( 1 -1200 0 ) ( 0 -1200 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -364 ) ( 1 0 -364 ) ( 0 1 -364 ) CITY4_2 0 0 0 1 1
+( 0 0 1064 ) ( 0 1 1064 ) ( 1 0 1064 ) CITY4_2 0 0 0 1 1
+}
+{
+( -1200 0 0 ) ( -1200 1 0 ) ( -1200 0 1 ) CITY4_2 0 0 0 1 1
+( 1200 0 0 ) ( 1200 0 1 ) ( 1200 1 0 ) CITY4_2 0 0 0 1 1
+( 0 1200 0 ) ( 0 1200 1 ) ( 1 1200 0 ) CITY4_2 0 0 0 1 1
+( 0 1264 0 ) ( 1 1264 0 ) ( 0 1264 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -364 ) ( 1 0 -364 ) ( 0 1 -364 ) CITY4_2 0 0 0 1 1
+( 0 0 1064 ) ( 0 1 1064 ) ( 1 0 1064 ) CITY4_2 0 0 0 1 1
+}
+{
+( -1200 0 0 ) ( -1200 1 0 ) ( -1200 0 1 ) CITY4_2 0 0 0 1 1
+( 1200 0 0 ) ( 1200 0 1 ) ( 1200 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1200 0 ) ( 0 -1200 1 ) ( 1 -1200 0 ) CITY4_2 0 0 0 1 1
+( 0 1200 0 ) ( 1 1200 0 ) ( 0 1200 1 ) CITY4_2 0 0 0 1 1
+( 0 0 -364 ) ( 1 0 -364 ) ( 0 1 -364 ) CITY4_2 0 0 0 1 1
+( 0 0 -300 ) ( 0 1 -300 ) ( 1 0 -300 ) CITY4_2 0 0 0 1 1
+}
+{
+( -1200 0 0 ) ( -1200 1 0 ) ( -1200 0 1 ) CITY4_2 0 0 0 1 1
+( 1200 0 0 ) ( 1200 0 1 ) ( 1200 1 0 ) CITY4_2 0 0 0 1 1
+( 0 -1200 0 ) ( 0 -1200 1 ) ( 1 -1200 0 ) CITY4_2 0 0 0 1 1
+( 0 1200 0 ) ( 1 1200 0 ) ( 0 1200 1 ) CITY4_2 0 0 0 1 1
+( 0 0 1000 ) ( 1 0 1000 ) ( 0 1 1000 ) CITY4_2 0 0 0 1 1
+( 0 0 1064 ) ( 0 1 1064 ) ( 1 0 1064 ) CITY4_2 0 0 0 1 1
+}
+}
+{
+"classname" "info_player_start"
+"origin" "-640 0 25"
+"angle" "0"
+}
+{
+"classname" "light"
+"origin" "0 0 500"
+"light" "600"
+}

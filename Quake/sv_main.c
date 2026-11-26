@@ -3288,6 +3288,7 @@ void SV_StartSound (edict_t *entity, float *origin, int channel, const char *sam
 		Host_Error ("SV_StartSound: channel = %i", channel);
 	else if (channel > 7)
 		Con_DPrintf ("SV_StartSound: channel = %i\n", channel);
+	sample = SV_Enemies_Sound (entity, sample); // a saucer's scrag sounds become its own
 
 	// find precache number for sound
 	for (sound_num = 1; sound_num < MAX_SOUNDS && sv.sound_precache[sound_num]; sound_num++)

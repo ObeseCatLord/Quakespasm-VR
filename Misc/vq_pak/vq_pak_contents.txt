@@ -28,3 +28,13 @@ progs/workshop/starhook.mdl
 progs/workshop/bulb.mdl
 progs/workshop/flare.mdl
 progs/workshop/wristband.mdl
+progs/workshop/yeti_fur.lmp
+sound/sentinel/laser.wav
+sound/sentinel/widle1.wav
+sound/sentinel/widle2.wav
+sound/sentinel/wsight.wav
+sound/sentinel/wpain.wav
+progs/workshop/saucer.mdl
+progs/workshop/snowball.mdl
+progs/workshop/saucergib.mdl
+progs/workshop/yeti_skin.lmp

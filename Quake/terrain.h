@@ -91,7 +91,10 @@ typedef struct
 
 terrain_t *Terrain_Create (const int32_t origin[3], const int32_t size_chunks[3], uint32_t seed);
 void	   Terrain_Free (terrain_t *t);
-void	   Terrain_Generate (terrain_t *t); // carves the seed's cave with ordinary dig ops
+void	   Terrain_Generate (terrain_t *t);
+void	   Terrain_GenerateFlat (
+	terrain_t *t,
+	int		   floor_z); // debug arenas: a 2048 x 2048 x 768 box of terrain, floor at lattice height floor_z // carves the seed's cave with ordinary dig ops
 int		   Terrain_GenerateIce (terrain_t *t); // optional: ice pillars and icicles grown with fill ops; returns how many
 int		   Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op); // returns samples changed
 int		   Terrain_Sample (const terrain_t *t, int x, int y, int z, uint8_t *mat); // lattice coordinates; outside is solid
@@ -220,6 +223,20 @@ void SV_Terrain_SendToClient (struct client_s *client);
 /* Server side (sv_terrain.c). Engine code only; the offline fixture does not link these. */
 struct edict_s;
 void SV_Terrain_Init (void);
+int	 SV_Terrain_AirRoute (const float p[3], float dir[3]); // toward the nearest player through open cave (the crawlers' flow field); 0 none
+
+/* The cave's own enemies (sv_enemies.c): the saucer and the yeti. */
+void		SV_Enemies_Init (void);
+void		SV_Enemies_Clear (void);
+void		SV_Enemies_Precache (void);
+int			SV_Enemies_Adopt (struct edict_s *ent, int yeti);
+int			SV_Enemies_IsSaucer (const struct edict_s *ent);
+int			SV_Enemies_MoveToGoal (struct edict_s *ent, struct edict_s *goal, float dist);
+const char *SV_Enemies_Sound (const struct edict_s *ent, const char *sample);
+void		SV_Enemies_Frame (void);
+void		SV_Enemies_Report (void); // terrain_ents: what the saucers and yetis have fired
+int			SV_Enemies_WantSaucers (void);
+int			SV_Enemies_WantYetis (void);
 void SV_Terrain_NewMap (void);
 void SV_Terrain_PlaceEntities (void);
 void SV_Terrain_Clear (void);

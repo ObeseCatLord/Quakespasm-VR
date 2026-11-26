@@ -16,6 +16,9 @@ Needs `python3` with Pillow and Blender on the PATH (or `BLENDER=/path/to/blende
 
 - `kit.py` - tiny modelling/painting kit: lofts, fans, atlas rects, palette-index painting, fullbright mask.
 - `assets.py` - the eight asset definitions (geometry, UVs, skins, frames).
+- `saucer.py` - the saucer enemy, its snowball and hull gib. The saucer and gib skins are cut from the painted
+  concept sheet `../concept/saucer_concept.png` (nearest-neighbour, reduced to a few palette ramps); the rune,
+  portholes and lens are painted in fullbright colours.
 - `bl_build.py` - builds each `.blend` (one mesh, a shape key per frame) and exports `frame_<name>.obj`.
   The OBJ exporter is called with forward=Y, up=Z: that is what keeps coordinates as modelled
   (+X forward, +Y left, +Z up, 1 unit = 1 Quake unit).

@@ -24,13 +24,13 @@ void CL_Terrain_Clear (void)
 }
 
 /*
-//terrain_init <seed> <origin x y z> <size x y z> <ice> <walk_normal>
+//terrain_init <seed> <origin x y z> <size x y z> <ice> <walk_normal> [<arena floor height, -1 for a cave>]
 //terrain_init none
 */
 static void CL_Terrain_Init_f (void)
 {
 	CL_Terrain_Clear ();
-	if (Cmd_Argc () != 10)
+	if (Cmd_Argc () != 10 && Cmd_Argc () != 11)
 		return; // "none": this map has no cave
 	int32_t origin[3], size[3];
 	for (int a = 0; a < 3; ++a)
@@ -45,9 +45,15 @@ static void CL_Terrain_Init_f (void)
 	}
 	const uint32_t seed = (uint32_t)strtoul (Cmd_Argv (1), NULL, 10);
 	terrain_t	  *t = Terrain_Create (origin, size, seed);
-	Terrain_Generate (t);
-	if (atoi (Cmd_Argv (8)))
-		Terrain_GenerateIce (t);
+	const int	   arena_floor = Cmd_Argc () == 11 ? atoi (Cmd_Argv (10)) : -1;
+	if (arena_floor >= 0 && arena_floor <= size[2] * TERRAIN_CHUNK)
+		Terrain_GenerateFlat (t, arena_floor); // a debug arena's flat floor
+	else
+	{
+		Terrain_Generate (t);
+		if (atoi (Cmd_Argv (8)))
+			Terrain_GenerateIce (t);
+	}
 	t->walk_normal = CLAMP (0.0f, (float)atof (Cmd_Argv (9)), 1.0f);
 	terrain_client = t;
 	++terrain_client_epoch;

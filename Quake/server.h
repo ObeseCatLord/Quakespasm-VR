@@ -667,6 +667,7 @@ void SV_BroadcastAvatarSlot (int slot, int avatar_id);
 
 void	 SV_MoveToGoal (void);
 qboolean SV_StepDirection (edict_t *ent, float yaw, float dist);
+void	 SV_NewChaseDir (edict_t *actor, edict_t *enemy, float dist);
 
 void SV_ConnectClient (int clientnum); // called from the netcode to add new clients. also called from pr_ext to spawn new botclients.
 void SV_CheckForNewClients (void);

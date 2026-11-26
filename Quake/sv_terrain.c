@@ -13,7 +13,9 @@
 unsigned terrain_epoch; // bumped whenever terrain_active is replaced or freed
 
 static terrain_op_t *sv_terrain_ops;
-static qboolean		 sv_terrain_ice_used; // whether the region was generated with ice; clients regenerate it the same way
+static qboolean		 sv_terrain_ice_used;
+static int			 sv_terrain_arena_floor =
+	INT_MIN; // a drgarena* map's flat floor (lattice height); INT_MIN: a cave // whether the region was generated with ice; clients regenerate it the same way
 static int			 sv_terrain_num_ops, sv_terrain_cap_ops;
 static double		 sv_terrain_next_dig[MAX_SCOREBOARD + 1];
 
@@ -107,10 +109,16 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 		origin[i] = (int)floorf (center[i] / TERRAIN_CELL + 0.5f) * TERRAIN_CELL - size[i] * TERRAIN_CHUNK_UNITS / 2;
 	terrain_t	*t = Terrain_Create (origin, size, seed);
 	const double start = Sys_DoubleTime ();
-	Terrain_Generate (t);
-	const int ice = terrain_ice.value ? Terrain_GenerateIce (t) : 0;
+	int			 ice = 0;
+	if (sv_terrain_arena_floor != INT_MIN)
+		Terrain_GenerateFlat (t, sv_terrain_arena_floor); // a debug arena: a flat floor, no cave
+	else
+	{
+		Terrain_Generate (t);
+		ice = terrain_ice.value ? Terrain_GenerateIce (t) : 0;
+	}
 	t->walk_normal = CLAMP (0.0f, terrain_slope.value, 1.0f);
-	sv_terrain_ice_used = terrain_ice.value != 0;
+	sv_terrain_ice_used = sv_terrain_arena_floor == INT_MIN && terrain_ice.value != 0;
 	terrain_active = t;
 	++terrain_epoch;
 	memset (sv_terrain_next_dig, 0, sizeof (sv_terrain_next_dig));
@@ -131,6 +139,8 @@ void SV_Terrain_NewMap (void)
 {
 	SV_Terrain_Clear ();
 	SV_Workshop_Clear ();
+	SV_Enemies_Clear ();
+	sv_terrain_arena_floor = INT_MIN;
 	if (strncmp (sv.name, "drg", 3))
 		return;
 	// The region covers the whole map, so its outer layer (which always stays solid to keep the
@@ -144,6 +154,13 @@ void SV_Terrain_NewMap (void)
 		const int	least = i == 2 ? DRG_SIZE_Z : DRG_SIZE_X;
 		size[i] = CLAMP (least, (int)ceilf ((extent + 2 * TERRAIN_CELL) / TERRAIN_CHUNK_UNITS), DRG_SIZE_MAX);
 		center[i] = (qcvm->worldmodel->mins[i] + qcvm->worldmodel->maxs[i]) * 0.5f;
+	}
+	// drgarena* maps are for tests and pictures: a flat terrain floor at world height 0 instead of a
+	// cave, and nothing moved or added at random (tests place what they need: terrain_spawnenemy)
+	if (!strncmp (sv.name, "drgarena", 8))
+	{
+		int32_t origin_z = (int)floorf (center[2] / TERRAIN_CELL + 0.5f) * TERRAIN_CELL - size[2] * TERRAIN_CHUNK_UNITS / 2;
+		sv_terrain_arena_floor = -origin_z / TERRAIN_CELL;
 	}
 	SV_Terrain_SpawnAt (center, (uint32_t)terrain_seed.value, size);
 }
@@ -963,6 +980,17 @@ static qboolean NavDirection (const terrain_t *t, const float p[3], const float 
 	return true;
 }
 
+int SV_Terrain_AirRoute (const float p[3], float dir[3])
+{
+	const terrain_t *t = terrain_active;
+	int				 cells = 0;
+	const float		 none[3] = {0, 0, 0}; // no surface to keep to: a flyer's route is through the air
+	if (!t)
+		return 0;
+	NavUpdate (t);
+	return NavDirection (t, p, none, dir, &cells) && cells > 1;
+}
+
 static float CrawlerGradient (const terrain_t *t, const float p[3], float g[3])
 {
 	const float h = 8.0f;
@@ -1337,6 +1365,39 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 
 static qboolean PlaceFindFloor (uint32_t *rng, const float mins[3], const float maxs[3], const float near[3], float min_dist, float max_dist, float out[3]);
 
+/*
+The cave's own enemies: saucers (the progs' scrag, made over) hovering above the floor and yetis
+(the progs' shambler) on it, well away from the start.
+*/
+static void EnemiesSpawnAll (uint32_t *rng, const float start[3])
+{
+	int made[2] = {0, 0};
+	for (int kind = 0; kind < 2; ++kind)
+	{
+		const int	 want = q_min (kind ? SV_Enemies_WantYetis () : SV_Enemies_WantSaucers (), 8);
+		dfunction_t *func = ED_FindFunction (kind ? "monster_shambler" : "monster_wizard");
+		const float	 mins[3] = {-32, -32, -24}, maxs[3] = {32, 32, 64};
+		for (int i = 0; i < want && func; ++i)
+		{
+			float spot[3];
+			if (!PlaceFindFloor (rng, mins, maxs, start, 900.0f, 4096.0f, spot))
+				break;
+			if (!kind)
+				spot[2] += 96.0f; // saucers start in the air
+			edict_t *ed = ED_Alloc ();
+			ed->v.classname = PR_SetEngineString (func->s_name ? PR_GetString (func->s_name) : "monster");
+			VectorCopy (spot, ed->v.origin);
+			pr_global_struct->self = EDICT_TO_PROG (ed);
+			PR_ExecuteProgram (func - qcvm->functions);
+			if (ed->free)
+				continue;
+			made[kind] += SV_Enemies_Adopt (ed, kind);
+		}
+	}
+	if (made[0] || made[1])
+		Con_Printf ("terrain: %d saucers, %d yetis\n", made[0], made[1]);
+}
+
 static void CrawlerSpawnAll (uint32_t *rng, const float start[3])
 {
 	const int want = q_min ((int)terrain_crawlers.value, MAX_CRAWLERS);
@@ -1422,6 +1483,13 @@ void SV_Terrain_PlaceEntities (void)
 	if (COM_FileExists (WORKSHOP_FLARE_MODEL, NULL))
 		SV_Precache_Model (WORKSHOP_FLARE_MODEL);
 	SV_Workshop_Precache ();
+	SV_Enemies_Precache ();
+	if (sv_terrain_arena_floor != INT_MIN)
+	{
+		WalkNavUpdate ();
+		Con_Printf ("terrain: arena, flat floor at height 0\n");
+		return;
+	}
 	uint32_t		 rng = t->seed * 747796405u + 2891336453u;
 	if (!rng)
 		rng = 1;
@@ -1478,6 +1546,7 @@ void SV_Terrain_PlaceEntities (void)
 	Con_Printf ("terrain: placed %d monsters and %d items on the cave floor (%d found no spot)\n", monsters, items, failed);
 	WalkNavUpdate (); // while the map loads rather than at the first chase
 	CrawlerSpawnAll (&rng, start);
+	EnemiesSpawnAll (&rng, start);
 	SV_Terrain_WormMapLoad (start);
 }
 
@@ -1774,6 +1843,7 @@ static void SV_Terrain_Ents_f (void)
 	Con_Printf (
 		"terrain_steps: ok %d blocked %d edge %d footing %d (mid %d corners %d) crawlers %d\n", sv_terrain_step_stats[0], sv_terrain_step_stats[1],
 		sv_terrain_step_stats[2], sv_terrain_step_stats[3], sv_terrain_step_stats[4], sv_terrain_step_stats[5], sv_terrain_num_crawlers);
+	SV_Enemies_Report ();
 	PR_SwitchQCVM (NULL);
 }
 
@@ -1832,8 +1902,8 @@ void SV_Terrain_SendToClient (client_t *client)
 		const terrain_t *t = terrain_active;
 		if (t)
 			q_snprintf (
-				command, sizeof (command), "//terrain_init %u %d %d %d %d %d %d %d %.4f\n", t->seed, t->origin[0], t->origin[1], t->origin[2], t->size[0],
-				t->size[1], t->size[2], sv_terrain_ice_used ? 1 : 0, t->walk_normal);
+				command, sizeof (command), "//terrain_init %u %d %d %d %d %d %d %d %.4f %d\n", t->seed, t->origin[0], t->origin[1], t->origin[2], t->size[0],
+				t->size[1], t->size[2], sv_terrain_ice_used ? 1 : 0, t->walk_normal, sv_terrain_arena_floor == INT_MIN ? -1 : sv_terrain_arena_floor);
 		else
 			q_strlcpy (command, "//terrain_init none\n", sizeof (command));
 		if (!SV_Terrain_Stuff (client, command))
@@ -1858,6 +1928,78 @@ void SV_Terrain_SendToClient (client_t *client)
 			return; // the rest goes in a later frame
 		sent->ops += count;
 	}
+}
+
+/*
+terrain_spawnenemy <saucer|yeti> [distance] | <saucer|yeti> x y z [yaw]
+Debug: puts one of the cave's enemies in front of the local player, on the floor (a saucer above
+it), or exactly at x y z.
+*/
+static void SV_Terrain_SpawnEnemy_f (void)
+{
+	if (!terrain_active || !sv.active || !sv_player || Cmd_Argc () < 2)
+	{
+		Con_Printf ("terrain_spawnenemy <saucer|yeti> [distance]: needs a terrain and a local server\n");
+		return;
+	}
+	const int	yeti = !strcmp (Cmd_Argv (1), "yeti");
+	const float distance = Cmd_Argc () == 3 ? (float)atof (Cmd_Argv (2)) : 200.0f;
+	const int	absolute = Cmd_Argc () >= 5; // terrain_spawnenemy <kind> x y z [yaw]: exactly there
+	PR_SwitchQCVM (&sv.qcvm);
+	dfunction_t *func = ED_FindFunction (yeti ? "monster_shambler" : "monster_wizard");
+	if (func)
+	{
+		vec3_t forward, right, up, spot, below;
+		vec3_t flat = {0, sv_player->v.v_angle[1], 0};
+		AngleVectors (flat, forward, right, up);
+		VectorMA (sv_player->v.origin, distance, forward, spot);
+		VectorCopy (spot, below);
+		below[2] -= 512.0f;
+		const vec3_t  mins = {-32, -32, -24}, maxs = {32, 32, 64};
+		const trace_t tr = SV_Move (spot, (float *)mins, (float *)maxs, below, MOVE_NOMONSTERS, sv_player);
+		if (!tr.startsolid)
+			VectorCopy (tr.endpos, spot);
+		if (!yeti)
+			spot[2] += 64.0f;
+		if (absolute)
+			for (int a = 0; a < 3; ++a)
+				spot[a] = (float)atof (Cmd_Argv (2 + a));
+		edict_t *ed = ED_Alloc ();
+		ed->v.classname = PR_SetEngineString (yeti ? "monster_shambler" : "monster_wizard");
+		VectorCopy (spot, ed->v.origin);
+		ed->v.angles[1] = Cmd_Argc () >= 6 ? (float)atof (Cmd_Argv (5)) : anglemod (sv_player->v.v_angle[1] + 180.0f); // facing the player
+		pr_global_struct->self = EDICT_TO_PROG (ed);
+		PR_ExecuteProgram (func - qcvm->functions);
+		if (!ed->free && !SV_Enemies_Adopt (ed, yeti))
+			Con_Printf ("terrain_spawnenemy: no %s look here, it stays a %s\n", yeti ? "yeti" : "saucer", yeti ? "shambler" : "scrag");
+	}
+	PR_SwitchQCVM (NULL);
+}
+
+/*
+terrain_clearmonsters [all]
+Debug: removes the map's monsters (with "all", the cave's own saucers and yetis too), for tests
+and pictures.
+*/
+static void SV_Terrain_ClearMonsters_f (void)
+{
+	if (!sv.active)
+		return;
+	PR_SwitchQCVM (&sv.qcvm);
+	int removed = 0;
+	for (int e = svs.maxclients + 1; e < qcvm->num_edicts; ++e)
+	{
+		edict_t		  *ed = EDICT_NUM (e);
+		const qboolean all = !strcmp (Cmd_Argv (1), "all");
+		if (ed->free || !((int)ed->v.flags & FL_MONSTER) ||
+			(!all && (SV_Enemies_IsSaucer (ed) || !strcmp (PR_GetString (ed->v.model), "progs/workshop/yeti.mdl"))))
+			continue;
+		ED_Free (ed);
+		++removed;
+	}
+	sv_terrain_num_crawlers = 0;
+	Con_Printf ("terrain_clearmonsters: %d removed\n", removed);
+	PR_SwitchQCVM (NULL);
 }
 
 void SV_Terrain_Init (void)
@@ -1889,4 +2031,7 @@ void SV_Terrain_Init (void)
 	SV_Terrain_IceInit ();
 	SV_Terrain_LavaInit ();
 	SV_Workshop_Init ();
+	SV_Enemies_Init ();
+	Cmd_AddCommand ("terrain_spawnenemy", SV_Terrain_SpawnEnemy_f);
+	Cmd_AddCommand ("terrain_clearmonsters", SV_Terrain_ClearMonsters_f);
 }
