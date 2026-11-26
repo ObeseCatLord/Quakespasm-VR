@@ -97,6 +97,7 @@ void Terrain_Free (terrain_t *t)
 {
 	if (!t)
 		return;
+	Terrain_IceFree (t);
 	const int count = t->size[0] * t->size[1] * t->size[2];
 	for (int i = 0; i < count; ++i)
 	{
@@ -161,8 +162,32 @@ float Terrain_SampleWorld (const terrain_t *t, const float p[3])
 	return v * ((float)TERRAIN_CELL / (float)TERRAIN_SUB);
 }
 
+void Terrain_SetSample (terrain_t *t, int x, int y, int z, int sdf, int mat)
+{
+	const int		 cx = x >> TERRAIN_CHUNK_SHIFT, cy = y >> TERRAIN_CHUNK_SHIFT, cz = z >> TERRAIN_CHUNK_SHIFT;
+	terrain_chunk_t *c = Terrain_Chunk (t, cx, cy, cz);
+	if (!c)
+		return;
+	if (!c->sdf)
+		Materialize (t, c, cx, cy, cz);
+	const int i = (((z & 31) << TERRAIN_CHUNK_SHIFT | (y & 31)) << TERRAIN_CHUNK_SHIFT) | (x & 31);
+	c->sdf[i] = (int8_t)Clamp (sdf, -TERRAIN_SDF_MAX, TERRAIN_SDF_MAX);
+	if (mat >= 0)
+		c->mat[i] = (uint8_t)mat;
+	for (int nz = (z - 1) >> TERRAIN_CHUNK_SHIFT; nz <= (z + 1) >> TERRAIN_CHUNK_SHIFT; ++nz)
+		for (int ny = (y - 1) >> TERRAIN_CHUNK_SHIFT; ny <= (y + 1) >> TERRAIN_CHUNK_SHIFT; ++ny)
+			for (int nx = (x - 1) >> TERRAIN_CHUNK_SHIFT; nx <= (x + 1) >> TERRAIN_CHUNK_SHIFT; ++nx)
+			{
+				terrain_chunk_t *n = Terrain_Chunk (t, nx, ny, nz);
+				if (n)
+					n->dirty = 1;
+			}
+}
+
 int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 {
+	if (op->kind >= TERRAIN_OP_DETACH)
+		return Terrain_IceApplyOp (t, op);
 	const int reach = (int)op->radius + TERRAIN_SDF_MAX;
 	int		  lo[3], hi[3];
 	for (int a = 0; a < 3; ++a)
@@ -1072,6 +1097,18 @@ void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t)
 
 void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op)
 {
+	if (op->kind >= TERRAIN_OP_DETACH)
+	{
+		int lo[3], hi[3];
+		Terrain_IceOpBounds (t, op, lo, hi);
+		for (int a = 0; a < 3; ++a)
+		{
+			lo[a] = (lo[a] - 1) >> 1; // lattice cell -> nav cell (2 lattice cells each)
+			hi[a] = (hi[a] + 1) >> 1;
+		}
+		Terrain_NavRefresh (nav, t, lo, hi);
+		return;
+	}
 	// an op changes samples up to radius + TERRAIN_SDF_MAX (fixed point) from its centre
 	const int reach = (int)op->radius + TERRAIN_SDF_MAX + TERRAIN_SUB;
 	int		  lo[3], hi[3];

@@ -12800,7 +12800,10 @@ void SV_Physics (void)
 	}
 
 	if (qcvm == &sv.qcvm)
+	{
 		SV_Terrain_WormFrame ();
+		SV_Terrain_IceFrame ();
+	}
 
 	// SV_CheckAllEnts ();
 

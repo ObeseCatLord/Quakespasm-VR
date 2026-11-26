@@ -55,6 +55,20 @@ Tuning cvars start with `terrain_worm_` (`aim_height`, `hunt_speed`, `launch`, `
 weapons, whether a player fits through its tunnels everywhere, its warning light and sound, and it
 rarely touches the player at the default aim height.
 
+### Falling ice
+
+Cutting an icicle or pillar off its root (any dig, including a rocket) floods the solid samples
+around the cut. A piece that is not joined to the rest of the cave within a bounded search becomes
+a rigid body: it is removed from the field (a `detach` op in the op log), meshed once, and simulated
+at a fixed 144 Hz as a 64-point shell against `Terrain_SampleWorld` with restitution, friction,
+sleep and a cap of 16 bodies. When it sleeps it is stamped back into the field as solid at a
+quantized pose (a `stamp` op), so replaying the log reproduces the same field. A moving body hurts
+monsters through `T_Damage`. Commands: `terrain_ice_pillar [length]` (build an icicle where you
+aim), `terrain_ice_cut`, `terrain_ice_dummy`, `terrain_ice_ramp`, `terrain_ice_toss`,
+`terrain_ice_cam`, `terrain_ice_info`, `terrain_ice_verify`, `terrain_ice_bench`. Cvars
+`terrain_ice_*` (`bodies`, `restitution`, `friction`, `damage`, `max`, `shell`, `sleep`).
+Test: `tests/terrain_ice.gdb`. Code: `Quake/sv_terrain_ice.c`, `Quake/terrain_ice.c`.
+
 ### Spider crawlers
 
 The crawler code drives any walking monster the loaded `progs.dat` has. With the same jam pack
