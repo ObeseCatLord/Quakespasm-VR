@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <!-- Concept sheet: dough blob in flight, the platform it becomes, and its shards. -->
+  <rect width="1600" height="1000" fill="#6b6b68"/>
+  <rect width="1600" height="70" fill="#4a4a47"/>
+  <text x="40" y="47" font-family="monospace" font-size="30" fill="#e8dcc0">GINGERBREAD  /  blob in flight · platform on a wall · shards</text>
+
+  <!-- blob: faceted lump of dough with a darker crease, ~40 tris -->
+  <g transform="translate(220,330)">
+    <text x="-90" y="-150" font-family="monospace" font-size="22" fill="#efe6cf">dough blob (in flight, swells 0.6x to 1.4x)</text>
+    <polygon points="0,-90 70,-60 95,10 60,80 -10,95 -80,60 -95,-10 -60,-70" fill="#a65a1c"/>
+    <polygon points="0,-90 70,-60 30,-20 -30,-40" fill="#d58a3a"/>
+    <polygon points="-60,-70 0,-90 -30,-40" fill="#c27530"/>
+    <polygon points="70,-60 95,10 40,20 30,-20" fill="#b8692a"/>
+    <polygon points="-95,-10 -30,-40 -20,30 -80,60" fill="#8f4a17"/>
+    <polygon points="60,80 -10,95 -20,30 40,20" fill="#7a3d12"/>
+    <polygon points="-30,-40 30,-20 40,20 -20,30" fill="#b06322"/>
+    <!-- crumbs speckles -->
+    <g fill="#5e2f0e"><rect x="10" y="-5" width="8" height="8"/><rect x="-50" y="10" width="8" height="8"/><rect x="40" y="45" width="8" height="8"/></g>
+  </g>
+
+  <!-- platform stuck to a rocky wall, seen from slightly above -->
+  <g transform="translate(560,180)">
+    <text x="160" y="500" font-family="monospace" font-size="22" fill="#efe6cf">platform: flat disk ~120 across, 20 thick, icing round the rim</text>
+    <!-- wall -->
+    <polygon points="0,40 140,30 170,200 120,520 0,560" fill="#4f5a66"/>
+    <polygon points="140,30 170,200 120,520 150,520 200,260 180,40" fill="#3b444e"/>
+    <!-- disk top (ellipse as 12-gon) -->
+    <polygon points="150,250 260,205 420,190 580,205 690,250 720,300 690,350 580,395 420,410 260,395 150,350 130,300" fill="#a0581c"/>
+    <!-- disk side band -->
+    <polygon points="130,300 150,350 260,395 420,410 580,395 690,350 720,300 720,340 690,392 580,438 420,454 260,438 150,392 130,340" fill="#6d3810"/>
+    <!-- top facets -->
+    <polygon points="420,190 580,205 500,300" fill="#b7672a"/>
+    <polygon points="260,205 420,190 500,300 330,300" fill="#a95f22"/>
+    <polygon points="580,205 690,250 720,300 500,300" fill="#9a5219"/>
+    <!-- icing rim (zigzag piping) -->
+    <polyline points="150,250 190,232 230,215 270,206 320,198 370,192 420,190 470,192 520,197 580,205 630,222 690,250 715,280 720,300 712,325 690,350 640,375 580,395 520,404 470,409 420,410 370,408 320,403 260,395 210,378 150,350 133,325 130,300 138,275 150,250"
+      fill="none" stroke="#f6f1e6" stroke-width="12" stroke-linejoin="bevel"/>
+    <!-- icing dots inside -->
+    <g fill="#f6f1e6"><rect x="300" y="280" width="16" height="16"/><rect x="430" y="250" width="16" height="16"/><rect x="560" y="300" width="16" height="16"/><rect x="430" y="340" width="16" height="16"/></g>
+    <!-- red and green sugar buttons -->
+    <polygon points="370,300 392,290 404,306 382,318" fill="#c8241c"/>
+    <polygon points="500,330 522,320 534,336 512,348" fill="#2e8b3e"/>
+  </g>
+
+  <!-- shards -->
+  <g transform="translate(220,700)">
+    <text x="-90" y="-60" font-family="monospace" font-size="22" fill="#efe6cf">shards (shatter on a monster), ~12 tris each</text>
+    <polygon points="0,0 70,-20 90,30 30,60" fill="#a0581c"/><polygon points="0,0 70,-20 50,10" fill="#c27530"/>
+    <polyline points="0,0 70,-20" stroke="#f6f1e6" stroke-width="8"/>
+    <polygon points="150,-10 210,0 200,60 140,50" fill="#8f4a17"/><polygon points="150,-10 210,0 180,20" fill="#b06322"/>
+    <polygon points="260,20 330,-10 340,40 280,70" fill="#a65a1c"/><polyline points="330,-10 340,40" stroke="#f6f1e6" stroke-width="8"/>
+  </g>
+
+  <g transform="translate(1180,620)" font-family="monospace" font-size="18" fill="#efe6cf">
+    <text x="0" y="-14">palette</text>
+    <rect x="0" y="0" width="40" height="40" fill="#a0581c"/><text x="50" y="27">gingerbread</text>
+    <rect x="0" y="50" width="40" height="40" fill="#6d3810"/><text x="50" y="77">baked edge</text>
+    <rect x="0" y="100" width="40" height="40" fill="#f6f1e6"/><text x="50" y="127">royal icing</text>
+    <rect x="0" y="150" width="40" height="40" fill="#c8241c"/><text x="50" y="177">red sugar</text>
+    <rect x="0" y="200" width="40" height="40" fill="#2e8b3e"/><text x="50" y="227">green sugar</text>
+  </g>
+</svg>

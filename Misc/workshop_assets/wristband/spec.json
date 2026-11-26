@@ -1,0 +1,11 @@
+{
+ "frames": [
+  "frame_idle.obj"
+ ],
+ "frame_names": [
+  "idle"
+ ],
+ "skins": [
+  "skin.png"
+ ]
+}

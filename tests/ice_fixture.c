@@ -49,10 +49,29 @@ int main (void)
 		for (int a = 0; a < 3; ++a) s.center[a] = (int)floorf (((float)b->lat_min[a] * 16 + b->com[a]) * 2 + 0.5f);
 		int c = Terrain_ApplyOp (t, &s); log[n++] = s;
 		printf ("stamp changed %d mid %.1f hash same as before cut: %d\n", c, Terrain_SampleWorld (t, (float[3]){512, 512, ceil_z - 100}), Terrain_Hash (t) == h0);
+		// a second copy lying tilted on the floor: a pose whose packed quaternion uses all its bits
+		float q2[4] = {cosf (0.6f), sinf (0.6f) * 0.6f, sinf (0.6f) * 0.8f, 0.0f};
+		terrain_op_t s2 = s; s2.aux = Terrain_PackQuat (q2);
+		s2.center[0] += 2 * 120; s2.center[2] = 2 * (512 - 200);
+		c = Terrain_ApplyOp (t, &s2); log[n++] = s2;
+		printf ("tilted stamp changed %d aux %08x\n", c, s2.aux);
 	}
 	// replay
 	terrain_t *r = Terrain_Create (org, size, 1);
 	for (int i = 0; i < n; ++i) Terrain_ApplyOp (r, &log[i]);
 	printf ("replay %s\n", Terrain_Hash (r) == Terrain_Hash (t) ? "MATCH" : "MISMATCH");
-	return 0;
+	// the same log through the netsync wire form (Terrain_OpPack / Terrain_OpUnpack), as a client replays it
+	terrain_t *w = Terrain_Create (org, size, 1);
+	int same = 1;
+	for (int i = 0; i < n; ++i) {
+		uint8_t packed[TERRAIN_OP_BYTES]; terrain_op_t back;
+		Terrain_OpPack (&log[i], packed); Terrain_OpUnpack (packed, &back);
+		same &= back.kind == log[i].kind && back.radius == log[i].radius && back.aux == (log[i].kind == TERRAIN_OP_STAMP ? log[i].aux : 0u) &&
+				!memcmp (back.center, log[i].center, sizeof back.center);
+		Terrain_ApplyOp (w, &back);
+	}
+	printf ("wire replay %s, ops round-trip %s, %d bricks\n", Terrain_Hash (w) == Terrain_Hash (t) ? "MATCH" : "MISMATCH", same ? "exact" : "CHANGED", Terrain_BrickCount (w));
+	const int ok = Terrain_Hash (r) == Terrain_Hash (t) && Terrain_Hash (w) == Terrain_Hash (t) && same;
+	puts (ok ? "ICE_FIXTURE_PASSED" : "ICE_FIXTURE_FAILED");
+	return !ok;
 }

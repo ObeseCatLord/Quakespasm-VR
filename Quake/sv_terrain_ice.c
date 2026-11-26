@@ -1091,15 +1091,15 @@ static void Verify_f (void)
 	Terrain_Generate (r);
 	if (Cvar_VariableValue ("terrain_ice"))
 		Terrain_GenerateIce (r);
-	int kinds[4] = {0, 0, 0, 0};
+	int kinds[TERRAIN_OP_KINDS + 1] = {0};
 	for (int i = 0; i < n; ++i)
 	{
 		Terrain_ApplyOp (r, &ops[i]);
-		++kinds[ops[i].kind & 3];
+		++kinds[q_min (ops[i].kind, TERRAIN_OP_KINDS)];
 	}
 	const uint64_t h0 = Terrain_Hash (a), h1 = Terrain_Hash (r);
 	Con_Printf (
-		"terrain_ice_verify: %d ops (%d dig, %d fill, %d detach, %d stamp), %d bricks live and %d replayed, hash %016llx vs %016llx, replay %.0f ms: %s\n", n, kinds[0], kinds[1], kinds[2], kinds[3],
+		"terrain_ice_verify: %d ops (%d dig, %d fill, %d disk, %d detach, %d stamp), %d bricks live and %d replayed, hash %016llx vs %016llx, replay %.0f ms: %s\n", n, kinds[TERRAIN_OP_DIG], kinds[TERRAIN_OP_FILL], kinds[TERRAIN_OP_DISK], kinds[TERRAIN_OP_DETACH], kinds[TERRAIN_OP_STAMP],
 		Terrain_BrickCount (a), Terrain_BrickCount (r), (unsigned long long)h0, (unsigned long long)h1, (Sys_DoubleTime () - start) * 1000.0, h0 == h1 ? "MATCH" : "MISMATCH");
 	Terrain_Free (r);
 }

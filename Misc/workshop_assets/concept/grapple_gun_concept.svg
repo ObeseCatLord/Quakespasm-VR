@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <!-- Concept sheet: festive one-handed grapple, star hook, and the Christmas-light line. -->
+  <rect width="1600" height="1000" fill="#6b6b68"/>
+  <rect width="1600" height="70" fill="#4a4a47"/>
+  <text x="40" y="47" font-family="monospace" font-size="30" fill="#e8dcc0">FESTIVE GRAPPLE  /  gun · gold star hook · light-string line  ·  ~140 tris gun</text>
+
+  <!-- the gun, side view -->
+  <g transform="translate(120,150)">
+    <!-- body: green, chunky -->
+    <polygon points="0,60 380,40 420,70 420,190 380,210 0,200" fill="#1f6b33"/>
+    <polygon points="0,60 380,40 420,70 0,90" fill="#2f9147"/>
+    <polygon points="0,180 420,170 380,210 0,200" fill="#134222"/>
+    <!-- gold trim bands -->
+    <polygon points="90,55 120,54 120,201 90,200" fill="#c99a2e"/>
+    <polygon points="300,45 330,44 330,205 300,205" fill="#c99a2e"/>
+    <!-- red barrel -->
+    <polygon points="420,80 600,90 600,160 420,170" fill="#a8231c"/>
+    <polygon points="420,80 600,90 600,106 420,100" fill="#d03a2e"/>
+    <!-- muzzle ring gold -->
+    <polygon points="600,72 640,80 640,170 600,178" fill="#c99a2e"/>
+    <!-- side spool drum wound with lights (octagon) -->
+    <polygon points="150,100 210,70 280,70 330,100 330,170 280,200 210,200 150,170" fill="#c99a2e"/>
+    <polygon points="170,108 220,86 270,86 312,108 312,162 270,184 220,184 170,162" fill="#0d3a1b"/>
+    <!-- little bulbs on the spool -->
+    <g><rect x="190" y="115" width="18" height="18" fill="#e23b2e"/><rect x="230" y="100" width="18" height="18" fill="#2fbf55"/><rect x="270" y="115" width="18" height="18" fill="#3a6ee0"/>
+      <rect x="200" y="150" width="18" height="18" fill="#f5c542"/><rect x="250" y="155" width="18" height="18" fill="#e23b2e"/></g>
+    <!-- grip: dark red with gold pommel -->
+    <polygon points="60,200 150,200 120,380 40,380" fill="#6e1a14"/>
+    <polygon points="40,380 120,380 116,400 36,400" fill="#c99a2e"/>
+    <!-- trigger -->
+    <polygon points="160,200 220,200 220,250 168,250 168,238 208,238 208,214 160,214" fill="#134222"/>
+    <polygon points="184,210 196,210 192,240 182,240" fill="#c99a2e"/>
+  </g>
+
+  <!-- the hook: a gold five-point star with three claw prongs -->
+  <g transform="translate(1260,260)">
+    <text x="-170" y="-150" font-family="monospace" font-size="22" fill="#efe6cf">star hook (tree-topper), 3 claws</text>
+    <polygon points="0,-120 30,-38 116,-38 46,12 72,96 0,46 -72,96 -46,12 -116,-38 -30,-38" fill="#e0b23a"/>
+    <polygon points="0,-120 30,-38 0,0 -30,-38" fill="#f6d46a"/>
+    <polygon points="30,-38 116,-38 46,12 0,0" fill="#c99a2e"/>
+    <polygon points="0,0 46,12 72,96 0,46" fill="#a87d2e"/>
+    <!-- claws -->
+    <polygon points="-20,40 -60,140 -40,150 -6,60" fill="#8a8f96"/>
+    <polygon points="20,40 60,140 40,150 6,60" fill="#8a8f96"/>
+    <polygon points="-8,50 8,50 10,170 -10,170" fill="#6d7278"/>
+  </g>
+
+  <!-- the line: dark green wire with big old-fashioned bulbs, cycling red, green, blue, gold -->
+  <g transform="translate(120,640)">
+    <text x="0" y="-60" font-family="monospace" font-size="22" fill="#efe6cf">line drawn as a light string: a bulb every 14 units, glowing (fullbright), slight sag</text>
+    <path d="M0,0 Q680,120 1360,0" fill="none" stroke="#0d3a1b" stroke-width="8"/>
+    <g>
+      <!-- bulbs: socket + faceted bulb pointing down -->
+      <g transform="translate(100,23)"><rect x="-8" y="0" width="16" height="12" fill="#1a4a26"/><polygon points="-14,12 14,12 10,50 0,62 -10,50" fill="#ff4a38"/></g>
+      <g transform="translate(260,45)"><rect x="-8" y="0" width="16" height="12" fill="#1a4a26"/><polygon points="-14,12 14,12 10,50 0,62 -10,50" fill="#3ee06a"/></g>
+      <g transform="translate(420,59)"><rect x="-8" y="0" width="16" height="12" fill="#1a4a26"/><polygon points="-14,12 14,12 10,50 0,62 -10,50" fill="#4f86ff"/></g>
+      <g transform="translate(580,66)"><rect x="-8" y="0" width="16" height="12" fill="#1a4a26"/><polygon points="-14,12 14,12 10,50 0,62 -10,50" fill="#ffd24a"/></g>
+      <g transform="translate(740,66)"><rect x="-8" y="0" width="16" height="12" fill="#1a4a26"/><polygon points="-14,12 14,12 10,50 0,62 -10,50" fill="#ff4a38"/></g>
+      <g transform="translate(900,59)"><rect x="-8" y="0" width="16" height="12" fill="#1a4a26"/><polygon points="-14,12 14,12 10,50 0,62 -10,50" fill="#3ee06a"/></g>
+      <g transform="translate(1060,45)"><rect x="-8" y="0" width="16" height="12" fill="#1a4a26"/><polygon points="-14,12 14,12 10,50 0,62 -10,50" fill="#4f86ff"/></g>
+      <g transform="translate(1220,23)"><rect x="-8" y="0" width="16" height="12" fill="#1a4a26"/><polygon points="-14,12 14,12 10,50 0,62 -10,50" fill="#ffd24a"/></g>
+    </g>
+  </g>
+
+  <g transform="translate(1180,770)" font-family="monospace" font-size="18" fill="#efe6cf">
+    <rect x="0" y="0" width="30" height="30" fill="#1f6b33"/><text x="40" y="22">holly green</text>
+    <rect x="200" y="0" width="30" height="30" fill="#a8231c"/><text x="240" y="22">berry red</text>
+    <rect x="0" y="40" width="30" height="30" fill="#c99a2e"/><text x="40" y="62">gold trim</text>
+    <rect x="200" y="40" width="30" height="30" fill="#ffd24a"/><text x="240" y="62">bulbs: fullbright</text>
+  </g>
+</svg>

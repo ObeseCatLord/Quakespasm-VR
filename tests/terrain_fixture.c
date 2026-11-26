@@ -295,7 +295,7 @@ int main (int argc, char **argv)
 					far_cell = i;
 			}
 		printf (
-			"nav: %d x %d x %d cells, stand %d (wide %d), reachable from the centre %d, farthest %d steps\n", nav.dim[0], nav.dim[1], nav.dim[2], stand[0],
+			"nav: %d x %d x %d cells, stand %d (wide %d), reachable from the centre %d, farthest costs %d\n", nav.dim[0], nav.dim[1], nav.dim[2], stand[0],
 			stand[1], reached, far_cell >= 0 ? dist[far_cell] : -1);
 		printf ("nav cost: full refresh %.2f ms, flood %.2f ms\n", refresh_ms, flood_ms);
 		CHECK (reached > 400, "only %d stand cells reachable on foot from the centre", reached);
@@ -306,12 +306,10 @@ int main (int argc, char **argv)
 		int path[4096], path_len = 0, blocked_links = 0;
 		for (int cell = far_cell; cell >= 0 && path_len < 4096; cell = Terrain_NavNext (&nav, 0, dist, cell))
 			path[path_len++] = cell;
-		CHECK (
-			path_len == dist[far_cell] + 1 && path[path_len - 1] == seed, "the route from the farthest cell is %d long, not %d, or misses the target",
-			path_len - 1, dist[far_cell]);
+		CHECK (path_len > 1 && path[path_len - 1] == seed, "the route from the farthest cell misses the target");
 		for (int k = 0; k + 1 < path_len; ++k)
 		{
-			CHECK (dist[path[k + 1]] == dist[path[k]] - 1, "route step %d does not get closer", k);
+			CHECK (dist[path[k + 1]] + Terrain_NavStepCost (&nav, path[k], path[k + 1]) == dist[path[k]], "route step %d is not on a cheapest way", k);
 			const float	  mins[3] = {-16, -16, -24}, maxs[3] = {16, 16, 32};
 			float		  a[3], b[3];
 			terrain_hit_t hit;
@@ -326,20 +324,78 @@ int main (int argc, char **argv)
 		printf ("nav route: %d steps (%d off a ledge), %d with a wall at body height\n", path_len - 1, drops, blocked_links);
 		CHECK (blocked_links * 10 <= path_len, "%d of %d route steps run into a wall", blocked_links, path_len - 1);
 
+		// jumps: a target up on the highest floor of the cave is out of reach of most of it on foot;
+		// jumps of up to 3 levels bring more of the cave to it, and no route gets dearer
+		{
+			int high = -1;
+			for (int i = 0; i < nav.count; ++i)
+				if ((nav.flags[i] & TERRAIN_NAV_STAND) && dist[i] != TERRAIN_NAV_FAR &&
+					(high < 0 || i / (nav.dim[0] * nav.dim[1]) > high / (nav.dim[0] * nav.dim[1])))
+					high = i;
+			int reach_walk = 0, reach_jump = 0, dearer = 0, climbs = 0;
+			Terrain_NavFlood (&nav, 0, &high, 1, dist2);
+			uint16_t *walk_only = malloc ((size_t)nav.count * sizeof (uint16_t));
+			memcpy (walk_only, dist2, (size_t)nav.count * sizeof (uint16_t));
+			nav.max_climb = 3;
+			Terrain_NavFlood (&nav, 0, &high, 1, dist2);
+			int sample = -1;
+			for (int i = 0; i < nav.count; ++i)
+			{
+				reach_walk += walk_only[i] != TERRAIN_NAV_FAR;
+				reach_jump += dist2[i] != TERRAIN_NAV_FAR;
+				dearer += walk_only[i] != TERRAIN_NAV_FAR && dist2[i] > walk_only[i];
+				if (sample < 0 && dist2[i] != TERRAIN_NAV_FAR && walk_only[i] == TERRAIN_NAV_FAR)
+					sample = i;
+			}
+			for (int cell = sample, next; cell >= 0 && (next = Terrain_NavNext (&nav, 0, dist2, cell)) >= 0; cell = next)
+				climbs += Terrain_NavIsClimb (&nav, cell, next);
+			printf (
+				"nav to the highest floor: %d cells reach it on foot, %d with jumps of up to 3 levels (%d jumps on one such route), %d dearer\n", reach_walk,
+				reach_jump, climbs, dearer);
+			CHECK (reach_jump > reach_walk, "jumps brought nothing new to the highest floor");
+			CHECK (!dearer, "allowing jumps made %d routes dearer", dearer);
+			CHECK (sample < 0 || climbs > 0, "a route only jumps make possible has no jump");
+			free (walk_only);
+			nav.max_climb = 0;
+		}
+		// a near field matches the full one within its bound, and stays right when flooded again from
+		// another seed (it clears only what it reached before)
+		{
+			terrain_navfield_t near;
+			Terrain_NavFieldInit (&nav, &near);
+			int		  wrong = 0, inside = 0;
+			const int seeds2[2] = {seed, path[path_len / 3]};
+			for (int round = 0; round < 2; ++round)
+			{
+				Terrain_NavFlood (&nav, 0, &seeds2[round], 1, dist2);
+				double t0 = Now ();
+				Terrain_NavFloodNear (&nav, 0, &seeds2[round], 1, &near, 60);
+				const double near_ms = Now () - t0;
+				for (int i = 0; i < nav.count; ++i)
+				{
+					const int expect = dist2[i] <= 60 ? dist2[i] : TERRAIN_NAV_FAR;
+					wrong += near.dist[i] != expect;
+					inside += round == 0 && expect != TERRAIN_NAV_FAR;
+				}
+				if (!round)
+					printf ("nav near field (cost 60): %d cells in %.3f ms\n", inside, near_ms);
+			}
+			CHECK (!wrong, "%d cells of a near field differ from the full flood", wrong);
+			CHECK (inside > 20, "the near field reached only %d cells", inside);
+			Terrain_NavFieldFree (&near);
+		}
 		// block the route halfway, then dig it open again: the far cell's distance has to follow
 		const int mid = path[path_len / 2];
 		float	  mid_pos[3];
 		Terrain_NavCellCenter (&nav, mid, mid_pos);
-		terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_FILL, 7 * TERRAIN_SUB, {0, 0, 0}};
+		terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_FILL, 7 * TERRAIN_SUB, {0, 0, 0}, {0, 0, 0}, 0};
 		for (int a = 0; a < 3; ++a)
 			op.center[a] = (int32_t)((mid_pos[a] - (float)origin[a]) * TERRAIN_SUB / TERRAIN_CELL);
 		Terrain_ApplyOp (nt, &op);
 		Terrain_NavRefreshOp (&nav, nt, &op);
 		CHECK (!(nav.flags[mid] & TERRAIN_NAV_STAND), "a filled cell is still somewhere to stand");
 		Terrain_NavFlood (&nav, 0, &seed, 1, dist2);
-		printf (
-			"nav: after a fill on the route the far cell is %d steps away (was %d)\n", dist2[far_cell] == TERRAIN_NAV_FAR ? -1 : dist2[far_cell],
-			dist[far_cell]);
+		printf ("nav: after a fill on the route the far cell costs %d (was %d)\n", dist2[far_cell] == TERRAIN_NAV_FAR ? -1 : dist2[far_cell], dist[far_cell]);
 		CHECK (dist2[far_cell] >= dist[far_cell], "filling the route shortened it");
 		int through_fill = 0;
 		for (int cell = far_cell; cell >= 0; cell = Terrain_NavNext (&nav, 0, dist2, cell))
@@ -375,6 +431,51 @@ int main (int argc, char **argv)
 		free (dist2);
 		Terrain_NavFree (&nav);
 		Terrain_Free (nt);
+	}
+
+	// 8. platform disks: shape, wire round trip, and somewhere to stand on the far side of a pit
+	{
+		terrain_t *dt = Terrain_Create (origin, size, 1);
+		Terrain_Generate (dt);
+		// a flat disk, 60 units across the axis and 10 either side of it, tilted off the vertical
+		const float c[3] = {
+			(float)origin[0] + size[0] * TERRAIN_CHUNK_UNITS * 0.5f, (float)origin[1] + size[1] * TERRAIN_CHUNK_UNITS * 0.5f,
+			(float)origin[2] + size[2] * TERRAIN_CHUNK_UNITS * 0.5f};
+		terrain_op_t disk = {TERRAIN_OP_DISK, TERRAIN_MAT_GINGER, 60 * TERRAIN_SUB / TERRAIN_CELL, {0, 0, 0}, {0, 30, 120}, 10 * TERRAIN_SUB / TERRAIN_CELL};
+		for (int a = 0; a < 3; ++a)
+			disk.center[a] = (int32_t)((c[a] - (float)origin[a]) * TERRAIN_SUB / TERRAIN_CELL);
+		const uint64_t before = Terrain_Hash (dt);
+		CHECK (Terrain_ApplyOp (dt, &disk) > 0, "a disk in the start room changed nothing");
+		const float n[3] = {0.0f, 30.0f / sqrtf (30.0f * 30.0f + 120.0f * 120.0f), 120.0f / sqrtf (30.0f * 30.0f + 120.0f * 120.0f)};
+		// a direction in the disk's plane
+		const float u[3] = {1.0f, 0.0f, 0.0f};
+		int			wrong = 0;
+		for (int k = -5; k <= 5; ++k)
+		{
+			float in_plane[3], off_axis[3];
+			for (int a = 0; a < 3; ++a)
+			{
+				in_plane[a] = c[a] + u[a] * 10.0f * (float)k;				 // within the radius: solid
+				off_axis[a] = c[a] + n[a] * 26.0f + u[a] * 10.0f * (float)k; // past the thickness: open
+			}
+			wrong += Terrain_SampleWorld (dt, in_plane) > -2.0f;
+			wrong += Terrain_SampleWorld (dt, off_axis) < 2.0f;
+		}
+		CHECK (!wrong, "%d samples on the wrong side of a disk", wrong);
+		uint8_t		 packed[TERRAIN_OP_BYTES];
+		terrain_op_t back;
+		Terrain_OpPack (&disk, packed);
+		Terrain_OpUnpack (packed, &back);
+		terrain_t *peer = Terrain_Create (origin, size, 1);
+		Terrain_Generate (peer);
+		Terrain_ApplyOp (peer, &back);
+		CHECK (Terrain_Hash (peer) == Terrain_Hash (dt) && Terrain_Hash (dt) != before, "a disk sent over the wire did not replay to the same field");
+		uint8_t mat = 0;
+		Terrain_Sample (dt, (int)(disk.center[0] / TERRAIN_SUB), (int)(disk.center[1] / TERRAIN_SUB), (int)(disk.center[2] / TERRAIN_SUB), &mat);
+		CHECK (mat == TERRAIN_MAT_GINGER, "a disk's inside is material %d, not gingerbread", mat);
+		printf ("disk: radius 60, half thickness 10, shape and replay checked\n");
+		Terrain_Free (peer);
+		Terrain_Free (dt);
 	}
 
 	if (argc > 1)

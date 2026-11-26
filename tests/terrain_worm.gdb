@@ -15,7 +15,11 @@ run
 ignore 1 300
 continue
 call (void)Cbuf_AddText("terrain_crawlers 0; terrain_worm_auto 0; map drgbox\n")
-ignore 1 500
+ignore 1 40
+continue
+# god as soon as the map is up: in the map-sized cave a monster can reach the start within seconds
+call (void)Cbuf_AddText("god\n")
+ignore 1 460
 continue
 call (void)Cbuf_AddText("god; echo PHASE A0; terrain_worm_spawn 600; terrain_probe; terrain_worm_info\n")
 ignore 1 400

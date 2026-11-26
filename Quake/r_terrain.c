@@ -1,10 +1,10 @@
 /*
- * Client side of the editable terrain prototype: meshes and draws the region the server owns
- * (terrain_active, see sv_terrain.c), plus the console commands for trying it.
+ * Client side of the editable terrain prototype: meshes and draws the client's copy of the region
+ * (terrain_client, see cl_terrain.c), plus the console commands for trying it.
  * GPL-2.0-or-later, as the rest of the engine.
  *
- * Only a listen server's own client sees terrain so far. This file never edits the field: its
- * commands go through SV_Terrain_Edit, the same path a networked edit will take.
+ * This file never edits the field: its commands go through SV_Terrain_Edit on the server, and the
+ * edits come back like any other through the op stream.
  * Lighting is computed per vertex on the CPU (ambient occlusion, a lamp at the eye, cl_dlights).
  * r_terrain_style 0 draws it through the untextured basic shader (the original ice look); styles
  * 1-3 draw through the terrain shader with a procedural nearest-texel atlas (r_terrain_tex.c) and
@@ -31,9 +31,29 @@ typedef struct
 	terrain_drawvert_t *verts;
 	int					num_verts, cap_verts;
 	vec3_t				mins, maxs;
+	// lit vertices kept from the last frame that drew this chunk (see Terrain_LitFor)
+	byte			   *lit;
+	size_t				lit_cap;
+	int					lit_style; // -1: nothing kept
+	uint32_t			lit_key;
+	vec3_t				lit_eye;
 } terrain_draw_t;
 
-static terrain_t	  *terrain; // the region the draws below were built for; equals terrain_active once R_Terrain_Update ran
+// One chunk meshed on a worker: the result waits here until the main thread swaps it in.
+typedef struct
+{
+	int					chunk;
+	terrain_mesh_t		mesh;
+	terrain_drawvert_t *verts;
+	int					num_verts, cap_verts;
+} terrain_job_t;
+static terrain_job_t *terrain_jobs;
+static int			  terrain_num_jobs, terrain_cap_jobs;
+static task_handle_t  terrain_job_task;
+static qboolean		  terrain_job_running;
+static double		  terrain_job_start;
+
+static terrain_t	  *terrain; // the region the draws below were built for; equals terrain_client once R_Terrain_Update ran
 static unsigned		   terrain_draw_epoch;
 static int			   terrain_draw_count;
 static terrain_draw_t *terrain_draws;
@@ -55,12 +75,14 @@ static const float terrain_colors[2][TERRAIN_MAT_COUNT][3] = {
 		{0.46f, 0.31f, 0.19f}, // dirt
 		{0.95f, 0.72f, 0.18f}, // gold
 		{0.62f, 0.64f, 0.60f}, // player fill
+		{0.58f, 0.31f, 0.12f}, // gingerbread
 	},
 	{
 		{0.50f, 0.74f, 0.93f}, // glacier ice
 		{0.90f, 0.94f, 1.00f}, // packed snow
 		{0.16f, 0.34f, 0.66f}, // old blue ice
 		{0.80f, 0.90f, 0.98f}, // cut ice
+		{0.58f, 0.31f, 0.12f}, // gingerbread
 	},
 };
 static const float terrain_snow[3] = {0.94f, 0.97f, 1.0f};
@@ -68,8 +90,12 @@ static const float terrain_deep_ice[3] = {0.05f, 0.22f, 0.45f}; // what shadowed
 
 static void Terrain_FreeDraws (void)
 {
+	R_Terrain_FinishMeshing ();
 	for (int i = 0; i < terrain_draw_count; ++i)
+	{
 		free (terrain_draws[i].verts);
+		free (terrain_draws[i].lit);
+	}
 	free (terrain_draws);
 	terrain_draws = NULL;
 	terrain_draw_count = 0;
@@ -78,13 +104,14 @@ static void Terrain_FreeDraws (void)
 
 // Expands a chunk's indexed mesh to unshared triangles: rock keeps one normal per face so it
 // reads as facets, dirt keeps the smooth field normals.
-static void Terrain_BuildDrawInto (terrain_draw_t *draw, const terrain_mesh_t *mesh)
+// Shared by the chunk jobs and the falling ice draws.
+static void Terrain_BuildVerts (terrain_drawvert_t **verts, int *num_verts, int *cap_verts, const terrain_mesh_t *mesh)
 {
-	draw->num_verts = mesh->num_indices;
-	if (draw->num_verts > draw->cap_verts)
+	*num_verts = mesh->num_indices;
+	if (*num_verts > *cap_verts)
 	{
-		draw->cap_verts = draw->num_verts + draw->num_verts / 4;
-		draw->verts = (terrain_drawvert_t *)realloc (draw->verts, draw->cap_verts * sizeof (*draw->verts));
+		*cap_verts = *num_verts + *num_verts / 4;
+		*verts = (terrain_drawvert_t *)realloc (*verts, *cap_verts * sizeof (**verts));
 	}
 	for (int k = 0; k < mesh->num_indices; k += 3)
 	{
@@ -101,7 +128,7 @@ static void Terrain_BuildDrawInto (terrain_draw_t *draw, const terrain_mesh_t *m
 		const qboolean smooth = v[0]->material == TERRAIN_MAT_DIRT && v[1]->material == TERRAIN_MAT_DIRT && v[2]->material == TERRAIN_MAT_DIRT;
 		for (int i = 0; i < 3; ++i)
 		{
-			terrain_drawvert_t *out = &draw->verts[k + i];
+			terrain_drawvert_t *out = &(*verts)[k + i];
 			VectorCopy (v[i]->pos, out->pos);
 			VectorCopy (smooth ? v[i]->normal : face, out->normal);
 			out->material = v[i]->material < TERRAIN_MAT_COUNT ? v[i]->material : 0;
@@ -112,9 +139,9 @@ static void Terrain_BuildDrawInto (terrain_draw_t *draw, const terrain_mesh_t *m
 	}
 }
 
-static void Terrain_BuildDraw (int index, const terrain_mesh_t *mesh)
+static void Terrain_BuildDraw (terrain_job_t *job, const terrain_mesh_t *mesh)
 {
-	Terrain_BuildDrawInto (&terrain_draws[index], mesh);
+	Terrain_BuildVerts (&job->verts, &job->num_verts, &job->cap_verts, mesh);
 }
 
 /*
@@ -136,7 +163,8 @@ static void Terrain_IceBuild (void)
 		if (!SV_Terrain_IceDraw (i, &mesh, pos, R, com))
 			continue;
 		terrain_draw_t *draw = &terrain_ice_draws[terrain_ice_count++];
-		Terrain_BuildDrawInto (draw, mesh);
+		Terrain_BuildVerts (&draw->verts, &draw->num_verts, &draw->cap_verts, mesh);
+		draw->lit_style = -1; // it moves every frame: light it again
 		for (int a = 0; a < 3; ++a)
 		{
 			draw->mins[a] = 1e9f;
@@ -160,24 +188,80 @@ static void Terrain_IceBuild (void)
 	}
 }
 
+static void Terrain_MeshTask (int index, void *data)
+{
+	terrain_job_t *job = &terrain_jobs[index];
+	const int	   cx = job->chunk % terrain->size[0], cy = job->chunk / terrain->size[0] % terrain->size[1],
+				   cz = job->chunk / (terrain->size[0] * terrain->size[1]);
+	Terrain_MeshChunk (terrain, cx, cy, cz, &job->mesh);
+	Terrain_BuildDraw (job, &job->mesh);
+}
+
+// Takes the finished meshes: each job's vertices change places with the chunk's old ones.
+static void Terrain_TakeJobs (void)
+{
+	for (int i = 0; i < terrain_num_jobs; ++i)
+	{
+		terrain_job_t	   *job = &terrain_jobs[i];
+		terrain_draw_t	   *draw = &terrain_draws[job->chunk];
+		terrain_drawvert_t *verts = draw->verts;
+		const int			cap = draw->cap_verts;
+		draw->verts = job->verts;
+		draw->num_verts = job->num_verts;
+		draw->cap_verts = job->cap_verts;
+		draw->lit_style = -1;
+		job->verts = verts;
+		job->cap_verts = cap;
+	}
+	terrain_last_remesh_ms = (Sys_DoubleTime () - terrain_job_start) * 1000.0;
+	terrain_last_remesh_chunks = terrain_num_jobs;
+	terrain_num_jobs = 0;
+	terrain_job_running = false;
+}
+
+/*
+Waits for chunks being meshed on the workers and takes them. Anything that changes or frees the
+client's field calls this first, so a worker never reads a field while it is written.
+*/
+void R_Terrain_FinishMeshing (void)
+{
+	if (!terrain_job_running)
+		return;
+	Task_Join (terrain_job_task, TASK_TIMEOUT_INFINITE);
+	Terrain_TakeJobs ();
+}
+
+// Hands the dirty chunks to the workers, one chunk each; the frame goes on drawing the old meshes.
 static void Terrain_RemeshDirty (void)
 {
-	const double start = Sys_DoubleTime ();
-	int			 remeshed = 0;
-	for (int cz = 0; cz < terrain->size[2]; ++cz)
-		for (int cy = 0; cy < terrain->size[1]; ++cy)
-			for (int cx = 0; cx < terrain->size[0]; ++cx)
-			{
-				terrain_chunk_t *chunk = Terrain_Chunk (terrain, cx, cy, cz);
-				if (!chunk->dirty)
-					continue;
-				chunk->dirty = 0;
-				Terrain_MeshChunk (terrain, cx, cy, cz, &terrain_scratch);
-				Terrain_BuildDraw ((cz * terrain->size[1] + cy) * terrain->size[0] + cx, &terrain_scratch);
-				++remeshed;
-			}
-	terrain_last_remesh_ms = (Sys_DoubleTime () - start) * 1000.0;
-	terrain_last_remesh_chunks = remeshed;
+	terrain_last_remesh_chunks = 0; // set again only on the frame a job is taken, for the report below
+	if (terrain_job_running)
+	{
+		if (!Task_Join (terrain_job_task, 0))
+			return;
+		Terrain_TakeJobs ();
+	}
+	int count = 0;
+	for (int i = 0; i < terrain_draw_count; ++i)
+		count += terrain->chunks[i].dirty != 0;
+	if (!count)
+		return;
+	if (count > terrain_cap_jobs)
+	{
+		terrain_jobs = (terrain_job_t *)realloc (terrain_jobs, count * sizeof (*terrain_jobs));
+		memset (terrain_jobs + terrain_cap_jobs, 0, (count - terrain_cap_jobs) * sizeof (*terrain_jobs));
+		terrain_cap_jobs = count;
+	}
+	terrain_num_jobs = 0;
+	for (int i = 0; i < terrain_draw_count; ++i)
+		if (terrain->chunks[i].dirty)
+		{
+			terrain->chunks[i].dirty = 0;
+			terrain_jobs[terrain_num_jobs++].chunk = i;
+		}
+	terrain_job_start = Sys_DoubleTime ();
+	terrain_job_running = true;
+	terrain_job_task = Task_AllocateAssignIndexedFuncAndSubmit (Terrain_MeshTask, terrain_num_jobs, NULL, 0);
 }
 
 /*
@@ -185,17 +269,18 @@ Main thread, once per frame before drawing: follow the server's region and remes
 */
 void R_Terrain_Update (void)
 {
-	if (terrain_draw_epoch != terrain_epoch)
+	if (terrain_draw_epoch != terrain_client_epoch)
 	{
-		terrain_draw_epoch = terrain_epoch;
+		terrain_draw_epoch = terrain_client_epoch;
 		Terrain_FreeDraws ();
-		terrain = terrain_active;
+		terrain = terrain_client;
 		if (terrain)
 		{
 			terrain_draw_count = terrain->size[0] * terrain->size[1] * terrain->size[2];
 			terrain_draws = (terrain_draw_t *)calloc (terrain_draw_count, sizeof (*terrain_draws));
 			for (int i = 0; i < terrain_draw_count; ++i)
 			{
+				terrain_draws[i].lit_style = -1;
 				const int cell[3] = {i % terrain->size[0], i / terrain->size[0] % terrain->size[1], i / (terrain->size[0] * terrain->size[1])};
 				for (int a = 0; a < 3; ++a)
 				{
@@ -366,6 +451,84 @@ void R_Terrain_Init (void)
 	Cmd_AddCommand ("terrain_probe", Terrain_Probe_f);
 }
 
+/*
+Lighting cache. Lighting a chunk's vertices is the expensive part of drawing the terrain, and most
+frames nothing it depends on has changed. A chunk keeps the vertices it was last drawn with, and
+lights them again only when its mesh, the look, the lighting cvars, the dynamic lights that reach
+it, or (while the eye lamp reaches it) the eye moved by more than a couple of units.
+*/
+static uint32_t Terrain_KeyMix (uint32_t h, uint32_t v)
+{
+	h ^= v;
+	return h * 16777619u;
+}
+
+static uint32_t Terrain_KeyFloat (uint32_t h, float f, float step)
+{
+	return Terrain_KeyMix (h, (uint32_t)(int32_t)floorf (f / step + 0.5f));
+}
+
+// The cached vertices still hold for this frame?
+static qboolean
+Terrain_LitFresh (terrain_draw_t *draw, int style, float lamp, const dlight_t *const *lights, const float (*light_rgb)[3], const int *near, int num_near)
+{
+	uint32_t key = Terrain_KeyMix (2166136261u, (uint32_t)style);
+	key = Terrain_KeyFloat (key, lamp, 1.0f);
+	key = Terrain_KeyFloat (key, r_terrain_ambient.value, 0.001f);
+	key = Terrain_KeyFloat (key, r_terrain_biome.value, 1.0f);
+	for (int n = 0; n < num_near; ++n)
+	{
+		const dlight_t *dl = lights[near[n]];
+		for (int a = 0; a < 3; ++a)
+		{
+			key = Terrain_KeyFloat (key, dl->origin[a], 2.0f);
+			key = Terrain_KeyFloat (key, light_rgb[near[n]][a], 0.02f);
+		}
+		key = Terrain_KeyFloat (key, dl->radius, 2.0f);
+	}
+	// the eye lamp: within three of its reaches the eye's position matters, beyond it does not
+	float gap2 = 0.0f;
+	for (int a = 0; a < 3; ++a)
+	{
+		const float o = r_origin[a];
+		const float d = o < draw->mins[a] ? draw->mins[a] - o : o > draw->maxs[a] ? o - draw->maxs[a] : 0.0f;
+		gap2 += d * d;
+	}
+	const qboolean lamp_reaches = lamp > 0.0f && gap2 < lamp * lamp * 9.0f;
+	key = Terrain_KeyMix (key, lamp_reaches);
+	vec3_t moved;
+	VectorSubtract (r_origin, draw->lit_eye, moved);
+	const qboolean fresh = draw->lit_style == style && draw->lit_key == key && (!lamp_reaches || DotProduct (moved, moved) < 2.0f * 2.0f);
+	if (!fresh)
+	{
+		draw->lit_style = style;
+		draw->lit_key = key;
+		VectorCopy (r_origin, draw->lit_eye);
+	}
+	return fresh;
+}
+
+static void *Terrain_LitReserve (terrain_draw_t *draw, size_t bytes)
+{
+	if (bytes > draw->lit_cap)
+	{
+		draw->lit_cap = bytes + bytes / 4;
+		draw->lit = (byte *)realloc (draw->lit, draw->lit_cap);
+	}
+	return draw->lit;
+}
+
+// Copies a chunk's lit vertices into this frame's vertex memory and draws them.
+static void Terrain_DrawLit (cb_context_t *cbx, const terrain_draw_t *draw, size_t vertex_size)
+{
+	VkBuffer	 buffer;
+	VkDeviceSize buffer_offset;
+	void		*out = R_VertexAllocate (draw->num_verts * vertex_size, &buffer, &buffer_offset);
+	memcpy (out, draw->lit, draw->num_verts * vertex_size);
+	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
+	vulkan_globals.vk_cmd_draw (cbx->cb, draw->num_verts, 1, 0, 0);
+}
+
 void R_DrawTerrain (cb_context_t *cbx)
 {
 	if (!terrain_draw_count || !r_terrain.value)
@@ -404,7 +567,7 @@ void R_DrawTerrain (cb_context_t *cbx)
 		}
 	for (int i = 0; i < terrain_draw_count + terrain_ice_count; ++i)
 	{
-		const terrain_draw_t *draw = i < terrain_draw_count ? &terrain_draws[i] : &terrain_ice_draws[i - terrain_draw_count];
+		terrain_draw_t *draw = i < terrain_draw_count ? &terrain_draws[i] : &terrain_ice_draws[i - terrain_draw_count];
 		if (!draw->num_verts || R_CullBox ((float *)draw->mins, (float *)draw->maxs))
 			continue;
 
@@ -422,9 +585,12 @@ void R_DrawTerrain (cb_context_t *cbx)
 				near_lights[num_near++] = l;
 		}
 
-		VkBuffer	   buffer;
-		VkDeviceSize   buffer_offset;
-		basicvertex_t *out = (basicvertex_t *)R_VertexAllocate (draw->num_verts * sizeof (basicvertex_t), &buffer, &buffer_offset);
+		if (Terrain_LitFresh (draw, 0, lamp, lights, (const float (*)[3])light_rgb, near_lights, num_near))
+		{
+			Terrain_DrawLit (cbx, draw, sizeof (basicvertex_t));
+			continue;
+		}
+		basicvertex_t *out = (basicvertex_t *)Terrain_LitReserve (draw, draw->num_verts * sizeof (basicvertex_t));
 		for (int k = 0; k < draw->num_verts; ++k)
 		{
 			const terrain_drawvert_t *v = &draw->verts[k];
@@ -451,7 +617,7 @@ void R_DrawTerrain (cb_context_t *cbx)
 			}
 			float rgb[3];
 			VectorCopy (terrain_colors[ice][v->material], rgb);
-			if (ice)
+			if (ice && v->material != TERRAIN_MAT_GINGER)
 			{
 				// snow settles on what faces up; shadowed ice goes deep blue instead of black
 				const float snow = CLAMP (0.0f, ((float)v->up / 255.0f - 0.55f) * 3.0f, 1.0f);
@@ -490,8 +656,7 @@ void R_DrawTerrain (cb_context_t *cbx)
 				out[k].color[c] = (byte)(q_min (rgb[c] * lit[c] + shine, 1.0f) * 255.0f);
 			out[k].color[3] = 255;
 		}
-		vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
-		vulkan_globals.vk_cmd_draw (cbx->cb, draw->num_verts, 1, 0, 0);
+		Terrain_DrawLit (cbx, draw, sizeof (basicvertex_t));
 	}
 	R_EndDebugUtilsLabel (cbx);
 }
@@ -530,7 +695,7 @@ static void R_DrawTerrainTextured (cb_context_t *cbx)
 
 	for (int i = 0; i < terrain_draw_count + terrain_ice_count; ++i)
 	{
-		const terrain_draw_t *draw = i < terrain_draw_count ? &terrain_draws[i] : &terrain_ice_draws[i - terrain_draw_count];
+		terrain_draw_t *draw = i < terrain_draw_count ? &terrain_draws[i] : &terrain_ice_draws[i - terrain_draw_count];
 		if (!draw->num_verts || R_CullBox ((float *)draw->mins, (float *)draw->maxs))
 			continue;
 		int near_lights[MAX_DLIGHTS], num_near = 0;
@@ -547,9 +712,12 @@ static void R_DrawTerrainTextured (cb_context_t *cbx)
 				near_lights[num_near++] = l;
 		}
 
-		VkBuffer			buffer;
-		VkDeviceSize		buffer_offset;
-		terrain_gpuvert_t *out = (terrain_gpuvert_t *)R_VertexAllocate (draw->num_verts * sizeof (terrain_gpuvert_t), &buffer, &buffer_offset);
+		if (Terrain_LitFresh (draw, R_TerrainStyle_Current (), lamp, lights, (const float (*)[3])light_rgb, near_lights, num_near))
+		{
+			Terrain_DrawLit (cbx, draw, sizeof (terrain_gpuvert_t));
+			continue;
+		}
+		terrain_gpuvert_t *out = (terrain_gpuvert_t *)Terrain_LitReserve (draw, draw->num_verts * sizeof (terrain_gpuvert_t));
 		for (int k = 0; k < draw->num_verts; ++k)
 		{
 			const terrain_drawvert_t *v = &draw->verts[k];
@@ -600,6 +768,8 @@ static void R_DrawTerrainTextured (cb_context_t *cbx)
 				snow = q_min (snow + st->strata_snow, 1.0f); // packed-snow strata show on the walls too
 			else if (v->material == TERRAIN_MAT_FILL)
 				snow = 1.0f;
+			else if (v->material == TERRAIN_MAT_GINGER)
+				snow = 0.0f; // fresh from the gun
 			VectorCopy (v->pos, out[k].pos);
 			for (int c = 0; c < 3; ++c)
 				out[k].light[c] = (byte)(CLAMP (0.0f, (lit[c] + shine) * 0.5f, 1.0f) * 255.0f);
@@ -609,8 +779,7 @@ static void R_DrawTerrainTextured (cb_context_t *cbx)
 			out[k].params[2] = 0;
 			out[k].params[3] = v->ao;
 		}
-		vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &buffer, &buffer_offset);
-		vulkan_globals.vk_cmd_draw (cbx->cb, draw->num_verts, 1, 0, 0);
+		Terrain_DrawLit (cbx, draw, sizeof (terrain_gpuvert_t));
 	}
 	R_TerrainProps_Draw (cbx);
 	R_TerrainLava_Draw (cbx);

@@ -182,6 +182,9 @@ if not "$(SteamAudioSdkDir)"=="" copy /Y "$(SteamAudioSdkDir)\lib\windows-x64\ph
     <ClCompile Include="..\..\Quake\gl_rmain.c" />
     <ClCompile Include="..\..\Quake\gl_rmisc.c" />
     <ClCompile Include="..\..\Quake\r_passes.c" />
+    <ClCompile Include="..\..\Quake\cl_terrain.c" />
+    <ClCompile Include="..\..\Quake\cl_workshop.c" />
+    <ClCompile Include="..\..\Quake\sv_workshop.c" />
     <ClCompile Include="..\..\Quake\r_terrain.c" />
     <ClCompile Include="..\..\Quake\sv_terrain.c" />
     <ClCompile Include="..\..\Quake\terrain.c" />

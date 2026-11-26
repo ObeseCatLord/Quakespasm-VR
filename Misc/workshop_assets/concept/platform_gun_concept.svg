@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <!-- Concept sheet: platform gun. Faceted low-poly look, flat shading, small earthy palette. -->
+  <rect width="1600" height="1000" fill="#6b6b68"/>
+  <rect x="0" y="0" width="1600" height="70" fill="#4a4a47"/>
+  <text x="40" y="47" font-family="monospace" font-size="30" fill="#e8dcc0">PLATFORM GUN  /  side view (top)  ·  three-quarter view (bottom)  ·  ~180 tris budget</text>
+
+  <!-- ============ SIDE VIEW ============ -->
+  <g transform="translate(140,140)">
+    <!-- stock / rear block -->
+    <polygon points="0,150 90,120 120,120 120,250 40,270 0,240" fill="#4b3a2a"/>
+    <polygon points="0,150 90,120 90,135 10,165" fill="#6a5238"/>
+    <polygon points="0,240 40,270 40,255 6,228" fill="#2f2419"/>
+    <!-- main riveted iron body -->
+    <polygon points="120,110 560,110 590,140 590,260 560,280 120,280" fill="#5b5e63"/>
+    <polygon points="120,110 560,110 590,140 120,140" fill="#7d8288"/>
+    <polygon points="120,250 590,250 560,280 120,280" fill="#3c3e42"/>
+    <!-- red band -->
+    <polygon points="330,110 380,110 380,280 330,280" fill="#9b2a22"/>
+    <polygon points="330,110 380,110 380,140 330,140" fill="#c0392b"/>
+    <!-- rivets -->
+    <g fill="#b8a46a">
+      <rect x="140" y="150" width="10" height="10"/><rect x="140" y="230" width="10" height="10"/>
+      <rect x="300" y="150" width="10" height="10"/><rect x="300" y="230" width="10" height="10"/>
+      <rect x="410" y="150" width="10" height="10"/><rect x="410" y="230" width="10" height="10"/>
+      <rect x="540" y="150" width="10" height="10"/><rect x="540" y="230" width="10" height="10"/>
+    </g>
+    <!-- fat barrel -->
+    <polygon points="590,140 860,150 860,250 590,260" fill="#686c72"/>
+    <polygon points="590,140 860,150 860,172 590,166" fill="#8f949b"/>
+    <polygon points="590,236 860,230 860,250 590,260" fill="#43464a"/>
+    <!-- brass barrel rings -->
+    <polygon points="660,142 690,143 690,257 660,258" fill="#a87d2e"/>
+    <polygon points="760,146 790,147 790,253 760,254" fill="#a87d2e"/>
+    <polygon points="660,142 690,143 690,160 660,160" fill="#d4a443"/>
+    <polygon points="760,146 790,147 790,163 760,163" fill="#d4a443"/>
+    <!-- wide flared muzzle (octagonal bell) -->
+    <polygon points="860,150 960,100 975,110 975,290 960,300 860,250" fill="#555960"/>
+    <polygon points="860,150 960,100 975,110 870,165" fill="#81868d"/>
+    <polygon points="860,250 960,300 975,290 870,236" fill="#33363a"/>
+    <polygon points="960,100 990,104 990,296 960,300" fill="#2a2216"/>
+    <polygon points="968,140 986,140 986,260 968,260" fill="#7a4a1e"/>
+    <!-- glass dough canister on top -->
+    <polygon points="220,40 470,40 490,60 490,110 200,110 200,60" fill="#9ec7c9" opacity="0.85"/>
+    <polygon points="220,40 470,40 490,60 200,60" fill="#d6ecec"/>
+    <!-- glowing gingerbread dough inside -->
+    <polygon points="210,72 480,68 485,108 205,108" fill="#b5651d"/>
+    <polygon points="230,74 300,70 330,82 270,90" fill="#e0913b"/>
+    <polygon points="360,72 440,70 460,84 390,92" fill="#e0913b"/>
+    <!-- canister brass caps -->
+    <polygon points="190,36 222,36 222,112 190,112" fill="#a87d2e"/>
+    <polygon points="468,36 500,36 500,112 468,112" fill="#a87d2e"/>
+    <polygon points="190,36 222,36 222,50 190,50" fill="#d4a443"/>
+    <polygon points="468,36 500,36 500,50 468,50" fill="#d4a443"/>
+    <!-- brass feed pipe -->
+    <polygon points="500,70 600,70 640,110 620,124 590,92 500,92" fill="#b8892f"/>
+    <polygon points="500,70 600,70 610,80 500,80" fill="#ddb055"/>
+    <!-- wooden pistol grip -->
+    <polygon points="250,280 330,280 300,430 220,430" fill="#6b4a2b"/>
+    <polygon points="250,280 330,280 324,300 246,300" fill="#8a6239"/>
+    <polygon points="220,430 300,430 296,412 224,412" fill="#4a3220"/>
+    <!-- candy-cane striped fore handle -->
+    <g>
+      <polygon points="470,280 520,280 506,400 456,400" fill="#f1ede2"/>
+      <polygon points="470,300 520,288 518,306 468,318" fill="#c8241c"/>
+      <polygon points="466,336 516,324 514,342 464,354" fill="#c8241c"/>
+      <polygon points="462,372 512,360 510,378 460,390" fill="#c8241c"/>
+      <polygon points="456,400 506,400 504,388 458,388" fill="#b9b3a5"/>
+    </g>
+    <!-- trigger guard -->
+    <polygon points="330,280 400,280 400,330 340,330 340,316 386,316 386,294 330,294" fill="#3c3e42"/>
+    <polygon points="352,290 364,290 360,318 350,318" fill="#2a2a2a"/>
+  </g>
+
+  <!-- ============ THREE-QUARTER VIEW ============ -->
+  <g transform="translate(330,560) scale(0.78)">
+    <!-- body box in 3/4: front face, top, side -->
+    <polygon points="100,120 560,60 640,100 180,170" fill="#7d8288"/>
+    <polygon points="180,170 640,100 640,250 180,330" fill="#5b5e63"/>
+    <polygon points="100,120 180,170 180,330 100,280" fill="#43464a"/>
+    <polygon points="360,90 420,82 420,236 360,246" fill="#9b2a22"/>
+    <polygon points="330,105 390,97 420,82 360,90" fill="#c0392b"/>
+    <!-- barrel (octagon prism) -->
+    <polygon points="640,110 900,80 900,220 640,245" fill="#686c72"/>
+    <polygon points="640,110 900,80 900,104 640,134" fill="#8f949b"/>
+    <!-- muzzle bell octagon facing viewer-right -->
+    <polygon points="900,40 980,20 1040,60 1050,150 1010,240 930,262 900,230" fill="#555960"/>
+    <polygon points="930,70 990,56 1020,90 1024,150 996,206 946,220 930,190" fill="#2a2216"/>
+    <polygon points="955,110 995,102 1000,150 960,160" fill="#7a4a1e"/>
+    <polygon points="900,40 980,20 1040,60 960,74" fill="#8a8f96"/>
+    <!-- canister -->
+    <polygon points="190,60 520,14 560,40 230,90" fill="#d6ecec"/>
+    <polygon points="230,90 560,40 560,96 230,150" fill="#9ec7c9" opacity="0.9"/>
+    <polygon points="236,112 556,64 556,94 236,146" fill="#b5651d"/>
+    <polygon points="290,112 370,100 390,112 310,124" fill="#e0913b"/>
+    <!-- grip and candy handle -->
+    <polygon points="290,300 360,290 330,440 262,450" fill="#6b4a2b"/>
+    <polygon points="520,262 566,256 552,380 506,386" fill="#f1ede2"/>
+    <polygon points="518,282 564,272 562,290 516,300" fill="#c8241c"/>
+    <polygon points="514,318 560,308 558,326 512,336" fill="#c8241c"/>
+    <polygon points="510,354 556,344 554,362 508,372" fill="#c8241c"/>
+    <!-- stock -->
+    <polygon points="0,140 100,120 100,280 30,300 0,270" fill="#4b3a2a"/>
+  </g>
+
+  <!-- palette swatches -->
+  <g transform="translate(1180,600)" font-family="monospace" font-size="18" fill="#efe6cf">
+    <text x="0" y="-14">palette</text>
+    <rect x="0" y="0" width="40" height="40" fill="#5b5e63"/><text x="50" y="27">riveted iron</text>
+    <rect x="0" y="50" width="40" height="40" fill="#a87d2e"/><text x="50" y="77">brass</text>
+    <rect x="0" y="100" width="40" height="40" fill="#b5651d"/><text x="50" y="127">dough (fullbright glow)</text>
+    <rect x="0" y="150" width="40" height="40" fill="#9ec7c9"/><text x="50" y="177">canister glass</text>
+    <rect x="0" y="200" width="40" height="40" fill="#6b4a2b"/><text x="50" y="227">wood grip</text>
+    <rect x="0" y="250" width="40" height="40" fill="#c8241c"/><text x="50" y="277">candy-cane red</text>
+    <rect x="0" y="300" width="40" height="40" fill="#f1ede2"/><text x="50" y="327">candy-cane white</text>
+  </g>
+</svg>

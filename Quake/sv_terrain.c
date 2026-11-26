@@ -13,6 +13,7 @@
 unsigned terrain_epoch; // bumped whenever terrain_active is replaced or freed
 
 static terrain_op_t *sv_terrain_ops;
+static qboolean		 sv_terrain_ice_used; // whether the region was generated with ice; clients regenerate it the same way
 static int			 sv_terrain_num_ops, sv_terrain_cap_ops;
 static double		 sv_terrain_next_dig[MAX_SCOREBOARD + 1];
 
@@ -37,10 +38,12 @@ static float  nav_ms;
 static cvar_t terrain_crawler_sense = {"terrain_crawler_sense", "900", CVAR_NONE}; // crawlers wake for a player this close, seen or not
 static cvar_t terrain_monsterstep = {"terrain_monsterstep", "1", CVAR_NONE};		   // slope-tolerant monster steps on terrain
 static cvar_t terrain_jetpack_speed = {"terrain_jetpack_speed", "260", CVAR_NONE};	  // fastest climb
+static cvar_t terrain_monsterclimb = {"terrain_monsterclimb", "3", CVAR_NONE};		  // levels (32 units each) a walking monster may jump up onto a ledge
 static cvar_t terrain_pathfind = {"terrain_pathfind", "1", CVAR_NONE};				  // walking monsters follow a route through the cave
 static cvar_t terrain_ice = {"terrain_ice", "1", CVAR_NONE}; // grow ice pillars and icicles in new caves; 0 is the plain worm cave
 
 #define FLARE_MODEL "progs/s_light.spr"
+#define WORKSHOP_FLARE_MODEL "progs/workshop/flare.mdl" // the hand flare, when the engine pak has it
 #define MAX_FLARES	8
 static edict_t *sv_terrain_flares[MAX_FLARES];
 
@@ -78,6 +81,7 @@ static float	sv_terrain_sniff_pos[3];
 #define DRG_SIZE_X 6
 #define DRG_SIZE_Y 6
 #define DRG_SIZE_Z 3
+#define DRG_SIZE_MAX 12 // chunks per axis at most (6144 units): keeps the walking grid and its fields a few MB
 
 static void WalkReset (void);
 
@@ -105,6 +109,8 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 	const double start = Sys_DoubleTime ();
 	Terrain_Generate (t);
 	const int ice = terrain_ice.value ? Terrain_GenerateIce (t) : 0;
+	t->walk_normal = CLAMP (0.0f, terrain_slope.value, 1.0f);
+	sv_terrain_ice_used = terrain_ice.value != 0;
 	terrain_active = t;
 	++terrain_epoch;
 	memset (sv_terrain_next_dig, 0, sizeof (sv_terrain_next_dig));
@@ -124,12 +130,21 @@ void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t siz
 void SV_Terrain_NewMap (void)
 {
 	SV_Terrain_Clear ();
+	SV_Workshop_Clear ();
 	if (strncmp (sv.name, "drg", 3))
 		return;
-	vec3_t		  center;
-	const int32_t size[3] = {DRG_SIZE_X, DRG_SIZE_Y, DRG_SIZE_Z};
+	// The region covers the whole map, so its outer layer (which always stays solid to keep the
+	// surface closed) lies behind the map's own walls: digging stops at the map, not at a flat
+	// wall in the middle of the cave.
+	vec3_t	center;
+	int32_t size[3];
 	for (int i = 0; i < 3; ++i)
+	{
+		const float extent = qcvm->worldmodel->maxs[i] - qcvm->worldmodel->mins[i];
+		const int	least = i == 2 ? DRG_SIZE_Z : DRG_SIZE_X;
+		size[i] = CLAMP (least, (int)ceilf ((extent + 2 * TERRAIN_CELL) / TERRAIN_CHUNK_UNITS), DRG_SIZE_MAX);
 		center[i] = (qcvm->worldmodel->mins[i] + qcvm->worldmodel->maxs[i]) * 0.5f;
+	}
 	SV_Terrain_SpawnAt (center, (uint32_t)terrain_seed.value, size);
 }
 
@@ -137,6 +152,7 @@ void SV_Terrain_NewMap (void)
 The one way the terrain changes after generation. The op is quantized here and logged; the
 quantized op is what every peer would replay. Radius and position are in Quake units.
 */
+// Applies an op of any kind to the region and logs it; every peer replays the log in this order.
 int SV_Terrain_PushOp (const terrain_op_t *op)
 {
 	terrain_t *t = terrain_active;
@@ -170,6 +186,30 @@ int SV_Terrain_Edit (int kind, const float pos[3], float radius)
 	if (changed)
 		SV_Terrain_IceEdited (&op); // a dig may have cut an island loose
 	return changed;
+}
+
+/*
+Fills a gingerbread disk: radius across its axis, half_thickness along it (Quake units), the axis
+given by normal (any length). The platform gun's way of adding to the cave.
+*/
+int SV_Terrain_Disk (const float pos[3], const float normal[3], float radius, float half_thickness)
+{
+	terrain_t  *t = terrain_active;
+	const float len = t ? sqrtf (DotProduct (normal, normal)) : 0.0f;
+	if (!t || len < 1e-3f)
+		return 0;
+	terrain_op_t op;
+	memset (&op, 0, sizeof (op));
+	op.kind = TERRAIN_OP_DISK;
+	op.material = TERRAIN_MAT_GINGER;
+	op.radius = (uint16_t)(CLAMP (8.0f, radius, 512.0f) * TERRAIN_SUB / TERRAIN_CELL);
+	op.thickness = (uint8_t)(CLAMP (2.0f, half_thickness, 120.0f) * TERRAIN_SUB / TERRAIN_CELL);
+	for (int i = 0; i < 3; ++i)
+	{
+		op.center[i] = (int32_t)floorf ((pos[i] - (float)t->origin[i]) * TERRAIN_SUB / TERRAIN_CELL + 0.5f);
+		op.normal[i] = (int8_t)floorf (normal[i] / len * 127.0f + 0.5f);
+	}
+	return SV_Terrain_PushOp (&op);
 }
 
 int SV_Terrain_OpLog (const terrain_op_t **ops)
@@ -225,7 +265,7 @@ int SV_Terrain_RelaxedSteps (void)
 
 float SV_Terrain_WalkNormal (void)
 {
-	return terrain_active ? terrain_slope.value : 0.7f;
+	return terrain_active ? terrain_active->walk_normal : 0.7f; // the slope cvar applies to the next cave
 }
 
 /*
@@ -258,23 +298,111 @@ QuakeC (ai_run and movetogoal) is unchanged. Fields are kept per player and body
 */
 #define WALK_SLOTS 8
 static terrain_nav_t walk_nav;
+static uint8_t		*walk_bsp_tested; // per walking cell: the map's brushes were asked about it
 static unsigned		 walk_nav_epoch;
 static int			 walk_nav_ops = -1, walk_nav_version;
+// Each chased player has two fields per body size. The near one covers about WALK_NEAR_COST of
+// walking around them and is flooded again whenever they reach another cell or the cave changes,
+// in the same frame, so the monsters close by react to a new tunnel or platform at once; it costs
+// only the cells it covers. The far one covers the whole cave for the monsters beyond that and is
+// brought up to date every couple of seconds.
+#define WALK_NEAR_COST	   120 // about 1900 units of walking
+#define WALK_NEAR_COST_TOP 180 // for the most chased player
+#define WALK_FAR_EVERY	   2.0
+#define WALK_FAR_EVERY_TOP 1.0
 static struct
 {
-	edict_t	 *goal;
-	int		  cls, seed, version;
-	double	  built, used;
-	uint16_t *dist;
+	edict_t			  *goal;
+	int				   cls, used_once;
+	double			   used;
+	int				   asks, demand; // monsters' requests this second, and over the last full second
+	double			   demand_since;
+	terrain_navfield_t near;
+	int				   near_seed, near_version;
+	double			   near_built;
+	uint16_t		  *far;
+	int				   far_seed, far_version;
+	double			   far_built;
 } walk_fields[WALK_SLOTS];
+
+static double walk_far_frame = -1.0; // server time of the last whole-cave flood: one a frame at most
+
+/*
+Priority: a field's demand is how many monster thinks asked for it over the last second, i.e. how
+hard that player is being chased. The most wanted field gets the larger near area and the faster
+whole-cave refresh, takes the frame's one whole-cave flood first, and fields in demand are never
+given up for another target. A player who outruns the pack keeps a fresh field behind them, so the
+monsters follow their trail instead of losing them.
+*/
+// A field's demand, gone once nothing has asked for it for a second (its pack died or gave up).
+static int WalkDemand (int i)
+{
+	const double used = walk_fields[i].used;
+	return walk_fields[i].used_once && qcvm->time >= used && qcvm->time < used + 1.0 ? walk_fields[i].demand : 0;
+}
+
+static int WalkTopDemand (void)
+{
+	int top = 0;
+	for (int i = 0; i < WALK_SLOTS; ++i)
+		top = q_max (top, WalkDemand (i));
+	return top;
+}
+
+// Fields nothing has asked for in a while give their memory back (a large cave's are megabytes each).
+static void WalkFreeIdle (void)
+{
+	for (int i = 0; i < WALK_SLOTS; ++i)
+		if (walk_fields[i].used_once && (qcvm->time < walk_fields[i].used || qcvm->time > walk_fields[i].used + 10.0))
+		{
+			Terrain_NavFieldFree (&walk_fields[i].near);
+			free (walk_fields[i].far);
+			walk_fields[i].far = NULL;
+			walk_fields[i].used_once = 0;
+			walk_fields[i].goal = NULL;
+		}
+}
+
+// Per monster: where it last got to and when, to notice one that has stopped getting anywhere.
+typedef struct
+{
+	vec3_t anchor; // where it was when it last moved 32 units
+	double since, stock_until, last_chase;
+} walk_progress_t;
+static walk_progress_t *walk_progress;
+static int				walk_progress_cap;
 
 static void WalkReset (void)
 {
+	free (walk_progress);
+	walk_progress = NULL;
+	walk_far_frame = -1.0;
+	free (walk_bsp_tested);
+	walk_bsp_tested = NULL;
+	walk_progress_cap = 0;
 	Terrain_NavFree (&walk_nav);
 	walk_nav_ops = -1;
 	for (int i = 0; i < WALK_SLOTS; ++i)
-		free (walk_fields[i].dist);
+	{
+		Terrain_NavFieldFree (&walk_fields[i].near);
+		free (walk_fields[i].far);
+	}
 	memset (walk_fields, 0, sizeof (walk_fields)); // qcvm->time restarts with the map, so the stamps go too
+}
+
+// Asks the map whether a cell's centre is inside a brush, once per cell; 1 when it is.
+static int WalkNavTestCell (int cell)
+{
+	if (walk_bsp_tested[cell])
+		return 0;
+	walk_bsp_tested[cell] = 1;
+	vec3_t p;
+	Terrain_NavCellCenter (&walk_nav, cell, p);
+	const int contents = SV_HullPointContents (&qcvm->worldmodel->hulls[0], 0, p);
+	if (contents != CONTENTS_SOLID && contents != CONTENTS_SKY)
+		return 0;
+	Terrain_NavSetBlocked (&walk_nav, cell, 1);
+	return 1;
 }
 
 // Brings the walking grid up to date with the terrain and its op log.
@@ -288,28 +416,38 @@ static qboolean WalkNavUpdate (void)
 		WalkReset ();
 		Terrain_NavInit (&walk_nav, t);
 		walk_nav_epoch = terrain_epoch;
-		// cells inside the map's brushes are closed whatever the field says
+		// cells inside the map's brushes are closed whatever the field says; only open cells need
+		// asking, and a dig that opens more asks about those as it comes (WalkNavTestCell)
+		Terrain_NavRefreshAll (&walk_nav, t);
+		free (walk_bsp_tested);
+		walk_bsp_tested = (uint8_t *)calloc (walk_nav.count, 1);
 		int blocked = 0;
 		for (int i = 0; i < walk_nav.count; ++i)
-		{
-			vec3_t p;
-			Terrain_NavCellCenter (&walk_nav, i, p);
-			const int contents = SV_HullPointContents (&qcvm->worldmodel->hulls[0], 0, p); // the map alone: the cave rock is the field's business
-			if (contents == CONTENTS_SOLID || contents == CONTENTS_SKY)
-			{
-				Terrain_NavSetBlocked (&walk_nav, i, 1);
-				++blocked;
-			}
-		}
+			if (walk_nav.flags[i] & TERRAIN_NAV_AIR)
+				blocked += WalkNavTestCell (i);
 		Terrain_NavRefreshAll (&walk_nav, t);
 		walk_nav_ops = sv_terrain_num_ops;
 		++walk_nav_version;
 		Con_DPrintf ("terrain: walking grid %dx%dx%d, %d cells inside brushes\n", walk_nav.dim[0], walk_nav.dim[1], walk_nav.dim[2], blocked);
 	}
+	const int climb = CLAMP (0, (int)terrain_monsterclimb.value, TERRAIN_NAV_MAX_CLIMB);
+	if (walk_nav.max_climb != climb)
+	{
+		walk_nav.max_climb = climb;
+		++walk_nav_version;
+	}
 	if (walk_nav_ops != sv_terrain_num_ops)
 	{
 		for (int i = walk_nav_ops; i < sv_terrain_num_ops; ++i)
+		{
+			int lo[3], hi[3];
+			Terrain_NavOpBox (&walk_nav, t, &sv_terrain_ops[i], lo, hi);
+			for (int z = q_max (lo[2], 0); z <= q_min (hi[2], walk_nav.dim[2] - 1); ++z)
+				for (int y = q_max (lo[1], 0); y <= q_min (hi[1], walk_nav.dim[1] - 1); ++y)
+					for (int x = q_max (lo[0], 0); x <= q_min (hi[0], walk_nav.dim[0] - 1); ++x)
+						WalkNavTestCell ((z * walk_nav.dim[1] + y) * walk_nav.dim[0] + x);
 			Terrain_NavRefreshOp (&walk_nav, t, &sv_terrain_ops[i]);
+		}
 		walk_nav_ops = sv_terrain_num_ops;
 		++walk_nav_version;
 	}
@@ -328,45 +466,87 @@ static int WalkStandCell (const edict_t *ent, int cls, int down)
 }
 
 // The distance field toward goal for bodies of this class, or NULL when the goal has no floor.
-static const uint16_t *WalkField (edict_t *goal, int cls)
+/*
+The field toward goal for bodies of this class that covers cell (the monster's): the near one when
+the monster is inside it, else the far one. NULL when there is none yet or the goal has no floor.
+*/
+static const uint16_t *WalkField (edict_t *goal, int cls, int cell)
 {
+	WalkFreeIdle ();
 	// a target in the air (jetpack, a jump) is chased to the floor under it
 	const int seed = WalkStandCell (goal, cls, 8);
 	int		  slot = -1;
 	for (int i = 0; i < WALK_SLOTS && slot < 0; ++i)
-		if (walk_fields[i].goal == goal && walk_fields[i].cls == cls && walk_fields[i].dist)
+		if (walk_fields[i].goal == goal && walk_fields[i].cls == cls && walk_fields[i].used_once)
 			slot = i;
 	if (slot < 0)
 	{
 		if (seed < 0)
 			return NULL;
-		// an empty slot, else the one unused longest; a field still in use is not given up, or two
-		// targets would take turns flooding the grid on every think
+		// an empty slot, else the least wanted (then the one unused longest); a field still in use is
+		// not given up
 		slot = 0;
 		for (int i = 1; i < WALK_SLOTS; ++i)
-			if (!walk_fields[i].dist ? walk_fields[slot].dist != NULL : (walk_fields[slot].dist && walk_fields[i].used < walk_fields[slot].used))
+		{
+			const qboolean empty = !walk_fields[i].used_once, slot_empty = !walk_fields[slot].used_once;
+			if (slot_empty)
+				break;
+			if (empty || WalkDemand (i) < WalkDemand (slot) || (WalkDemand (i) == WalkDemand (slot) && walk_fields[i].used < walk_fields[slot].used))
 				slot = i;
-		if (walk_fields[slot].dist && qcvm->time >= walk_fields[slot].used && qcvm->time < walk_fields[slot].used + 1.0)
+		}
+		if (walk_fields[slot].used_once && qcvm->time >= walk_fields[slot].used && qcvm->time < walk_fields[slot].used + 1.0)
 			return NULL;
-		if (!walk_fields[slot].dist)
-			walk_fields[slot].dist = (uint16_t *)malloc ((size_t)walk_nav.count * sizeof (uint16_t));
-		walk_fields[slot].goal = goal;
-		walk_fields[slot].cls = cls;
-		walk_fields[slot].seed = -1;
-		walk_fields[slot].built = -1.0;
+		__typeof__ (walk_fields[0]) *f = &walk_fields[slot];
+		if (!f->near.dist)
+			Terrain_NavFieldInit (&walk_nav, &f->near);
+		if (!f->far)
+			f->far = (uint16_t *)malloc ((size_t)walk_nav.count * sizeof (uint16_t));
+		f->goal = goal;
+		f->cls = cls;
+		f->used_once = 1;
+		f->near_seed = f->far_seed = -1;
+		f->near_built = f->far_built = -1.0;
+		f->asks = f->demand = 0;
+		f->demand_since = qcvm->time;
 	}
 	__typeof__ (walk_fields[0]) *f = &walk_fields[slot];
 	f->used = qcvm->time;
-	// rebuilt when the target reaches another cell or the cave changes, at most a few times a second
-	const qboolean stale = f->seed < 0 || (seed >= 0 && seed != f->seed) || f->version != walk_nav_version;
-	if (stale && seed >= 0 && (f->built < 0.0 || qcvm->time < f->built || qcvm->time >= f->built + 0.2))
+	++f->asks;
+	if (qcvm->time < f->demand_since || qcvm->time >= f->demand_since + 1.0)
 	{
-		Terrain_NavFlood (&walk_nav, cls, &seed, 1, f->dist);
-		f->seed = seed;
-		f->version = walk_nav_version;
-		f->built = qcvm->time;
+		f->demand = f->asks;
+		f->asks = 0;
+		f->demand_since = qcvm->time;
 	}
-	return f->seed >= 0 ? f->dist : NULL;
+	const qboolean top = f->demand > 0 && f->demand >= WalkTopDemand ();
+	if (seed >= 0)
+	{
+		// near: redone the frame anything it depends on changes
+		if ((seed != f->near_seed || f->near_version != walk_nav_version) && f->near_built != qcvm->time)
+		{
+			Terrain_NavFloodNear (&walk_nav, cls, &seed, 1, &f->near, top ? WALK_NEAR_COST_TOP : WALK_NEAR_COST);
+			f->near_seed = seed;
+			f->near_version = walk_nav_version;
+			f->near_built = qcvm->time;
+		}
+		// far: the whole cave, every couple of seconds at most
+		// far: the whole cave, every second or two, one such flood a frame, the most chased first
+		// (a field never built yet goes first of all: until then its monsters have nothing)
+		const qboolean far_stale = f->far_seed < 0 || seed != f->far_seed || f->far_version != walk_nav_version;
+		const double   every = top ? WALK_FAR_EVERY_TOP : WALK_FAR_EVERY;
+		const qboolean frame_free = walk_far_frame != qcvm->time || f->far_built < 0.0;
+		if (far_stale && frame_free && (f->far_built < 0.0 || qcvm->time < f->far_built || qcvm->time >= f->far_built + every))
+		{
+			walk_far_frame = qcvm->time;
+			Terrain_NavFlood (&walk_nav, cls, &seed, 1, f->far);
+			f->far_seed = seed;
+			f->far_version = walk_nav_version;
+			f->far_built = qcvm->time;
+		}
+	}
+	if (cell >= 0 && f->near_seed >= 0 && f->near.dist[cell] != TERRAIN_NAV_FAR)
+		return f->near.dist;
+	return f->far_seed >= 0 ? f->far : NULL;
 }
 
 static int WalkSteps (edict_t *ent, edict_t *goal)
@@ -374,8 +554,8 @@ static int WalkSteps (edict_t *ent, edict_t *goal)
 	if (!WalkNavUpdate () || goal == qcvm->edicts || goal->free)
 		return -1;
 	const int		cls = WalkClass (ent);
-	const uint16_t *dist = WalkField (goal, cls);
 	const int		cell = WalkStandCell (ent, cls, 2);
+	const uint16_t *dist = WalkField (goal, cls, cell);
 	if (cell < 0)
 		return -2; // not standing anywhere the grid knows
 	return dist && dist[cell] != TERRAIN_NAV_FAR ? dist[cell] : -1;
@@ -419,6 +599,65 @@ a target that is not a player, no route, or the target close by).
 void PF_changeyaw (void);
 extern cvar_t sv_gravity;
 
+// A monster whose box ended up inside the terrain (a fill, an explosion's dig next to it, a bad
+// landing) can take no step at all. Push it out along the field's gradient, a little at a time.
+static float CrawlerGradient (const terrain_t *t, const float p[3], float g[3]);
+
+int SV_Terrain_BoxInBrushes (const float origin[3], const float mins[3], const float maxs[3])
+{
+	for (int k = 0; k < 9; ++k)
+	{
+		vec3_t p;
+		for (int a = 0; a < 3; ++a)
+			p[a] = origin[a] + (k == 8 ? (mins[a] + maxs[a]) * 0.5f : ((k >> a) & 1) ? maxs[a] - 1.0f : mins[a] + 1.0f);
+		if (SV_HullPointContents (&qcvm->worldmodel->hulls[0], 0, p) == CONTENTS_SOLID)
+			return 1;
+	}
+	return 0;
+}
+
+static void WalkUnstick (edict_t *ent)
+{
+	const terrain_t *t = terrain_active;
+	for (int i = 0; i < 4 && Terrain_BoxOverlaps (t, ent->v.origin, ent->v.mins, ent->v.maxs); ++i)
+	{
+		float centre[3], g[3];
+		for (int a = 0; a < 3; ++a)
+			centre[a] = ent->v.origin[a] + (ent->v.mins[a] + ent->v.maxs[a]) * 0.5f;
+		if (CrawlerGradient (t, centre, g) < 0.05f)
+			break;
+		vec3_t to;
+		VectorMA (ent->v.origin, 4.0f, g, to);
+		if (SV_Terrain_BoxInBrushes (to, ent->v.mins, ent->v.maxs))
+			break; // out of the cave but into the map: stay put
+		VectorCopy (to, ent->v.origin);
+	}
+	SV_LinkEdict (ent, false);
+}
+
+// Jumps from the foot of a ledge onto it, the way a drop goes off one: just enough to clear the lip.
+static void WalkLeap (edict_t *ent, int target, float yaw_deg)
+{
+	vec3_t top;
+	Terrain_NavCellCenter (&walk_nav, target, top);
+	const float rise = q_max (top[2] - TERRAIN_NAV_CELL * 0.5f - (ent->v.origin[2] + ent->v.mins[2]), 16.0f) + 24.0f;
+	const float g = q_max (sv_gravity.value, 100.0f), up = sqrtf (2.0f * g * rise);
+	const float yaw = yaw_deg * M_PI / 180.0f;
+	ent->v.velocity[0] = cosf (yaw) * 110.0f;
+	ent->v.velocity[1] = sinf (yaw) * 110.0f;
+	ent->v.velocity[2] = up;
+	ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
+	ent->v.groundentity = 0;
+}
+
+// Turns toward yaw and reports whether it already faces it closely enough to jump or drop.
+static qboolean WalkFace (edict_t *ent, float yaw)
+{
+	ent->v.ideal_yaw = anglemod (yaw);
+	PF_changeyaw ();
+	return fabsf (anglemod (ent->v.angles[YAW] - ent->v.ideal_yaw + 180.0f) - 180.0f) < 30.0f;
+}
+
 int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 {
 	if (!terrain_active || !terrain_pathfind.value || ((int)ent->v.flags & (FL_FLY | FL_SWIM)) || SV_Terrain_IsCrawler (ent))
@@ -427,18 +666,53 @@ int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 	// churn the few kept
 	if (goal == qcvm->edicts || goal->free || !((int)goal->v.flags & FL_CLIENT) || !WalkNavUpdate ())
 		return false;
+	WalkUnstick (ent);
 	const int		cls = WalkClass (ent);
-	const uint16_t *field = WalkField (goal, cls);
-	const int		cell = field ? WalkStandCell (ent, cls, 2) : -1;
-	if (cell < 0 || field[cell] == TERRAIN_NAV_FAR || field[cell] <= 1)
+	const int		cell = WalkStandCell (ent, cls, 2);
+	const uint16_t *field = cell >= 0 ? WalkField (goal, cls, cell) : NULL;
+	if (cell < 0 || !field || field[cell] == TERRAIN_NAV_FAR || field[cell] <= 3)
 		return false;
+
+	// A monster that has not got closer in a few seconds is stuck on something the grid cannot see
+	// (another monster, a step the slope rules refuse): give it a second of the stock chase, whose
+	// random turns usually shake it loose.
+	const int num = NUM_FOR_EDICT (ent);
+	if (num >= walk_progress_cap)
+	{
+		const int cap = q_max (num + 1, qcvm->num_edicts);
+		walk_progress = (walk_progress_t *)realloc (walk_progress, cap * sizeof (*walk_progress));
+		memset (walk_progress + walk_progress_cap, 0, (cap - walk_progress_cap) * sizeof (*walk_progress));
+		walk_progress_cap = cap;
+	}
+	walk_progress_t *wp = &walk_progress[num];
+	// stuck means not getting anywhere itself: it has stayed within 32 units of one spot for three
+	// seconds (a player outrunning it is not that)
+	vec3_t			 moved;
+	VectorSubtract (ent->v.origin, wp->anchor, moved);
+	// (time spent standing to fire, not chasing, does not count)
+	const qboolean gap = qcvm->time < wp->last_chase || qcvm->time > wp->last_chase + 0.5;
+	wp->last_chase = qcvm->time;
+	if (gap || qcvm->time < wp->since || !wp->since || DotProduct (moved, moved) > 32.0f * 32.0f)
+	{
+		VectorCopy (ent->v.origin, wp->anchor);
+		wp->since = qcvm->time;
+	}
+	if (qcvm->time < wp->stock_until)
+		return false;
+	if (qcvm->time > wp->since + 3.0)
+	{
+		wp->stock_until = qcvm->time + 1.0;
+		wp->since = qcvm->time + 1.0;
+		return false;
+	}
+
 	// look a few cells down the route; aiming past the next cell cuts the grid's corners. Not past a
-	// ledge: the drop is taken square on.
+	// ledge, up or down: that is taken square on.
 	int route[4], n = 0;
 	for (int c = cell, next; n < 4 && (next = Terrain_NavNext (&walk_nav, cls, field, c)) >= 0; c = next)
 	{
 		route[n++] = next;
-		if (Terrain_NavIsDrop (&walk_nav, c, next))
+		if (Terrain_NavIsDrop (&walk_nav, c, next) || Terrain_NavIsClimb (&walk_nav, c, next))
 			break;
 	}
 	if (!n)
@@ -457,10 +731,7 @@ int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 		// At the lip, where a step is refused for walking off an edge: once it faces the drop, it
 		// steps off and falls as ordinary step physics, just fast enough to clear the lip and land
 		// in the next cell.
-		ent->v.ideal_yaw = anglemod (yaws[1]);
-		PF_changeyaw ();
-		const float delta = fabsf (anglemod (ent->v.angles[YAW] - ent->v.ideal_yaw + 180.0f) - 180.0f);
-		if (delta < 30.0f)
+		if (WalkFace (ent, yaws[1]))
 		{
 			vec3_t		landing;
 			const float yaw = yaws[1] * M_PI / 180.0f;
@@ -474,6 +745,13 @@ int SV_Terrain_MoveToGoal (edict_t *ent, edict_t *goal, float dist)
 			ent->v.flags = (int)ent->v.flags & ~FL_ONGROUND;
 			ent->v.groundentity = 0;
 		}
+		return true;
+	}
+	if (Terrain_NavIsClimb (&walk_nav, cell, route[0]))
+	{
+		// At the foot of a ledge on the route: once it faces it, it jumps up.
+		if (WalkFace (ent, yaws[1]))
+			WalkLeap (ent, route[0], yaws[1]);
 		return true;
 	}
 	static const float around[4] = {45, -45, 90, -90};
@@ -754,6 +1032,38 @@ static void CrawlerPose (terrain_crawler_t *c, const float feet[3])
 	SV_LinkEdict (ent, true);
 }
 
+/*
+Whether a crawler may move its feet from feet to next (on a surface with normal n). The body must
+stay out of the map's brushes, and must not push into another monster or a player: a move that
+brings two bodies closer than they are wide is refused, one that separates them is allowed, so a
+pile can always untangle.
+*/
+static qboolean CrawlerRoom (const terrain_crawler_t *c, const float feet[3], const float next[3], const float n[3])
+{
+	float body[3], was[3];
+	VectorMA (next, c->height * 0.5f, n, body);
+	VectorMA (feet, c->height * 0.5f, c->normal, was);
+	const int contents = SV_PointContents (body);
+	if (contents == CONTENTS_SOLID || contents == CONTENTS_SKY)
+		return false;
+	for (int e = 1; e < qcvm->num_edicts; ++e)
+	{
+		edict_t *other = EDICT_NUM (e);
+		if (other == c->ent || other->free || other->v.solid == SOLID_NOT || other->v.health <= 0 || !((int)other->v.flags & (FL_MONSTER | FL_CLIENT)))
+			continue;
+		float centre[3], d_new[3], d_old[3];
+		for (int a = 0; a < 3; ++a)
+			centre[a] = other->v.origin[a] + (other->v.mins[a] + other->v.maxs[a]) * 0.5f;
+		VectorSubtract (body, centre, d_new);
+		VectorSubtract (was, centre, d_old);
+		const float room = c->half_width + q_max (other->v.maxs[0] - other->v.mins[0], other->v.maxs[2] - other->v.mins[2]) * 0.35f;
+		const float near2 = DotProduct (d_new, d_new);
+		if (near2 < room * room && near2 < DotProduct (d_old, d_old))
+			return false; // closing on a player stops at arm's length, which is within its melee reach
+	}
+	return true;
+}
+
 int SV_Terrain_CrawlerFrame (edict_t *ent)
 {
 	const terrain_t *t = terrain_active;
@@ -1009,7 +1319,7 @@ int SV_Terrain_CrawlerFrame (edict_t *ent)
 			VectorMA (feet, terrain_crawler_speed.value * c->speed * q_min (rate, 1.0f) / rate * (float)host_frametime, to, next);
 			if (!CrawlerProject (t, next, n))
 				c->dbg |= 4;
-			else
+			else if (CrawlerRoom (c, feet, next, n))
 			{
 				VectorCopy (next, feet);
 				for (int a = 0; a < 3; ++a)
@@ -1109,6 +1419,9 @@ void SV_Terrain_PlaceEntities (void)
 		return;
 	const terrain_t *t = terrain_active;
 	SV_Precache_Model (FLARE_MODEL); // while the map loads, so every client has it
+	if (COM_FileExists (WORKSHOP_FLARE_MODEL, NULL))
+		SV_Precache_Model (WORKSHOP_FLARE_MODEL);
+	SV_Workshop_Precache ();
 	uint32_t		 rng = t->seed * 747796405u + 2891336453u;
 	if (!rng)
 		rng = 1;
@@ -1206,6 +1519,7 @@ Both work from fields every progs.dat has, so they need no QuakeC support.
 */
 void SV_Terrain_PlayerFrame (edict_t *ent, int num)
 {
+	SV_Workshop_PlayerFrame (ent, num);
 	const terrain_t *t = terrain_active;
 	if (!t || ent->free || ent->v.health <= 0 || num < 1 || num > MAX_SCOREBOARD)
 		return;
@@ -1338,6 +1652,46 @@ terrain_flare
 The local player throws a light that bounces and stays where it lands. The oldest goes out when
 there are more than MAX_FLARES.
 */
+/*
+Throws a flare from origin at velocity for player. The oldest goes out when there are more than
+MAX_FLARES. Used by the terrain_flare command and by a VR hand throwing one off the wrist.
+*/
+static qboolean SV_Terrain_Precached (const char *model)
+{
+	for (int i = 1; i < MAX_MODELS && sv.model_precache[i]; ++i)
+		if (!strcmp (sv.model_precache[i], model))
+			return true;
+	return false;
+}
+
+int SV_Terrain_ThrowFlare (edict_t *player, const float origin[3], const float velocity[3])
+{
+	const char *model = COM_FileExists (WORKSHOP_FLARE_MODEL, NULL) && SV_Terrain_Precached (WORKSHOP_FLARE_MODEL) ? WORKSHOP_FLARE_MODEL : FLARE_MODEL;
+	if (!SV_Terrain_Precached (model))
+	{
+		Con_Printf ("terrain_flare: the flare model is not precached on this map\n");
+		return 0;
+	}
+	edict_t **slot = &sv_terrain_flares[sv_terrain_next_flare];
+	sv_terrain_next_flare = (sv_terrain_next_flare + 1) % MAX_FLARES;
+	if (*slot && !(*slot)->free && !strcmp (PR_GetString ((*slot)->v.classname), "terrain_flare"))
+		ED_Free (*slot);
+	edict_t *flare = *slot = ED_Alloc ();
+	flare->v.classname = PR_SetEngineString ("terrain_flare");
+	flare->v.movetype = MOVETYPE_BOUNCE;
+	flare->v.solid = SOLID_NOT;
+	flare->v.model = PR_SetEngineString (model);
+	flare->v.modelindex = SV_ModelIndex (model);
+	flare->v.effects = EF_BRIGHTLIGHT;
+	flare->v.owner = EDICT_TO_PROG (player);
+	VectorCopy (origin, flare->v.origin);
+	VectorCopy (velocity, flare->v.velocity);
+	flare->v.avelocity[0] = 300.0f; // tumbles end over end
+	flare->v.avelocity[1] = 120.0f;
+	SV_LinkEdict (flare, false);
+	return 1;
+}
+
 static void SV_Terrain_Flare_f (void)
 {
 	if (!terrain_active || !sv.active || !sv_player)
@@ -1346,27 +1700,15 @@ static void SV_Terrain_Flare_f (void)
 		return;
 	}
 	PR_SwitchQCVM (&sv.qcvm);
-	edict_t **slot = &sv_terrain_flares[sv_terrain_next_flare];
-	sv_terrain_next_flare = (sv_terrain_next_flare + 1) % MAX_FLARES;
-	if (*slot && !(*slot)->free && !strcmp (PR_GetString ((*slot)->v.classname), "terrain_flare"))
-		ED_Free (*slot);
 	edict_t *player = sv_player;
-	edict_t *flare = *slot = ED_Alloc ();
-	vec3_t	 forward, right, up;
+	vec3_t	 forward, right, up, origin, velocity;
 	AngleVectors (player->v.v_angle, forward, right, up);
-	flare->v.classname = PR_SetEngineString ("terrain_flare");
-	flare->v.movetype = MOVETYPE_BOUNCE;
-	flare->v.solid = SOLID_NOT;
-	flare->v.model = PR_SetEngineString (FLARE_MODEL);
-	flare->v.modelindex = SV_ModelIndex (FLARE_MODEL);
-	flare->v.effects = EF_BRIGHTLIGHT;
-	flare->v.owner = EDICT_TO_PROG (player);
 	for (int i = 0; i < 3; ++i)
 	{
-		flare->v.origin[i] = player->v.origin[i] + player->v.view_ofs[i] + forward[i] * 12.0f;
-		flare->v.velocity[i] = forward[i] * 650.0f + up[i] * 120.0f + player->v.velocity[i] * 0.5f;
+		origin[i] = player->v.origin[i] + player->v.view_ofs[i] + forward[i] * 12.0f;
+		velocity[i] = forward[i] * 650.0f + up[i] * 120.0f + player->v.velocity[i] * 0.5f;
 	}
-	SV_LinkEdict (flare, false);
+	SV_Terrain_ThrowFlare (player, origin, velocity);
 	PR_SwitchQCVM (NULL);
 }
 
@@ -1435,6 +1777,89 @@ static void SV_Terrain_Ents_f (void)
 	PR_SwitchQCVM (NULL);
 }
 
+/*
+==============================================================================
+
+NETSYNC
+
+A client's copy of the cave is the seed's cave plus the op log replayed in order. Each spawned
+client of this engine (the pinned QSVR protocol) gets the region's parameters once, then every op
+it has not had yet, as hidden stuffed commands on its reliable channel: ordered, never lost, and a
+plain Quake client simply never receives them. The op stream carries the index of its first op,
+so a client can tell when it has missed or repeated one.
+
+==============================================================================
+*/
+// as many ops as fit a stuffed command (the client takes up to 2047 characters) with room for the header
+#define TERRAIN_OPS_PER_COMMAND ((2047 - 64) / (2 * TERRAIN_OP_BYTES))
+static struct
+{
+	qboolean live, need_init;
+	unsigned epoch;
+	int		 ops;
+} sv_terrain_sent[MAX_SCOREBOARD];
+
+static qboolean SV_Terrain_Stuff (client_t *client, const char *command)
+{
+	sizebuf_t *msg = &client->message;
+	const int  need = (int)strlen (command) + 2;					  // svc_stufftext and the terminator
+	if (msg->overflowed || msg->cursize + need > msg->maxsize / 2)	  // leave half for everything else
+		return false;
+	MSG_WriteByte (msg, svc_stufftext);
+	MSG_WriteString (msg, command);
+	return !msg->overflowed;
+}
+
+void SV_Terrain_SendToClient (client_t *client)
+{
+	const int slot = (int)(client - svs.clients);
+	if (slot < 0 || slot >= MAX_SCOREBOARD)
+		return;
+	__typeof__ (sv_terrain_sent[0]) *sent = &sv_terrain_sent[slot];
+	if (!client->active || !client->spawned || !client->netconnection || client->protocol_qsvr != QSVR_PROTOCOL_PINNED)
+	{
+		sent->live = false;
+		return;
+	}
+	if (!sent->live)
+	{
+		sent->live = true;
+		sent->need_init = true;
+	}
+	char command[2048];
+	if (sent->need_init || sent->epoch != terrain_epoch)
+	{
+		const terrain_t *t = terrain_active;
+		if (t)
+			q_snprintf (
+				command, sizeof (command), "//terrain_init %u %d %d %d %d %d %d %d %.4f\n", t->seed, t->origin[0], t->origin[1], t->origin[2], t->size[0],
+				t->size[1], t->size[2], sv_terrain_ice_used ? 1 : 0, t->walk_normal);
+		else
+			q_strlcpy (command, "//terrain_init none\n", sizeof (command));
+		if (!SV_Terrain_Stuff (client, command))
+			return;
+		sent->need_init = false;
+		sent->epoch = terrain_epoch;
+		sent->ops = 0;
+	}
+	while (terrain_active && sent->ops < sv_terrain_num_ops)
+	{
+		const int count = q_min (TERRAIN_OPS_PER_COMMAND, sv_terrain_num_ops - sent->ops);
+		int		  len = q_snprintf (command, sizeof (command), "//terrain_ops %d %d ", sent->ops, TERRAIN_OP_BYTES);
+		for (int i = 0; i < count; ++i)
+		{
+			uint8_t packed[TERRAIN_OP_BYTES];
+			Terrain_OpPack (&sv_terrain_ops[sent->ops + i], packed);
+			for (int b = 0; b < TERRAIN_OP_BYTES && len + 3 < (int)sizeof (command); ++b)
+				len += q_snprintf (command + len, sizeof (command) - len, "%02x", packed[b]);
+		}
+		q_strlcpy (command + len, "\n", sizeof (command) - len);
+		if (!SV_Terrain_Stuff (client, command))
+			return; // the rest goes in a later frame
+		sent->ops += count;
+	}
+}
+
 void SV_Terrain_Init (void)
 {
 	Cvar_RegisterVariable (&terrain_seed);
@@ -1456,10 +1881,12 @@ void SV_Terrain_Init (void)
 	Cvar_RegisterVariable (&terrain_crawler_pounce);
 	Cvar_RegisterVariable (&terrain_monsterstep);
 	Cvar_RegisterVariable (&terrain_pathfind);
+	Cvar_RegisterVariable (&terrain_monsterclimb);
 	Cmd_AddCommand ("terrain_ents", SV_Terrain_Ents_f);
 	Cmd_AddCommand ("terrain_wake", SV_Terrain_Wake_f);
 	Cmd_AddCommand ("terrain_flare", SV_Terrain_Flare_f);
 	SV_Terrain_WormInit ();
 	SV_Terrain_IceInit ();
 	SV_Terrain_LavaInit ();
+	SV_Workshop_Init ();
 }

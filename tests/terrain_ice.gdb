@@ -1,6 +1,7 @@
 # Falling ice. Run: tests/run-headless.sh tests/terrain_ice.gdb   (Vulkan ICD set up first)
 # Phase A: build a pillar over a monster, cut its root, watch it fall, land, rest and be stamped back;
-#          terrain_ice_info prints CHECK lines (PASS/FAIL); terrain_ice_verify replays the op log.
+#          terrain_ice_info prints CHECK lines (PASS/FAIL); terrain_ice_verify replays the op log;
+#          terrain_clhash shows the client copy (built from the op stream) equal to the server's.
 # Phase B: a second pillar over a ramp, tossed sideways, to see tumbling and sliding.
 # Phase C: the cost with 1, 4 and 16 bodies.
 set pagination off
@@ -14,7 +15,7 @@ continue
 call (void)Cbuf_AddText("terrain_crawlers 0; terrain_worm_auto 0; map drgbox\n")
 ignore 1 500
 continue
-call (void)Cbuf_AddText("god; echo PHASE A; setpos 0 0 -190 -75 0 0\n")
+call (void)Cbuf_AddText("god; echo PHASE A; setpos -200 0 -190 -75 0 0\n")
 ignore 1 20
 continue
 call (void)Cbuf_AddText("terrain_ice_pillar 280; terrain_ice_dummy; terrain_ice_info\n")
@@ -35,7 +36,7 @@ continue
 call (void)Cbuf_AddText("echo SETTLING; terrain_ice_info\n")
 ignore 1 200
 continue
-call (void)Cbuf_AddText("echo AT_REST; terrain_ice_cam rest 260; screenshot; terrain_ice_info; terrain_ice_verify\n")
+call (void)Cbuf_AddText("echo AT_REST; terrain_ice_cam rest 260; screenshot; terrain_ice_info; terrain_ice_verify; terrain_clhash\n")
 ignore 1 40
 continue
 call (void)Cbuf_AddText("echo PHASE B; setpos 400 -100 -190 -75 0 0\n")
@@ -68,7 +69,7 @@ continue
 call (void)Cbuf_AddText("terrain_ice_info\n")
 ignore 1 250
 continue
-call (void)Cbuf_AddText("echo B_REST; terrain_ice_cam rest 260; screenshot; terrain_ice_info; terrain_ice_verify\n")
+call (void)Cbuf_AddText("echo B_REST; terrain_ice_cam rest 260; screenshot; terrain_ice_info; terrain_ice_verify; terrain_clhash\n")
 ignore 1 40
 continue
 call (void)Cbuf_AddText("echo PHASE C; terrain_ice_bench 1 600; terrain_ice_bench 4 600; terrain_ice_bench 16 600\n")

@@ -25,6 +25,7 @@ enum
 	TERRAIN_MAT_DIRT,
 	TERRAIN_MAT_GOLD,
 	TERRAIN_MAT_FILL,
+	TERRAIN_MAT_GINGER, // platform gun disks
 	TERRAIN_MAT_COUNT
 };
 
@@ -32,9 +33,12 @@ enum
 {
 	TERRAIN_OP_DIG,
 	TERRAIN_OP_FILL,
+	TERRAIN_OP_DISK,   // fills a flat disk: radius across, thickness through, facing normal
 	TERRAIN_OP_DETACH, // terrain_ice.c: remove the small solid island holding a lattice cell (center = cell, radius = cell cap)
-	TERRAIN_OP_STAMP   // terrain_ice.c: set a detached brick back into the field (radius = brick id, center = pose position, aux = pose)
+	TERRAIN_OP_STAMP,  // terrain_ice.c: set a detached brick back into the field (radius = brick id, center = pose position, aux = pose)
+	TERRAIN_OP_KINDS
 };
+#define TERRAIN_OP_IS_ICE(kind) ((kind) == TERRAIN_OP_DETACH || (kind) == TERRAIN_OP_STAMP)
 
 // Field values are signed distance in TERRAIN_SUB units, negative inside solid.
 // A chunk with sdf == NULL is uniform (all solid or all open) and stores one value.
@@ -51,6 +55,7 @@ typedef struct
 	int32_t			 origin[3]; // world position of sample (0,0,0), Quake units
 	int32_t			 size[3];	// chunks per axis
 	uint32_t		 seed;
+	float			 walk_normal; // least floor normal z that counts as ground on this terrain (set by the server, sent to clients)
 	terrain_chunk_t *chunks;
 	void			*ice; // bricks of detached chunks (terrain_ice.c)
 } terrain_t;
@@ -63,7 +68,9 @@ typedef struct
 	uint8_t	 material;
 	uint16_t radius;
 	int32_t	 center[3];
-	uint32_t aux; // STAMP: packed orientation (Terrain_PackQuat)
+	int8_t	 normal[3]; // TERRAIN_OP_DISK: the disk's axis, any length up to 127
+	uint8_t	 thickness; // TERRAIN_OP_DISK: half the disk's thickness, TERRAIN_SUB units
+	uint32_t aux;		// TERRAIN_OP_STAMP: packed orientation (Terrain_PackQuat); on the wire it takes the bytes of normal and thickness
 } terrain_op_t;
 
 typedef struct
@@ -144,6 +151,7 @@ int Terrain_PointSolid (const terrain_t *t, const float p[3]);
 #define TERRAIN_NAV_CLASSES	 2 // 0: a body up to a player's size; 1: wide and tall (shambler)
 #define TERRAIN_NAV_FAR		 0xffff
 #define TERRAIN_NAV_MAX_DROP 4 // cells a body may drop off a ledge (one way)
+#define TERRAIN_NAV_MAX_CLIMB 4 // most levels max_climb may allow
 enum
 {
 	TERRAIN_NAV_AIR = 1,	 // centre is open
@@ -155,24 +163,59 @@ typedef struct
 {
 	int32_t	 origin[3];
 	int		 dim[3], count;
-	uint8_t *flags;
-	int		*queue; // flood scratch
+	uint8_t	 *flags;
+	int		  max_climb; // levels a body may jump up onto a ledge; 0 or 1: none (set by the caller)
+	uint64_t *heap;		 // flood scratch
+	int		  heap_len, heap_cap;
 } terrain_nav_t;
 
 void Terrain_NavInit (terrain_nav_t *nav, const terrain_t *t); // allocates; flags start clear
 void Terrain_NavFree (terrain_nav_t *nav);
 void Terrain_NavRefresh (terrain_nav_t *nav, const terrain_t *t, const int lo[3], const int hi[3]); // inclusive cell box
 void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t);
+void Terrain_NavOpBox (const terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op, int lo[3], int hi[3]); // the cells an op can change (unclamped; ice ops: clamped)
 void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op); // after Terrain_ApplyOp
 void Terrain_NavSetBlocked (terrain_nav_t *nav, int cell, int blocked);						// takes effect on the next refresh
 void Terrain_NavCellCenter (const terrain_nav_t *nav, int cell, float out[3]);
 int	 Terrain_NavFindStand (const terrain_nav_t *nav, int cls, const float feet[3], int up, int down); // -1 when none near
-void Terrain_NavFlood (const terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist);
+void Terrain_NavFlood (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist); // the whole grid
+
+// A distance field that can be flooded only around its target: a near flood settles cells up to a
+// cost and clears just the cells its last flood reached, so it is cheap enough to redo every time
+// the cave or the target changes. Cells beyond the bound stay TERRAIN_NAV_FAR.
+typedef struct
+{
+	uint16_t *dist;
+	int		 *touched;
+	int		  num_touched, cap_touched;
+} terrain_navfield_t;
+void Terrain_NavFieldInit (const terrain_nav_t *nav, terrain_navfield_t *field);
+void Terrain_NavFieldFree (terrain_navfield_t *field);
+void Terrain_NavFloodNear (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, terrain_navfield_t *field, int max_cost);
 int	 Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, int cell); // one step closer, or -1
 int	 Terrain_NavIsDrop (const terrain_nav_t *nav, int from, int to);					  // that step is off a ledge
+int	 Terrain_NavIsClimb (const terrain_nav_t *nav, int from, int to);					  // that step is a jump up onto a ledge
+int	 Terrain_NavStepCost (const terrain_nav_t *nav, int from, int to);
 
-extern terrain_t *terrain_active;
+// Op wire form (netsync): kind, material, radius, centre, then normal and thickness (DISK) or aux
+// (STAMP) in the last four bytes, little-endian.
+#define TERRAIN_OP_BYTES 20
+void Terrain_OpPack (const terrain_op_t *op, uint8_t out[TERRAIN_OP_BYTES]);
+void Terrain_OpUnpack (const uint8_t in[TERRAIN_OP_BYTES], terrain_op_t *op);
+
+extern terrain_t *terrain_active; // the server's region
 extern unsigned	  terrain_epoch; // changes whenever terrain_active is replaced or freed
+extern terrain_t *terrain_client;		// the client's copy, built from the server's seed and op log (cl_terrain.c); what is drawn
+extern unsigned	  terrain_client_epoch; // changes whenever terrain_client is replaced or freed
+extern terrain_t *terrain_pmove;		// whichever of the two the running player move collides with
+float			  Terrain_PmoveWalkNormal (void);
+void			  CL_Terrain_Init (void);
+void			  CL_Terrain_Clear (void);
+void			  CL_Workshop_Init (void);
+void			  CL_Workshop_Clear (void);
+void			  CL_Workshop_AddEntities (void); // cl_workshop.c: light strings, VR wrist flares and holster
+struct client_s;
+void SV_Terrain_SendToClient (struct client_s *client);
 
 /* Server side (sv_terrain.c). Engine code only; the offline fixture does not link these. */
 struct edict_s;
@@ -182,9 +225,22 @@ void SV_Terrain_PlaceEntities (void);
 void SV_Terrain_Clear (void);
 void SV_Terrain_SpawnAt (const float center[3], uint32_t seed, const int32_t size[3]);
 int	 SV_Terrain_Edit (int kind, const float pos[3], float radius);
+int	 SV_Terrain_Disk (const float pos[3], const float normal[3], float radius, float half_thickness); // gingerbread
 int	 SV_Terrain_OpLog (const terrain_op_t **ops);
 void SV_Terrain_PlayerFrame (struct edict_s *ent, int num);
+int	 SV_Terrain_ThrowFlare (struct edict_s *player, const float origin[3], const float velocity[3]); // 0: no flare model on this map
+
+/* The workshop's tools (sv_workshop.c): platform gun, festive grapple, thrown flares. */
+void	   SV_Workshop_Init (void);
+void	   SV_Workshop_Precache (void); // while a drg* map loads
+void	   SV_Workshop_Clear (void);
+void SV_Workshop_LoadingSave (void); // a saved game is being loaded over this map
+void	   SV_Workshop_PlayerFrame (struct edict_s *ent, int num);										// once a frame, before the player's commands
+void	   SV_Workshop_PreThink (struct edict_s *ent);													// per command, right before PlayerPreThink
+void	   SV_Workshop_Frame (void);																	// once a server frame, after physics
+int		   SV_Workshop_ViewModel (struct client_s *client, int *modelindex, float *frame, float *ammo); // 1 when a tool replaces the weapon on screen
 void SV_Terrain_SniffWrite (int dest, int kind, float value);
+int		   SV_Terrain_BoxInBrushes (const float origin[3], const float mins[3], const float maxs[3]); // corners or centre inside the map's solid
 float SV_Terrain_WalkNormal (void); // least floor normal z that counts as ground; steeper on terrain than BSP's 0.7
 int	 SV_Terrain_CrawlerFrame (struct edict_s *ent); // 1 when the edict is a surface crawler and was moved here
 int	 SV_Terrain_IsCrawler (struct edict_s *ent);
@@ -216,5 +272,6 @@ typedef struct // read-only view of the lava particles for drawing (listen serve
 } terrain_lava_view_t;
 const terrain_lava_view_t *SV_Terrain_LavaView (void); // NULL when nothing to draw
 void R_Terrain_Update (void);
+void	   R_Terrain_FinishMeshing (void); // waits for chunks meshing on worker threads; call before changing or freeing terrain_client
 
 #endif

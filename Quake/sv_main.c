@@ -1092,11 +1092,22 @@ void SV_CalcStats (client_t *client, int *statsi, float *statsf, const char **st
 	memset ((void *)statss, 0, sizeof (*statss) * MAX_CL_STATS);
 	statsf[STAT_HEALTH] = ent->v.health;
 	statsi[STAT_WEAPON] = SV_ModelIndex (PR_GetString (ent->v.weaponmodel));
+	statsf[STAT_AMMO] = ent->v.currentammo;
+	statsf[STAT_WEAPONFRAME] = ent->v.weaponframe;
+	{
+		int	  tool_model;
+		float tool_frame, tool_ammo;
+		if (SV_Workshop_ViewModel (client, &tool_model, &tool_frame, &tool_ammo))
+		{
+			// a workshop tool is out: it takes the weapon's place on screen and in the ammo count
+			statsi[STAT_WEAPON] = tool_model;
+			statsf[STAT_WEAPONFRAME] = tool_frame;
+			statsf[STAT_AMMO] = tool_ammo;
+		}
+	}
 	if ((unsigned int)statsi[STAT_WEAPON] >= client->limit_models)
 		statsi[STAT_WEAPON] = 0;
-	statsf[STAT_AMMO] = ent->v.currentammo;
 	statsf[STAT_ARMOR] = ent->v.armorvalue;
-	statsf[STAT_WEAPONFRAME] = ent->v.weaponframe;
 	statsf[STAT_SHELLS] = ent->v.ammo_shells;
 	statsf[STAT_NAILS] = ent->v.ammo_nails;
 	statsf[STAT_ROCKETS] = ent->v.ammo_rockets;
@@ -4564,6 +4575,12 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 	int			 items;
 	int			 items2;
 	unsigned int weaponmodelindex = SV_ModelIndex (PR_GetString (ent->v.weaponmodel));
+	float		 weaponframe = ent->v.weaponframe, currentammo = ent->v.currentammo;
+	{
+		int tool_model;
+		if (SV_Workshop_ViewModel (client, &tool_model, &weaponframe, &currentammo))
+			weaponmodelindex = (unsigned int)tool_model; // a workshop tool is out
+	}
 
 	if (weaponmodelindex >= client->limit_models)
 		weaponmodelindex = 0;
@@ -4599,7 +4616,7 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 			bits |= (SU_VELOCITY1 << i);
 	}
 
-	if (ent->v.weaponframe)
+	if (weaponframe)
 		bits |= SU_WEAPONFRAME;
 
 	if (ent->v.armorvalue)
@@ -4615,7 +4632,7 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 			bits |= SU_WEAPON2;
 		if ((int)ent->v.armorvalue > 255)
 			bits |= SU_ARMOR2;
-		if ((int)ent->v.currentammo > 255)
+		if ((int)currentammo > 255)
 			bits |= SU_AMMO2;
 		if ((int)ent->v.ammo_shells > 255)
 			bits |= SU_SHELLS2;
@@ -4625,7 +4642,7 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 			bits |= SU_ROCKETS2;
 		if ((int)ent->v.ammo_cells > 255)
 			bits |= SU_CELLS2;
-		if (bits & SU_WEAPONFRAME && (int)ent->v.weaponframe > 255)
+		if (bits & SU_WEAPONFRAME && (int)weaponframe > 255)
 			bits |= SU_WEAPONFRAME2;
 		if (bits & SU_WEAPON && ent->alpha != ENTALPHA_DEFAULT)
 			bits |= SU_WEAPONALPHA; // for now, weaponalpha = client entity alpha
@@ -4666,14 +4683,14 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 	MSG_WriteLong (msg, items);
 
 	if (bits & SU_WEAPONFRAME)
-		MSG_WriteByte (msg, (int)ent->v.weaponframe & 0xff);
+		MSG_WriteByte (msg, (int)weaponframe & 0xff);
 	if (bits & SU_ARMOR)
 		MSG_WriteByte (msg, (int)ent->v.armorvalue & 0xff);
 	if (bits & SU_WEAPON)
 		MSG_WriteByte (msg, (int)weaponmodelindex & 0xff);
 
 	MSG_WriteShort (msg, ent->v.health);
-	MSG_WriteByte (msg, (int)ent->v.currentammo & 0xff);
+	MSG_WriteByte (msg, (int)currentammo & 0xff);
 	MSG_WriteByte (msg, (int)ent->v.ammo_shells & 0xff);
 	MSG_WriteByte (msg, (int)ent->v.ammo_nails & 0xff);
 	MSG_WriteByte (msg, (int)ent->v.ammo_rockets & 0xff);
@@ -4703,7 +4720,7 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 	if (bits & SU_ARMOR2)
 		MSG_WriteByte (msg, (int)ent->v.armorvalue >> 8);
 	if (bits & SU_AMMO2)
-		MSG_WriteByte (msg, (int)ent->v.currentammo >> 8);
+		MSG_WriteByte (msg, (int)currentammo >> 8);
 	if (bits & SU_SHELLS2)
 		MSG_WriteByte (msg, (int)ent->v.ammo_shells >> 8);
 	if (bits & SU_NAILS2)
@@ -4713,7 +4730,7 @@ void SV_WriteClientdataToMessage (client_t *client, sizebuf_t *msg)
 	if (bits & SU_CELLS2)
 		MSG_WriteByte (msg, (int)ent->v.ammo_cells >> 8);
 	if (bits & SU_WEAPONFRAME2)
-		MSG_WriteByte (msg, (int)ent->v.weaponframe >> 8);
+		MSG_WriteByte (msg, (int)weaponframe >> 8);
 	if (bits & SU_WEAPONALPHA)
 		MSG_WriteByte (msg, ent->alpha); // for now, weaponalpha = client entity alpha
 										 // johnfitz
@@ -5785,6 +5802,7 @@ void SV_SendClientMessages (void)
 		SV_AppendAkimboProtocol (host_client);
 		SV_AppendGorillaProtocol (host_client);
 		SV_AppendInstantStopProtocol (host_client);
+		SV_Terrain_SendToClient (host_client);
 		if (host_client->spawned)
 		{
 			char reason[128] = "metadata envelope cannot be published";

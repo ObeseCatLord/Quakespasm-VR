@@ -10087,6 +10087,7 @@ const char *SV_RunStandardPlayerPhysics (edict_t *ent)
 		failure = "standard collision collection failed";
 		goto done;
 	}
+	terrain_pmove = terrain_active;
 	PM_PlayerMove (1);
 	/* Capture and retain contacts before any trigger/impact can mutate scratch
 	 * or remove/reallocate another contact. No callback uses the live PMove list. */
@@ -10587,6 +10588,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 		}
 		SV_CoopRespawnFilterBorrowedInput (ent, NUM_FOR_EDICT (ent),
 			respawn_policy, &respawn_input_scope, &respawn_input_saved);
+		SV_Workshop_PreThink (ent); // tools read this command's impulse and buttons
+
 		PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 		if (!SV_CoopRespawnPolicyOwnerLive (respawn_policy, client, ent))
 		{
@@ -10787,6 +10790,8 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	if (run_prethink)
 	{
 		host_frametime = shared_qc ? think_window->world_frametime : seconds;
+		SV_Workshop_PreThink (ent); // tools read this command's impulse and buttons
+
 		PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 		host_frametime = seconds;
 		pr_global_struct->frametime = seconds;
@@ -10990,6 +10995,7 @@ static qboolean SV_Physics_ClientPrivateWalkTrial (edict_t *ent, client_t *clien
 	}
 	VectorCopy (ent->v.v_angle, premove_v_angle);
 	VectorCopy (ent->v.angles, premove_angles);
+	terrain_pmove = terrain_active;
 	PM_PlayerMove (1.0f);
 	result_gorilla = pmove.gorilla;
 	VectorCopy (pmove.origin, result_gorilla_origin);
@@ -11965,6 +11971,8 @@ static qboolean SV_Physics_ClientNativeFromPhase (edict_t *ent, int num,
 		SV_CoopRespawnFilterBorrowedInput (ent, num, respawn_policy,
 			&respawn_input_scope, &respawn_input_saved);
 	VectorCopy (ent->v.origin, callback_origin);
+	SV_Workshop_PreThink (ent); // tools read this command's impulse and buttons
+
 	PR_ExecuteProgram (pr_global_struct->PlayerPreThink);
 
 after_prethink:
@@ -12926,6 +12934,9 @@ void SV_Physics (void)
 
 	if (pr_global_struct->force_retouch)
 		pr_global_struct->force_retouch--;
+
+	if (qcvm == &sv.qcvm)
+		SV_Workshop_Frame (); // the workshop tools' shots and growing platforms
 
 	if (!(sv_freezenonclients.value && qcvm == &sv.qcvm))
 		qcvm->time += host_frametime;

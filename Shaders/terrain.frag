@@ -31,6 +31,7 @@ layout (location = 0) out vec4 out_frag_color;
 #define FLAG_FULLBRIGHT 1u // prop bulbs: the vertex colour is the final colour
 #define FLAG_PLAIN		2u // prop cords and trunks: lit vertex colour, no texture
 #define MAT_OLDICE		2u
+#define MAT_GINGER		4u // platform gun disks
 
 uint Hash (uvec3 v)
 {
@@ -83,6 +84,18 @@ void main ()
 		vec3 albedo;
 		if ((flags & FLAG_PLAIN) != 0u)
 			albedo = vec3 (0.5);
+		else if (material == MAT_GINGER)
+		{
+			// gingerbread: baked brown with darker crumb, the odd sugar sprinkle, in every style
+			const uvec2 tb = uvec2 ((texel >> lod) + 65536);
+			const uint	h = Hash (uvec3 (tb, 41u + axis));
+			const float g = float (h & 1023u) / 1023.0;
+			albedo = g > 0.72 ? vec3 (0.40, 0.20, 0.07) : vec3 (0.58, 0.31, 0.12);
+			if (g > 0.997)
+				albedo = vec3 (0.96, 0.94, 0.88); // icing
+			else if (g > 0.994)
+				albedo = ((h >> 12) & 1u) != 0u ? vec3 (0.80, 0.12, 0.10) : vec3 (0.18, 0.55, 0.22);
+		}
 		else
 		{
 			int tile = material == MAT_OLDICE ? 2 : 0;

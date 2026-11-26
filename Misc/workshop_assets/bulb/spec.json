@@ -1,0 +1,15 @@
+{
+ "frames": [
+  "frame_idle.obj"
+ ],
+ "frame_names": [
+  "idle"
+ ],
+ "skins": [
+  "skin_red.png",
+  "skin_green.png",
+  "skin_blue.png",
+  "skin_gold.png"
+ ],
+ "fullbright": "fullbright.png"
+}

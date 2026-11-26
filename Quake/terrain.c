@@ -9,6 +9,58 @@
 #include <string.h>
 
 terrain_t *terrain_active;
+terrain_t *terrain_client;
+unsigned   terrain_client_epoch;
+terrain_t *terrain_pmove;
+
+float Terrain_PmoveWalkNormal (void)
+{
+	return terrain_pmove ? terrain_pmove->walk_normal : 0.7f;
+}
+
+void Terrain_OpPack (const terrain_op_t *op, uint8_t out[TERRAIN_OP_BYTES])
+{
+	out[0] = op->kind;
+	out[1] = op->material;
+	out[2] = (uint8_t)(op->radius & 0xff);
+	out[3] = (uint8_t)(op->radius >> 8);
+	for (int a = 0; a < 3; ++a)
+		for (int b = 0; b < 4; ++b)
+			out[4 + a * 4 + b] = (uint8_t)((uint32_t)op->center[a] >> (8 * b));
+	if (op->kind == TERRAIN_OP_STAMP)
+		for (int b = 0; b < 4; ++b)
+			out[16 + b] = (uint8_t)(op->aux >> (8 * b));
+	else
+	{
+		for (int a = 0; a < 3; ++a)
+			out[16 + a] = (uint8_t)op->normal[a];
+		out[19] = op->thickness;
+	}
+}
+
+void Terrain_OpUnpack (const uint8_t in[TERRAIN_OP_BYTES], terrain_op_t *op)
+{
+	memset (op, 0, sizeof (*op));
+	op->kind = in[0];
+	op->material = in[1];
+	op->radius = (uint16_t)(in[2] | in[3] << 8);
+	for (int a = 0; a < 3; ++a)
+	{
+		uint32_t v = 0;
+		for (int b = 0; b < 4; ++b)
+			v |= (uint32_t)in[4 + a * 4 + b] << (8 * b);
+		op->center[a] = (int32_t)v;
+	}
+	if (op->kind == TERRAIN_OP_STAMP)
+	{
+		for (int b = 0; b < 4; ++b)
+			op->aux |= (uint32_t)in[16 + b] << (8 * b);
+		return;
+	}
+	for (int a = 0; a < 3; ++a)
+		op->normal[a] = (int8_t)in[16 + a];
+	op->thickness = in[19];
+}
 
 #define PAD	  (TERRAIN_CHUNK + 2) // samples -1 .. CHUNK
 #define CELLS (TERRAIN_CHUNK + 1) // cells -1 .. CHUNK-1
@@ -83,6 +135,7 @@ terrain_t *Terrain_Create (const int32_t origin[3], const int32_t size_chunks[3]
 		t->size[i] = size_chunks[i];
 	}
 	t->seed = seed;
+	t->walk_normal = 0.7f;
 	const int count = t->size[0] * t->size[1] * t->size[2];
 	t->chunks = (terrain_chunk_t *)calloc (count, sizeof (*t->chunks));
 	for (int i = 0; i < count; ++i)
@@ -186,9 +239,16 @@ void Terrain_SetSample (terrain_t *t, int x, int y, int z, int sdf, int mat)
 
 int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 {
-	if (op->kind >= TERRAIN_OP_DETACH)
+	if (TERRAIN_OP_IS_ICE (op->kind))
 		return Terrain_IceApplyOp (t, op);
-	const int reach = (int)op->radius + TERRAIN_SDF_MAX;
+	if (op->kind >= TERRAIN_OP_KINDS)
+		return 0;
+	const int	  reach = (int)op->radius + (op->kind == TERRAIN_OP_DISK ? (int)op->thickness : 0) + TERRAIN_SDF_MAX;
+	// a disk's axis, as given (integer, any length up to 127)
+	const int64_t nx = op->normal[0], ny = op->normal[1], nz = op->normal[2];
+	const int64_t nlen = op->kind == TERRAIN_OP_DISK ? (int64_t)ISqrt64 ((uint64_t)(nx * nx + ny * ny + nz * nz)) : 0;
+	if (op->kind == TERRAIN_OP_DISK && !nlen)
+		return 0;
 	int		  lo[3], hi[3];
 	for (int a = 0; a < 3; ++a)
 	{
@@ -207,7 +267,8 @@ int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 			for (int x = lo[0]; x <= hi[0]; ++x)
 			{
 				const int64_t	 dx = (int64_t)x * TERRAIN_SUB - op->center[0];
-				const int		 dist = (int)ISqrt64 ((uint64_t)(dx * dx + dy * dy + dz * dz));
+				const int64_t	 d2 = dx * dx + dy * dy + dz * dz;
+				const int		 dist = (int)ISqrt64 ((uint64_t)d2);
 				const int		 cx = x >> TERRAIN_CHUNK_SHIFT;
 				terrain_chunk_t *c = Terrain_Chunk (t, cx, cy, cz);
 				const int		 i = (((z & 31) << TERRAIN_CHUNK_SHIFT | (y & 31)) << TERRAIN_CHUNK_SHIFT) | (x & 31);
@@ -219,6 +280,20 @@ int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 					if (v <= old)
 						continue;
 				}
+				else if (op->kind == TERRAIN_OP_DISK)
+				{
+					// distance to a flat cylinder: across the axis against the radius, along it against the
+					// half thickness
+					const int64_t axial = (dx * nx + dy * ny + dz * nz) / nlen;
+					const int64_t r2 = d2 - axial * axial;
+					const int64_t qx = (int64_t)ISqrt64 ((uint64_t)(r2 > 0 ? r2 : 0)) - (int64_t)op->radius;
+					const int64_t qy = (axial < 0 ? -axial : axial) - (int64_t)op->thickness;
+					const int64_t ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0, in = qx > qy ? qx : qy;
+					const int64_t sdf = (int64_t)ISqrt64 ((uint64_t)(ox * ox + oy * oy)) + (in < 0 ? in : 0);
+					v = (int)(sdf < -TERRAIN_SDF_MAX ? -TERRAIN_SDF_MAX : sdf > TERRAIN_SDF_MAX ? TERRAIN_SDF_MAX : sdf);
+					if (v >= old)
+						continue;
+				}
 				else
 				{
 					v = Clamp (dist - (int)op->radius, -TERRAIN_SDF_MAX, TERRAIN_SDF_MAX);
@@ -228,7 +303,7 @@ int Terrain_ApplyOp (terrain_t *t, const terrain_op_t *op)
 				if (!c->sdf)
 					Materialize (t, c, cx, cy, cz);
 				c->sdf[i] = (int8_t)v;
-				if (op->kind == TERRAIN_OP_FILL && old >= 0)
+				if (op->kind != TERRAIN_OP_DIG && old >= 0)
 					c->mat[i] = op->material;
 				++changed;
 				const int p[3] = {x, y, z};
@@ -280,7 +355,7 @@ void Terrain_Generate (terrain_t *t)
 		extent[a] = t->size[a] * TERRAIN_CHUNK * TERRAIN_SUB;
 		pos[a] = extent[a] / 2;
 	}
-	terrain_op_t op = {TERRAIN_OP_DIG, 0, 11 * TERRAIN_SUB, {pos[0], pos[1], pos[2]}};
+	terrain_op_t op = {TERRAIN_OP_DIG, 0, 11 * TERRAIN_SUB, {pos[0], pos[1], pos[2]}, {0, 0, 0}, 0};
 	Terrain_ApplyOp (t, &op); // start room at the region centre
 	// Sized for Quake: passages 130-260 units across (a player is 32 by 56), chambers about 450.
 	// The margin keeps every dig inside the region, so the cave never opens onto the map shell.
@@ -329,7 +404,7 @@ static void FillColumn (terrain_t *t, int x, int y, int z0, int z1, int r0, int 
 {
 	// a stack of fill spheres from z0 to z1 (lattice), radius r0 at z0 to r1 at z1 (TERRAIN_SUB units),
 	// plus `bulge` extra at both ends so columns flare into floor and ceiling
-	terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_GOLD, 0, {x * TERRAIN_SUB + TERRAIN_SUB / 2, y * TERRAIN_SUB + TERRAIN_SUB / 2, 0}};
+	terrain_op_t op = {TERRAIN_OP_FILL, TERRAIN_MAT_GOLD, 0, {x * TERRAIN_SUB + TERRAIN_SUB / 2, y * TERRAIN_SUB + TERRAIN_SUB / 2, 0}, {0, 0, 0}, 0};
 	const int	 len = (z1 - z0) * TERRAIN_SUB;
 	const int	 dir = len < 0 ? -1 : 1;
 	for (int d = 0; d * dir <= len * dir;)
@@ -974,7 +1049,9 @@ is clear by a few units; a cell is somewhere to stand when it is open, the one u
 there is headroom above. Two neighbouring stand cells are joined when the climb or drop between them
 is at most one cell (45 degrees at this cell size, inside the step monsters take on terrain) and the
 body has room to make it; a ledge also leads, one way, to a floor up to TERRAIN_NAV_MAX_DROP cells
-below it. A flood from the target gives every connected stand cell its number of
+below it, and when the caller sets max_climb a floor up to that many cells above can be jumped onto.
+The flood is weighted (diagonals, drops and jumps cost more than walking), so a route keeps to the
+floor where it can. A flood from the target gives every connected stand cell its number of
 steps to go; walking to a neighbour with a smaller number is the way there.
 
 ==============================================================================
@@ -1043,13 +1120,12 @@ void Terrain_NavInit (terrain_nav_t *nav, const terrain_t *t)
 	}
 	nav->count = count;
 	nav->flags = (uint8_t *)calloc (count, 1);
-	nav->queue = (int *)malloc (count * sizeof (int));
 }
 
 void Terrain_NavFree (terrain_nav_t *nav)
 {
 	free (nav->flags);
-	free (nav->queue);
+	free (nav->heap);
 	memset (nav, 0, sizeof (*nav));
 }
 
@@ -1095,29 +1171,35 @@ void Terrain_NavRefreshAll (terrain_nav_t *nav, const terrain_t *t)
 	Terrain_NavRefresh (nav, t, lo, hi);
 }
 
-void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op)
+void Terrain_NavOpBox (const terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op, int lo[3], int hi[3])
 {
-	if (op->kind >= TERRAIN_OP_DETACH)
+	if (TERRAIN_OP_IS_ICE (op->kind))
 	{
-		int lo[3], hi[3];
+		// a STAMP's box needs its brick, so call this after the op (and every DETACH before it) was applied
 		Terrain_IceOpBounds (t, op, lo, hi);
 		for (int a = 0; a < 3; ++a)
 		{
-			lo[a] = (lo[a] - 1) >> 1; // lattice cell -> nav cell (2 lattice cells each)
-			hi[a] = (hi[a] + 1) >> 1;
+			const int lattice_per_nav = TERRAIN_NAV_CELL / TERRAIN_CELL;
+			lo[a] = (lo[a] - 1) / lattice_per_nav; // lattice sample -> nav cell
+			hi[a] = (hi[a] + 1) / lattice_per_nav;
 		}
-		Terrain_NavRefresh (nav, t, lo, hi);
 		return;
 	}
 	// an op changes samples up to radius + TERRAIN_SDF_MAX (fixed point) from its centre
-	const int reach = (int)op->radius + TERRAIN_SDF_MAX + TERRAIN_SUB;
-	int		  lo[3], hi[3];
+	const int reach = (int)op->radius + (op->kind == TERRAIN_OP_DISK ? (int)op->thickness : 0) + TERRAIN_SDF_MAX + TERRAIN_SUB;
+	(void)nav;
 	for (int a = 0; a < 3; ++a)
 	{
 		const int sub_per_nav = TERRAIN_SUB * TERRAIN_NAV_CELL / TERRAIN_CELL;
 		lo[a] = (int)floorf ((float)(op->center[a] - reach) / (float)sub_per_nav);
 		hi[a] = (int)floorf ((float)(op->center[a] + reach) / (float)sub_per_nav);
 	}
+}
+
+void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain_op_t *op)
+{
+	int lo[3], hi[3];
+	Terrain_NavOpBox (nav, t, op, lo, hi);
 	Terrain_NavRefresh (nav, t, lo, hi);
 }
 
@@ -1214,43 +1296,165 @@ static int NavDrop (const terrain_nav_t *nav, int cls, const int a[3], const int
 	return 1;
 }
 
-// One step from a to b on foot: a walk or climb either way, or a drop off a ledge.
+// One step from a to b on foot: a walk or climb of a level either way, a drop off a ledge, or a
+// jump up onto one no higher than the caller allows (the reverse of a drop).
 static int NavStep (const terrain_nav_t *nav, int cls, const int a[3], const int b[3])
 {
-	return b[2] - a[2] >= -1 ? NavLink (nav, cls, a, b) : NavDrop (nav, cls, a, b);
+	const int dz = b[2] - a[2];
+	if (dz >= -1 && dz <= 1)
+		return NavLink (nav, cls, a, b);
+	if (dz < -1)
+		return NavDrop (nav, cls, a, b);
+	return dz <= nav->max_climb && NavDrop (nav, cls, b, a);
+}
+
+// What a step costs: about two per 32 units across, three on a diagonal, more for leaving the floor.
+static int NavCost (const int a[3], const int b[3])
+{
+	const int diag = a[0] != b[0] && a[1] != b[1], dz = b[2] - a[2];
+	if (dz > 1)
+		return 4 + 2 * dz; // a jump up
+	if (dz < -1)
+		return 3 + dz * -1 / 2;
+	return diag ? 3 : 2;
+}
+
+// Level changes tried for each direction, best first on a tie: walks, then drops, then climbs.
+static int NavLevels (const terrain_nav_t *nav, int levels[16])
+{
+	int n = 0;
+	levels[n++] = 0;
+	levels[n++] = 1;
+	levels[n++] = -1;
+	for (int dz = 2; dz <= TERRAIN_NAV_MAX_DROP; ++dz)
+		levels[n++] = -dz;
+	for (int dz = 2; dz <= nav->max_climb && dz <= TERRAIN_NAV_MAX_CLIMB; ++dz)
+		levels[n++] = dz;
+	return n;
 }
 
 static const int nav_dirs[8][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
 
-void Terrain_NavFlood (const terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist)
+// Binary heap of (cost << 32 | cell) for the flood.
+static void NavPush (terrain_nav_t *nav, uint64_t v)
+{
+	if (nav->heap_len == nav->heap_cap)
+	{
+		nav->heap_cap = nav->heap_cap ? nav->heap_cap * 2 : 4096;
+		nav->heap = (uint64_t *)realloc (nav->heap, (size_t)nav->heap_cap * sizeof (uint64_t));
+	}
+	int i = nav->heap_len++;
+	while (i > 0 && nav->heap[(i - 1) / 2] > v)
+	{
+		nav->heap[i] = nav->heap[(i - 1) / 2];
+		i = (i - 1) / 2;
+	}
+	nav->heap[i] = v;
+}
+
+static uint64_t NavPop (terrain_nav_t *nav)
+{
+	const uint64_t top = nav->heap[0], last = nav->heap[--nav->heap_len];
+	int			   i = 0;
+	for (;;)
+	{
+		int c = i * 2 + 1;
+		if (c >= nav->heap_len)
+			break;
+		if (c + 1 < nav->heap_len && nav->heap[c + 1] < nav->heap[c])
+			++c;
+		if (nav->heap[c] >= last)
+			break;
+		nav->heap[i] = nav->heap[c];
+		i = c;
+	}
+	if (nav->heap_len)
+		nav->heap[i] = last;
+	return top;
+}
+
+// Dijkstra from the seeds over stand cells, settling cells no dearer than max_cost. When touched is
+// given, every cell given a cost is recorded there (to be reset later without clearing the grid).
+static void NavFloodCore (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist, int max_cost, terrain_navfield_t *touched)
 {
 	const uint8_t bit = (uint8_t)(TERRAIN_NAV_STAND << cls);
-	memset (dist, 0xff, (size_t)nav->count * sizeof (uint16_t));
-	int head = 0, tail = 0;
+	int			  levels[16];
+	const int	  num_levels = NavLevels (nav, levels);
+	nav->heap_len = 0;
+#define NAV_TOUCH(cell)                                                                                            \
+	do                                                                                                             \
+	{                                                                                                              \
+		if (touched)                                                                                               \
+		{                                                                                                          \
+			if (touched->num_touched == touched->cap_touched)                                                      \
+			{                                                                                                      \
+				touched->cap_touched = touched->cap_touched ? touched->cap_touched * 2 : 4096;                     \
+				touched->touched = (int *)realloc (touched->touched, (size_t)touched->cap_touched * sizeof (int)); \
+			}                                                                                                      \
+			touched->touched[touched->num_touched++] = (cell);                                                     \
+		}                                                                                                          \
+	} while (0)
 	for (int s = 0; s < num_seeds; ++s)
 		if (seeds[s] >= 0 && seeds[s] < nav->count && dist[seeds[s]] == TERRAIN_NAV_FAR && (nav->flags[seeds[s]] & bit))
 		{
 			dist[seeds[s]] = 0;
-			nav->queue[tail++] = seeds[s];
+			NAV_TOUCH (seeds[s]);
+			NavPush (nav, (uint64_t)seeds[s]);
 		}
-	while (head < tail)
+	while (nav->heap_len)
 	{
-		const int cell = nav->queue[head++];
+		const uint64_t top = NavPop (nav);
+		const int	   cell = (int)(top & 0xffffffffu), cost = (int)(top >> 32);
+		if (cost != dist[cell])
+			continue; // a cheaper way here was already settled
 		const int c[3] = {cell % nav->dim[0], (cell / nav->dim[0]) % nav->dim[1], cell / (nav->dim[0] * nav->dim[1])};
-		if (dist[cell] >= TERRAIN_NAV_FAR - 1)
-			continue;
 		// the flood runs backwards: next is a cell from which one step reaches this one
 		for (int d = 0; d < 8; ++d)
-			for (int dz = -1; dz <= TERRAIN_NAV_MAX_DROP; ++dz)
+			for (int k = 0; k < num_levels; ++k)
 			{
-				const int n[3] = {c[0] + nav_dirs[d][0], c[1] + nav_dirs[d][1], c[2] + dz};
+				const int n[3] = {c[0] + nav_dirs[d][0], c[1] + nav_dirs[d][1], c[2] - levels[k]};
 				const int next = NavIndex3 (nav, n[0], n[1], n[2]);
-				if (next < 0 || dist[next] != TERRAIN_NAV_FAR || !(nav->flags[next] & bit) || !NavStep (nav, cls, n, c))
+				if (next < 0 || !(nav->flags[next] & bit))
 					continue;
-				dist[next] = (uint16_t)(dist[cell] + 1);
-				nav->queue[tail++] = next;
+				const int total = cost + NavCost (n, c);
+				if (total >= dist[next] || total > max_cost || total >= TERRAIN_NAV_FAR || !NavStep (nav, cls, n, c))
+					continue;
+				if (dist[next] == TERRAIN_NAV_FAR)
+					NAV_TOUCH (next);
+				dist[next] = (uint16_t)total;
+				NavPush (nav, (uint64_t)total << 32 | (uint64_t)next);
 			}
 	}
+#undef NAV_TOUCH
+}
+
+void Terrain_NavFlood (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist)
+{
+	memset (dist, 0xff, (size_t)nav->count * sizeof (uint16_t));
+	NavFloodCore (nav, cls, seeds, num_seeds, dist, TERRAIN_NAV_FAR, NULL);
+}
+
+void Terrain_NavFieldInit (const terrain_nav_t *nav, terrain_navfield_t *field)
+{
+	memset (field, 0, sizeof (*field));
+	field->dist = (uint16_t *)malloc ((size_t)nav->count * sizeof (uint16_t));
+	memset (field->dist, 0xff, (size_t)nav->count * sizeof (uint16_t));
+}
+
+void Terrain_NavFieldFree (terrain_navfield_t *field)
+{
+	free (field->dist);
+	free (field->touched);
+	memset (field, 0, sizeof (*field));
+}
+
+void Terrain_NavFloodNear (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, terrain_navfield_t *field, int max_cost)
+{
+	// clear only what the last flood reached, so a small flood costs only its own cells
+	for (int i = 0; i < field->num_touched; ++i)
+		field->dist[field->touched[i]] = TERRAIN_NAV_FAR;
+	field->num_touched = 0;
+	NavFloodCore (nav, cls, seeds, num_seeds, field->dist, max_cost, field);
 }
 
 int Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, int cell)
@@ -1259,24 +1463,44 @@ int Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, in
 		return -1;
 	const uint8_t bit = (uint8_t)(TERRAIN_NAV_STAND << cls);
 	const int	  c[3] = {cell % nav->dim[0], (cell / nav->dim[0]) % nav->dim[1], cell / (nav->dim[0] * nav->dim[1])};
-	int			  best = -1, best_dist = dist[cell];
-	// first found wins a tie: straight directions before diagonals, and within a direction a walk
-	// before a drop and a short drop before a long one
+	int			  levels[16], best = -1, best_total = dist[cell] + 1;
+	const int	  num_levels = NavLevels (nav, levels);
+	// the step on a cheapest way; on a tie straight directions win over diagonals, and within a
+	// direction a walk over a drop over a climb
 	for (int d = 0; d < 8; ++d)
-		for (int k = 0; k < 2 + TERRAIN_NAV_MAX_DROP; ++k)
+		for (int k = 0; k < num_levels; ++k)
 		{
-			const int dz = k < 3 ? k - 1 : 1 - k;
-			const int n[3] = {c[0] + nav_dirs[d][0], c[1] + nav_dirs[d][1], c[2] + dz};
+			const int n[3] = {c[0] + nav_dirs[d][0], c[1] + nav_dirs[d][1], c[2] + levels[k]};
 			const int next = NavIndex3 (nav, n[0], n[1], n[2]);
-			if (next < 0 || dist[next] >= best_dist || !(nav->flags[next] & bit) || !NavStep (nav, cls, c, n))
+			if (next < 0 || dist[next] == TERRAIN_NAV_FAR || !(nav->flags[next] & bit))
+				continue;
+			const int total = dist[next] + NavCost (c, n);
+			if (total >= best_total || !NavStep (nav, cls, c, n))
 				continue;
 			best = next;
-			best_dist = dist[next];
+			best_total = total;
 		}
 	return best;
 }
 
+int Terrain_NavLevelChange (const terrain_nav_t *nav, int from, int to)
+{
+	return to / (nav->dim[0] * nav->dim[1]) - from / (nav->dim[0] * nav->dim[1]);
+}
+
 int Terrain_NavIsDrop (const terrain_nav_t *nav, int from, int to)
 {
-	return (to / (nav->dim[0] * nav->dim[1])) < (from / (nav->dim[0] * nav->dim[1])) - 1;
+	return Terrain_NavLevelChange (nav, from, to) < -1;
+}
+
+int Terrain_NavIsClimb (const terrain_nav_t *nav, int from, int to)
+{
+	return Terrain_NavLevelChange (nav, from, to) > 1;
+}
+
+int Terrain_NavStepCost (const terrain_nav_t *nav, int from, int to)
+{
+	const int d0 = nav->dim[0], d01 = nav->dim[0] * nav->dim[1];
+	const int a[3] = {from % d0, (from / d0) % nav->dim[1], from / d01}, b[3] = {to % d0, (to / d0) % nav->dim[1], to / d01};
+	return NavCost (a, b);
 }

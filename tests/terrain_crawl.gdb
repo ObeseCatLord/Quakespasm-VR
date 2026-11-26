@@ -10,7 +10,11 @@ run
 ignore 1 300
 continue
 call (void)Cbuf_AddText("terrain_crawler_sense 0; map drgbox\n")
-ignore 1 500
+ignore 1 40
+continue
+# god as soon as the map is up: in the map-sized cave a grunt can shoot the start within seconds
+call (void)Cbuf_AddText("god\n")
+ignore 1 460
 continue
 call (void)Cbuf_AddText("god; terrain_crawler_sense 3000; echo PHASE t0; terrain_ents\n")
 ignore 1 1200
