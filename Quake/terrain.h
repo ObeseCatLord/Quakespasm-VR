@@ -262,6 +262,7 @@ int	 SV_Terrain_IceDraw (int i, const terrain_mesh_t **mesh, float pos[3], float
 void SV_Terrain_LavaInit (void);
 void SV_Terrain_LavaReset (void);
 void SV_Terrain_LavaFrame (void); // once per server frame, after the worm
+int	 SV_Terrain_LavaSpray (int owner, const float eye[3], const float forward[3], const float up[3], const float player_vel[3]); // a held lava nozzle; call every frame
 typedef struct // read-only view of the lava particles for drawing (listen server only)
 {
 	int			 count;

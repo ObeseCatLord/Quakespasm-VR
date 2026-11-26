@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Desktop (no headset) run of the cave box with the particle lava. Extra arguments go to the engine.
-# Hold L to spray lava along the view, F throws a flare, F7 cycles the look.
+# Pull out the lava sprayer with - (or scroll past the platform gun), hold fire to hose lava; 9 is the
+# grapple, 0 the platform gun, F throws a flare, F7 cycles the terrain look, F8 the lava style.
+# (The old +terrain_lava debug bind still exists: bind it from the console if you want a no-tank spray.)
 cd "$(dirname "$0")/.." || exit 1
-# a bind to a +command cannot go on the command line (the + starts a new command), so it goes in a cfg
-mkdir -p run/id1 && printf 'bind l "+terrain_lava"\n' > run/id1/drg-keys.cfg
-exec nix develop -c ./build-drg/vkquake -basedir "$PWD/run" -novr +map drgbox +exec drg-keys.cfg \
-  +bind f terrain_flare +bind F7 "terrain_style next" "$@"
+exec nix develop -c ./build-drg/vkquake -basedir "$PWD/run" -novr +map drgbox \
+  +bind f terrain_flare +bind F7 "terrain_style next" +bind F8 "terrain_lava_style next" "$@"

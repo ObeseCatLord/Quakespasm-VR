@@ -101,6 +101,7 @@ typedef struct
 	float  rate, left, acc;
 	int	   stream;
 	float  heat;
+	int	   owner; // player number of a workshop sprayer (refreshed every frame it is held); 0 for the rest
 } emitter_t;
 
 static struct
@@ -1521,6 +1522,19 @@ static void LavaDamage (void)
 	}
 }
 
+// Where a held nozzle starts: a little ahead of the eye, backing off while that spot is inside rock.
+static int Lava_Muzzle (const float eye[3], const float forward[3], const float up[3], float out[3])
+{
+	for (float dist = 24.0f; dist >= 0.0f; dist -= 6.0f)
+	{
+		for (int a = 0; a < 3; ++a)
+			out[a] = eye[a] + forward[a] * dist - up[a] * 6.0f;
+		if (Sample (out) > P.radius + 2.0f)
+			return 1;
+	}
+	return 0;
+}
+
 static void LavaWeapon (void)
 {
 	emitter_t *em = &L.em[0];
@@ -1532,23 +1546,10 @@ static void LavaWeapon (void)
 	edict_t *pl = sv_player;
 	vec3_t	 forward, right, up;
 	AngleVectors (pl->v.v_angle, forward, right, up);
-	float eye[3];
+	float eye[3], out[3];
 	for (int a = 0; a < 3; ++a)
 		eye[a] = pl->v.origin[a] + pl->v.view_ofs[a];
-	// the muzzle backs off when the eye is against rock
-	float out[3];
-	int	  found = 0;
-	for (float dist = 24.0f; dist >= 0.0f; dist -= 6.0f)
-	{
-		for (int a = 0; a < 3; ++a)
-			out[a] = eye[a] + forward[a] * dist - up[a] * 6.0f;
-		if (Sample (out) > P.radius + 2.0f)
-		{
-			found = 1;
-			break;
-		}
-	}
-	if (!found)
+	if (!Lava_Muzzle (eye, forward, up, out))
 	{
 		em->active = 0;
 		return;
@@ -1557,12 +1558,54 @@ static void LavaWeapon (void)
 	em->active = 1;
 	em->left = -1.0f;
 	em->stream = 0;
+	em->owner = 0;
 	em->rate = terrain_lava_rate.value;
 	em->spread = terrain_lava_spread.value;
 	em->heat = terrain_lava_heat.value;
 	memcpy (em->pos, out, sizeof (out));
 	for (int a = 0; a < 3; ++a)
 		em->vel[a] = forward[a] * speed + pl->v.velocity[a] * 0.5f;
+}
+
+/*
+The workshop's lava sprayer, for any player: called every server frame the nozzle is held open.
+The player's emitter (found by owner) lives a fraction of a second past the last call, so letting
+go, dying or leaving all stop it. Returns 0 when the nozzle is buried in rock or no emitter is free.
+*/
+int SV_Terrain_LavaSpray (int owner, const float eye[3], const float forward[3], const float up[3], const float player_vel[3])
+{
+	if (!terrain_active || !sv.active || owner < 1)
+		return 0;
+	Lava_ReadCvars ();
+	Lava_Setup ();
+	emitter_t *em = NULL;
+	for (int e = 1; e < LAVA_EMITTERS && !em; ++e)
+		if (L.em[e].active && L.em[e].owner == owner)
+			em = &L.em[e];
+	float out[3];
+	if (!Lava_Muzzle (eye, forward, up, out))
+	{
+		if (em)
+			em->active = 0;
+		return 0;
+	}
+	if (!em)
+	{
+		const int e = Lava_AddEmitter (out, vec3_origin, 0.0f, 0.2f, 0.0f, 1.0f);
+		if (!e)
+			return 0;
+		em = &L.em[e];
+		em->owner = owner;
+	}
+	const float speed = terrain_lava_speed.value;
+	em->left = 0.2f;
+	em->rate = terrain_lava_rate.value;
+	em->spread = terrain_lava_spread.value;
+	em->heat = terrain_lava_heat.value;
+	memcpy (em->pos, out, sizeof (out));
+	for (int a = 0; a < 3; ++a)
+		em->vel[a] = forward[a] * speed + player_vel[a] * 0.5f;
+	return 1;
 }
 
 void SV_Terrain_LavaFrame (void)

@@ -20,14 +20,14 @@
 
 #define LAVA_LIGHT_KEY	0x7e780000
 #define LAVA_LIGHTS		8
-#define STEAM_MAX		640
+#define STEAM_MAX		900
 #define STYLE_COUNT		4
 
 static const char *const style_names[STYLE_COUNT] = {"blobs", "goo", "chunky", "crust"};
 static const char *const style_notes[STYLE_COUNT] = {"shaded spheres, hot core, dark rim", "big merged bodies, dithered edge", "pixel-art discs, warping texture, 6 colours",
 													 "cooling plates with glowing cracks"};
 
-static cvar_t r_terrain_lava_style = {"r_terrain_lava_style", "0", CVAR_ARCHIVE}; // 0 blobs, 1 goo, 2 chunky, 3 crust
+static cvar_t r_terrain_lava_style = {"r_terrain_lava_style", "2", CVAR_ARCHIVE}; // 0 blobs, 1 goo, 2 chunky (default), 3 crust
 static cvar_t r_terrain_lava_light = {"r_terrain_lava_light", "1", CVAR_ARCHIVE}; // brightness of the lava's dynamic lights; 0 turns them off
 static cvar_t r_terrain_lava_steam = {"r_terrain_lava_steam", "1", CVAR_ARCHIVE}; // amount of steam where lava melts ice; 0 turns it off
 static cvar_t r_terrain_lava_glow = {"r_terrain_lava_glow", "1", CVAR_ARCHIVE};	  // strength of the glow around hot particles; 0 turns it off
@@ -108,7 +108,7 @@ static unsigned steam_seen;
 
 static void SpawnPuffs (const terrain_lava_steam_event_t *e, float amount)
 {
-	float want = e->strength * 2.2f * amount;
+	float want = e->strength * 4.0f * amount; // a melt event is strength 3: about a dozen big puffs
 	int	  n = (int)want;
 	if (Rnd () < want - (float)n)
 		++n;
@@ -121,14 +121,14 @@ static void SpawnPuffs (const terrain_lava_steam_event_t *e, float amount)
 			p = &puffs[(int)(Rnd () * STEAM_MAX) % STEAM_MAX]; // full: replace some other
 		for (int a = 0; a < 3; ++a)
 		{
-			p->pos[a] = e->pos[a] + e->nrm[a] * 6.0f + (Rnd () - 0.5f) * 10.0f;
-			p->vel[a] = e->nrm[a] * (10.0f + 14.0f * Rnd ()) + (Rnd () - 0.5f) * 30.0f;
+			p->pos[a] = e->pos[a] + e->nrm[a] * 8.0f + (Rnd () - 0.5f) * 22.0f;
+			p->vel[a] = e->nrm[a] * (8.0f + 12.0f * Rnd ()) + (Rnd () - 0.5f) * 26.0f;
 		}
-		p->vel[2] += 38.0f + 34.0f * Rnd ();
+		p->vel[2] += 40.0f + 26.0f * Rnd (); // with the slow lift below, about 60 to 120 units of rise over the puff's life
 		p->age = 0.0f;
-		p->life = 1.1f + 0.9f * Rnd ();
-		p->size0 = 5.0f + 5.0f * Rnd ();
-		p->grow = 14.0f + 12.0f * Rnd ();
+		p->life = 1.7f + 0.6f * Rnd ();
+		p->size0 = 12.0f + 8.0f * Rnd ();
+		p->grow = 22.0f + 16.0f * Rnd ();
 		p->rnd = Rnd ();
 	}
 }
@@ -146,7 +146,7 @@ static void SteamUpdate (const terrain_lava_view2_t *v, float dt)
 		steam_seen = v->steam_seq - TERRAIN_LAVA_STEAM_RING;
 	for (; steam_seen != v->steam_seq; ++steam_seen)
 		SpawnPuffs (&v->steam[steam_seen % TERRAIN_LAVA_STEAM_RING], r_terrain_lava_steam.value);
-	const float drag = expf (-0.9f * dt);
+	const float drag = expf (-0.9f * dt), zdrag = expf (-0.5f * dt);
 	for (int i = 0; i < num_puffs;)
 	{
 		puff_t *p = &puffs[i];
@@ -160,7 +160,7 @@ static void SteamUpdate (const terrain_lava_view2_t *v, float dt)
 			p->pos[a] += p->vel[a] * dt;
 		p->vel[0] *= drag;
 		p->vel[1] *= drag;
-		p->vel[2] = p->vel[2] * drag + 24.0f * dt; // keeps rising a little
+		p->vel[2] = p->vel[2] * zdrag + 22.0f * dt; // keeps rising
 		++i;
 	}
 }
@@ -374,7 +374,7 @@ void R_TerrainLava_Draw (cb_context_t *cbx)
 			continue;
 		const float t = p->age / p->life;
 		const float fade_in = CLAMP (0.0f, t / 0.12f, 1.0f), fade_out = (1.0f - t) * (1.0f - t);
-		const float alpha = 0.5f * fade_in * fade_out;
+		const float alpha = 0.62f * fade_in * fade_out;
 		quad_meta_t m = {2, (byte)(p->rnd * 255.0f), 0, (byte)(CLAMP (0.0f, alpha, 1.0f) * 255.0f)};
 		soft = PushQuad (soft, p->pos, vright, vup, p->size0 + p->grow * p->age, 0, 0, m);
 	}

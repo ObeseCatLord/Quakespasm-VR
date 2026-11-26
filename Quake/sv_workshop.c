@@ -13,6 +13,12 @@
  * disk of gingerbread added to the cave (a terrain op, so it is networked and walkable like any
  * other ground); on a monster or player it shatters and hurts them.
  *
+ * Lava sprayer ("molten candy"): a red-and-white striped hose gun with a glass tank of glowing lava.
+ * Holding fire sprays the particle lava of sv_terrain_lava.c from the player's view (the weapon hand
+ * in VR) through that file's emitter for the player, so it works for any client. The tank (shown
+ * as the ammo count, in percent) drains while the nozzle is open, and refills slowly once it has
+ * been shut a moment; once run dry it waits until the tank is partly full again.
+ *
  * Grapple: a star-shaped hook on a string of Christmas lights. Hold fire to throw it; once it
  * bites into the cave or the map it pulls the player in, and letting go reels it back. A monster
  * it hits takes a little damage. Clients draw the light string from the thrower to the hook
@@ -28,6 +34,7 @@
 #define GRAPPLE_HOOK	  "progs/workshop/starhook.mdl"
 #define GRAPPLE_BULB	  "progs/workshop/bulb.mdl"
 #define WRISTBAND_MODEL	  "progs/workshop/wristband.mdl"
+#define LAVAGUN_VIEWMODEL "progs/workshop/v_lavagun.mdl"
 
 // QuakeC's sound channels and attenuation (defs.qc)
 #define CHAN_AUTO	0
@@ -41,11 +48,13 @@ enum
 {
 	TOOL_NONE,
 	TOOL_PLATGUN,
-	TOOL_GRAPPLE
+	TOOL_GRAPPLE,
+	TOOL_LAVAGUN
 };
 
 #define IMPULSE_PLATGUN 70
 #define IMPULSE_GRAPPLE 71
+#define IMPULSE_LAVAGUN 72
 #define IMPULSE_NEXT	10 // Quake's next and previous weapon (the mouse wheel)
 #define IMPULSE_PREV	12
 
@@ -63,6 +72,7 @@ static const struct
 } ws_tools[] = {
 	{TOOL_GRAPPLE, IMPULSE_GRAPPLE, "grapple"},
 	{TOOL_PLATGUN, IMPULSE_PLATGUN, "platgun"},
+	{TOOL_LAVAGUN, IMPULSE_LAVAGUN, "lavagun"},
 };
 #define NUM_WS_TOOLS ((int)(sizeof (ws_tools) / sizeof (ws_tools[0])))
 
@@ -87,6 +97,10 @@ static cvar_t workshop_platgun_regen = {"workshop_platgun_regen", "10", CVAR_NON
 static cvar_t workshop_grapple_speed = {"workshop_grapple_speed", "1100", CVAR_NONE};
 static cvar_t workshop_grapple_pull = {"workshop_grapple_pull", "620", CVAR_NONE};
 static cvar_t workshop_grapple_range = {"workshop_grapple_range", "1600", CVAR_NONE};
+static cvar_t workshop_lava_drain = {"workshop_lava_drain", "12", CVAR_NONE};	   // tank percent used per second of spraying
+static cvar_t workshop_lava_refill = {"workshop_lava_refill", "5", CVAR_NONE};	   // tank percent restored per second once the nozzle is shut; 0 never
+static cvar_t workshop_lava_delay = {"workshop_lava_delay", "1.0", CVAR_NONE};	   // seconds the nozzle stays shut before the tank starts to refill
+static cvar_t workshop_lava_restart = {"workshop_lava_restart", "20", CVAR_NONE};  // tank percent needed to spray again after running dry
 static cvar_t workshop_flares = {"workshop_flares", "4", CVAR_NONE};			// flares a VR wrist carries
 static cvar_t workshop_flare_regen = {"workshop_flare_regen", "15", CVAR_NONE}; // seconds per flare restored
 
@@ -112,6 +126,11 @@ typedef struct
 	int		 flares_sent;
 	qboolean holding;		 // attack_finished is being held ahead of time for a tool
 	float	 progs_finished; // the progs' own attack_finished when the hold began
+	float	 lava_tank;		 // lava sprayer tank, percent
+	double	 lava_last;		 // when the tank was last drained
+	double	 lava_until;	 // the nozzle counts as open until then (a command can lag a frame)
+	qboolean lava_dry;		 // ran empty: no spray until the tank is back to workshop_lava_restart
+	qboolean lava_snd;		 // the spray's sound is playing
 } ws_player_t;
 
 typedef struct
@@ -185,6 +204,7 @@ void SV_Workshop_Precache (void)
 	SV_Precache_Model (WS_Model (PLATGUN_VIEWMODEL, "progs/v_rock.mdl"));
 	SV_Precache_Model (WS_Model (PLATGUN_BLOB, "progs/grenade.mdl"));
 	SV_Precache_Model (WS_Model (PLATGUN_SHARD, "progs/gib1.mdl"));
+	SV_Precache_Model (WS_Model (LAVAGUN_VIEWMODEL, "progs/v_rock.mdl"));
 	SV_Precache_Model (WS_GrappleViewModel ());
 	SV_Precache_Model (WS_HookModel ());
 	if (COM_FileExists (GRAPPLE_BULB, NULL))
@@ -198,6 +218,8 @@ void SV_Workshop_Precache (void)
 	SV_Precache_Sound ("weapons/ax1.wav");
 	SV_Precache_Sound ("weapons/lock4.wav");
 	SV_Precache_Sound ("weapons/pkup.wav");
+	SV_Precache_Sound ("ambience/fire1.wav");
+	SV_Precache_Sound ("misc/null.wav");
 	ws_precached = true;
 	ws_sweep = true;
 	for (int i = 1; i <= MAX_SCOREBOARD; ++i)
@@ -557,6 +579,8 @@ static void WS_SetTool (edict_t *player, ws_player_t *p, int tool)
 		return;
 	if (p->tool == TOOL_GRAPPLE)
 		Grapple_Release (p);
+	if (p->tool == TOOL_LAVAGUN)
+		p->lava_until = 0.0; // the nozzle shuts; its emitter lapses by itself
 	p->tool = tool;
 	// putting a tool away gives the progs back their own cooldown, so a weapon impulse in the same
 	// command (a key, or the wheel going past the last tool) is not dropped by W_WeaponFrame
@@ -619,6 +643,20 @@ void SV_Workshop_PlayerFrame (edict_t *ent, int num)
 	else if (!p->reload_until && !p->clip && p->reserve)
 		p->reload_until = qcvm->time + PLATGUN_RELOAD;
 
+	// lava tank: refills once the nozzle has been shut a moment, and the spray's sound stops with it
+	const qboolean spraying = qcvm->time < p->lava_until;
+	if (!spraying && p->lava_snd && !ent->free)
+	{
+		SV_StartSound (ent, NULL, CHAN_WEAPON, "misc/null.wav", 255, ATTN_NORM);
+		p->lava_snd = false;
+	}
+	if (!spraying && p->lava_tank < 100.0f && workshop_lava_refill.value > 0 && qcvm->time >= p->lava_until + workshop_lava_delay.value)
+	{
+		p->lava_tank = q_min (100.0f, p->lava_tank + workshop_lava_refill.value * (float)host_frametime);
+		if (p->lava_dry && p->lava_tank >= workshop_lava_restart.value)
+			p->lava_dry = false;
+	}
+
 	if (ent->free || ent->v.health <= 0)
 		WS_SetTool (ent, p, TOOL_NONE);
 	else if (p->hook_state == 2)
@@ -626,6 +664,57 @@ void SV_Workshop_PlayerFrame (edict_t *ent, int num)
 }
 
 static void WS_Wheel (edict_t *ent, ws_player_t *p, int dir);
+
+/*
+==============================================================================
+
+LAVA SPRAYER
+
+==============================================================================
+*/
+
+// Holding fire: one call per command. In VR the nozzle follows the weapon hand (the command carries
+// its pose relative to the body); otherwise it comes from the view.
+static void Lavagun_Spray (edict_t *player, int num, ws_player_t *p)
+{
+	if (p->lava_dry || p->lava_tank <= 0.0f)
+	{
+		if (!p->lava_dry)
+		{
+			p->lava_dry = true;
+			SV_ClientPrintf ("Lava tank empty\n");
+		}
+		return;
+	}
+	const usercmd_t *cmd = &svs.clients[num - 1].cmd;
+	vec3_t			 angles, forward, right, up, eye;
+	VectorCopy (player->v.v_angle, angles);
+	VectorAdd (player->v.origin, player->v.view_ofs, eye);
+	if (cmd->vr_active && cmd->vr_handpos_relative && isfinite (cmd->vr_handpos[0]) && isfinite (cmd->vr_handpos[1]) && isfinite (cmd->vr_handpos[2]) &&
+		isfinite (cmd->vr_handrot[0]) && isfinite (cmd->vr_handrot[1]) && isfinite (cmd->vr_handrot[2]) && VectorLength (cmd->vr_handpos) <= 96.0f)
+	{
+		VectorAdd (player->v.origin, cmd->vr_handpos, eye);
+		VectorCopy (cmd->vr_handrot, angles);
+	}
+	AngleVectors (angles, forward, right, up);
+	if (!SV_Terrain_LavaSpray (num, eye, forward, up, player->v.velocity))
+		return; // nozzle against rock: nothing comes out, and nothing is used
+	const double dt = (qcvm->time - p->lava_last) < 0.1 ? qcvm->time - p->lava_last : 0.0;
+	p->lava_last = qcvm->time;
+	p->lava_until = qcvm->time + 0.15;
+	p->lava_tank -= workshop_lava_drain.value * (float)dt;
+	if (p->lava_tank <= 0.0f)
+	{
+		p->lava_tank = 0.0f;
+		p->lava_dry = true;
+		SV_ClientPrintf ("Lava tank empty\n");
+	}
+	if (!p->lava_snd)
+	{
+		SV_StartSound (player, NULL, CHAN_WEAPON, "ambience/fire1.wav", 200, ATTN_NORM);
+		p->lava_snd = true;
+	}
+}
 
 /*
 Right before PlayerPreThink, for each command the player sends: the command's impulse and buttons
@@ -670,6 +759,11 @@ void SV_Workshop_PreThink (edict_t *ent)
 	{
 		if (attack && p->clip > 0 && !p->reload_until && qcvm->time >= p->next_fire)
 			Platgun_Fire (ent, num, p);
+	}
+	else if (p->tool == TOOL_LAVAGUN)
+	{
+		if (attack)
+			Lavagun_Spray (ent, num, p);
 	}
 	else if (p->tool == TOOL_GRAPPLE)
 	{
@@ -778,6 +872,7 @@ static void WS_ResetSlot (ws_player_t *p, qboolean release_hook)
 	memset (p, 0, sizeof (*p));
 	p->clip = PLATGUN_CLIP;
 	p->reserve = PLATGUN_MAX - PLATGUN_CLIP;
+	p->lava_tank = 100.0f;
 	p->flares = (int)workshop_flares.value;
 	p->flares_sent = -1;
 }
@@ -825,6 +920,13 @@ int SV_Workshop_ViewModel (client_t *client, int *modelindex, float *frame, floa
 		*ammo = (float)(p->clip + p->reserve);
 		return 1;
 	}
+	if (p->tool == TOOL_LAVAGUN)
+	{
+		*modelindex = SV_ModelIndex (WS_Model (LAVAGUN_VIEWMODEL, "progs/v_rock.mdl"));
+		*frame = qcvm->time < p->lava_until ? (((int)(qcvm->time * 24.0)) & 1 ? 1.0f : 2.0f) : 0.0f; // the gun shudders while it sprays
+		*ammo = ceilf (p->lava_tank);
+		return 1;
+	}
 	if (p->tool == TOOL_GRAPPLE)
 	{
 		*modelindex = SV_ModelIndex (WS_GrappleViewModel ());
@@ -836,7 +938,7 @@ int SV_Workshop_ViewModel (client_t *client, int *modelindex, float *frame, floa
 }
 
 /*
-workshop_tool <platgun|grapple|off>  (any name in ws_tools)
+workshop_tool <platgun|grapple|lavagun|off>  (any name in ws_tools)
 Takes a tool out or puts it away; a VR hand reaching for its holster sends this.
 */
 static void SV_Workshop_Tool_f (void)
@@ -880,8 +982,8 @@ static void SV_Workshop_Info_f (void)
 			continue;
 		const int at = WS_ToolSlot (p->tool);
 		Con_Printf (
-			"workshop_info: player %d tool %s weapon %d clip %d reserve %d flares %d\n", num, at >= 0 ? ws_tools[at].name : "none", (int)client->edict->v.weapon,
-			p->clip, p->reserve, p->flares);
+			"workshop_info: player %d tool %s weapon %d clip %d reserve %d flares %d lava %.1f%s shells %d\n", num, at >= 0 ? ws_tools[at].name : "none",
+			(int)client->edict->v.weapon, p->clip, p->reserve, p->flares, p->lava_tank, p->lava_dry ? " dry" : "", (int)client->edict->v.ammo_shells);
 	}
 	PR_SwitchQCVM (NULL);
 }
@@ -968,6 +1070,10 @@ void SV_Workshop_Init (void)
 	Cvar_RegisterVariable (&workshop_grapple_speed);
 	Cvar_RegisterVariable (&workshop_grapple_pull);
 	Cvar_RegisterVariable (&workshop_grapple_range);
+	Cvar_RegisterVariable (&workshop_lava_drain);
+	Cvar_RegisterVariable (&workshop_lava_refill);
+	Cvar_RegisterVariable (&workshop_lava_delay);
+	Cvar_RegisterVariable (&workshop_lava_restart);
 	Cvar_RegisterVariable (&workshop_flares);
 	Cvar_RegisterVariable (&workshop_flare_regen);
 	Cmd_AddCommand_ClientCommand ("workshop_tool", SV_Workshop_Tool_f);

@@ -8,7 +8,7 @@ if [ "$1" = "--palette" ]; then QUAKE_PALETTE="$2"; shift 2; fi
 export QUAKE_PALETTE PYTHONDONTWRITEBYTECODE=1
 export WORKSHOP_WORK="${WORKSHOP_WORK:-${TMPDIR:-/tmp}/workshop_gen}"
 ASSETS="$(cd .. && pwd)"; OUT="$(cd ../.. && pwd)/vq_pak/progs/workshop"
-ALL="${@:-v_platgun v_grapple starhook gingerblob gingershard bulb flare wristband}"
+ALL="${@:-v_platgun v_lavagun v_grapple starhook gingerblob gingershard bulb flare wristband}"
 mkdir -p "$WORKSHOP_WORK" "$OUT"
 python3 assets.py $(echo $ALL | sed 's/v_//g')
 "${BLENDER:-blender}" -b --factory-startup --python bl_build.py -- $ALL 2>&1 | grep -E "BUILT|Error|Traceback" || true

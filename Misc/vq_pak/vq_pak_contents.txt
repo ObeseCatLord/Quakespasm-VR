@@ -20,6 +20,7 @@ maps/r2m3@63f4.ent
 maps/r2m3@76ec.ent
 default.cfg
 progs/workshop/v_platgun.mdl
+progs/workshop/v_lavagun.mdl
 progs/workshop/gingerblob.mdl
 progs/workshop/gingershard.mdl
 progs/workshop/v_grapple.mdl

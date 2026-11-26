@@ -16,7 +16,8 @@ From a `nix develop` build in `build-drg` with `run/` as the basedir:
 - `tests/drg-ice.sh`: falling ice. P builds an icicle on the ceiling where you aim, C cuts its root
   (rockets on the root work too); the piece falls as a rigid body, crushes monsters and freezes
   back into the cave. Any dig that cuts a piece of ice loose does the same.
-- `tests/drg-lava.sh`: hold L to spray particle lava that runs downhill, pools and melts the ice.
+- `tests/drg-lava.sh`: take out the lava sprayer (`-`, or scroll past the platform gun) and hold fire to
+  hose particle lava that runs downhill, pools and melts the ice; F8 cycles the lava look.
 
 Sections below: "Ice worm", "Falling ice", "Particle lava".
 
@@ -119,7 +120,8 @@ edge), chunky (pixel-art discs, six palette steps, world-locked texels), crust (
 cracks). Hot glow sprites are additive, steam is a soft premultiplied puff; both skip depth writes.
 Lights: at most 8, orange-red, scale with heat and particle count, smoothed over time; brightness is
 `r_terrain_lava_light` (0 = off). Steam: `r_terrain_lava_steam` (0 = off, 1 = default) where lava melts or
-digs ice; puffs rise and fade over about 1.5 s, capped. Sleeping: `terrain_lava_sleep 1` lets settled
+digs ice; puffs are big and soft, rise 60 to 120 units and fade over about 2 s, capped at 900
+(`r_terrain_lava_steam 2` doubles the amount). The default style is chunky (`r_terrain_lava_style 2`). Sleeping: `terrain_lava_sleep 1` lets settled
 particles stop being simulated (they wake when an awake neighbour moves fast or the terrain changes
 nearby); `terrain_lava_crust` sets surface cooling. Look test: `tests/terrain_lava_look.gdb`.
 Not done: collision with map brushes and entities, a fluid surface, netsync (draws from server
@@ -143,7 +145,7 @@ Engine-side, so they work with a stock `progs.dat`: a tool takes the weapon's pl
 while it is out and holds the progs' own weapon back; ordinary weapon impulses put it away (and
 the progs switch weapon in the same command). The mouse wheel (Quake's next and previous weapon,
 impulses 10 and 12) runs on past Quake's last usable weapon to the grapple, then the platform
-gun, then back round to the axe, and the reverse going the other way. The tools and their order
+gun, then the lava sprayer, then back round to the axe, and the reverse going the other way. The tools and their order
 are one table in `Quake/sv_workshop.c` (`ws_tools`); `workshop_info` prints each player's tool
 and weapon.
 
@@ -159,11 +161,23 @@ and weapon.
 - **Festive grapple** (`impulse 71`, key `9`): hold fire to throw a gold star hook on a string of
   Christmas lights; once it bites, it pulls you in, letting go reels it back. Its behaviour
   follows the grapple in Dissolution of Eternity; the models are new.
-- **Desktop keys**: `9` the grapple and `0` the platform gun (weapon slots after Quake's 1-8; press
+- **Lava sprayer** ("molten candy", `impulse 72`, key `-`): a candy-striped hose gun with a glass tank
+  of glowing lava. Hold fire to spray the particle lava (see "Particle lava") from the view, or from
+  the weapon hand in VR (the hand pose in the usercmd; not tried in a headset). It uses the lava
+  file's own emitter, one per player (`SV_Terrain_LavaSpray`), so any client's sprayer works on the
+  server; drawing the lava is still listen-server only. The tank shows as the ammo count in percent: it
+  drains at `workshop_lava_drain` (12) a second while the nozzle is open (about 8 s from full),
+  starts refilling at `workshop_lava_refill` (5) a second after `workshop_lava_delay` (1 s) shut, and
+  after running dry will not spray again until it is back to `workshop_lava_restart` (20) percent.
+  The nozzle backs off when its eye is against rock. The stock `+terrain_lava` debug bind still
+  works and needs no tool or tank. The HUD's ammo icon is whichever ammo type you hold, as for the other
+  tools. Its view model (`v_lavagun.mdl`) is built by `Misc/workshop_assets/gen` like the others.
+- **Desktop keys**: `9` the grapple, `0` the platform gun and `-` the lava sprayer (`-` was Quake's
+  screen-size-down key; `sizedown` is still a console command) (weapon slots after Quake's 1-8; press
   again or pick any weapon to put the tool away), `F` throws a flare (`workshop_flare`, from the
   same flares a VR wrist carries, four that come back over time). New configs get these from the
-  engine's `default.cfg`; on the first workshop map the client also binds whichever of the three
-  keys are free (or hold Quake's no-op `impulse 0`) and says so in the console;
+  engine's `default.cfg`; on the first workshop map the client also binds whichever of the four
+  keys are free (or hold Quake's no-op `impulse 0`, or for `-` the stock `sizedown`) and says so in the console;
   `cl_workshop_binds 0` leaves keys alone.
 - **VR**: flares ride on the weapon hand's wrist and are taken with the other hand's grip and
   thrown by letting go, at the hand's own speed (as the VRG mod for Deep Rock does); the grapple
@@ -224,10 +238,11 @@ own pak). Without them the tools fall back to stock models.
 | `terrain_crawler_types` | `monster_demon1` | comma list of `classname[:scale[:health[:speed]]]`, cycled over the crawlers. With a mod that has one, e.g. `-game <mod> +terrain_crawler_types monster_spider:0.6:15:1.3,monster_spider:3:500:0.6` |
 | `terrain_ice` | 1 | ice pillars, icicles and floor stubs in new caves |
 | `r_terrain_style`, `r_terrain_props` | 1, 1 | look 0-3 and its props |
-| `workshop_tools` | 1 | the platform gun and grapple on drg* maps |
+| `workshop_tools` | 1 | the platform gun, grapple and lava sprayer on drg* maps |
 | `workshop_platform_radius`, `workshop_platform_thickness` | 60, 20 | platform size |
 | `workshop_platgun_speed`, `workshop_platgun_damage`, `workshop_platgun_regen` | 1250, 40, 10 | |
 | `workshop_grapple_speed`, `workshop_grapple_pull`, `workshop_grapple_range` | 1100, 620, 1600 | |
+| `workshop_lava_drain`, `workshop_lava_refill`, `workshop_lava_delay`, `workshop_lava_restart` | 12, 5, 1, 20 | lava sprayer tank: percent per second used and refilled, seconds shut before refilling, percent needed to restart after running dry |
 | `workshop_flares`, `workshop_flare_regen` | 4, 15 | flares a VR wrist carries, seconds per flare back |
 | `vr_workshop_holsters`, `vr_workshop_throw_scale`, `cl_workshop_lights`, `cl_workshop_binds` | 1, 2.5, 1, 1 | client side |
 | `r_terrain_ambient`, `r_terrain_lamp`, `r_terrain_dlights`, `r_terrain_biome` | | look |
@@ -247,7 +262,8 @@ Debug commands: `terrain_probe`, `terrain_ents`, `terrain_wake`, `terrain_dig`, 
   with routes on and off (`terrain_ents` prints `route N`: about 2 per 32 units walked).
   `terrain_netsync.gdb` checks that the client's copy matches the server's region after edits.
   `workshop_tools.gdb` fires the platform gun and the grapple, then walks the mouse wheel through
-  the weapons and tools. `terrain_combined.gdb` runs the worm, crawlers, a falling pillar, lava and
+  the weapons and tools; `workshop_lava_tool.gdb` runs the lava sprayer (tank drain and refill, running dry, melting
+  a wall, the stock weapon held back). `terrain_combined.gdb` runs the worm, crawlers, a falling pillar, lava and
   a platform in one map and compares the client's copy with the server's at the end.
 
 ## Known gaps

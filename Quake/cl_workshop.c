@@ -52,13 +52,15 @@ static qmodel_t *WS_ClientModel (const char *name)
 static cvar_t cl_workshop_binds = {"cl_workshop_binds", "1", CVAR_ARCHIVE}; // bind the workshop keys left free
 
 /*
-The desktop keys, on the first workshop map: 9 the grapple and 0 the platform gun (weapon slots
-after Quake's 1-8), F the flare. Only keys with nothing on them (or Quake's no-op "impulse 0") are
-taken, so a player's own binds stay; the saved config keeps them after that.
+The desktop keys, on the first workshop map: 9 the grapple, 0 the platform gun and - the lava
+sprayer (weapon slots after Quake's 1-8), F the flare. Only keys with nothing on them (or Quake's
+no-op "impulse 0", or for - Quake's own "sizedown") are taken, so a player's own binds stay; the
+saved config keeps them after that.
 */
 static void CL_Workshop_DefaultBinds (void)
 {
-	static const char *const binds[][2] = {{"9", "impulse 71"}, {"0", "impulse 70"}, {"f", "workshop_flare"}};
+	static const char *const binds[][2] = {{"9", "impulse 71"}, {"0", "impulse 70"}, {"-", "impulse 72"}, {"f", "workshop_flare"}};
+	static const char *const names[] = {"grapple", "platform gun", "lava sprayer", "flare"};
 	static qboolean			 done;
 	char					 taken[128] = "";
 	if (done || !cl_workshop_binds.value)
@@ -68,11 +70,11 @@ static void CL_Workshop_DefaultBinds (void)
 	{
 		const int	key = Key_StringToKeynum (binds[i][0]);
 		const char *now = key >= 0 ? keybindings[key] : NULL;
-		if (key < 0 || (now && *now && strcmp (now, "impulse 0")))
+		if (key < 0 || (now && *now && strcmp (now, "impulse 0") && (i != 2 || strcmp (now, "sizedown"))))
 			continue;
 		Key_SetBinding (key, binds[i][1]);
 		q_strlcat (taken, taken[0] ? ", " : "", sizeof (taken));
-		q_strlcat (taken, va ("%s %s", binds[i][0], i == 0 ? "grapple" : i == 1 ? "platform gun" : "flare"), sizeof (taken));
+		q_strlcat (taken, va ("%s %s", binds[i][0], names[i]), sizeof (taken));
 	}
 	if (taken[0])
 		Con_Printf ("Workshop keys bound: %s (cl_workshop_binds 0 leaves keys alone)\n", taken);

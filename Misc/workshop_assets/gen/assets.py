@@ -118,6 +118,77 @@ def platgun():
     piv = (-8.0, 0.0, -15.0)
     m.save([('idle', ident), ('fire1', kick(3.0, 6.0, piv)), ('fire2', kick(1.5, 3.0, piv))])
 
+# ------------------------------------------------------------------ v_lavagun
+# A hot-cocoa-red sprayer: candy-striped barrel, a glass tank of glowing lava on the left, wood grip.
+LAVA = [224, 225, 226, 227, 228, 229, 230, 231]
+
+def lavagun():
+    m = M('v_lavagun', 256, 128, bg=68)
+    Z0 = -10.6
+    bp = [(3.0, -14.0), (3.0, -8.4), (1.8, -7.2), (-1.8, -7.2), (-3.0, -8.4), (-3.0, -14.0)]
+    bw = [28, 8, 16, 8, 28, 10]
+    R_body = (0, 0, 90, 60)
+    def body_extra(a, f, j, ix, iy):
+        if a > 0.87: return None
+        aa = a / 0.87
+        if 0.36 <= aa < 0.46 or 0.62 <= aa < 0.70: return m.pick(BRASS, 0.75 if j == 2 else (0.2 if j == 5 else 0.5), 0.25)
+        if abs(aa - 0.36) < 0.012 or abs(aa - 0.46) < 0.012 or abs(aa - 0.62) < 0.012 or abs(aa - 0.70) < 0.012: return 2
+        if j == 2 and (f < 0.12 or f > 0.88): return 79       # bright edge along the top
+        return None
+    m.paint_loft(R_body, side_nz(bp), BERRY, wts=bw, extra=body_extra, noise=0.22)
+    m.loft([prof(-14.0, bp), prof(4.0, bp), prof(5.6, bp, 0.8, (0, Z0))], R_body, us=[(0, 0.87), (0.87, 1)], wts=bw)
+    R_bcap = (90, 0, 28, 28); R_fcap = (118, 0, 22, 22)
+    m.fill(R_bcap, DKRED, 0.5, 0.25); m.fill(R_fcap, DKRED, 0.4, 0.3)
+    m.fan(prof(-14.0, bp), R_bcap, (1, 2), (0, 0, Z0)); m.fan(prof(5.6, bp, 0.8, (0, Z0)), R_fcap, (1, 2), (0, 0, Z0))
+    # candy-striped barrel flaring to a nozzle that glows from inside
+    R_bar = (0, 60, 88, 44); R_in = (88, 60, 20, 44); R_plug = (224, 14, 14, 14)
+    rb = lambda x, r: ngon(x, 0, Z0, r, r, 8); nz8 = side_nz(yz(rb(0, 1)))
+    def stripes(a, f, j, ix, iy):
+        if a > 0.9: return m.pick(BRASS, 0.5 + 0.3 * (j == 2), 0.2)
+        return m.pick(WHITE, 0.8, 0.3) if ((ix + iy) // 5) % 2 else m.pick(BERRY, 0.7, 0.3)
+    m.paint_loft(R_bar, nz8, BERRY, extra=stripes, noise=0.2)
+    m.paint_loft(R_in, nz8, LAVA, cols=[(0.0, 1.0, LAVA[2:], True)], noise=0.3, fb=True)
+    m.loft([rb(5.6, 2.4), rb(21.0, 2.2), rb(25.0, 3.4)], R_bar, us=[(0, 0.7), (0.7, 1)])
+    m.loft([rb(25.0, 3.4), rb(25.0, 2.7), rb(21.5, 1.5)], R_in, us=[(0, 0.25), (0.25, 1)], center=(40, 0, Z0), flip=True)
+    m.paint(R_plug, lambda u, v, ix, iy: (m.pick(LAVA, 0.95 - 0.8 * math.hypot(u - 0.5, v - 0.5), 0.25), True))
+    m.fan(rb(21.5, 1.5), R_plug, (1, 2), (0, 0, Z0))
+    # glass tank on the left, full of lava, with brass ribs
+    R_tank = (140, 0, 70, 44); R_tcap = (210, 0, 14, 14)
+    TY, TZ = 6.2, Z0 + 1.2
+    rt = lambda x: ngon(x, TY, TZ, 3.2, 3.2, 8); nzt = side_nz(yz(rt(0)))
+    def tank_extra(a, f, j, ix, iy):
+        if a < 0.07 or a >= 0.93 or abs(a - 0.5) < 0.04:
+            return m.pick(BRASS, 0.8 if j in (1, 2) else 0.35, 0.2)
+        if abs(a - 0.07) < 0.012 or abs(a - 0.93) < 0.012 or abs(a - 0.46) < 0.012 or abs(a - 0.54) < 0.012: return 2
+        if nzt[j] > 0.2 and f < 0.3: return (m.pick(LAVA, 0.95, 0.1), True)   # glass shine on the lit side
+        return (m.pick(LAVA, 0.25 + 0.5 * ((ix * 3 + iy * 5) % 7) / 7.0 + 0.2 * (nzt[j] * 0.5 + 0.5), 0.3), True)
+    m.paint_loft(R_tank, nzt, BRASS, extra=tank_extra, noise=0.2)
+    m.loft([rt(-13.0), rt(3.0)], R_tank)
+    m.fill(R_tcap, BRASS, 0.5)
+    m.fan(rt(-13.0), R_tcap, (1, 2), (-5, TY, TZ)); m.fan(rt(3.0), R_tcap, (1, 2), (-5, TY, TZ))
+    # brass feed hose from the tank to the barrel
+    R_hose = (230, 28, 24, 12)
+    m.paint_loft(R_hose, [0.9, -0.1, -0.7, 0.3], BRASS, noise=0.2)
+    hr = lambda x, y, z, r=0.9: [(x, y + r * math.cos(math.radians(a)), z + r * math.sin(math.radians(a))) for a in (45, 135, 225, 315)]
+    m.loft([hr(3.0, TY, TZ), hr(6.0, 4.6, Z0 + 0.6), hr(8.4, 2.0, Z0)], R_hose, us=[(0, 0.5), (0.5, 1)])
+    # wood grip and candy cane fore handle
+    R_grip = (108, 60, 34, 42); R_gbot = (142, 60, 14, 10)
+    grain = lambda ramp: (lambda a, f, j, ix, iy: (ramp[1] if (iy * 7 + ix // 5) % 5 == 0 else None))
+    m.paint_loft(R_grip, [0.2, 0.6, 0.2, -0.6], WOOD, extra=grain(WOOD), cols=[(0.9, 1.0, WOOD[:3])], noise=0.25)
+    g0 = m.box_ring(-14.0, -10.0, -6.0, 1.5); g1 = m.box_ring(-21.0, -11.4, -7.6, 1.4)
+    m.loft([g0, g1], R_grip); m.fill(R_gbot, WOOD, 0.15); m.fan(g1, R_gbot, (0, 1), (-9, 0, -18))
+    R_cane = (156, 60, 28, 34); R_cbot = (184, 60, 10, 10)
+    def cane(u, v, ix, iy):
+        if ix >= 24: return m.pick(WHITE, 0.1, 0.2)
+        return m.pick(CANDY, 0.8, 0.3) if ((ix + iy) // 4) % 2 == 0 else m.pick(WHITE, 0.85, 0.3)
+    m.paint(R_cane, cane)
+    c0 = m.box_ring(-14.0, 0.2, 2.7, 1.15); c1 = m.box_ring(-20.0, -0.6, 1.9, 1.15)
+    m.loft([c0, c1], R_cane); m.fill(R_cbot, WHITE, 0.2); m.fan(c1, R_cbot, (0, 1), (0.8, 0, -17))
+    R_trig = (194, 60, 12, 12); m.fill(R_trig, DKIRON, 0.7)
+    triprism(m, [(-5.4, -13.8), (-3.8, -13.8), (-5.0, -16.2)], 0.4, R_trig)
+    piv = (-8.0, 0.0, -14.0)
+    m.save([('idle', ident), ('fire1', kick(2.0, 4.0, piv)), ('fire2', kick(1.0, 2.0, piv))])
+
 # ------------------------------------------------------------------ v_grapple
 def grapple():
     m = M('v_grapple', 256, 128, bg=188)
@@ -353,5 +424,5 @@ def wristband():
     m.quad([(-1.45, -0.62, z), (1.45, -0.62, z), (1.45, 0.62, z), (-1.45, 0.62, z)], R_bk, (0, 0, 0), swap=True)
     m.save([('idle', ident)])
 
-for f in (platgun, grapple, starhook, gingerblob, gingershard, bulb, flare, wristband):
+for f in (platgun, lavagun, grapple, starhook, gingerblob, gingershard, bulb, flare, wristband):
     if len(sys.argv) < 2 or f.__name__ in sys.argv[1:]: f()
