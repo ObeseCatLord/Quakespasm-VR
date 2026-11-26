@@ -992,7 +992,10 @@ void Host_GetConsoleCommands (void)
 		cmd = Sys_ConsoleInput ();
 		if (!cmd)
 			break;
+		// Sys_ConsoleInput strips the line ending; without it, two lines read in
+		// the same frame would run as one command ("mapname" + "quit").
 		Cbuf_AddText (cmd);
+		Cbuf_AddText ("\n");
 	}
 }
 
