@@ -785,6 +785,16 @@ void SV_Terrain_WormMapLoad (const float start[3])
 	worm_pending = terrain_worm.value != 0;
 }
 
+int SV_Terrain_WormPoints (float (*out)[3], int max)
+{
+	if (!worm.active || !sv.active)
+		return 0;
+	const int n = q_min (worm.nseg, max);
+	for (int i = 0; i < n; ++i)
+		VectorCopy (worm.seg[i].ent->v.origin, out[i]);
+	return n;
+}
+
 /* ---- commands ---- */
 
 static qboolean Ready (void)

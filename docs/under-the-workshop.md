@@ -49,7 +49,8 @@ the styles use where the engine finds them. Without them the looks still work, w
 `tests/drg-worm.sh`, or `+terrain_worm 1` before `+map`. A segmented worm (shambler head, greybox
 body) burrows through the rock, digging a tunnel, and every few seconds hunts: it bursts out near a
 player, arcs through the cave and dives back in. `terrain_worm_hunt` forces a hunt,
-`terrain_worm_info` prints its state, `terrain_worm_hurt <segment> <damage> [qc]` damages a segment.
+`r_terrain_worm_xray 1` draws its chain as lines through the rock (X in the runner, which also
+starts with no other monsters), `terrain_worm_info` prints its state, `terrain_worm_hurt <segment> <damage> [qc]` damages a segment.
 Tuning cvars start with `terrain_worm_` (`aim_height`, `hunt_speed`, `launch`, `telegraph`,
 `dig_radius`, `dig_step`). Code: `Quake/sv_terrain_worm.c`. Unproven so far: hits from real
 weapons, whether a player fits through its tunnels everywhere, its warning light and sound, and it

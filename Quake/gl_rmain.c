@@ -2327,6 +2327,55 @@ static void R_ShowPointFile (cb_context_t *cbx)
 	R_EndDebugUtilsLabel (cbx);
 }
 
+/*
+================
+R_ShowTerrainWorm -- r_terrain_worm_xray 1 draws the ice worm's chain as lines over everything, so it
+can be found while it is inside the rock (listen server only; a debug view)
+================
+*/
+int	 SV_Terrain_WormPoints (float (*out)[3], int max);
+cvar_t r_terrain_worm_xray = {"r_terrain_worm_xray", "0", CVAR_NONE};
+
+static void R_ShowTerrainWorm (cb_context_t *cbx)
+{
+	float pts[32][3];
+	if (!r_terrain_worm_xray.value || !sv.active || cl.maxclients > 1)
+		return;
+	const int n = SV_Terrain_WormPoints (pts, 32);
+	if (n <= 0)
+		return;
+	const int	   count = (n - 1) * 2 + n * 6;
+	VkBuffer	   vertex_buffer;
+	VkDeviceSize   vertex_buffer_offset;
+	basicvertex_t *v = (basicvertex_t *)R_VertexAllocate (count * sizeof (basicvertex_t), &vertex_buffer, &vertex_buffer_offset);
+	int			   k = 0;
+	for (int i = 0; i + 1 < n; ++i)
+	{
+		R_FillDebugVertex (&v[k++], pts[i], 0xffff40ffu);
+		R_FillDebugVertex (&v[k++], pts[i + 1], 0xffff40ffu);
+	}
+	for (int i = 0; i < n; ++i)
+	{
+		const float	   r = i == 0 ? 40.0f : 20.0f;
+		const uint32_t c = i == 0 ? 0xff4040ffu : 0x40ffffffu;
+		for (int a = 0; a < 3; ++a)
+		{
+			vec3_t lo, hi;
+			VectorCopy (pts[i], lo);
+			VectorCopy (pts[i], hi);
+			lo[a] -= r;
+			hi[a] += r;
+			R_FillDebugVertex (&v[k++], lo, c);
+			R_FillDebugVertex (&v[k++], hi, c);
+		}
+	}
+	R_BeginDebugUtilsLabel (cbx, "terrain worm xray");
+	R_BindPipeline (cbx, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkan_globals.debug_lines_pipeline[cbx->pipeline_variant]);
+	vulkan_globals.vk_cmd_bind_vertex_buffers (cbx->cb, 0, 1, &vertex_buffer, &vertex_buffer_offset);
+	vulkan_globals.vk_cmd_draw (cbx->cb, k, 1, 0, 0);
+	R_EndDebugUtilsLabel (cbx);
+}
+
 static void R_ShowViewModelTris (cb_context_t *cbx)
 {
 	entity_t *currententity = &cl.viewent;
@@ -2959,6 +3008,7 @@ static void R_DrawViewModelTask (void *unused)
 	R_ShowBoundingBoxes (cbx); // johnfitz
 	R_ShowPointFile (cbx);
 	R_DrawTerrain (cbx);
+	R_ShowTerrainWorm (cbx);
 	R_DrawFBTCalibrationVisuals (cbx);
 
 	if (vulkan_globals.stereo_active)
