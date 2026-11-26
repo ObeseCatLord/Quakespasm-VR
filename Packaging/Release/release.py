@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Local 2.0 releases using the existing native recipes and publisher.
 
-Normal workflow (push the committed revision before publication):
+Normal workflow (push the committed revision first: the Windows runtime is the
+GitHub Actions artifact for that exact commit, fetched with `gh`):
   python3 Packaging/Release/release.py --config CONFIG --root COHORT run \
       --revision HEAD --build --stage --deploy --publish-r2 --publish-gh
 
 CONFIG is local JSON, not credentials. Required: output_base (outside source).
 Optional sections: arm.ssh_host; straight.directory and straight.runtime_base;
-r2.remote and r2.public; github.repository, github.tag, optional github.notes_file; windows (passed to
-windows/build.py). Paths must be absolute. COHORT is below output_base.
+r2.remote and r2.public; github.repository, github.tag, optional github.notes_file; windows.builder
+('actions', the default, or 'winboat' for the local adapter, whose other windows
+keys are passed to windows/build.py). Paths must be absolute. COHORT is below output_base.
 Builds are clean. Resume rechecks full inventories; partial/conflicting build
 outputs are retained and refused, never silently deleted or reused.
 To retry a failed target, manually rename its directory outside the cohort
@@ -37,8 +39,10 @@ import zipfile
 
 try:
     from . import unix
+    from . import windows_actions
 except ImportError:
     import unix
+    import windows_actions
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -176,12 +180,21 @@ def prepare(root, rev, repo=REPO):
 
 
 def verify_platform(root, name, entry):
+    if name == 'windows' and windows_actions.adopted(root):
+        return windows_actions.verify(root, entry)
     if name == 'windows':
         return unix.verify_windows(root, entry)
     result = unix.verify_unix(root, name, entry)
     if (root / name / 'qualification.json').exists():
         result['qualification_sha256'] = unix.verify_qualification(root, name, entry)
     return result
+
+
+def windows_builder(config):
+    """'actions' (default) adopts the GitHub Actions artifact; 'winboat' builds locally."""
+    builder = config.get('windows', {}).get('builder', 'actions')
+    require(builder in ('actions', 'winboat'), 'windows.builder must be actions or winboat')
+    return builder
 
 
 def verify_windows_adapter(root, config_path, repo=REPO):
@@ -198,7 +211,7 @@ def verify(root, platforms, repo=REPO, expected_revision=None, require_record=Fa
     state = read(state_path) if state_path.exists() else {'platforms': {}}
     results = {}
     for name in platforms:
-        if name == 'windows':
+        if name == 'windows' and not windows_actions.adopted(root):
             verify_windows_adapter(root, config_path, repo)
         result = verify_platform(root, name, entry)
         if require_record and name != 'windows':
@@ -260,7 +273,11 @@ def build(root, platforms, config, config_path, repo=REPO, requalify_windows=Fal
     for name in platforms:
         if name in state['platforms']:
             continue
-        if name == 'windows' and (root / 'windows').exists():
+        if name == 'windows' and windows_builder(config) == 'actions':
+            # GitHub Actions builds every pushed commit with MSVC; adopt that
+            # artifact for exactly this revision instead of a local Windows build.
+            windows_actions.fetch(root, entry, config['github']['repository'])
+        elif name == 'windows' and (root / 'windows').exists():
             # A completed Windows output (for example from an explicit
             # requalification) is adopted only after the adapter re-verifies all
             # of its evidence against the configured baseline; partial or
@@ -272,7 +289,7 @@ def build(root, platforms, config, config_path, repo=REPO, requalify_windows=Fal
                      root / 'windows-build.log', cwd=repo)
         else:
             unix.build(root, name, config, root / 'source')
-        if name == 'windows':
+        if name == 'windows' and not windows_actions.adopted(root):
             verify_windows_adapter(root, config_path, repo)
         state['platforms'][name] = verify_platform(root, name, entry)
         save(root / 'coordinator.json', state)
