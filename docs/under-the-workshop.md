@@ -72,7 +72,7 @@ Test: `tests/terrain_ice.gdb`. Code: `Quake/sv_terrain_ice.c`, `Quake/terrain_ic
 
 ### Particle lava (first pass)
 
-`tests/drg-lava.sh`: hold G to spray. A pool of up to 4096 particles (`terrain_lava_cap`) simulated
+`tests/drg-lava.sh`: hold L to spray. A pool of up to 4096 particles (`terrain_lava_cap`) simulated
 on the server, one fixed 1/72 s step per frame at most: pairwise viscosity, double-density
 relaxation (Clavet et al. 2005) on a hash grid, collision with the terrain field, friction and a
 short cling so lava hangs on walls and then drips. Each particle has heat: it cools (faster on
