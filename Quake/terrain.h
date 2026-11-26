@@ -31,7 +31,9 @@ enum
 enum
 {
 	TERRAIN_OP_DIG,
-	TERRAIN_OP_FILL
+	TERRAIN_OP_FILL,
+	TERRAIN_OP_DETACH, // terrain_ice.c: remove the small solid island holding a lattice cell (center = cell, radius = cell cap)
+	TERRAIN_OP_STAMP   // terrain_ice.c: set a detached brick back into the field (radius = brick id, center = pose position, aux = pose)
 };
 
 // Field values are signed distance in TERRAIN_SUB units, negative inside solid.
@@ -50,6 +52,7 @@ typedef struct
 	int32_t			 size[3];	// chunks per axis
 	uint32_t		 seed;
 	terrain_chunk_t *chunks;
+	void			*ice; // bricks of detached chunks (terrain_ice.c)
 } terrain_t;
 
 // Centre and radius are in TERRAIN_SUB units relative to the region origin.
@@ -60,6 +63,7 @@ typedef struct
 	uint8_t	 material;
 	uint16_t radius;
 	int32_t	 center[3];
+	uint32_t aux; // STAMP: packed orientation (Terrain_PackQuat)
 } terrain_op_t;
 
 typedef struct
@@ -87,8 +91,39 @@ int		   Terrain_Sample (const terrain_t *t, int x, int y, int z, uint8_t *mat); 
 float	   Terrain_SampleWorld (const terrain_t *t, const float p[3]); // trilinear distance in Quake units
 uint64_t   Terrain_Hash (const terrain_t *t);
 terrain_chunk_t *Terrain_Chunk (const terrain_t *t, int cx, int cy, int cz);
+void	   Terrain_SetSample (terrain_t *t, int x, int y, int z, int sdf, int mat); // mat < 0 keeps the material; marks meshes dirty
 void	   Terrain_MeshChunk (const terrain_t *t, int cx, int cy, int cz, terrain_mesh_t *mesh);
 void	   Terrain_MeshFree (terrain_mesh_t *mesh);
+
+/*
+ * Falling ice (terrain_ice.c). A DETACH op removes a small solid island from the field and keeps its
+ * samples as a brick: a little field of its own, origin 0, lattice spacing TERRAIN_CELL, with air
+ * around it. A STAMP op later sets the brick back at a quantized pose. Both replay exactly from the
+ * op log, because the brick table is rebuilt by replaying DETACH ops in order.
+ */
+typedef struct
+{
+	terrain_t *field;	   // brick frame; sample (i,j,k) sits at TERRAIN_CELL * (i,j,k)
+	int		   lat_min[3]; // world lattice coordinate of brick sample (0,0,0)
+	int		   dim[3];	   // lattice samples used per axis
+	int		   cells;	   // solid samples
+	float	   mass;	   // sum of sample weights (a full solid sample is 1)
+	float	   com[3];	   // centre of mass, brick frame
+	float	   inertia[9]; // about com, brick frame, unit density
+	float	   mins[3], maxs[3]; // box round the solid, brick frame
+	float	   radius;	   // from com to the farthest solid sample
+} terrain_brick_t;
+
+const terrain_brick_t *Terrain_Brick (const terrain_t *t, int id);
+int	   Terrain_BrickCount (const terrain_t *t);
+int	   Terrain_IceApplyOp (terrain_t *t, const terrain_op_t *op); // DETACH and STAMP; called by Terrain_ApplyOp
+int	   Terrain_IceLastBrick (const terrain_t *t);				  // id made by the latest DETACH, or -1
+int	   Terrain_IceFindIslands (const terrain_t *t, const terrain_op_t *dig, terrain_op_t *out, int max_out); // DETACH ops for what a dig cut loose
+void   Terrain_IceOpBounds (const terrain_t *t, const terrain_op_t *op, int lo[3], int hi[3]); // lattice box a DETACH or STAMP may change
+void   Terrain_IceFree (terrain_t *t);
+uint32_t Terrain_PackQuat (const float q[4]); // w x y z, 10 bits per kept component
+void   Terrain_UnpackQuat (uint32_t v, float q[4]);
+void   Terrain_QuatMatrix (const float q[4], float m[9]); // row-major, body to world
 
 typedef struct
 {
@@ -161,6 +196,13 @@ void SV_Terrain_WormReset (void);
 void SV_Terrain_WormMapLoad (const float start[3]); // precache; spawn one when terrain_worm is set
 void SV_Terrain_WormFrame (void);					// once per server frame, before entities run
 int	 SV_Terrain_WormPoints (float (*out)[3], int max); // segment centres head first, 0 when there is no worm (debug view)
+void SV_Terrain_IceInit (void);
+void SV_Terrain_IceReset (void);
+void SV_Terrain_IceFrame (void);							   // once per server frame
+void SV_Terrain_IceEdited (const terrain_op_t *op);			   // after a logged edit: detach what it cut loose
+int	 SV_Terrain_PushOp (const terrain_op_t *op);			   // applies and logs any op kind (SV_Terrain_Edit builds sphere ops on it)
+int	 SV_Terrain_IceDrawCount (void);
+int	 SV_Terrain_IceDraw (int i, const terrain_mesh_t **mesh, float pos[3], float rot[9], float com[3]); // interpolated pose of a live body
 void R_Terrain_Update (void);
 
 #endif

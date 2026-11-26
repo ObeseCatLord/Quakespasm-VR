@@ -78,9 +78,8 @@ static void Terrain_FreeDraws (void)
 
 // Expands a chunk's indexed mesh to unshared triangles: rock keeps one normal per face so it
 // reads as facets, dirt keeps the smooth field normals.
-static void Terrain_BuildDraw (int index, const terrain_mesh_t *mesh)
+static void Terrain_BuildDrawInto (terrain_draw_t *draw, const terrain_mesh_t *mesh)
 {
-	terrain_draw_t *draw = &terrain_draws[index];
 	draw->num_verts = mesh->num_indices;
 	if (draw->num_verts > draw->cap_verts)
 	{
@@ -109,6 +108,54 @@ static void Terrain_BuildDraw (int index, const terrain_mesh_t *mesh)
 			out->ao = v[i]->ao;
 			out->up = (byte)(CLAMP (0.0f, v[i]->normal[2], 1.0f) * 255.0f);
 			out->axis = fabsf (face[0]) >= fabsf (face[1]) && fabsf (face[0]) >= fabsf (face[2]) ? 0 : (fabsf (face[1]) >= fabsf (face[2]) ? 1 : 2);
+		}
+	}
+}
+
+static void Terrain_BuildDraw (int index, const terrain_mesh_t *mesh)
+{
+	Terrain_BuildDrawInto (&terrain_draws[index], mesh);
+}
+
+/*
+Falling ice (sv_terrain_ice.c): each live body's brick mesh, moved to its interpolated pose, drawn
+like one more chunk.
+*/
+#define ICE_DRAWS 32
+static terrain_draw_t terrain_ice_draws[ICE_DRAWS];
+static int			  terrain_ice_count;
+
+static void Terrain_IceBuild (void)
+{
+	terrain_ice_count = 0;
+	const int n = q_min (SV_Terrain_IceDrawCount (), ICE_DRAWS);
+	for (int i = 0; i < n; ++i)
+	{
+		const terrain_mesh_t *mesh;
+		float				  pos[3], R[9], com[3];
+		if (!SV_Terrain_IceDraw (i, &mesh, pos, R, com))
+			continue;
+		terrain_draw_t *draw = &terrain_ice_draws[terrain_ice_count++];
+		Terrain_BuildDrawInto (draw, mesh);
+		for (int a = 0; a < 3; ++a)
+		{
+			draw->mins[a] = 1e9f;
+			draw->maxs[a] = -1e9f;
+		}
+		for (int k = 0; k < draw->num_verts; ++k)
+		{
+			terrain_drawvert_t *v = &draw->verts[k];
+			float				p[3] = {v->pos[0] - com[0], v->pos[1] - com[1], v->pos[2] - com[2]}, nrm[3] = {v->normal[0], v->normal[1], v->normal[2]};
+			for (int a = 0; a < 3; ++a)
+			{
+				v->pos[a] = pos[a] + R[a * 3] * p[0] + R[a * 3 + 1] * p[1] + R[a * 3 + 2] * p[2];
+				v->normal[a] = R[a * 3] * nrm[0] + R[a * 3 + 1] * nrm[1] + R[a * 3 + 2] * nrm[2];
+				draw->mins[a] = q_min (draw->mins[a], v->pos[a]);
+				draw->maxs[a] = q_max (draw->maxs[a], v->pos[a]);
+			}
+			v->up = (byte)(CLAMP (0.0f, v->normal[2], 1.0f) * 255.0f);
+			const float ax = fabsf (v->normal[0]), ay = fabsf (v->normal[1]), az = fabsf (v->normal[2]);
+			v->axis = ax >= ay && ax >= az ? 0 : (ay >= az ? 1 : 2);
 		}
 	}
 }
@@ -161,6 +208,7 @@ void R_Terrain_Update (void)
 	if (!terrain)
 		return;
 	Terrain_RemeshDirty ();
+	Terrain_IceBuild ();
 	R_TerrainStyle_Update (terrain, terrain_draw_epoch);
 	if (terrain_last_remesh_chunks > 8)
 	{
@@ -354,9 +402,9 @@ void R_DrawTerrain (cb_context_t *cbx)
 			light_rgb[num_lights][2] = (white ? level * 0.42f : dl->color[2]) * r_terrain_dlights.value;
 			lights[num_lights++] = dl;
 		}
-	for (int i = 0; i < terrain_draw_count; ++i)
+	for (int i = 0; i < terrain_draw_count + terrain_ice_count; ++i)
 	{
-		const terrain_draw_t *draw = &terrain_draws[i];
+		const terrain_draw_t *draw = i < terrain_draw_count ? &terrain_draws[i] : &terrain_ice_draws[i - terrain_draw_count];
 		if (!draw->num_verts || R_CullBox ((float *)draw->mins, (float *)draw->maxs))
 			continue;
 
@@ -480,9 +528,9 @@ static void R_DrawTerrainTextured (cb_context_t *cbx)
 			lights[num_lights++] = dl;
 		}
 
-	for (int i = 0; i < terrain_draw_count; ++i)
+	for (int i = 0; i < terrain_draw_count + terrain_ice_count; ++i)
 	{
-		const terrain_draw_t *draw = &terrain_draws[i];
+		const terrain_draw_t *draw = i < terrain_draw_count ? &terrain_draws[i] : &terrain_ice_draws[i - terrain_draw_count];
 		if (!draw->num_verts || R_CullBox ((float *)draw->mins, (float *)draw->maxs))
 			continue;
 		int near_lights[MAX_DLIGHTS], num_near = 0;

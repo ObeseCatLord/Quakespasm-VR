@@ -83,6 +83,7 @@ static void WalkReset (void);
 void SV_Terrain_Clear (void)
 {
 	SV_Terrain_WormReset ();
+	SV_Terrain_IceReset ();
 	if (!terrain_active)
 		return;
 	Terrain_Free (terrain_active);
@@ -134,18 +135,12 @@ void SV_Terrain_NewMap (void)
 The one way the terrain changes after generation. The op is quantized here and logged; the
 quantized op is what every peer would replay. Radius and position are in Quake units.
 */
-int SV_Terrain_Edit (int kind, const float pos[3], float radius)
+int SV_Terrain_PushOp (const terrain_op_t *op)
 {
 	terrain_t *t = terrain_active;
 	if (!t)
 		return 0;
-	terrain_op_t op;
-	op.kind = (uint8_t)kind;
-	op.material = TERRAIN_MAT_FILL;
-	op.radius = (uint16_t)(CLAMP (8.0f, radius, 512.0f) * TERRAIN_SUB / TERRAIN_CELL);
-	for (int i = 0; i < 3; ++i)
-		op.center[i] = (int32_t)floorf ((pos[i] - (float)t->origin[i]) * TERRAIN_SUB / TERRAIN_CELL + 0.5f);
-	const int changed = Terrain_ApplyOp (t, &op);
+	const int changed = Terrain_ApplyOp (t, op);
 	if (!changed)
 		return 0;
 	if (sv_terrain_num_ops == sv_terrain_cap_ops)
@@ -153,7 +148,25 @@ int SV_Terrain_Edit (int kind, const float pos[3], float radius)
 		sv_terrain_cap_ops = sv_terrain_cap_ops ? sv_terrain_cap_ops * 2 : 256;
 		sv_terrain_ops = (terrain_op_t *)realloc (sv_terrain_ops, sv_terrain_cap_ops * sizeof (*sv_terrain_ops));
 	}
-	sv_terrain_ops[sv_terrain_num_ops++] = op;
+	sv_terrain_ops[sv_terrain_num_ops++] = *op;
+	return changed;
+}
+
+int SV_Terrain_Edit (int kind, const float pos[3], float radius)
+{
+	terrain_t *t = terrain_active;
+	if (!t)
+		return 0;
+	terrain_op_t op;
+	memset (&op, 0, sizeof (op));
+	op.kind = (uint8_t)kind;
+	op.material = TERRAIN_MAT_FILL;
+	op.radius = (uint16_t)(CLAMP (8.0f, radius, 512.0f) * TERRAIN_SUB / TERRAIN_CELL);
+	for (int i = 0; i < 3; ++i)
+		op.center[i] = (int32_t)floorf ((pos[i] - (float)t->origin[i]) * TERRAIN_SUB / TERRAIN_CELL + 0.5f);
+	const int changed = SV_Terrain_PushOp (&op);
+	if (changed)
+		SV_Terrain_IceEdited (&op); // a dig may have cut an island loose
 	return changed;
 }
 
@@ -1409,4 +1422,5 @@ void SV_Terrain_Init (void)
 	Cmd_AddCommand ("terrain_wake", SV_Terrain_Wake_f);
 	Cmd_AddCommand ("terrain_flare", SV_Terrain_Flare_f);
 	SV_Terrain_WormInit ();
+	SV_Terrain_IceInit ();
 }
