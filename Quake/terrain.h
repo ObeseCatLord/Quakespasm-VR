@@ -137,7 +137,20 @@ void Terrain_NavRefreshOp (terrain_nav_t *nav, const terrain_t *t, const terrain
 void Terrain_NavSetBlocked (terrain_nav_t *nav, int cell, int blocked);						// takes effect on the next refresh
 void Terrain_NavCellCenter (const terrain_nav_t *nav, int cell, float out[3]);
 int	 Terrain_NavFindStand (const terrain_nav_t *nav, int cls, const float feet[3], int up, int down); // -1 when none near
-void Terrain_NavFlood (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist);
+void Terrain_NavFlood (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist); // the whole grid
+
+// A distance field that can be flooded only around its target: a near flood settles cells up to a
+// cost and clears just the cells its last flood reached, so it is cheap enough to redo every time
+// the cave or the target changes. Cells beyond the bound stay TERRAIN_NAV_FAR.
+typedef struct
+{
+	uint16_t *dist;
+	int		 *touched;
+	int		  num_touched, cap_touched;
+} terrain_navfield_t;
+void Terrain_NavFieldInit (const terrain_nav_t *nav, terrain_navfield_t *field);
+void Terrain_NavFieldFree (terrain_navfield_t *field);
+void Terrain_NavFloodNear (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, terrain_navfield_t *field, int max_cost);
 int	 Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, int cell); // one step closer, or -1
 int	 Terrain_NavIsDrop (const terrain_nav_t *nav, int from, int to);					  // that step is off a ledge
 int	 Terrain_NavIsClimb (const terrain_nav_t *nav, int from, int to);					  // that step is a jump up onto a ledge

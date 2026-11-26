@@ -1296,17 +1296,32 @@ static uint64_t NavPop (terrain_nav_t *nav)
 	return top;
 }
 
-void Terrain_NavFlood (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist)
+// Dijkstra from the seeds over stand cells, settling cells no dearer than max_cost. When touched is
+// given, every cell given a cost is recorded there (to be reset later without clearing the grid).
+static void NavFloodCore (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist, int max_cost, terrain_navfield_t *touched)
 {
 	const uint8_t bit = (uint8_t)(TERRAIN_NAV_STAND << cls);
 	int			  levels[16];
 	const int	  num_levels = NavLevels (nav, levels);
-	memset (dist, 0xff, (size_t)nav->count * sizeof (uint16_t));
 	nav->heap_len = 0;
+#define NAV_TOUCH(cell)                                                                                            \
+	do                                                                                                             \
+	{                                                                                                              \
+		if (touched)                                                                                               \
+		{                                                                                                          \
+			if (touched->num_touched == touched->cap_touched)                                                      \
+			{                                                                                                      \
+				touched->cap_touched = touched->cap_touched ? touched->cap_touched * 2 : 4096;                     \
+				touched->touched = (int *)realloc (touched->touched, (size_t)touched->cap_touched * sizeof (int)); \
+			}                                                                                                      \
+			touched->touched[touched->num_touched++] = (cell);                                                     \
+		}                                                                                                          \
+	} while (0)
 	for (int s = 0; s < num_seeds; ++s)
 		if (seeds[s] >= 0 && seeds[s] < nav->count && dist[seeds[s]] == TERRAIN_NAV_FAR && (nav->flags[seeds[s]] & bit))
 		{
 			dist[seeds[s]] = 0;
+			NAV_TOUCH (seeds[s]);
 			NavPush (nav, (uint64_t)seeds[s]);
 		}
 	while (nav->heap_len)
@@ -1325,12 +1340,44 @@ void Terrain_NavFlood (terrain_nav_t *nav, int cls, const int *seeds, int num_se
 				if (next < 0 || !(nav->flags[next] & bit))
 					continue;
 				const int total = cost + NavCost (n, c);
-				if (total >= dist[next] || total >= TERRAIN_NAV_FAR || !NavStep (nav, cls, n, c))
+				if (total >= dist[next] || total > max_cost || total >= TERRAIN_NAV_FAR || !NavStep (nav, cls, n, c))
 					continue;
+				if (dist[next] == TERRAIN_NAV_FAR)
+					NAV_TOUCH (next);
 				dist[next] = (uint16_t)total;
 				NavPush (nav, (uint64_t)total << 32 | (uint64_t)next);
 			}
 	}
+#undef NAV_TOUCH
+}
+
+void Terrain_NavFlood (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, uint16_t *dist)
+{
+	memset (dist, 0xff, (size_t)nav->count * sizeof (uint16_t));
+	NavFloodCore (nav, cls, seeds, num_seeds, dist, TERRAIN_NAV_FAR, NULL);
+}
+
+void Terrain_NavFieldInit (const terrain_nav_t *nav, terrain_navfield_t *field)
+{
+	memset (field, 0, sizeof (*field));
+	field->dist = (uint16_t *)malloc ((size_t)nav->count * sizeof (uint16_t));
+	memset (field->dist, 0xff, (size_t)nav->count * sizeof (uint16_t));
+}
+
+void Terrain_NavFieldFree (terrain_navfield_t *field)
+{
+	free (field->dist);
+	free (field->touched);
+	memset (field, 0, sizeof (*field));
+}
+
+void Terrain_NavFloodNear (terrain_nav_t *nav, int cls, const int *seeds, int num_seeds, terrain_navfield_t *field, int max_cost)
+{
+	// clear only what the last flood reached, so a small flood costs only its own cells
+	for (int i = 0; i < field->num_touched; ++i)
+		field->dist[field->touched[i]] = TERRAIN_NAV_FAR;
+	field->num_touched = 0;
+	NavFloodCore (nav, cls, seeds, num_seeds, field->dist, max_cost, field);
 }
 
 int Terrain_NavNext (const terrain_nav_t *nav, int cls, const uint16_t *dist, int cell)
