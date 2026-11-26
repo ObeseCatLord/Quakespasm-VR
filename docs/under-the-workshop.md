@@ -16,7 +16,7 @@ This is a prototype. Nothing here is networked yet, and nothing has been run in 
 Any map whose name starts with `drg` gets a cave: the server generates it at the map centre
 before the entities spawn, then moves the player start, items and monsters onto the cave floor.
 
-- Axe: digs.
+- Axe: digs, with a hit sound and a puff of chips.
 - Rocket and grenade explosions (anyone's): dig.
 - Hold jump in the air: jetpack (a stopgap for traversal).
 - Hold jump against a ledge: vault onto it.
@@ -95,6 +95,7 @@ Put these arguments before `+map`: the crawlers are made while the map loads.
 | --- | --- | --- |
 | `terrain_seed` | 1 | cave seed for drg* maps |
 | `terrain_axedig`, `terrain_jetpack`, `terrain_vault` | 1 | abilities |
+| `terrain_axefx` | 1 | axe bites play a hit sound and throw chips; 0 is off |
 | `terrain_blast` | 64 | radius an explosion digs; 0 is off |
 | `terrain_slope` | 0.55 | least walkable floor normal z on terrain |
 | `terrain_monsterstep` | 1 | slope-tolerant monster steps |

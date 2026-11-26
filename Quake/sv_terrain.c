@@ -18,6 +18,7 @@ static double		 sv_terrain_next_dig[MAX_SCOREBOARD + 1];
 
 static cvar_t terrain_seed = {"terrain_seed", "1", CVAR_NONE};			   // cave seed for drg* maps
 static cvar_t terrain_axedig = {"terrain_axedig", "1", CVAR_NONE};		   // the axe digs
+static cvar_t terrain_axefx = {"terrain_axefx", "1", CVAR_NONE};		   // axe bites sound and throw chips
 static cvar_t terrain_jetpack = {"terrain_jetpack", "1", CVAR_NONE};	   // hold jump in the air to climb
 static cvar_t terrain_jetpack_thrust = {"terrain_jetpack_thrust", "1500", CVAR_NONE}; // units/s^2, against sv_gravity
 static cvar_t terrain_blast = {"terrain_blast", "64", CVAR_NONE};				   // radius an explosion digs; 0 turns it off
@@ -1153,6 +1154,38 @@ void SV_Terrain_PlaceEntities (void)
 	SV_Terrain_WormMapLoad (start);
 }
 
+#define AXE_CHIP_COLOR 8 // palette 8..15: greys to white, reads as dust in any look
+#define AXE_CHIP_COUNT 24
+#define AXE_HIT_SOUND  "player/axhit2.wav"
+
+/*
+The bite took material: play the axe-hits-wall sound and throw chips out of the hole. The QuakeC
+swing traces later, finds the hole and stays silent.
+*/
+static void SV_Terrain_AxeFeedback (edict_t *ent, const terrain_hit_t *hit, const vec3_t eye, const vec3_t forward, float reach, const vec3_t center)
+{
+	vec3_t org, dir;
+	int	   i;
+	if (hit && !hit->startsolid)
+		VectorMA (eye, hit->fraction * reach, forward, org);
+	else
+		VectorCopy (center, org);
+	VectorMA (org, -6.0f, forward, org); // start in open air
+
+	// Skip quietly when the progs did not precache the sound
+	for (i = 1; i < MAX_SOUNDS && sv.sound_precache[i]; i++)
+		if (!strcmp (sv.sound_precache[i], AXE_HIT_SOUND))
+		{
+			SV_StartSound (ent, org, 0, AXE_HIT_SOUND, 255, 1.0f);
+			break;
+		}
+
+	VectorScale (forward, -5.0f, dir); // chips come out toward the player
+	SV_StartParticle (org, dir, AXE_CHIP_COLOR, AXE_CHIP_COUNT);
+	VectorScale (forward, -2.0f, dir);
+	SV_StartParticle (org, dir, AXE_CHIP_COLOR, AXE_CHIP_COUNT / 2);
+}
+
 /*
 Per-player terrain abilities, run once per server frame before the player moves.
 Both work from fields every progs.dat has, so they need no QuakeC support.
@@ -1243,12 +1276,15 @@ void SV_Terrain_PlayerFrame (edict_t *ent, int num)
 		terrain_hit_t hit;
 		vec3_t		  center;
 		float		  ahead = 40.0f;
-		if (Terrain_TraceBox (t, eye, zero, zero, end, &hit))
+		const qboolean hit_valid = Terrain_TraceBox (t, eye, zero, zero, end, &hit) ? true : false;
+		if (hit_valid)
 			ahead = (hit.startsolid ? 0.0f : hit.fraction * reach) + 20.0f;
 		VectorMA (eye, ahead, forward, center);
 		center[2] -= 6.0f; // keeps the floor of a dug passage near foot level
 		const int changed = SV_Terrain_Edit (TERRAIN_OP_DIG, center, 52.0f);
 		Con_DPrintf ("terrain: axe bite at %.0f %.0f %.0f changed %d samples\n", center[0], center[1], center[2], changed);
+		if (changed > 0 && terrain_axefx.value)
+			SV_Terrain_AxeFeedback (ent, hit_valid ? &hit : NULL, eye, forward, reach, center);
 		sv_terrain_next_dig[num] = qcvm->time + 0.5; // one bite per axe swing
 	}
 }
@@ -1389,6 +1425,7 @@ void SV_Terrain_Init (void)
 {
 	Cvar_RegisterVariable (&terrain_seed);
 	Cvar_RegisterVariable (&terrain_axedig);
+	Cvar_RegisterVariable (&terrain_axefx);
 	Cvar_RegisterVariable (&terrain_jetpack);
 	Cvar_RegisterVariable (&terrain_jetpack_thrust);
 	Cvar_RegisterVariable (&terrain_jetpack_speed);
