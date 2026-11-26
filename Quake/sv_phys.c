@@ -12801,6 +12801,8 @@ void SV_Physics (void)
 
 	if (qcvm == &sv.qcvm)
 		SV_Terrain_WormFrame ();
+	if (qcvm == &sv.qcvm)
+		SV_Terrain_LavaFrame ();
 
 	// SV_CheckAllEnts ();
 

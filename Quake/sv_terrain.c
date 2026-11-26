@@ -83,6 +83,7 @@ static void WalkReset (void);
 void SV_Terrain_Clear (void)
 {
 	SV_Terrain_WormReset ();
+	SV_Terrain_LavaReset ();
 	if (!terrain_active)
 		return;
 	Terrain_Free (terrain_active);
@@ -1409,4 +1410,5 @@ void SV_Terrain_Init (void)
 	Cmd_AddCommand ("terrain_wake", SV_Terrain_Wake_f);
 	Cmd_AddCommand ("terrain_flare", SV_Terrain_Flare_f);
 	SV_Terrain_WormInit ();
+	SV_Terrain_LavaInit ();
 }

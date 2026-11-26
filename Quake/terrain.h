@@ -160,6 +160,18 @@ void SV_Terrain_WormInit (void);
 void SV_Terrain_WormReset (void);
 void SV_Terrain_WormMapLoad (const float start[3]); // precache; spawn one when terrain_worm is set
 void SV_Terrain_WormFrame (void);					// once per server frame, before entities run
+void SV_Terrain_LavaInit (void);
+void SV_Terrain_LavaReset (void);
+void SV_Terrain_LavaFrame (void); // once per server frame, after the worm
+typedef struct // read-only view of the lava particles for drawing (listen server only)
+{
+	int			 count;
+	const float *pos[3], *heat;
+	float		 radius;
+	int			 num_lights;
+	const float (*lights)[4]; // x y z radius
+} terrain_lava_view_t;
+const terrain_lava_view_t *SV_Terrain_LavaView (void); // NULL when nothing to draw
 void R_Terrain_Update (void);
 
 #endif

@@ -353,6 +353,7 @@ void CL_UpdateTEnts (void)
 	const qboolean tracked = V_TrackedSessionActive ();
 
 	num_temp_entities = 0;
+	R_TerrainLava_Lights (); // lava particle lights (r_terrain_lava.c)
 	R_Terrain_AddEntities (); // the terrain styles' props and their lights (r_terrain_props.c)
 
 	if (cl.paused)
